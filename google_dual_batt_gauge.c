@@ -49,14 +49,15 @@ struct dual_fg_drv {
 	struct votable	*fcc_votable;
 
 	struct gbms_chg_profile chg_profile;
+
 	u32 battery_capacity;
-	int vbatt_idx;
 	int cc_max;
 
 	int base_charge_full;
 	int flip_charge_full;
 
 	bool init_complete;
+	bool cable_in;
 };
 
 static enum power_supply_property gdbatt_fg_props[] = {
@@ -78,25 +79,96 @@ static enum power_supply_property gdbatt_fg_props[] = {
 	POWER_SUPPLY_PROP_SERIAL_NUMBER,
 };
 
-static void gdbatt_select_cc_max(struct dual_fg_drv *dual_fg_drv, int base_temp, int flip_temp)
+static int gdbatt_get_temp(struct power_supply *fg_psy, int *temp)
+{
+	int err = 0;
+	union power_supply_propval val;
+
+	if (!fg_psy)
+		return -EINVAL;
+
+	err = power_supply_get_property(fg_psy,
+					POWER_SUPPLY_PROP_TEMP, &val);
+	if (err == 0)
+		*temp = val.intval;
+
+	return err;
+}
+
+static int gdbatt_select_temp_idx(struct gbms_chg_profile *profile, int temp)
+{
+	if (temp < profile->temp_limits[0] ||
+	    temp > profile->temp_limits[profile->temp_nb_limits - 1])
+		return -1;
+	else
+		return gbms_msc_temp_idx(profile, temp);
+}
+
+static int gdbatt_select_voltage_idx(struct gbms_chg_profile *profile, int vbatt)
+{
+	int vbatt_idx = 0;
+
+	while (vbatt_idx < profile->volt_nb_limits - 1 &&
+	       vbatt > profile->volt_limits[vbatt_idx])
+		vbatt_idx++;
+
+	return vbatt_idx;
+}
+
+static void gdbatt_select_cc_max(struct dual_fg_drv *dual_fg_drv)
 {
 	struct gbms_chg_profile *profile = &dual_fg_drv->chg_profile;
-	int base_temp_idx, flip_temp_idx;
+	int base_temp, flip_temp, base_vbatt, flip_vbatt;
+	int base_temp_idx, flip_temp_idx, base_vbatt_idx, flip_vbatt_idx;
 	int base_cc_max, flip_cc_max, cc_max;
+	struct power_supply *base_psy = dual_fg_drv->first_fg_psy;
+	struct power_supply *flip_psy = dual_fg_drv->second_fg_psy;
+	int ret = 0;
 
-	base_temp_idx = gbms_msc_temp_idx(profile, base_temp);
-	flip_temp_idx = gbms_msc_temp_idx(profile, flip_temp);
+	if (!dual_fg_drv->cable_in)
+		goto check_done;
 
-	base_cc_max = GBMS_CCCM_LIMITS(profile, base_temp_idx, dual_fg_drv->vbatt_idx);
-	flip_cc_max = GBMS_CCCM_LIMITS(profile, flip_temp_idx, dual_fg_drv->vbatt_idx);
+	ret = gdbatt_get_temp(base_psy, &base_temp);
+	if (ret < 0)
+		goto check_done;
+
+	ret = gdbatt_get_temp(flip_psy, &flip_temp);
+	if (ret < 0)
+		goto check_done;
+
+	base_vbatt = GPSY_GET_PROP(base_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
+	if (base_vbatt < 0)
+		goto check_done;
+
+	flip_vbatt = GPSY_GET_PROP(flip_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
+	if (flip_vbatt < 0)
+		goto check_done;
+
+	base_temp_idx = gdbatt_select_temp_idx(profile, base_temp);
+	flip_temp_idx = gdbatt_select_temp_idx(profile, flip_temp);
+
+	base_vbatt_idx = gdbatt_select_voltage_idx(profile, base_vbatt);
+	flip_vbatt_idx = gdbatt_select_voltage_idx(profile, flip_vbatt);
+
+	base_cc_max = GBMS_CCCM_LIMITS(profile, base_temp_idx, base_vbatt_idx);
+	flip_cc_max = GBMS_CCCM_LIMITS(profile, flip_temp_idx, flip_vbatt_idx);
 	cc_max = (base_cc_max <= flip_cc_max) ? base_cc_max : flip_cc_max;
+	if (cc_max == dual_fg_drv->cc_max)
+		goto check_done;
 
 	if (!dual_fg_drv->fcc_votable)
 		dual_fg_drv->fcc_votable = find_votable(VOTABLE_MSC_FCC);
-	if (dual_fg_drv->fcc_votable && cc_max != dual_fg_drv->cc_max) {
+	if (dual_fg_drv->fcc_votable) {
+		pr_info("temp:%d/%d(%d/%d), vbatt:%d/%d(%d/%d), cc_max:%d/%d(%d)\n",
+			base_temp, flip_temp, base_temp_idx, flip_temp_idx, base_vbatt,
+			flip_vbatt, base_vbatt_idx, flip_vbatt_idx, base_cc_max,
+			flip_cc_max, cc_max);
 		vote(dual_fg_drv->fcc_votable, DUAL_BATT_TEMP_VOTER, true, cc_max);
 		dual_fg_drv->cc_max = cc_max;
 	}
+
+check_done:
+	pr_debug("check done. cable_in=%d (%d)\n", dual_fg_drv->cable_in, ret);
 }
 
 static int gdbatt_get_capacity(struct dual_fg_drv *dual_fg_drv, int base_soc, int flip_soc)
@@ -126,6 +198,8 @@ static void google_dual_batt_work(struct work_struct *work)
 
 	if (!base_psy || !flip_psy)
 		goto error_done;
+
+	gdbatt_select_cc_max(dual_fg_drv);
 
 	base_data = GPSY_GET_PROP(base_psy, POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN);
 	flip_data = GPSY_GET_PROP(flip_psy, POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN);
@@ -187,7 +261,6 @@ static int gdbatt_get_property(struct power_supply *psy,
 		val->intval = fg_1.intval + fg_2.intval;
 		break;
 	case POWER_SUPPLY_PROP_TEMP:
-		gdbatt_select_cc_max(dual_fg_drv, fg_1.intval, fg_2.intval);
 		val->intval = MAX(fg_1.intval, fg_2.intval);
 		break;
 	case POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG:
@@ -196,7 +269,6 @@ static int gdbatt_get_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
 		val->intval = (fg_1.intval + fg_2.intval)/2;
-		dual_fg_drv->vbatt_idx = gbms_msc_voltage_idx(&dual_fg_drv->chg_profile, val->intval);
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_AVG:
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN:
@@ -263,15 +335,16 @@ static int gdbatt_set_property(struct power_supply *psy,
 	switch (psp) {
 	case GBMS_PROP_BATT_CE_CTRL:
 		if (dual_fg_drv->first_fg_psy) {
-			ret = GPSY_SET_PROP(dual_fg_drv->first_fg_psy, psp, false);
+			ret = GPSY_SET_PROP(dual_fg_drv->first_fg_psy, psp, val->intval);
 			if (ret < 0)
 				pr_err("Cannot set the first BATT_CE_CTRL, ret=%d\n", ret);
 		}
 		if (dual_fg_drv->second_fg_psy) {
-			ret = GPSY_SET_PROP(dual_fg_drv->second_fg_psy, psp, false);
+			ret = GPSY_SET_PROP(dual_fg_drv->second_fg_psy, psp, val->intval);
 			if (ret < 0)
 				pr_err("Cannot set the second BATT_CE_CTRL, ret=%d\n", ret);
 		}
+		dual_fg_drv->cable_in = !!val->intval;
 		break;
 	default:
 		return -EINVAL;
@@ -387,6 +460,7 @@ static void google_dual_batt_gauge_init_work(struct work_struct *work)
 		}
 	}
 
+	dual_fg_drv->cc_max = -1;
 	err = gdbatt_init_chg_profile(dual_fg_drv);
 	if (err < 0)
 		dev_info(dual_fg_drv->device,"fail to init chg profile (%d)\n", err);
@@ -407,8 +481,8 @@ static int google_dual_batt_gauge_probe(struct platform_device *pdev)
 	const char *first_fg_psy_name;
 	const char *second_fg_psy_name;
 	struct dual_fg_drv *dual_fg_drv;
-	int ret;
 	struct power_supply_config psy_cfg = {};
+	int ret;
 
 	dual_fg_drv = devm_kzalloc(&pdev->dev, sizeof(*dual_fg_drv), GFP_KERNEL);
 	if (!dual_fg_drv)
