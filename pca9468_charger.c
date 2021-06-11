@@ -4769,12 +4769,33 @@ static ssize_t p9468_set_chg_stats(struct device *dev, struct device_attribute *
 
 static DEVICE_ATTR(chg_stats, 0644, p9468_show_chg_stats, p9468_set_chg_stats);
 
+static ssize_t show_dump_reg(struct device *dev, struct device_attribute *attr,
+			     char *buf)
+{
+	struct pca9468_charger *pca9468 = dev_get_drvdata(dev);
+	u8 tmp[PCA9468_MAX_REGISTER + 1];
+	int ret, i;
+	int len = 0;
+
+	ret = regmap_bulk_read(pca9468->regmap, PCA9468_REG_DEVICE_INFO, &tmp,
+			       PCA9468_MAX_REGISTER + 1);
+	if (ret < 0)
+		return ret;
+
+	for (i = 0; i <= PCA9468_MAX_REGISTER; i++)
+		len += scnprintf(&buf[len], PAGE_SIZE - len, "%02x: %02x\n", i, tmp[i]);
+
+	return len;
+}
+
+static DEVICE_ATTR(registers_dump, 0444, show_dump_reg, NULL);
 
 static int pca9468_create_fs_entries(struct pca9468_charger *chip)
 {
 
 	device_create_file(chip->dev, &dev_attr_sts_ab);
 	device_create_file(chip->dev, &dev_attr_chg_stats);
+	device_create_file(chip->dev, &dev_attr_registers_dump);
 
 	chip->debug_root = debugfs_create_dir("charger-pca9468", NULL);
 	if (IS_ERR_OR_NULL(chip->debug_root)) {

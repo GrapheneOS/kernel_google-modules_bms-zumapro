@@ -2956,7 +2956,7 @@ static int chg_init_fs(struct chg_drv *chg_drv)
 	debugfs_create_bool("usb_skip_probe", 0600, chg_drv->debug_entry,
 			    &chg_drv->usb_skip_probe);
 
-	debugfs_create_file("pps_cc_tolerance", 0600, chg_drv->debug_entry,
+	debugfs_create_file("pps_cc_tolerance", 0644, chg_drv->debug_entry,
 			    chg_drv, &debug_pps_cc_tolerance_fops);
 
 	debugfs_create_u32("bd_triggered", S_IRUGO | S_IWUSR, chg_drv->debug_entry,
