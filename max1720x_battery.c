@@ -92,7 +92,7 @@ struct gbatt_capacity_estimation {
 	int start_vfsoc;
 };
 
-#define DEFAULT_BATTERY_ID		-1
+#define DEFAULT_BATTERY_ID		0
 #define DEFAULT_BATTERY_ID_RETRIES	5
 
 #define DEFAULT_CAP_SETTLE_INTERVAL	3
@@ -3555,6 +3555,10 @@ static int max1720x_clear_por(struct max1720x_chip *chip)
 static int max1720x_set_next_update(struct max1720x_chip *chip)
 {
 	int rc, cycle_count;
+
+	/* do not save data when battery ID is not clear */
+	if (chip->batt_id == DEFAULT_BATTERY_ID)
+		return 0;
 
 	cycle_count = max1720x_get_cycle_count(chip);
 	if (cycle_count < 0)
