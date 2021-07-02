@@ -14,7 +14,7 @@ filegroup(
         "*.h",
     ]),
     visibility = [
-        "//private/google-modules/power/reset:__subpackages__",
+        "//gs/google-modules/power/reset:__subpackages__",
     ],
 )
 
@@ -40,9 +40,9 @@ kernel_module(
         # "max77759.ko",
         # "pca9468-google.ko",
     ],
-    kernel_build = "//private/gs-google:slider",
+    kernel_build = "//gs/kernel/device-modules:slider",
     visibility = [
-        "//private/google-modules/power/reset:__subpackages__",
-        "//private/gs-google:__pkg__",
+        "//gs/google-modules/power/reset:__subpackages__",
+        "//gs/kernel/device-modules:__pkg__",
     ],
 )
