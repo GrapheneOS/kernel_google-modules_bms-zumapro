@@ -236,6 +236,7 @@ struct max1720x_chip {
 #define MAX1720_EMPTY_VOLTAGE(profile, temp, cycle) \
 	profile->empty_voltage[temp * NB_CYCLE_BUCKETS + cycle]
 
+
 static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj);
 
 static bool max17x0x_reglog_init(struct max1720x_chip *chip)
@@ -3637,17 +3638,18 @@ static int max1720x_clear_por(struct max1720x_chip *chip)
 /* read state from fg (if needed) and set the next update field */
 static int max1720x_set_next_update(struct max1720x_chip *chip)
 {
-	int rc, cycle_count;
+	int rc;
+	u16 reg_cycle;
 
 	/* do not save data when battery ID not clearly */
 	if (chip->batt_id == DEFAULT_BATTERY_ID)
 		return 0;
 
-	cycle_count = max1720x_get_cycle_count(chip);
-	if (cycle_count < 0)
-		return cycle_count;
+	rc = REGMAP_READ(&chip->regmap, MAX1720X_CYCLES, &reg_cycle);
+	if (rc < 0)
+		return rc;
 
-	if (chip->model_next_update && cycle_count < chip->model_next_update)
+	if (chip->model_next_update && reg_cycle < chip->model_next_update)
 		return 0;
 
 	/* read new state from Fuel gauge, save to storage if needed */
@@ -3664,11 +3666,11 @@ static int max1720x_set_next_update(struct max1720x_chip *chip)
 	if (rc == 0 && chip->model_next_update)
 		rc = max_m5_save_state_data(chip->model_data);
 	if (rc == 0)
-		chip->model_next_update = (cycle_count + (1 << 6)) &
+		chip->model_next_update = (reg_cycle + (1 << 6)) &
 					  ~((1 << 6) - 1);
 
-	pr_debug("%s: cycle_count=%d next_update=%d rc=%d\n", __func__,
-		 cycle_count, chip->model_next_update, rc);
+	pr_debug("%s: reg_cycle=%d next_update=%d rc=%d\n", __func__,
+		 reg_cycle, chip->model_next_update, rc);
 
 	return 0;
 }
@@ -3719,7 +3721,8 @@ static void max1720x_model_work(struct work_struct *work)
 	struct max1720x_chip *chip = container_of(work, struct max1720x_chip,
 						  model_work.work);
 	bool new_model = false;
-	int rc, cycle_count;
+	u16 reg_cycle;
+	int rc;
 
 	if (!chip->model_data)
 		return;
@@ -3739,13 +3742,13 @@ static void max1720x_model_work(struct work_struct *work)
 			/* TODO: keep trying to clear POR if the above fail */
 
 			max1720x_restore_battery_cycle(chip);
-			cycle_count = max1720x_get_cycle_count(chip);
-			if (cycle_count >= 0) {
+			rc = REGMAP_READ(&chip->regmap, MAX1720X_CYCLES, &reg_cycle);
+			if (rc == 0 && reg_cycle >= 0) {
 				chip->model_reload = MAX_M5_LOAD_MODEL_IDLE;
 				chip->model_ok = true;
 				new_model = true;
 				/* saved new value in max1720x_set_next_update */
-				chip->model_next_update = cycle_count > 0 ? cycle_count - 1 : 0;
+				chip->model_next_update = reg_cycle > 0 ? reg_cycle - 1 : 0;
 			}
 		} else if (rc != -EAGAIN) {
 			chip->model_reload = MAX_M5_LOAD_MODEL_DISABLED;
