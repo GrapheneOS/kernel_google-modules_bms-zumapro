@@ -562,6 +562,7 @@ struct p9221_charger_platform_data {
 	u32				alignment_scalar_high_current;
 	u32				alignment_offset_low_current;
 	u32				alignment_offset_high_current;
+	u32				alignment_current_threshold;
 	bool				feat_compat_mode;
 };
 

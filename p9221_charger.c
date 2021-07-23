@@ -943,12 +943,12 @@ static void p9221_init_align(struct p9221_charger_data *charger)
 			      msecs_to_jiffies(P9221_ALIGN_DELAY_MS));
 }
 
-static void p9382_align_check(struct p9221_charger_data *charger)
+static void p9xxx_align_check(struct p9221_charger_data *charger)
 {
 	int res, wlc_freq_threshold;
 	u32 wlc_freq, current_scaling = 0;
 
-	if (charger->current_filtered <= WLC_ALIGN_CURRENT_THRESHOLD) {
+	if (charger->current_filtered <= charger->pdata->alignment_current_threshold) {
 		current_scaling =
 			charger->pdata->alignment_scalar_low_current *
 			charger->current_filtered / 10;
@@ -1138,7 +1138,7 @@ no_scaling:
 	if (charger->chip_id == P9221_CHIP_ID)
 		p9221_align_check(charger, current_scaling);
 	else
-		p9382_align_check(charger);
+		p9xxx_align_check(charger);
 }
 
 static const char *p9221_get_tx_id_str(struct p9221_charger_data *charger)
@@ -5229,6 +5229,16 @@ static int p9221_parse_dt(struct device *dev,
 
 	dev_info(dev, "google,alignment_offset_high_current set to: %d\n",
 		 pdata->alignment_offset_high_current);
+
+	ret = of_property_read_u32(node, "google,alignment_current_threshold",
+				   &data);
+	if (ret < 0)
+		pdata->alignment_current_threshold = WLC_ALIGN_CURRENT_THRESHOLD;
+	else
+		pdata->alignment_current_threshold = data;
+
+	dev_info(dev, "google,alignment_current_threshold set to: %d\n",
+		 pdata->alignment_current_threshold);
 
 	ret = of_property_read_u32(node, "google,power_mitigate_threshold",
 				   &data);
