@@ -2493,19 +2493,13 @@ static ssize_t bd_clear_store(struct device *dev,
 
 	mutex_lock(&chg_drv->bd_lock);
 
+	bd_reset(&chg_drv->bd_state);
+
 	ret = bd_batt_set_state(chg_drv, false, -1);
 	if (ret < 0)
 		pr_err("MSC_BD set_batt_state (%d)\n", ret);
 
-	bd_reset(&chg_drv->bd_state);
-
-	if (chg_drv->chg_psy)
-		power_supply_changed(chg_drv->chg_psy);
-
 	mutex_unlock(&chg_drv->bd_lock);
-
-	if (chg_drv->bat_psy)
-		power_supply_changed(chg_drv->bat_psy);
 
 	return count;
 }
