@@ -124,7 +124,7 @@ static void google_dual_batt_work(struct work_struct *work)
 	if (!dual_fg_drv->init_complete)
 		goto error_done;
 
-	if (!base_psy && !flip_psy)
+	if (!base_psy || !flip_psy)
 		goto error_done;
 
 	base_data = GPSY_GET_PROP(base_psy, POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN);
