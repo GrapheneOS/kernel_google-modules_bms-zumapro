@@ -353,6 +353,17 @@ static int max77759_read_vbatt(struct max77759_chgr_data *data, int *vbatt)
 	return ret;
 }
 
+static int max77759_read_vbyp(struct max77759_chgr_data *data, int *vbyp)
+{
+	int ret;
+
+	ret = max77759_find_fg(data);
+	if (ret == 0)
+		ret = max_m5_read_vbypass(data->fg_i2c_client, vbyp);
+
+	return ret;
+}
+
 /* ----------------------------------------------------------------------- */
 
 /* set WDTEN in CHG_CNFG_18 (0xCB), tWD = 80s */
@@ -2466,7 +2477,7 @@ static int max77759_wcin_voltage_now(struct max77759_chgr_data *chg,
 
 	wlc_psy = max77759_get_wlc_psy(chg);
 	if (!wlc_psy)
-		return max77759_read_vbatt(chg, &val->intval);
+		return max77759_read_vbyp(chg, &val->intval);
 
 	rc = power_supply_get_property(wlc_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW, val);
 	if (rc < 0)
