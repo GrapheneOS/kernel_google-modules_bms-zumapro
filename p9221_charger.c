@@ -53,8 +53,6 @@
 #define RTX_BEN_ON		1
 #define RTX_BEN_ENABLED		2
 
-#define REENABLE_RTX_DELAY	3000
-
 #define get_boot_sec() div_u64(ktime_to_ns(ktime_get_boottime()), NSEC_PER_SEC)
 
 enum wlc_align_codes {
@@ -3936,13 +3934,12 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 		}
 		ret = p9382_ben_cfg(charger, RTX_BEN_DISABLED);
 		if (ret < 0)
-			goto error;
+			goto exit;
 
 		ret = p9382_disable_dcin_en(charger, false);
 		if (ret)
 			dev_err(&charger->client->dev,
 				"fail to enable dcin, ret=%d\n", ret);
-		goto done;
 	} else {
 		logbuffer_log(charger->rtx_log, "enable rtx");
 		/* Check if there is any one vote disabled */
@@ -3951,8 +3948,7 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 		if (tx_icl == 0) {
 			dev_err(&charger->client->dev, "rtx be disabled\n");
 			logbuffer_log(charger->rtx_log, "rtx be disabled\n");
-			charger->rtx_reset_cnt = 0;
-			goto done;
+			goto exit;
 		}
 
 		/*
@@ -3964,8 +3960,7 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 				"rTX is not allowed during WLC\n");
 			logbuffer_log(charger->rtx_log,
 				      "rTX is not allowed during WLC\n");
-			charger->rtx_reset_cnt = 0;
-			goto done;
+			goto exit;
 		}
 
 		/*
@@ -3975,7 +3970,7 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 		ret = p9382_disable_dcin_en(charger, true);
 		if (ret) {
 			dev_err(&charger->client->dev, "cannot enable rTX mode %d\n", ret);
-			goto error;
+			goto exit;
 		}
 
 		charger->com_busy = 0;
@@ -3985,7 +3980,7 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 
 		ret = p9382_ben_cfg(charger, RTX_BEN_ON);
 		if (ret < 0)
-			goto error;
+			goto exit;
 
 		msleep(10);
 
@@ -4003,7 +3998,7 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 				pm_relax(charger->dev);
 				charger->is_rtx_mode = false;
 			}
-			goto error;
+			goto exit;
 		}
 
 		ret = p9221_enable_interrupts(charger);
@@ -4026,14 +4021,8 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 					"Could not set Tx current limit: %d\n",
 					ret);
 		}
-		goto done;
 	}
-error:
-	if (charger->rtx_reset_cnt > 0) {
-		charger->rtx_err = RTX_HARD_OCP;
-		charger->rtx_reset_cnt = 0;
-	}
-done:
+exit:
 	if (charger->rtx_reset_cnt == 0)
 		schedule_work(&charger->uevent_work);
 	if (enable == 0 &&
@@ -4415,8 +4404,6 @@ static void p9xxx_reset_rtx_for_ocp(struct p9221_charger_data *charger)
 
 	charger->is_rtx_mode = false;
 	p9382_set_rtx(charger, false);
-
-	msleep(REENABLE_RTX_DELAY);
 
 	if (charger->rtx_reset_cnt) {
 		dev_info(&charger->client->dev, "re-enable RTx mode, cnt=%d\n", charger->rtx_reset_cnt);
