@@ -226,6 +226,10 @@ struct max1720x_chip {
 	/* debug interface, register to read or write */
 	u32 debug_reg_address;
 
+	/* dump data to logbuffer periodically */
+	struct logbuffer *monitor_log;
+	u16 pre_repsoc;
+
 	struct power_supply_desc max1720x_psy_desc;
 };
 
@@ -1588,7 +1592,7 @@ static void batt_ce_dump_data(const struct gbatt_capacity_estimation *cap_esti,
 			    " delta_cc_sum: %d"
 			    " delta_vfsoc_sum: %d"
 			    " state: %d"
-			    " cable: %d\n",
+			    " cable: %d",
 			    cap_esti->cap_filter_count,
 			    cap_esti->start_cc,
 			    cap_esti->start_vfsoc,
@@ -1717,7 +1721,7 @@ ioerr:
 
 exit:
 	logbuffer_log(chip->ce_log,
-		"valid=%d settle[cc=%d, vfsoc=%d], delta[cc=%d,vfsoc=%d] ce[%d]=%d\n",
+		"valid=%d settle[cc=%d, vfsoc=%d], delta[cc=%d,vfsoc=%d] ce[%d]=%d",
 		valid_estimate,
 		settle_cc, settle_vfsoc, delta_cc, delta_vfsoc,
 		cap_esti->cap_filter_count,
@@ -2147,6 +2151,82 @@ static int max1720x_property_is_writeable(struct power_supply *psy,
 	return 0;
 }
 
+static int max1720x_monitor_log_data(struct max1720x_chip *chip)
+{
+	u16 data, repsoc, vfsoc, avcap, repcap, fullcap, fullcaprep;
+	u16 fullcapnom, qh0, qh, dqacc, dpacc, qresidual, fstat;
+	int ret = 0;
+
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_REPSOC, &data);
+	if (ret < 0)
+		return ret;
+
+	repsoc = (data >> 8) & 0x00FF;
+	if (repsoc == chip->pre_repsoc)
+		return ret;
+
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_VFSOC, &vfsoc);
+	if (ret < 0)
+		return ret;
+
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_AVCAP, &avcap);
+	if (ret < 0)
+		return ret;
+
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_REPCAP, &repcap);
+	if (ret < 0)
+		return ret;
+
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_FULLCAP, &fullcap);
+	if (ret < 0)
+		return ret;
+
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_FULLCAPREP, &fullcaprep);
+	if (ret < 0)
+		return ret;
+
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_FULLCAPNOM, &fullcapnom);
+	if (ret < 0)
+		return ret;
+
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_QH0, &qh0);
+	if (ret < 0)
+		return ret;
+
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_QH, &qh);
+	if (ret < 0)
+		return ret;
+
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_DQACC, &dqacc);
+	if (ret < 0)
+		return ret;
+
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_DPACC, &dpacc);
+	if (ret < 0)
+		return ret;
+
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_QRESIDUAL, &qresidual);
+	if (ret < 0)
+		return ret;
+
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_FSTAT, &fstat);
+	if (ret < 0)
+		return ret;
+
+	logbuffer_log(chip->monitor_log, "%02X:%04X %02X:%04X %02X:%04X %02X:%04X"
+	" %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
+	" %02X:%04X %02X:%04X",
+		MAX1720X_REPSOC, data, MAX1720X_VFSOC, vfsoc, MAX1720X_AVCAP, avcap,
+		MAX1720X_REPCAP, repcap, MAX1720X_FULLCAP, fullcap, MAX1720X_FULLCAPREP,
+		fullcaprep, MAX1720X_FULLCAPNOM, fullcapnom, MAX1720X_QH0, qh0,
+		MAX1720X_QH, qh, MAX1720X_DQACC, dqacc, MAX1720X_DPACC, dpacc,
+		MAX1720X_QRESIDUAL, qresidual, MAX1720X_FSTAT, fstat);
+
+	chip->pre_repsoc = repsoc;
+
+	return ret;
+}
+
 /*
  * A fuel gauge reset resets only the fuel gauge operation without resetting IC
  * hardware. This is useful for testing different configurations without writing
@@ -2417,6 +2497,9 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 
 		if (storm)
 			pr_debug("Force power_supply_change in storm\n");
+		else
+			max1720x_monitor_log_data(chip);
+
 		storm = false;
 	}
 
@@ -5055,6 +5138,7 @@ static int max1720x_probe(struct i2c_client *client,
 	struct power_supply_config psy_cfg = { };
 	const struct max17x0x_reg *reg;
 	const char *psy_name = NULL;
+	char monitor_name[32];
 	int ret = 0;
 
 	chip = devm_kzalloc(dev, sizeof(*chip), GFP_KERNEL);
@@ -5178,6 +5262,15 @@ static int max1720x_probe(struct i2c_client *client,
 		ret = PTR_ERR(chip->ce_log);
 		dev_err(dev, "failed to obtain logbuffer, ret=%d\n", ret);
 		chip->ce_log = NULL;
+	}
+
+	scnprintf(monitor_name, sizeof(monitor_name), "%s_%s",
+		  chip->max1720x_psy_desc.name, "monitor");
+	chip->monitor_log = logbuffer_register(monitor_name);
+	if (IS_ERR(chip->monitor_log)) {
+		ret = PTR_ERR(chip->monitor_log);
+		dev_err(dev, "failed to obtain logbuffer, ret=%d\n", ret);
+		chip->monitor_log = NULL;
 	}
 
 	/* use VFSOC until it can confirm that FG Model is running */
