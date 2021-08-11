@@ -211,6 +211,7 @@ struct chg_drv {
 	struct votable	*dc_fcc_votable;
 	struct votable	*fan_level_votable;
 	struct votable	*dead_battery_votable;
+	struct votable  *tx_icl_votable;
 
 	bool init_done;
 	bool batt_present;
@@ -3583,6 +3584,8 @@ static int chg_set_dc_in_charge_cntl_limit(struct thermal_cooling_device *tcd,
 
 	if (!chg_drv->dc_icl_votable)
 		chg_drv->dc_icl_votable = find_votable("DC_ICL");
+	if (!chg_drv->tx_icl_votable)
+		chg_drv->tx_icl_votable = find_votable("TX_ICL");
 
 	/* dc_icl == -1 on level 0 */
 	tdev->current_level = lvl;
@@ -3596,6 +3599,9 @@ static int chg_set_dc_in_charge_cntl_limit(struct thermal_cooling_device *tcd,
 		wlc_state = chg_therm_set_wlc_offline(chg_drv, PPS_PSY_FIXED_ONLINE);
 		if (wlc_state < 0)
 			pr_err("MSC_THERM_DC cannot offline ret=%d\n", wlc_state);
+
+		if (chg_drv->tx_icl_votable)
+			vote(chg_drv->tx_icl_votable, THERMAL_DAEMON_VOTER, true, 0);
 
 		pr_info("MSC_THERM_DC lvl=%ld, dc disable wlc_state=%d\n",
 			lvl, wlc_state);
@@ -3615,6 +3621,8 @@ static int chg_set_dc_in_charge_cntl_limit(struct thermal_cooling_device *tcd,
 		wlc_state = chg_therm_set_wlc_online(chg_drv);
 		if (wlc_state < 0)
 			pr_err("MSC_THERM_DC cannot online ret=%d\n", wlc_state);
+		if (chg_drv->tx_icl_votable)
+			vote(chg_drv->tx_icl_votable, THERMAL_DAEMON_VOTER, false, 0);
 	}
 
 	/* online/offline or vote might change the selection */
