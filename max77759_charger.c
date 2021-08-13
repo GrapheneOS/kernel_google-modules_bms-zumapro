@@ -47,6 +47,7 @@
 #define THERMAL_HYST_LEVEL 100
 #define BATOILO_DET_30US 0x4
 #define MAX77759_DEFAULT_MODE	MAX77759_CHGR_MODE_ALL_OFF
+#define CHG_TERM_VOLT_DEBOUNCE	200
 
 /* CHG_DETAILS_01:CHG_DTLS */
 #define CHGR_DTLS_DEAD_BATTERY_MODE			0x00
@@ -118,6 +119,7 @@ struct max77759_chgr_data {
 #endif
 
 	int chg_term_voltage;
+	int chg_term_volt_debounce;
 };
 
 static inline int max77759_reg_read(struct regmap *regmap, uint8_t reg,
@@ -2077,10 +2079,11 @@ static int max77759_enable_sw_recharge(struct max77759_chgr_data *data,
 	if (ret == 0)
 		ret = max77759_chg_mode_write(uc_data->client, reg);
 
-	pr_debug("%s charge_done=%d->%d, reg=%x (%d)\n", __func__,
-		 charge_done, data->charge_done, reg, ret);
-
 	data->charge_done = false;
+
+	pr_debug("%s charge_done=%d->0, reg=%hhx (%d)\n", __func__,
+		 charge_done, reg, ret);
+
 	return ret;
 }
 
@@ -2730,6 +2733,7 @@ static int max77759_get_charge_type(struct max77759_chgr_data *data)
 
 static bool max77759_is_full(struct max77759_chgr_data *data)
 {
+	int vlimit = data->chg_term_voltage;
 	int ret, vbatt = 0;
 
 	/*
@@ -2741,8 +2745,11 @@ static bool max77759_is_full(struct max77759_chgr_data *data)
 	if (ret == 0)
 		vbatt = vbatt / 1000;
 
+	if (data->charge_done)
+		vlimit -= data->chg_term_volt_debounce;
+
 	/* true when chg_term_voltage==0, false if read error (vbatt==0) */
-	return vbatt >= data->chg_term_voltage;
+	return vbatt >= vlimit;
 }
 
 static int max77759_get_status(struct max77759_chgr_data *data)
@@ -2770,7 +2777,9 @@ static int max77759_get_status(struct max77759_chgr_data *data)
 			return POWER_SUPPLY_STATUS_CHARGING;
 		case CHGR_DTLS_DONE_MODE:
 			/* same as POWER_SUPPLY_PROP_CHARGE_DONE */
-			if (max77759_is_full(data))
+			if (!max77759_is_full(data))
+				data->charge_done = false;
+			if (data->charge_done)
 				return POWER_SUPPLY_STATUS_FULL;
 			return POWER_SUPPLY_STATUS_NOT_CHARGING;
 		case CHGR_DTLS_TIMER_FAULT_MODE:
@@ -4052,6 +4061,13 @@ static int max77759_charger_probe(struct i2c_client *client,
 				   &data->chg_term_voltage);
 	if (ret < 0)
 		data->chg_term_voltage = 0;
+
+	ret = of_property_read_u32(dev->of_node, "max77759,chg-term-volt-debounce",
+				   &data->chg_term_volt_debounce);
+	if (ret < 0)
+		data->chg_term_volt_debounce = CHG_TERM_VOLT_DEBOUNCE;
+	if (data->chg_term_voltage == 0)
+		data->chg_term_volt_debounce = 0;
 
 	data->init_complete = 1;
 	data->resume_complete = 1;
