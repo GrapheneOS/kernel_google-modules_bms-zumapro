@@ -2393,7 +2393,8 @@ static void p9221_set_online(struct p9221_charger_data *charger)
 	p9221_charge_stats_init(&charger->chg_data);
 	mutex_unlock(&charger->stats_lock);
 
-	if (charger->chip_id == P9222_CHIP_ID) {
+	if (charger->chip_id == P9222_CHIP_ID &&
+	    !p9221_is_epp(charger)) {
 		dev_err(&charger->client->dev, "P9222 change VOUT to 5V\n");
 		ret = p9221_set_bpp_vout(charger);
 		if (ret)
