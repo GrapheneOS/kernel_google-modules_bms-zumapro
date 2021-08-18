@@ -486,8 +486,8 @@ static int p9382_wait_for_mode(struct p9221_charger_data *chgr, int mode)
 	int loops, ret;
 	uint8_t sys_mode;
 
-	/* 30 * 100 = 3 sec */
-	for (loops = 30 ; loops ; loops--) {
+	/* 20 * 50 = 1 sec */
+	for (loops = 20 ; loops ; loops--) {
 		ret = chgr->reg_read_8(chgr, P9221R5_SYSTEM_MODE_REG,
 					&sys_mode);
 		if (ret < 0) {
@@ -499,7 +499,7 @@ static int p9382_wait_for_mode(struct p9221_charger_data *chgr, int mode)
 		if (sys_mode == mode)
 			return 0;
 
-		msleep(100);
+		msleep(50);
 	}
 
 	return -ETIMEDOUT;
@@ -806,7 +806,21 @@ static int p9221_send_ccreset(struct p9221_charger_data *chgr)
 
 static int p9412_send_ccreset(struct p9221_charger_data *chgr)
 {
-	return -ENOTSUPP;
+	int ret;
+
+	dev_info(&chgr->client->dev, "Send CC reset\n");
+
+	mutex_lock(&chgr->cmd_lock);
+
+	ret = chgr->reg_write_8(chgr, P9412_COM_PACKET_TYPE_ADDR,
+				CHANNEL_RESET_PACKET_TYPE);
+	ret |= chgr->reg_write_8(chgr, P9412_COM_CHAN_SEND_SIZE_REG, 0);
+	if (ret == 0)
+		ret = chgr->chip_set_cmd(chgr, P9412_COM_CCACTIVATE);
+
+	mutex_unlock(&chgr->cmd_lock);
+
+	return ret;
 }
 
 /* send eop */
@@ -910,7 +924,7 @@ static int p9xxx_send_csp_in_txmode(struct p9221_charger_data *chgr, u8 stat)
 
 	ret = chgr->reg_read_16(chgr, P9221_STATUS_REG, &status_reg);
 	if ((ret != 0) || (status_reg & chgr->ints.rx_connected_bit) == 0)
-		return ret;
+		return -EINVAL;
 
 	dev_info(&chgr->client->dev, "Send Tx soc=%d\n", stat);
 	/* write packet type to 0x100 */
@@ -1175,14 +1189,26 @@ static bool p9412_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 		return 0;
 	}
 
-	if (val8 == P9XXX_SYS_OP_MODE_PROPRIETARY)
+	if (val8 == P9XXX_SYS_OP_MODE_PROPRIETARY) {
+
+		/* Step0: don't even try if power is not supported */
+		ret = chgr->reg_read_8(chgr, P9412_PROP_TX_POTEN_PWR_REG, &txpwr);
+		txpwr = txpwr / 2;
+		if (ret != 0 || txpwr < HPP_MODE_PWR_REQUIRE) {
+			dev_info(&chgr->client->dev,
+				"PROP_MODE: power=%dW not supported\n", txpwr);
+			chgr->prop_mode_en = false;
+			goto err_exit;
+		}
+
 		goto enable_capdiv;
+	}
 
 	ret = p9xxx_chip_get_tx_mfg_code(chgr, &chgr->mfg);
 	if (chgr->mfg != WLC_MFG_GOOGLE) {
 		dev_err(&chgr->client->dev,
 			"PROP_MODE: mfg code =%02x\n", chgr->mfg);
-                return 0;
+		return 0;
 	}
 
 	/*

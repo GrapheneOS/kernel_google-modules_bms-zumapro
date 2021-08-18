@@ -87,6 +87,27 @@ int max_m5_read_actual_input_current_ua(struct i2c_client *client, int *iic_raw)
 }
 EXPORT_SYMBOL_GPL(max_m5_read_actual_input_current_ua);
 
+int max_m5_read_vbypass(struct i2c_client *client, int *volt)
+{
+	struct max_m5_data *m5_data = max1720x_get_model_data(client);
+	unsigned int tmp;
+	int ret;
+
+	if (!m5_data || !m5_data->regmap)
+		return -ENODEV;
+
+	ret = regmap_read(m5_data->regmap->regmap, MAX_M5_VBYP, &tmp);
+	if (ret) {
+		pr_err("Failed to read %x\n", MAX_M5_VBYP);
+		return ret;
+	}
+
+	/* LSB: 0.427246mV */
+	*volt = div_u64((u64) tmp * 427246, 1000);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(max_m5_read_vbypass);
+
 int max_m5_reg_read(struct i2c_client *client, unsigned int reg,
 		    unsigned int *val)
 {

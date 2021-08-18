@@ -353,6 +353,17 @@ static int max77759_read_vbatt(struct max77759_chgr_data *data, int *vbatt)
 	return ret;
 }
 
+static int max77759_read_vbyp(struct max77759_chgr_data *data, int *vbyp)
+{
+	int ret;
+
+	ret = max77759_find_fg(data);
+	if (ret == 0)
+		ret = max_m5_read_vbypass(data->fg_i2c_client, vbyp);
+
+	return ret;
+}
+
 /* ----------------------------------------------------------------------- */
 
 /* set WDTEN in CHG_CNFG_18 (0xCB), tWD = 80s */
@@ -532,6 +543,22 @@ static int max77759_ls_mode(struct max77759_usecase_data *uc_data, int mode)
 	case 0:
 		/* the OVP open right away */
 		ret = gpio_get_value_cansleep(uc_data->lsw1_is_open);
+		if (ret <= 0 && uc_data->ls1_en > 0) {
+			const int max_count = 3;
+			int loops;
+
+			/*  do it manually and re-read after 20ms */
+			for (loops = 0; loops < max_count; loops++) {
+				gpio_set_value_cansleep(uc_data->ls1_en, 0);
+				msleep(20);
+
+				ret = gpio_get_value_cansleep(uc_data->lsw1_is_open);
+				pr_debug("%s: open lsw1 attempt %d/%d ret=%d\n",
+					 __func__, loops, max_count, ret);
+				if (ret > 0)
+					break;
+			}
+		}
 		break;
 	case 1:
 		/* it takes 11 ms to turn on the OVP */
@@ -996,9 +1023,6 @@ static int gs101_otg_mode(struct max77759_usecase_data *uc_data, int to)
 		rc = max77759_ls_mode(uc_data, 0);
 		if (rc < 0)
 			pr_err("%s: cannot clear lsw1 rc:%d\n",  __func__, rc);
-		/* b/192986752 make very sure that LSW1 is open */
-		if (uc_data->ls1_en > 0)
-			gpio_set_value_cansleep(uc_data->ls1_en, 0);
 
 		ret = max77759_ext_mode(uc_data, EXT_MODE_OFF);
 		if (ret < 0)
@@ -1737,16 +1761,17 @@ static int max77759_set_insel(struct max77759_usecase_data *uc_data,
 {
 	const u8 insel_mask = MAX77759_CHG_CNFG_12_CHGINSEL_MASK |
 			      MAX77759_CHG_CNFG_12_WCINSEL_MASK;
+	int wlc_on = cb_data->wlc_tx && !cb_data->dc_on;
 	bool force_wlc = false;
 	u8 insel_value = 0;
-	int ret, wlc_on;
+	int ret;
 
 	if (cb_data->usb_wlc) {
 		insel_value |= MAX77759_CHG_CNFG_12_WCINSEL;
 		force_wlc = true;
 	} else if (cb_data_is_inflow_off(cb_data)) {
 		/*
-		 * input_suspend masks both inputs:
+		 * input_suspend masks both inputs but must still allow
 		 * TODO: use a separate use case for usb + wlc
 		 */
 	} else if (cb_data->buck_on && !cb_data->chgin_off) {
@@ -1762,14 +1787,14 @@ static int max77759_set_insel(struct max77759_usecase_data *uc_data,
 			insel_value |= MAX77759_CHG_CNFG_12_CHGINSEL;
 
 		/* disconnected, do not enable wlc_in if in input_suspend */
-		if (!cb_data->wlcin_off)
+		if (!cb_data->wlcin_off || cb_data->wlc_tx)
 			insel_value |= MAX77759_CHG_CNFG_12_WCINSEL;
 
 		force_wlc = true;
 	}
 
-	if (from_uc != use_case || force_wlc) {
-		wlc_on = (insel_value & MAX77759_CHG_CNFG_12_WCINSEL) != 0;
+	if (from_uc != use_case || force_wlc || wlc_on) {
+		wlc_on = wlc_on || (insel_value & MAX77759_CHG_CNFG_12_WCINSEL) != 0;
 
 		/* b/182973431 disable WLC_IC while CHGIN, rtx will enable WLC later */
 		ret = gs101_wlc_en(uc_data, wlc_on);
@@ -1912,7 +1937,6 @@ static void max77759_mode_callback(struct gvotable_election *el,
 	/* now scan all the reasons, accumulate in cb_data */
 	gvotable_election_for_each(el, max77759_foreach_callback, &cb_data);
 
-
 	nope = !cb_data.use_raw && !cb_data.stby_on && !cb_data.dc_on &&
 	       !cb_data.chgr_on && !cb_data.buck_on && ! cb_data.boost_on &&
 	       !cb_data.otg_on && !cb_data.uno_on && !cb_data.wlc_tx &&
@@ -1969,7 +1993,7 @@ static void max77759_mode_callback(struct gvotable_election *el,
 	if (ret < 0) {
 		ret = max77759_force_standby(data);
 		if (ret < 0) {
-			dev_err(data->dev, "use_case=%d->%d to_stby failed ret:%d\n",
+			dev_err(data->dev, "use_case=%d->%d force_stby failed ret:%d\n",
 				data->uc_data.use_case, use_case, ret);
 			goto unlock_done;
 		}
@@ -2453,7 +2477,7 @@ static int max77759_wcin_voltage_now(struct max77759_chgr_data *chg,
 
 	wlc_psy = max77759_get_wlc_psy(chg);
 	if (!wlc_psy)
-		return max77759_read_vbatt(chg, &val->intval);
+		return max77759_read_vbyp(chg, &val->intval);
 
 	rc = power_supply_get_property(wlc_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW, val);
 	if (rc < 0)

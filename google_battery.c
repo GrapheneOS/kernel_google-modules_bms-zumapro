@@ -4692,10 +4692,10 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	debugfs_create_u32("debug_level", 0644, de, &debug_printk_prlog);
 	debugfs_create_file("cycle_count_sync", 0600, de, batt_drv,
 			    &cycle_count_bins_sync_fops);
-	debugfs_create_file("ssoc_gdf", 0600, de, batt_drv, &debug_ssoc_gdf_fops);
-	debugfs_create_file("ssoc_uic", 0600, de, batt_drv, &debug_ssoc_uic_fops);
-	debugfs_create_file("ssoc_rls", 0400, de, batt_drv, &debug_ssoc_rls_fops);
-	debugfs_create_file("ssoc_uicurve", 0600, de, batt_drv,
+	debugfs_create_file("ssoc_gdf", 0644, de, batt_drv, &debug_ssoc_gdf_fops);
+	debugfs_create_file("ssoc_uic", 0644, de, batt_drv, &debug_ssoc_uic_fops);
+	debugfs_create_file("ssoc_rls", 0444, de, batt_drv, &debug_ssoc_rls_fops);
+	debugfs_create_file("ssoc_uicurve", 0644, de, batt_drv,
 			    &debug_ssoc_uicurve_cstr_fops);
 	debugfs_create_file("force_psy_update", 0400, de, batt_drv,
 			    &debug_force_psy_update_fops);

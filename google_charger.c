@@ -211,6 +211,7 @@ struct chg_drv {
 	struct votable	*dc_fcc_votable;
 	struct votable	*fan_level_votable;
 	struct votable	*dead_battery_votable;
+	struct votable  *tx_icl_votable;
 
 	bool init_done;
 	bool batt_present;
@@ -2488,11 +2489,18 @@ static ssize_t bd_clear_store(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	if (val)
-		bd_reset(&chg_drv->bd_state);
+	if (!val)
+		return ret;
 
-	if (chg_drv->bat_psy)
-		power_supply_changed(chg_drv->bat_psy);
+	mutex_lock(&chg_drv->bd_lock);
+
+	bd_reset(&chg_drv->bd_state);
+
+	ret = bd_batt_set_state(chg_drv, false, -1);
+	if (ret < 0)
+		pr_err("MSC_BD set_batt_state (%d)\n", ret);
+
+	mutex_unlock(&chg_drv->bd_lock);
 
 	return count;
 }
@@ -2949,7 +2957,7 @@ static int chg_init_fs(struct chg_drv *chg_drv)
 	debugfs_create_bool("usb_skip_probe", 0600, chg_drv->debug_entry,
 			    &chg_drv->usb_skip_probe);
 
-	debugfs_create_file("pps_cc_tolerance", 0600, chg_drv->debug_entry,
+	debugfs_create_file("pps_cc_tolerance", 0644, chg_drv->debug_entry,
 			    chg_drv, &debug_pps_cc_tolerance_fops);
 
 	debugfs_create_u32("bd_triggered", S_IRUGO | S_IWUSR, chg_drv->debug_entry,
@@ -3576,6 +3584,8 @@ static int chg_set_dc_in_charge_cntl_limit(struct thermal_cooling_device *tcd,
 
 	if (!chg_drv->dc_icl_votable)
 		chg_drv->dc_icl_votable = find_votable("DC_ICL");
+	if (!chg_drv->tx_icl_votable)
+		chg_drv->tx_icl_votable = find_votable("TX_ICL");
 
 	/* dc_icl == -1 on level 0 */
 	tdev->current_level = lvl;
@@ -3589,6 +3599,9 @@ static int chg_set_dc_in_charge_cntl_limit(struct thermal_cooling_device *tcd,
 		wlc_state = chg_therm_set_wlc_offline(chg_drv, PPS_PSY_FIXED_ONLINE);
 		if (wlc_state < 0)
 			pr_err("MSC_THERM_DC cannot offline ret=%d\n", wlc_state);
+
+		if (chg_drv->tx_icl_votable)
+			vote(chg_drv->tx_icl_votable, THERMAL_DAEMON_VOTER, true, 0);
 
 		pr_info("MSC_THERM_DC lvl=%ld, dc disable wlc_state=%d\n",
 			lvl, wlc_state);
@@ -3608,6 +3621,8 @@ static int chg_set_dc_in_charge_cntl_limit(struct thermal_cooling_device *tcd,
 		wlc_state = chg_therm_set_wlc_online(chg_drv);
 		if (wlc_state < 0)
 			pr_err("MSC_THERM_DC cannot online ret=%d\n", wlc_state);
+		if (chg_drv->tx_icl_votable)
+			vote(chg_drv->tx_icl_votable, THERMAL_DAEMON_VOTER, false, 0);
 	}
 
 	/* online/offline or vote might change the selection */

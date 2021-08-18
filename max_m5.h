@@ -206,6 +206,8 @@ ssize_t max_m5_gmsr_state_cstr(char *buf, int max);
 
 extern int max_m5_read_actual_input_current_ua(struct i2c_client *client,
 					       int *iic);
+extern int max_m5_read_vbypass(struct i2c_client *client,
+					       int *volt);
 
 extern int max_m5_reg_read(struct i2c_client *client, unsigned int reg,
 		    unsigned int *val);
@@ -214,6 +216,12 @@ extern int max_m5_reg_write(struct i2c_client *client, unsigned int reg,
 #else
 static inline int
 max_m5_read_actual_input_current_ua(struct i2c_client *client, int *iic)
+{
+	return -ENODEV;
+}
+
+static inline int
+max_m5_read_vbypass(struct i2c_client *client, int *volt)
 {
 	return -ENODEV;
 }

@@ -3251,6 +3251,38 @@ BATTERY_DEBUG_ATTRIBUTE(debug_reg_data_fops, max1720x_show_debug_data,
 			max1720x_set_debug_data);
 
 
+
+static ssize_t max1720x_show_reg_all(struct file *filp, char __user *buf,
+					size_t count, loff_t *ppos)
+{
+	struct max1720x_chip *chip = (struct max1720x_chip *)filp->private_data;
+	u32 reg_address;
+	u16 data;
+	char *tmp;
+	int ret = 0, len = 0;
+
+	tmp = kmalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!tmp)
+		return -ENOMEM;
+
+	for (reg_address = 0; reg_address <= 0xFF; reg_address++) {
+		ret = REGMAP_READ(&chip->regmap, reg_address, &data);
+		if (ret < 0)
+			continue;
+
+		len += scnprintf(tmp + len, PAGE_SIZE - len, "%02x: %04x\n", reg_address, data);
+	}
+
+	if (len > 0)
+		len = simple_read_from_buffer(buf, count,  ppos, tmp, strlen(tmp));
+
+	kfree(tmp);
+
+	return len;
+}
+
+BATTERY_DEBUG_ATTRIBUTE(debug_reg_all_fops, max1720x_show_reg_all, NULL);
+
 /*
  * TODO: add the building blocks of google capacity
  *
@@ -3289,7 +3321,7 @@ static int max17x0x_init_debugfs(struct max1720x_chip *chip)
 					&debug_reglog_writes_fops);
 
 	if (chip->gauge_type == MAX_M5_GAUGE_TYPE)
-		debugfs_create_file("fg_model", 0440, de, chip,
+		debugfs_create_file("fg_model", 0444, de, chip,
 				    &debug_m5_custom_model_fops);
 	debugfs_create_bool("model_ok", 0444, de, &chip->model_ok);
 	debugfs_create_file("sync_model", 0400, de, chip,
@@ -3301,6 +3333,9 @@ static int max17x0x_init_debugfs(struct max1720x_chip *chip)
 	/* new debug interface */
 	debugfs_create_u32("address", 0600, de, &chip->debug_reg_address);
 	debugfs_create_file("data", 0600, de, chip, &debug_reg_data_fops);
+
+	/* dump all registers */
+	debugfs_create_file("registers", 0444, de, chip, &debug_reg_all_fops);
 
 	return 0;
 }
