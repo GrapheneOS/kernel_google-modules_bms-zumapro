@@ -3501,11 +3501,13 @@ static int max77759_irq_work(struct max77759_chgr_data *data, u8 idx)
 		/* Still below threshold */
 		mod_delayed_work(system_wq, irq_wq,
 				   msecs_to_jiffies(VD_DELAY));
+		mutex_unlock(&data->triggered_irq_lock[idx]);
 	} else {
 		data->triggered_counter[idx] = 0;
+		mutex_unlock(&data->triggered_irq_lock[idx]);
 		enable_irq(data->triggered_irq[idx]);
 	}
-	mutex_unlock(&data->triggered_irq_lock[idx]);
+
 	return 0;
 }
 
@@ -3538,13 +3540,13 @@ static void max77759_triggered_irq_work(void *data, int id)
 	struct max77759_chgr_data *chg_data = data;
 	struct thermal_zone_device *tvid = chg_data->tz_miti[id];
 
+	disable_irq_nosync(chg_data->triggered_irq[id]);
 	mutex_lock(&chg_data->triggered_irq_lock[id]);
 	if (chg_data->triggered_counter[id] == 0) {
 		chg_data->triggered_counter[id] += 1;
 		if (tvid)
 			thermal_zone_device_update(tvid, THERMAL_EVENT_UNSPECIFIED);
 	}
-	disable_irq_nosync(chg_data->triggered_irq[id]);
 	mod_delayed_work(system_wq, &chg_data->triggered_irq_work[id],
 			 msecs_to_jiffies(VD_DELAY));
 	mutex_unlock(&chg_data->triggered_irq_lock[id]);
