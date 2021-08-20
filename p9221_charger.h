@@ -18,6 +18,7 @@
 
 #include <linux/gpio.h>
 #include <linux/crc8.h>
+#include "pmic-voter.h" /* TODO(b/163679860): use gvotables */
 
 #define P9221_WLC_VOTER				"WLC_VOTER"
 #define P9221_USER_VOTER			"WLC_USER_VOTER"
@@ -28,6 +29,7 @@
 #define HPP_DC_ICL_VOTER			"HPP_VOTER"
 #define DD_VOTER				"DD_VOTER"
 #define AUTH_DC_ICL_VOTER			"AUTH_VOTER"
+#define CPOUT_EN_VOTER				"CPOUT_EN_VOTER"
 #define WLC_MFG_GOOGLE				0x72
 #define P9221_DC_ICL_BPP_UA			700000
 #define P9221_DC_ICL_BPP_RAMP_DEFAULT_UA	900000
@@ -717,6 +719,7 @@ struct p9221_charger_data {
 	bool				auth_delay;
 	struct mutex			auth_lock;
 	int 				ll_bpp_cep;
+	int				last_disable;
 
 #if IS_ENABLED(CONFIG_GPIOLIB)
 	struct gpio_chip gpio;

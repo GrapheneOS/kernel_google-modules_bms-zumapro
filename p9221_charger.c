@@ -22,7 +22,6 @@
 #include <linux/alarmtimer.h>
 #include <misc/logbuffer.h>
 #include "gbms_power_supply.h"
-#include "pmic-voter.h" /* TODO(b/163679860): use gvotables */
 #include "p9221_charger.h"
 #include "p9221-dt-bindings.h"
 #include "google_dc_pps.h"
@@ -5566,6 +5565,14 @@ int p9221_wlc_disable(struct p9221_charger_data *charger, int disable, u8 reason
 
 	pr_debug("%s: disable=%d, ept_reason=%d ret=%d\n", __func__,
 		 disable, reason, ret);
+
+	if (charger->last_disable != disable) {
+		pr_info("%s[%d]: disable=%d, ept_reason=%d ret=%d\n", __func__,
+			charger->online, disable, reason, ret);
+		logbuffer_log(charger->log, "Set wlc_disable=%d", disable);
+	}
+
+	charger->last_disable = disable;
 	return ret;
 }
 
@@ -5573,8 +5580,12 @@ static int p9221_wlc_disable_callback(struct votable *votable, void *data,
 				      int disable, const char *client)
 {
 	struct p9221_charger_data *charger = data;
+	u8 val = EPT_END_OF_CHARGE;
 
-	return p9221_wlc_disable(charger, disable, EPT_END_OF_CHARGE);
+	if (get_client_vote(votable, CPOUT_EN_VOTER))
+		val = P9221_EOP_RESTART_POWER; /* auto restart */
+
+	return p9221_wlc_disable(charger, disable, val);
 }
 
 /*
@@ -5648,6 +5659,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	charger->fw_rev = 0;
 	charger->chip_id = charger->pdata->chip_id;
 	charger->rtx_wakelock = false;
+	charger->last_disable = -1;
 	mutex_init(&charger->io_lock);
 	mutex_init(&charger->cmd_lock);
 	mutex_init(&charger->stats_lock);

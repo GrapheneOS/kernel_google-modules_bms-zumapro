@@ -1695,7 +1695,7 @@ static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 	switch (offset) {
 	case P9XXX_GPIO_CPOUT_EN:
 		/* take offline (if online) and set/reset QI_EN_L */
-		ret = p9221_wlc_disable(charger, !value, EPT_END_OF_CHARGE);
+		ret = vote(charger->wlc_disable_votable, CPOUT_EN_VOTER, !value, 0);
 		break;
 	case P9412_GPIO_CPOUT21_EN:
 		/* TODO: no-op for FW38+ */
