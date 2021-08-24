@@ -37,7 +37,6 @@
 #define DOCK_DELAY_INIT_MS		500
 #define DOCK_NOTIFIER_DELAY_MS		100
 #define DOCK_ICL_DEFAULT_UA		500000
-#define DOCK_CHGIN_VOUT_UV		5000000
 #define DOCK_15W_ILIM_UA		1250000
 #define DOCK_13_5W_ILIM_UA		1500000
 #define DOCK_13_5W_VOUT_UV		9000000
@@ -144,7 +143,7 @@ static void google_dock_icl_ramp_work(struct work_struct *work)
 	int voltage;
 
 	voltage = GPSY_GET_PROP(dock->dc_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
-	if ((voltage > DOCK_13_5W_VOUT_UV) || (voltage < DOCK_CHGIN_VOUT_UV))
+	if (voltage > DOCK_13_5W_VOUT_UV)
 		dock->icl_ramp_ua = DOCK_15W_ILIM_UA;
 	else
 		dock->icl_ramp_ua = DOCK_13_5W_ILIM_UA;
