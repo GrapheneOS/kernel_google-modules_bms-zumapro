@@ -1819,7 +1819,7 @@ static int pca9468_set_wireless_dc(struct pca9468_charger *pca9468, int vbat)
 
 	/* ta_cur is ignored */
 	logbuffer_prlog(pca9468, LOGLEVEL_DEBUG,
-			"%s: iin_cc=%d, ta_vol=%d ta_max_vol=%d\n", __func__,
+			"%s: iin_cc=%d, ta_vol=%d ta_max_vol=%d", __func__,
 			pca9468->iin_cc, pca9468->ta_vol, pca9468->ta_max_vol);
 
 	return 0;
@@ -1915,22 +1915,30 @@ error:
 /*
  * The caller was triggered from pca9468_apply_new_iin(), return to the
  * calling CC or CV loop.
+ * call holding mutex_unlock(&pca9468->lock);
  */
 static void pca9468_return_to_loop(struct pca9468_charger *pca9468)
 {
-	pca9468->new_iin = 0;
+	switch (pca9468->ret_state) {
+	case DC_STATE_CC_MODE:
+		pca9468->timer_id = TIMER_CHECK_CCMODE;
+		break;
+	case DC_STATE_CV_MODE:
+		pca9468->timer_id = TIMER_CHECK_CVMODE;
+		break;
+	default:
+		dev_err(pca9468->dev, "%s: invalid ret_state=%u\n",
+			__func__, pca9468->ret_state);
+		return;
+	}
 
 	dev_info(pca9468->dev, "%s: charging_state=%u->%u\n", __func__,
 		 pca9468->charging_state, pca9468->ret_state);
 
-	/* Go to return state  */
 	pca9468->charging_state = pca9468->ret_state;
-	if (pca9468->charging_state == DC_STATE_CC_MODE)
-		pca9468->timer_id = TIMER_CHECK_CCMODE;
-	else
-		pca9468->timer_id = TIMER_CHECK_CVMODE;
-
-	pca9468->timer_period = 1000;	/* Wait 1000ms */
+	pca9468->timer_period = 1000;
+	pca9468->ret_state = 0;
+	pca9468->new_iin = 0;
 }
 
 /*
@@ -2277,8 +2285,8 @@ static int pca9468_set_new_iin(struct pca9468_charger *pca9468, int iin)
 		return 0;
 	}
 
-	/* previus request still pending, no need to update */
-	if (pca9468->iin_cc == pca9468->new_iin)
+	/* same as previous request nevermind */
+	if (iin == pca9468->new_iin)
 		return 0;
 
 	pr_debug("%s: new_iin=%d->%d state=%d\n", __func__,
@@ -2291,15 +2299,16 @@ static int pca9468_set_new_iin(struct pca9468_charger *pca9468, int iin)
 		/* used on start vs the ->iin_cfg one */
 		pca9468->pdata->iin_cfg = iin;
 		pca9468->iin_cc = iin;
-	} else if (pca9468->new_iin == 0) {
+	} else if (pca9468->ret_state == 0) {
 		/*
-		 * applied in pca9468_apply_new_iin() from CC or in CV loop
-		 * will ultimately update pca9468->iin_cc and iin_cfg.
+		 * pca9468_apply_new_iin() has not picked out the value yet
+		 * and the value can be changed safely.
 		 */
 		pca9468->new_iin = iin;
 
-		/* might want to tickle the cycle now */
+		/* might want to tickle the loop now */
 	} else {
+		/* the caller must retry */
 		ret = -EAGAIN;
 	}
 
@@ -2314,6 +2323,7 @@ static int pca9468_set_new_iin(struct pca9468_charger *pca9468, int iin)
  */
 static int pca9468_set_new_cc_max(struct pca9468_charger *pca9468, int cc_max)
 {
+	const int prev_cc_max = pca9468->cc_max;
 	int iin_max, ret = 0;
 
 	if (cc_max < 0) {
@@ -2340,7 +2350,7 @@ static int pca9468_set_new_cc_max(struct pca9468_charger *pca9468, int cc_max)
 
 	logbuffer_prlog(pca9468, LOGLEVEL_INFO,
 			"%s: charging_state=%d cc_max=%d->%d iin_max=%d, ret=%d",
-			__func__, pca9468->charging_state, pca9468->cc_max,
+			__func__, pca9468->charging_state, prev_cc_max,
 			cc_max, iin_max, ret);
 
 done:
