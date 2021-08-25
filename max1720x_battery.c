@@ -1953,7 +1953,8 @@ static int max1720x_get_property(struct power_supply *psy,
 			if (((u16) data) & MAX1720X_STATUS_POR) {
 				chip->por = true;
 				/* clear POR and reload model */
-				max1720x_fg_irq_thread_fn(-1, chip);
+				if (chip->model_ok)
+					max1720x_fg_irq_thread_fn(-1, chip);
 			} else {
 				chip->por = false;
 			}
@@ -2353,7 +2354,6 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 	bool storm = false;
 	int err = 0;
 
-
 	if (!chip || (irq != -1 && irq != chip->primary->irq)) {
 		WARN_ON_ONCE(1);
 		return IRQ_NONE;
@@ -2424,7 +2424,7 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 	fg_status_clr = fg_status;
 
 	if (fg_status & MAX1720X_STATUS_POR) {
-		pr_debug("POR is set\n");
+		dev_warn(chip->dev, "POR is set\n");
 
 		/* trigger model load */
 		mutex_lock(&chip->model_lock);
