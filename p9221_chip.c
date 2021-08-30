@@ -1168,13 +1168,12 @@ static int p9412_capdiv_en(struct p9221_charger_data *chgr, u8 mode)
 	return ((cdmode & mask) == mask) ? 0 :  -ETIMEDOUT;
 }
 
-/* For high power mode */
-static bool p9221_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
+static int p9221_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 {
 	return -ENOTSUPP;
 }
 
-static bool p9412_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
+static int p9412_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 {
 	int ret, loops;
 	u8 val8, cdmode, txpwr, pwr_stp, mode_sts, err_sts, prop_cur_pwr, prop_req_pwr;
@@ -1191,7 +1190,6 @@ static bool p9412_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 
 	if (val8 == P9XXX_SYS_OP_MODE_PROPRIETARY) {
 
-		/* Step0: don't even try if power is not supported */
 		ret = chgr->reg_read_8(chgr, P9412_PROP_TX_POTEN_PWR_REG, &txpwr);
 		txpwr = txpwr / 2;
 		if (ret != 0 || txpwr < HPP_MODE_PWR_REQUIRE) {
