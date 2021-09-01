@@ -60,6 +60,7 @@ struct dock_drv {
 	u32 icl_ramp_ua;
 	u32 icl_ramp_delay_ms;
 	int online;
+	int pogo_ovp_en;
 };
 
 static int dock_has_dc_in(struct dock_drv *dock)
@@ -245,6 +246,24 @@ out:
 	return NOTIFY_OK;
 }
 
+static int google_dock_parse_dt(struct device *dev,
+			  struct dock_drv *dock)
+{
+	int ret = 0;
+	struct device_node *node = dev->of_node;
+
+	/* POGO_OVP_EN */
+	ret = of_get_named_gpio(node, "google,pogo_ovp_en", 0);
+	dock->pogo_ovp_en = ret;
+	if (ret < 0)
+		dev_warn(dev, "unable to read google,pogo_ovp_en from dt: %d\n",
+			 ret);
+	else
+		dev_info(dev, "POGO_OVP_EN gpio:%d", dock->pogo_ovp_en);
+
+	return 0;
+}
+
 static enum power_supply_property dock_props[] = {
 	POWER_SUPPLY_PROP_PRESENT,
 	POWER_SUPPLY_PROP_ONLINE,
@@ -427,6 +446,7 @@ static int google_dock_probe(struct platform_device *pdev)
 		}
 	}
 
+	google_dock_parse_dt(dock->device, dock);
 	mutex_init(&dock->dock_lock);
 	INIT_DELAYED_WORK(&dock->init_work, google_dock_init_work);
 	INIT_DELAYED_WORK(&dock->icl_ramp_work, google_dock_icl_ramp_work);
@@ -471,6 +491,9 @@ static int google_dock_probe(struct platform_device *pdev)
 		devm_kfree(&pdev->dev, dock);
 		return ret;
 	}
+
+	if (dock->pogo_ovp_en >= 0)
+		gpio_direction_output(dock->pogo_ovp_en, 1);
 
 	schedule_delayed_work(&dock->init_work,
 			      msecs_to_jiffies(DOCK_DELAY_INIT_MS));
