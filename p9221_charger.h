@@ -454,6 +454,12 @@
 
 #define RTX_RESET_COUNT_MAX			3
 
+/* p9412 GPIOS */
+#define P9412_GPIOS_REG				0xF5
+#define P9412_GPIO_GP2_CTL			BIT(0)
+#define P9412_GPIO_GP3_CTL			BIT(1)
+#define P9412_GPIO_OD4_CTL			BIT(2)
+
 /* Features */
 typedef enum {
     WLCF_DISABLE_ALL_FEATURE     = 0x00,
@@ -565,6 +571,8 @@ struct p9221_charger_platform_data {
 	u32				alignment_offset_high_current;
 	u32				alignment_current_threshold;
 	bool				feat_compat_mode;
+	/* Support P9412 GPIO */
+	bool				has_p9412_gpio;
 };
 
 struct p9221_charger_ints_bit {
@@ -707,6 +715,7 @@ struct p9221_charger_data {
 	bool				wait_for_online;
 	struct mutex			rtx_lock;
 	ktime_t				online_at;
+	bool				p9412_gpio_ctl;
 
 #if IS_ENABLED(CONFIG_GPIOLIB)
 	struct gpio_chip gpio;

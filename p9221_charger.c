@@ -4982,6 +4982,10 @@ static int p9221_parse_dt(struct device *dev,
 	else
 		dev_info(dev, "enable gpio:%d", pdata->qien_gpio);
 
+	/* support p9412 GPIO */
+	pdata->has_p9412_gpio = of_property_read_bool(node,
+                                                      "idt,has_p9412_gpio");
+
 	/* QI_USB_VBUS_EN */
 	ret = of_get_named_gpio(node, "idt,gpio_qi_vbus_en", 0);
 	pdata->qi_vbus_en = ret;
@@ -5469,6 +5473,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	charger->align_count = 0;
 	charger->is_mfg_google = false;
 	charger->fw_rev = 0;
+	charger->p9412_gpio_ctl = false;
 	charger->chip_id = charger->pdata->chip_id;
 	mutex_init(&charger->io_lock);
 	mutex_init(&charger->cmd_lock);
