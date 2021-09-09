@@ -361,9 +361,20 @@ no_fod:
 		 charger->pdata->fod_hpp_num, retries);
 }
 
+#define CC_DATA_LOCK_MS		250
+
 static int p9221_send_data(struct p9221_charger_data *charger)
 {
 	int ret;
+	ktime_t now = get_boot_msec();
+
+	if (charger->cc_data_lock.cc_use &&
+	    charger->cc_data_lock.cc_rcv_at != 0 &&
+	    (now - charger->cc_data_lock.cc_rcv_at > CC_DATA_LOCK_MS))
+		charger->cc_data_lock.cc_use = false;
+
+	if (charger->cc_data_lock.cc_use)
+		return -EBUSY;
 
 	if (charger->tx_busy)
 		return -EBUSY;
@@ -2568,6 +2579,8 @@ static void p9221_set_online(struct p9221_charger_data *charger)
 	charger->tx_busy = false;
 	charger->tx_done = true;
 	charger->rx_done = false;
+	charger->cc_data_lock.cc_use = false;
+	charger->cc_data_lock.cc_rcv_at = 0;
 	charger->last_capacity = -1;
 	charger->online_at = get_boot_sec();
 
@@ -4972,6 +4985,7 @@ static void p9221_irq_handler(struct p9221_charger_data *charger, u16 irq_src)
 
 			charger->rx_len = rxlen;
 			charger->rx_done = true;
+			charger->cc_data_lock.cc_rcv_at = get_boot_msec();
 			sysfs_notify(&charger->dev->kobj, NULL, "rxdone");
 		}
 	}
@@ -4980,6 +4994,8 @@ static void p9221_irq_handler(struct p9221_charger_data *charger, u16 irq_src)
 	if (irq_src & charger->ints.cc_send_busy_bit) {
 		charger->tx_busy = false;
 		charger->tx_done = true;
+		charger->cc_data_lock.cc_use = true;
+		charger->cc_data_lock.cc_rcv_at = 0;
 		cancel_delayed_work(&charger->tx_work);
 		sysfs_notify(&charger->dev->kobj, NULL, "txbusy");
 		sysfs_notify(&charger->dev->kobj, NULL, "txdone");

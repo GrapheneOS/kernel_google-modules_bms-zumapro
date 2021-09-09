@@ -531,6 +531,11 @@ struct p9221_charger_feature {
 	bool session_valid;
 };
 
+struct p9221_charger_cc_data_lock {
+	bool cc_use;
+	ktime_t cc_rcv_at;
+};
+
 struct p9221_charger_platform_data {
 	int				irq_gpio;
 	int				irq_int;
@@ -643,6 +648,7 @@ struct p9221_charger_data {
 	struct logbuffer		*rtx_log;
 	struct dentry			*debug_entry;
 	struct p9221_charger_feature	chg_features;
+	struct p9221_charger_cc_data_lock	cc_data_lock;
 	u16				chip_id;
 	int				online;
 	bool				enabled;
