@@ -720,6 +720,7 @@ struct p9221_charger_data {
 	struct mutex			auth_lock;
 	int 				ll_bpp_cep;
 	int				last_disable;
+	ktime_t				irq_at;
 
 #if IS_ENABLED(CONFIG_GPIOLIB)
 	struct gpio_chip gpio;
@@ -828,6 +829,7 @@ enum p9382_rtx_err {
 #define P9412_MW_TO_HW(mw) (((mw) * 2) / 1000) /* mw -> 0.5 W units */
 #define P9412_HW_TO_MW(hw) (((hw) / 2) * 1000) /* 0.5 W units -> mw */
 #define get_boot_sec() div_u64(ktime_to_ns(ktime_get_boottime()), NSEC_PER_SEC)
+#define get_boot_msec() div_u64(ktime_to_ns(ktime_get_boottime()), NSEC_PER_MSEC)
 
 #define p9xxx_chip_get_tx_id(chgr, id) (chgr->reg_tx_id_addr < 0 ? \
       -ENOTSUPP : chgr->reg_read_n(chgr, chgr->reg_tx_id_addr, id, sizeof(*id)))

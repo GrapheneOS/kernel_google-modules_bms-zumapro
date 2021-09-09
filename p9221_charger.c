@@ -5005,11 +5005,18 @@ static void p9221_irq_handler(struct p9221_charger_data *charger, u16 irq_src)
 	}
 }
 
+#define IRQ_DEBOUNCE_TIME_MS		4
 static irqreturn_t p9221_irq_thread(int irq, void *irq_data)
 {
 	struct p9221_charger_data *charger = irq_data;
 	int ret;
 	u16 irq_src = 0;
+	ktime_t now = get_boot_msec();
+
+	if ((now - charger->irq_at) < IRQ_DEBOUNCE_TIME_MS)
+		return IRQ_HANDLED;
+
+	charger->irq_at = now;
 
 	pm_runtime_get_sync(charger->dev);
 	if (!charger->resume_complete) {
@@ -5698,6 +5705,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	charger->chip_id = charger->pdata->chip_id;
 	charger->rtx_wakelock = false;
 	charger->last_disable = -1;
+	charger->irq_at = 0;
 	mutex_init(&charger->io_lock);
 	mutex_init(&charger->cmd_lock);
 	mutex_init(&charger->stats_lock);
