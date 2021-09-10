@@ -883,7 +883,12 @@ static int fan_level_cb(struct votable *votable, void *data,
 		return 0;
 
 	if (batt_drv->fan_last_level != lvl) {
-		pr_debug("FAN_LEVEL %d->%d\n", batt_drv->fan_last_level, lvl);
+		pr_debug("FAN_LEVEL %d->%d reason=%s\n",
+			 batt_drv->fan_last_level, lvl, client ? client : "<>");
+		logbuffer_log(batt_drv->ttf_stats.ttf_log,
+			      "FAN_LEVEL %d->%d reason=%s",
+			      batt_drv->fan_last_level, lvl,
+			      client ? client : "<>");
 
 		batt_drv->fan_last_level = lvl;
 		if (batt_drv->psy)
@@ -2567,7 +2572,7 @@ done_no_op:
 		   now, rest->rest_deadline, rest->always_on_soc, ttf,
 		   rest->rest_state, rest_state, fv_uv, cc_max);
 	logbuffer_log(batt_drv->ttf_stats.ttf_log,
-		      "MSC_HEALTH: now=%lld deadline=%lld aon_soc=%d ttf=%lld state=%d->%d fv_uv=%d, cc_max=%d\n",
+		      "MSC_HEALTH: now=%lld deadline=%lld aon_soc=%d ttf=%lld state=%d->%d fv_uv=%d, cc_max=%d",
 		      now, rest->rest_deadline, rest->always_on_soc,
 		      ttf, rest->rest_state, rest_state, fv_uv, cc_max);
 
