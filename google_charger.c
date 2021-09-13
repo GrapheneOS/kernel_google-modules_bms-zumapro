@@ -1200,8 +1200,11 @@ static int bd_fan_calculate_level(struct bd_data *bd_state)
 	const ktime_t bd_fan_alarm = t * FAN_BD_LIMIT_ALARM / 100;
 	const ktime_t bd_fan_high = t * FAN_BD_LIMIT_HIGH / 100;
 	const ktime_t bd_fan_med = t * FAN_BD_LIMIT_MED / 100;
-	const long long temp_avg = bd_state->temp_sum / bd_state->time_sum;
+	long long temp_avg = 0;
 	int bd_fan_level = FAN_LVL_NOT_CARE;
+
+	if (bd_state->time_sum)
+		temp_avg = bd_state->temp_sum / bd_state->time_sum;
 
 	if (temp_avg < bd_state->bd_trigger_temp)
 		bd_fan_level = FAN_LVL_NOT_CARE;
@@ -3471,9 +3474,6 @@ static int chg_set_fcc_charge_cntl_limit(struct thermal_cooling_device *tcd,
 
 		pr_info("MSC_THERM_FCC lvl=%d ret=%d fcc=%d disable=%d\n",
 			 tdev->current_level, ret, fcc, chg_disable);
-
-		ret = vote(chg_drv->msc_chg_disable_votable, THERMAL_DAEMON_VOTER,
-			   chg_disable, 0);
 
 		/* apply immediately */
 		reschedule_chg_work(chg_drv);
