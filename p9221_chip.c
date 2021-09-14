@@ -1142,6 +1142,14 @@ static int p9412_capdiv_en(struct p9221_charger_data *chgr, u8 mode)
 
 	/* TODO: it probably needs a lock around this */
 
+	ret = chgr->reg_read_8(chgr, P9412_CDMODE_STS_REG, &cdmode);
+	if (ret < 0)
+		return ret;
+
+	/* If the results are as expected, no changes needed */
+	if ((cdmode & mask) == mask)
+		return ret;
+
 	ret = chgr->reg_write_8(chgr, P9412_CDMODE_REQ_REG, mask);
 	if (ret < 0)
 		return -EIO;

@@ -727,6 +727,8 @@ struct p9221_charger_data {
 	int 				ll_bpp_cep;
 	int				last_disable;
 	ktime_t				irq_at;
+	int				renego_state;
+	struct mutex			renego_lock;
 
 #if IS_ENABLED(CONFIG_GPIOLIB)
 	struct gpio_chip gpio;
@@ -821,6 +823,12 @@ enum p9382_rtx_err {
 	RTX_OVER_TEMP,
 	RTX_TX_CONFLICT,
 	RTX_HARD_OCP,
+};
+
+enum p9xxx_renego_state {
+	P9XXX_AVAILABLE = 0,
+	P9XXX_SEND_DATA,
+	P9XXX_ENABLE_PROPMODE,
 };
 
 #define P9221_MA_TO_UA(ma)((ma) * 1000)
