@@ -4453,7 +4453,7 @@ static bool pca9468_is_reg(struct device *dev, unsigned int reg)
 	return false;
 }
 
-static const struct regmap_config pca9468_regmap = {
+static struct regmap_config pca9468_regmap = {
 	.name		= "pca9468-mains",
 	.reg_bits	= 8,
 	.val_bits	= 8,
@@ -4462,7 +4462,7 @@ static const struct regmap_config pca9468_regmap = {
 	.volatile_reg = pca9468_is_reg,
 };
 
-static const struct power_supply_desc pca9468_mains_desc = {
+static struct power_supply_desc pca9468_mains_desc = {
 	.name		= "pca9468-mains",
 	/* b/179246019 will not look online to Android */
 	.type		= POWER_SUPPLY_TYPE_UNKNOWN,
@@ -4846,6 +4846,7 @@ static int pca9468_probe(struct i2c_client *client,
 	struct pca9468_platform_data *pdata;
 	struct pca9468_charger *pca9468_chg;
 	struct device *dev = &client->dev;
+	const char *psy_name = NULL;
 	int ret;
 
 	pr_debug("%s: =========START=========\n", __func__);
@@ -4909,6 +4910,12 @@ static int pca9468_probe(struct i2c_client *client,
 	pca9468_chg->timer_period = 0;
 
 	INIT_DELAYED_WORK(&pca9468_chg->pps_work, pca9468_pps_request_work);
+
+	ret = of_property_read_string(dev->of_node,
+				      "pca9468,psy_name", &psy_name);
+	if ((ret == 0) && (strlen(psy_name) > 0))
+		pca9468_regmap.name = pca9468_mains_desc.name =
+		    devm_kstrdup(dev, psy_name, GFP_KERNEL);
 
 	pca9468_chg->regmap = devm_regmap_init_i2c(client, &pca9468_regmap);
 	if (IS_ERR(pca9468_chg->regmap)) {
