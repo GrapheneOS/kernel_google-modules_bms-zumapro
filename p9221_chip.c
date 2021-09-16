@@ -1395,7 +1395,7 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 		chgr->ints.over_uv_bit = 0;
 		chgr->ints.cc_send_busy_bit = P9221R5_STAT_CCSENDBUSY;
 		chgr->ints.cc_data_rcvd_bit = P9221R5_STAT_CCDATARCVD;
-		chgr->ints.pp_rcvd_bit = P9222_STAT_PPRCVD;
+		chgr->ints.pp_rcvd_bit = 0; /* TODO: b/200114045 */
 		chgr->ints.cc_error_bit = P9222_STAT_CCERROR;
 		chgr->ints.cc_reset_bit = 0;
 		chgr->ints.propmode_stat_bit = 0;
