@@ -1455,7 +1455,8 @@ static int max1720x_get_cycle_count(struct max1720x_chip *chip)
 	int err, cycle_count;
 	u16 reg_cycle;
 
-	/* Corner case: battery under 3V hit POR without irq.
+	/*
+	 * Corner case: battery under 3V hit POR without irq.
 	 * cycles reset in this situation, incorrect data
 	 */
 	if (chip->por)
@@ -1949,21 +1950,21 @@ static int max1720x_get_property(struct power_supply *psy,
 		} else if (chip->fake_battery != -1) {
 			val->intval = chip->fake_battery;
 		} else {
+
 			err = REGMAP_READ(map, MAX1720X_STATUS, &data);
 			if (err < 0)
 				break;
 
 			/* BST is 0 when the battery is present */
-			val->intval = (((u16) data) & MAX1720X_STATUS_BST)
-							? 0 : 1;
+			val->intval = !(data & MAX1720X_STATUS_BST);
+			if (!val->intval)
+				break;
 
-			if (((u16) data) & MAX1720X_STATUS_POR) {
-				chip->por = true;
-				/* clear POR and reload model */
-				if (chip->model_ok)
-					max1720x_fg_irq_thread_fn(-1, chip);
-			} else {
-				chip->por = false;
+			/* chip->por prevent garbage in cycle count */
+			chip->por = data & MAX1720X_STATUS_POR;
+			if (chip->por && chip->model_ok) {
+				/* trigger reload model and clear of POR */
+				max1720x_fg_irq_thread_fn(-1, chip);
 			}
 		}
 		break;
