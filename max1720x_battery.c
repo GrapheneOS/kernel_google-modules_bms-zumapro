@@ -1303,8 +1303,14 @@ static void max1720x_handle_update_nconvgcfg(struct max1720x_chip *chip,
 	    (chip->curr_convgcfg_idx == -1 || idx < chip->curr_convgcfg_idx ||
 	     temp >= chip->temp_convgcfg[chip->curr_convgcfg_idx] +
 	     chip->convgcfg_hysteresis)) {
-		REGMAP_WRITE(&chip->regmap_nvram, MAX1720X_NCONVGCFG,
-			     chip->convgcfg_values[idx]);
+		struct max17x0x_regmap *regmap;
+
+		if (chip->gauge_type == MAX_M5_GAUGE_TYPE)
+			regmap = &chip->regmap;
+		else
+			regmap = &chip->regmap_nvram;
+
+		REGMAP_WRITE(regmap, MAX1720X_NCONVGCFG, chip->convgcfg_values[idx]);
 		chip->curr_convgcfg_idx = idx;
 		dev_info(chip->dev, "updating nConvgcfg to 0x%04x as temp is %d (idx:%d)\n",
 			 chip->convgcfg_values[idx], temp, idx);
