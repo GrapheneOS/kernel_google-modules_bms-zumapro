@@ -26,6 +26,8 @@
 #define P9382A_RTX_VOTER			"RTX_VOTER"
 #define THERMAL_DAEMON_VOTER			"THERMAL_DAEMON_VOTER"
 #define HPP_DC_ICL_VOTER			"HPP_VOTER"
+#define DD_VOTER				"DD_VOTER"
+#define AUTH_DC_ICL_VOTER			"AUTH_VOTER"
 #define WLC_MFG_GOOGLE				0x72
 #define P9221_DC_ICL_BPP_UA			700000
 #define P9221_DC_ICL_BPP_RAMP_DEFAULT_UA	900000
@@ -33,6 +35,8 @@
 #define P9221_DC_ICL_EPP_UA			1100000
 #define P9221_DC_ICL_HPP_UA			500000
 #define P9221_DC_ICL_RTX_UA			600000
+#define P9221_AUTH_DC_ICL_UA_500		500000
+#define P9221_AUTH_DC_ICL_UA_100		100000
 #define P9221_EPP_THRESHOLD_UV			7000000
 #define P9221_MAX_VOUT_SET_MV_DEFAULT		9000
 #define P9221_VOUT_SET_MIN_MV			3500
@@ -68,7 +72,8 @@
 #define P9XXX_NEG_POWER_10W		(10 / 0.5)
 #define P9XXX_NEG_POWER_11W		(11 / 0.5)
 #define P9382_RTX_TIMEOUT_MS		(2 * 1000)
-
+#define WLCDC_DEBOUNCE_TIME_S		400
+#define WLCDC_AUTH_CHECK_MS		(5 * 1000)
 /*
  * P9221 common registers
  */
@@ -343,6 +348,7 @@
 #define P9382A_COM_CHAN_SEND_SIZE_REG		0x101
 #define BIDI_COM_PACKET_TYPE			0x98
 #define PROPRIETARY_PACKET_TYPE			0x80
+#define CHANNEL_RESET_PACKET_TYPE		0xA8
 #define FAST_SERIAL_ID_HEADER			0x4F
 #define FAST_SERIAL_ID_SIZE			4
 #define ACCESSORY_TYPE_MASK			0x7
@@ -357,6 +363,7 @@
 #define TXID_SEND_DELAY_MS			(1 * 1000)
 #define TXSOC_SEND_DELAY_MS			(5 * 1000)
 
+#define COM_BUSY_MAX				10
 /*
  * P9412 unique registers
  */
@@ -383,6 +390,8 @@
 #define P9412_PROP_MODE_ERR_STS_REG		0xC9
 #define P9412_VOUT_SET_REG			0x6C /* 2 byte 10 mV */
 #define P9412_DIE_TEMP_REG			0x46 /* 2 byte in C */
+#define P9412_V5P0AP_SWITCH_REG			0x81
+#define V5P0AP_SWITCH_EN			BIT(7)
 
 #define P9412_CDMODE_STS_REG			0x100
 #define P9412_CDMODE_REQ_REG			0x101
@@ -396,7 +405,7 @@
 #define P9412_PROP_TX_ID_REG			0x154
 
 #define P9412_DATA_BUF_START			0x804
-#define P9412_DATA_BUF_SIZE			0xFC /* 252 bytes */
+#define P9412_DATA_BUF_SIZE			0x7FC /* 2044 bytes */
 #define P9412_PP_SEND_BUF_START			0x50
 #define P9412_PP_RECV_BUF_START			0x58
 
@@ -447,6 +456,8 @@
 #define P9XXX_CHARGER_FEATURE_CACHE_SIZE	32
 #define HPP_MODE_PWR_REQUIRE			23
 
+#define RTX_RESET_COUNT_MAX			3
+
 /* Features */
 typedef enum {
     WLCF_DISABLE_ALL_FEATURE     = 0x00,
@@ -460,6 +471,7 @@ typedef enum {
 #define TXID_TYPE_MASK			0xFF000000 /* bit[24-31] */
 #define TXID_TYPE_SHIFT			24
 #define TXID_DD_TYPE			0xE0
+#define TXID_DD_TYPE2			0xA0
 #define P9221_POWER_MITIGATE_DELAY_MS   (10 * 1000)
 #define P9221_FOD_MAX_TIMES             3
 
@@ -615,9 +627,12 @@ struct p9221_charger_data {
 	struct delayed_work		txid_work;
 	struct delayed_work		rtx_work;
 	struct delayed_work		power_mitigation_work;
+	struct delayed_work		auth_dc_icl_work;
 	struct work_struct		uevent_work;
 	struct work_struct		rtx_disable_work;
+	struct work_struct		rtx_reset_work;
 	struct alarm			icl_ramp_alarm;
+	struct alarm			auth_dc_icl_alarm;
 	struct timer_list		vrect_timer;
 	struct timer_list		align_timer;
 	struct bin_attribute		bin;
@@ -649,7 +664,7 @@ struct p9221_charger_data {
 	u16				auth_type;
 	bool				tx_done;
 	bool				tx_busy;
-	bool				com_busy;
+	u32				com_busy;
 	bool				check_np;
 	bool				check_dc;
 	bool				check_det;
@@ -683,6 +698,7 @@ struct p9221_charger_data {
 	int				rtx_state;
 	u32				rtx_csp;
 	int				rtx_err;
+	int				rtx_reset_cnt;
 	bool				chg_on_rtx;
 	bool				is_rtx_mode;
 	bool				prop_mode_en;
@@ -694,6 +710,12 @@ struct p9221_charger_data {
 	u32				fod_cnt;
 	bool				trigger_power_mitigation;
 	bool				wait_for_online;
+	struct mutex			rtx_lock;
+	bool				rtx_wakelock;
+	ktime_t				online_at;
+	bool				auth_delay;
+	struct mutex			auth_lock;
+	int 				ll_bpp_cep;
 
 #if IS_ENABLED(CONFIG_GPIOLIB)
 	struct gpio_chip gpio;
@@ -754,7 +776,7 @@ struct p9221_charger_data {
 
 	int (*chip_tx_mode_en)(struct p9221_charger_data *chgr, bool en);
 	int (*chip_renegotiate_pwr)(struct p9221_charger_data *chrg);
-	bool (*chip_prop_mode_en)(struct p9221_charger_data *chgr, int req_pwr);
+	int (*chip_prop_mode_en)(struct p9221_charger_data *chgr, int req_pwr);
 	void (*chip_check_neg_power)(struct p9221_charger_data *chgr);
 	int (*chip_send_txid)(struct p9221_charger_data *chgr);
 	int (*chip_send_csp_in_txmode)(struct p9221_charger_data *chgr, u8 stat);
@@ -765,6 +787,7 @@ u8 p9221_crc8(u8 *pdata, size_t nbytes, u8 crc);
 bool p9221_is_epp(struct p9221_charger_data *charger);
 bool p9xxx_is_capdiv_en(struct p9221_charger_data *charger);
 int p9221_wlc_disable(struct p9221_charger_data *charger, int disable, u8 reason);
+int p9221_set_auth_dc_icl(struct p9221_charger_data *charger, bool enable);
 
 void p9xxx_gpio_init(struct p9221_charger_data *charger);
 extern int p9221_chip_init_funcs(struct p9221_charger_data *charger,
@@ -800,6 +823,7 @@ enum p9382_rtx_err {
 #define P9221_MILLIC_TO_DECIC(mc) ((mc) / 100)
 #define P9412_MW_TO_HW(mw) (((mw) * 2) / 1000) /* mw -> 0.5 W units */
 #define P9412_HW_TO_MW(hw) (((hw) / 2) * 1000) /* 0.5 W units -> mw */
+#define get_boot_sec() div_u64(ktime_to_ns(ktime_get_boottime()), NSEC_PER_SEC)
 
 #define p9xxx_chip_get_tx_id(chgr, id) (chgr->reg_tx_id_addr < 0 ? \
       -ENOTSUPP : chgr->reg_read_n(chgr, chgr->reg_tx_id_addr, id, sizeof(*id)))
@@ -813,4 +837,6 @@ enum p9382_rtx_err {
       -ENOTSUPP : chgr->reg_write_n(chgr, chgr->reg_set_fod_addr, data, len))
 #define p9xxx_chip_get_fod_reg(chgr, data, len) (chgr->reg_set_fod_addr == 0 ? \
       -ENOTSUPP : chgr->reg_read_n(chgr, chgr->reg_set_fod_addr, data, len))
+
+
 #endif /* __P9221_CHARGER_H__ */

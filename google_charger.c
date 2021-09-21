@@ -1474,6 +1474,7 @@ bd_rerun:
 	if (!bd_state->triggered) {
 		/* disable the overheat flag, race with DWELL-DEFEND */
 		bd_batt_set_overheat(chg_drv, false);
+		chg_update_charging_state(chg_drv, false, false);
 	} else {
 		schedule_delayed_work(&chg_drv->bd_work,
 				      msecs_to_jiffies(interval_ms));
@@ -2488,8 +2489,18 @@ static ssize_t bd_clear_store(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	if (val)
-		bd_reset(&chg_drv->bd_state);
+	if (!val)
+		return ret;
+
+	mutex_lock(&chg_drv->bd_lock);
+
+	ret = bd_batt_set_state(chg_drv, false, -1);
+	if (ret < 0)
+		pr_err("MSC_BD set_batt_state (%d)\n", ret);
+
+	bd_reset(&chg_drv->bd_state);
+
+	mutex_unlock(&chg_drv->bd_lock);
 
 	if (chg_drv->bat_psy)
 		power_supply_changed(chg_drv->bat_psy);
@@ -3462,9 +3473,6 @@ static int chg_set_fcc_charge_cntl_limit(struct thermal_cooling_device *tcd,
 
 		pr_info("MSC_THERM_FCC lvl=%d ret=%d fcc=%d disable=%d\n",
 			 tdev->current_level, ret, fcc, chg_disable);
-
-		ret = vote(chg_drv->msc_chg_disable_votable, THERMAL_DAEMON_VOTER,
-			   chg_disable, 0);
 
 		/* apply immediately */
 		reschedule_chg_work(chg_drv);

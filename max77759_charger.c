@@ -40,6 +40,9 @@
 #define VD_LOWER_LIMIT 2600
 #define VD_STEP 50
 #define VD_DELAY 300
+#define BO_UPPER_LIMIT 6800
+#define BO_LOWER_LIMIT 3800
+#define BO_STEP 200
 #define THERMAL_IRQ_COUNTER_LIMIT 5
 #define THERMAL_HYST_LEVEL 100
 #define BATOILO_DET_30US 0x4
@@ -105,7 +108,7 @@ struct max77759_chgr_data {
 
 	/* thermal BCL */
 #if IS_ENABLED(CONFIG_GOOGLE_BCL)
-	struct thermal_zone_device *tz_vdroop[IFPMIC_SENSOR_MAX];
+	struct thermal_zone_device *tz_miti[IFPMIC_SENSOR_MAX];
 	int triggered_counter[IFPMIC_SENSOR_MAX];
 	unsigned int triggered_lvl[IFPMIC_SENSOR_MAX];
 	unsigned int triggered_irq[IFPMIC_SENSOR_MAX];
@@ -529,6 +532,22 @@ static int max77759_ls_mode(struct max77759_usecase_data *uc_data, int mode)
 	case 0:
 		/* the OVP open right away */
 		ret = gpio_get_value_cansleep(uc_data->lsw1_is_open);
+		if (ret <= 0 && uc_data->ls1_en > 0) {
+			const int max_count = 3;
+			int loops;
+
+			/*  do it manually and re-read after 20ms */
+			for (loops = 0; loops < max_count; loops++) {
+				gpio_set_value_cansleep(uc_data->ls1_en, 0);
+				msleep(20);
+
+				ret = gpio_get_value_cansleep(uc_data->lsw1_is_open);
+				pr_debug("%s: open lsw1 attempt %d/%d ret=%d\n",
+					 __func__, loops, max_count, ret);
+				if (ret > 0)
+					break;
+			}
+		}
 		break;
 	case 1:
 		/* it takes 11 ms to turn on the OVP */
@@ -993,9 +1012,6 @@ static int gs101_otg_mode(struct max77759_usecase_data *uc_data, int to)
 		rc = max77759_ls_mode(uc_data, 0);
 		if (rc < 0)
 			pr_err("%s: cannot clear lsw1 rc:%d\n",  __func__, rc);
-		/* b/192986752 make very sure that LSW1 is open */
-		if (uc_data->ls1_en > 0)
-			gpio_set_value_cansleep(uc_data->ls1_en, 0);
 
 		ret = max77759_ext_mode(uc_data, EXT_MODE_OFF);
 		if (ret < 0)
@@ -1734,16 +1750,17 @@ static int max77759_set_insel(struct max77759_usecase_data *uc_data,
 {
 	const u8 insel_mask = MAX77759_CHG_CNFG_12_CHGINSEL_MASK |
 			      MAX77759_CHG_CNFG_12_WCINSEL_MASK;
+	int wlc_on = cb_data->wlc_tx && !cb_data->dc_on;
 	bool force_wlc = false;
 	u8 insel_value = 0;
-	int ret, wlc_on;
+	int ret;
 
 	if (cb_data->usb_wlc) {
 		insel_value |= MAX77759_CHG_CNFG_12_WCINSEL;
 		force_wlc = true;
 	} else if (cb_data_is_inflow_off(cb_data)) {
 		/*
-		 * input_suspend masks both inputs:
+		 * input_suspend masks both inputs but must still allow
 		 * TODO: use a separate use case for usb + wlc
 		 */
 	} else if (cb_data->buck_on && !cb_data->chgin_off) {
@@ -1759,14 +1776,14 @@ static int max77759_set_insel(struct max77759_usecase_data *uc_data,
 			insel_value |= MAX77759_CHG_CNFG_12_CHGINSEL;
 
 		/* disconnected, do not enable wlc_in if in input_suspend */
-		if (!cb_data->wlcin_off)
+		if (!cb_data->wlcin_off || cb_data->wlc_tx)
 			insel_value |= MAX77759_CHG_CNFG_12_WCINSEL;
 
 		force_wlc = true;
 	}
 
-	if (from_uc != use_case || force_wlc) {
-		wlc_on = (insel_value & MAX77759_CHG_CNFG_12_WCINSEL) != 0;
+	if (from_uc != use_case || force_wlc || wlc_on) {
+		wlc_on = wlc_on || (insel_value & MAX77759_CHG_CNFG_12_WCINSEL) != 0;
 
 		/* b/182973431 disable WLC_IC while CHGIN, rtx will enable WLC later */
 		ret = gs101_wlc_en(uc_data, wlc_on);
@@ -1909,7 +1926,6 @@ static void max77759_mode_callback(struct gvotable_election *el,
 	/* now scan all the reasons, accumulate in cb_data */
 	gvotable_election_for_each(el, max77759_foreach_callback, &cb_data);
 
-
 	nope = !cb_data.use_raw && !cb_data.stby_on && !cb_data.dc_on &&
 	       !cb_data.chgr_on && !cb_data.buck_on && ! cb_data.boost_on &&
 	       !cb_data.otg_on && !cb_data.uno_on && !cb_data.wlc_tx &&
@@ -1966,7 +1982,7 @@ static void max77759_mode_callback(struct gvotable_election *el,
 	if (ret < 0) {
 		ret = max77759_force_standby(data);
 		if (ret < 0) {
-			dev_err(data->dev, "use_case=%d->%d to_stby failed ret:%d\n",
+			dev_err(data->dev, "use_case=%d->%d force_stby failed ret:%d\n",
 				data->uc_data.use_case, use_case, ret);
 			goto unlock_done;
 		}
@@ -3247,6 +3263,10 @@ static int bat_oilo_set(void *d, u64 val)
 	if (ret < 0)
 		return -EIO;
 
+	data->triggered_lvl[BATOILO] = (BO_STEP * ((val & MAX77759_CHG_CNFG_14_BAT_OILO_MASK)
+			>> MAX77759_CHG_CNFG_14_BAT_OILO_SHIFT) + BO_LOWER_LIMIT)
+			- THERMAL_HYST_LEVEL;
+
 	return 0;
 }
 
@@ -3494,10 +3514,18 @@ static void max77759_vdroop2_work(struct work_struct *work)
 	max77759_irq_work(chg_data, VDROOP2);
 }
 
+static void max77759_batoilo_work(struct work_struct *work)
+{
+	struct max77759_chgr_data *chg_data =
+	    container_of(work, struct max77759_chgr_data, triggered_irq_work[BATOILO].work);
+
+	max77759_irq_work(chg_data, BATOILO);
+}
+
 static void max77759_triggered_irq_work(void *data, int id)
 {
 	struct max77759_chgr_data *chg_data = data;
-	struct thermal_zone_device *tvid = chg_data->tz_vdroop[id];
+	struct thermal_zone_device *tvid = chg_data->tz_miti[id];
 
 	mutex_lock(&chg_data->triggered_irq_lock[id]);
 	if (chg_data->triggered_counter[id] == 0) {
@@ -3633,6 +3661,7 @@ static irqreturn_t max77759_chgr_irq(int irq, void *client)
 			atomic_inc(&data->bcl_dev->if_triggered_cnt[BATOILO]);
 			uvilo_read_stats(&data->bcl_dev->if_triggered_stats[BATOILO], data);
 		}
+		max77759_triggered_irq_work(data, BATOILO);
 	}
 #endif
 
@@ -3749,7 +3778,7 @@ static int max77759_setup_votables(struct max77759_chgr_data *data)
 }
 
 #if IS_ENABLED(CONFIG_GOOGLE_BCL)
-static int max77759_vdroop_read_level(void *data, int *val, int id)
+static int max77759_miti_read_level(void *data, int *val, int id)
 {
 	struct max77759_chgr_data *chg_data = data;
 	int triggered_counter = chg_data->triggered_counter[id];
@@ -3769,12 +3798,17 @@ static int max77759_vdroop_read_level(void *data, int *val, int id)
 
 static int max77759_vdroop1_read_temp(void *data, int *val)
 {
-	return max77759_vdroop_read_level(data, val, VDROOP1);
+	return max77759_miti_read_level(data, val, VDROOP1);
 }
 
 static int max77759_vdroop2_read_temp(void *data, int *val)
 {
-	return max77759_vdroop_read_level(data, val, VDROOP2);
+	return max77759_miti_read_level(data, val, VDROOP2);
+}
+
+static int max77759_batoilo_read_temp(void *data, int *val)
+{
+	return max77759_miti_read_level(data, val, BATOILO);
 }
 
 static const struct thermal_zone_of_device_ops vdroop1_tz_ops = {
@@ -3785,6 +3819,10 @@ static const struct thermal_zone_of_device_ops vdroop2_tz_ops = {
 	.get_temp = max77759_vdroop2_read_temp,
 };
 
+static const struct thermal_zone_of_device_ops batoilo_tz_ops = {
+	.get_temp = max77759_batoilo_read_temp,
+};
+
 static int max77759_init_vdroop(void *data_)
 {
 	struct max77759_chgr_data *data = data_;
@@ -3793,10 +3831,13 @@ static int max77759_init_vdroop(void *data_)
 
 	INIT_DELAYED_WORK(&data->triggered_irq_work[VDROOP1], max77759_vdroop1_work);
 	INIT_DELAYED_WORK(&data->triggered_irq_work[VDROOP2], max77759_vdroop2_work);
+	INIT_DELAYED_WORK(&data->triggered_irq_work[BATOILO], max77759_batoilo_work);
 	data->triggered_counter[VDROOP1] = 0;
 	data->triggered_counter[VDROOP2] = 0;
+	data->triggered_counter[BATOILO] = 0;
 	mutex_init(&data->triggered_irq_lock[VDROOP1]);
 	mutex_init(&data->triggered_irq_lock[VDROOP2]);
+	mutex_init(&data->triggered_irq_lock[BATOILO]);
 
 	ret = max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_17, &regdata);
 	if (ret < 0)
@@ -3825,26 +3866,45 @@ static int max77759_init_vdroop(void *data_)
 			>> MAX77759_CHG_CNFG_16_SYS_UVLO2_SHIFT)
 			+ VD_LOWER_LIMIT) - THERMAL_HYST_LEVEL;
 
-	data->tz_vdroop[VDROOP1] = thermal_zone_of_sensor_register(data->dev,
-							      VDROOP1, data,
-							      &vdroop1_tz_ops);
-	if (IS_ERR(data->tz_vdroop[VDROOP1])) {
+	ret = max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_14, &regdata);
+	if (ret < 0)
+		return -ENODEV;
+
+	data->triggered_lvl[BATOILO] = (BO_STEP * ((regdata & MAX77759_CHG_CNFG_14_BAT_OILO_MASK)
+			>> MAX77759_CHG_CNFG_14_BAT_OILO_SHIFT) + BO_LOWER_LIMIT)
+			- THERMAL_HYST_LEVEL;
+
+
+	data->tz_miti[VDROOP1] = thermal_zone_of_sensor_register(data->dev, VDROOP1, data,
+								 &vdroop1_tz_ops);
+	if (IS_ERR(data->tz_miti[VDROOP1])) {
 		dev_err(data->dev, "TZ register vdroop%d failed, err:%ld\n", VDROOP1,
-			PTR_ERR(data->tz_vdroop[VDROOP1]));
+			PTR_ERR(data->tz_miti[VDROOP1]));
 	} else {
-		thermal_zone_device_enable(data->tz_vdroop[VDROOP1]);
-		thermal_zone_device_update(data->tz_vdroop[VDROOP1], THERMAL_DEVICE_UP);
+		thermal_zone_device_enable(data->tz_miti[VDROOP1]);
+		thermal_zone_device_update(data->tz_miti[VDROOP1], THERMAL_DEVICE_UP);
 	}
-	data->tz_vdroop[VDROOP2] = thermal_zone_of_sensor_register(data->dev,
-							      VDROOP2, data,
-							      &vdroop2_tz_ops);
-	if (IS_ERR(data->tz_vdroop[VDROOP2])) {
+
+	data->tz_miti[VDROOP2] = thermal_zone_of_sensor_register(data->dev, VDROOP2, data,
+								 &vdroop2_tz_ops);
+	if (IS_ERR(data->tz_miti[VDROOP2])) {
 		dev_err(data->dev, "TZ register vdroop%d failed, err:%ld\n", VDROOP2,
-			PTR_ERR(data->tz_vdroop[VDROOP2]));
+			PTR_ERR(data->tz_miti[VDROOP2]));
 	} else {
-		thermal_zone_device_enable(data->tz_vdroop[VDROOP2]);
-		thermal_zone_device_update(data->tz_vdroop[VDROOP2], THERMAL_DEVICE_UP);
+		thermal_zone_device_enable(data->tz_miti[VDROOP2]);
+		thermal_zone_device_update(data->tz_miti[VDROOP2], THERMAL_DEVICE_UP);
 	}
+
+	data->tz_miti[BATOILO] = thermal_zone_of_sensor_register(data->dev, BATOILO, data,
+								 &batoilo_tz_ops);
+	if (IS_ERR(data->tz_miti[BATOILO])) {
+		dev_err(data->dev, "TZ register BATOILO failed, err:%ld\n",
+			PTR_ERR(data->tz_miti[BATOILO]));
+	} else {
+		thermal_zone_device_enable(data->tz_miti[BATOILO]);
+		thermal_zone_device_update(data->tz_miti[BATOILO], THERMAL_DEVICE_UP);
+	}
+
 	return 0;
 }
 #else
@@ -4000,10 +4060,12 @@ static int max77759_charger_remove(struct i2c_client *client)
 #if IS_ENABLED(CONFIG_GOOGLE_BCL)
 	struct max77759_chgr_data *data = i2c_get_clientdata(client);
 
-	if (data->tz_vdroop[VDROOP1])
-		thermal_zone_of_sensor_unregister(data->dev, data->tz_vdroop[VDROOP2]);
-	if (data->tz_vdroop[VDROOP2])
-		thermal_zone_of_sensor_unregister(data->dev, data->tz_vdroop[VDROOP2]);
+	if (data->tz_miti[VDROOP1])
+		thermal_zone_of_sensor_unregister(data->dev, data->tz_miti[VDROOP2]);
+	if (data->tz_miti[VDROOP2])
+		thermal_zone_of_sensor_unregister(data->dev, data->tz_miti[VDROOP2]);
+	if (data->tz_miti[BATOILO])
+		thermal_zone_of_sensor_unregister(data->dev, data->tz_miti[BATOILO]);
 #endif
 
 	wakeup_source_unregister(data->usecase_wake_lock);
