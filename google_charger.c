@@ -923,12 +923,25 @@ static void chg_work_adapter_details(union gbms_ce_adapter_details *ad,
 static int chg_work_roundtrip(struct chg_drv *chg_drv,
 			      union gbms_charger_state *chg_state)
 {
+	struct power_supply *chg_psy = chg_drv->chg_psy;
+	struct power_supply *wlc_psy = chg_drv->wlc_psy;
 	int fv_uv = -1, cc_max = -1;
 	int update_interval, rc;
+	int wlc_online = 0;
 
-	rc = gbms_read_charger_state(chg_state, chg_drv->chg_psy);
+	rc = gbms_read_charger_state(chg_state, chg_psy);
 	if (rc < 0)
 		return rc;
+
+	if (wlc_psy)
+		wlc_online = GPSY_GET_PROP(wlc_psy, POWER_SUPPLY_PROP_ONLINE);
+	/* DREAM-DEFEND disconnect for a short time. keep NOT_CHARGING */
+	if (wlc_online &&
+	    chg_state->f.chg_status == POWER_SUPPLY_STATUS_DISCHARGING) {
+		chg_state->f.chg_status = POWER_SUPPLY_STATUS_NOT_CHARGING;
+		chg_state->f.flags = gbms_gen_chg_flags(chg_state->f.chg_status,
+							chg_state->f.chg_type);
+	}
 
 	/* NOIRDROP is default for remote sensing */
 	if (chg_drv->chg_mode == CHG_DRV_MODE_NOIRDROP)
