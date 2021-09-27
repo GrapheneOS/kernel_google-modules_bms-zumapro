@@ -264,6 +264,9 @@ enum gbms_stats_tier_idx_t {
 	/* Defender TEMP or DWELL */
 	GBMS_STATS_BD_TI_OVERHEAT_TEMP = 110,
 	GBMS_STATS_BD_TI_CUSTOM_LEVELS = 111,
+	GBMS_STATS_BD_TI_TRICKLE = 112,
+
+	GBMS_STATS_BD_TI_TRICKLE_CLEARED = 122,
 };
 
 /* health state */
@@ -306,6 +309,7 @@ struct gbms_charging_event {
 
 	ktime_t first_update;
 	ktime_t last_update;
+	bool bd_clear_trickle;
 
 	/* health based charging */
 	struct batt_chg_health		ce_health;	/* updated on close */
@@ -320,6 +324,7 @@ struct gbms_charging_event {
 
 	struct gbms_ce_tier_stats overheat_stats;
 	struct gbms_ce_tier_stats cc_lvl_stats;
+	struct gbms_ce_tier_stats trickle_stats;
 };
 
 #define GBMS_CCCM_LIMITS(profile, ti, vi) \

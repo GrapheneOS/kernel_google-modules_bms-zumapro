@@ -208,6 +208,7 @@ struct max1720x_chip {
 	bool shadow_override;
 	int nb_empty_voltage;
 	u16 *empty_voltage;
+	bool por;
 
 	unsigned int debug_irq_none_cnt;
 	unsigned long icnt;
@@ -235,6 +236,7 @@ struct max1720x_chip {
 #define MAX1720_EMPTY_VOLTAGE(profile, temp, cycle) \
 	profile->empty_voltage[temp * NB_CYCLE_BUCKETS + cycle]
 
+static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj);
 
 static bool max17x0x_reglog_init(struct max1720x_chip *chip)
 {
@@ -1446,6 +1448,13 @@ static int max1720x_get_cycle_count(struct max1720x_chip *chip)
 	int err, cycle_count;
 	u16 reg_cycle;
 
+	/*
+	 * Corner case: battery under 3V hit POR without irq.
+	 * cycles reset in this situation, incorrect data
+	 */
+	if (chip->por)
+		return -ECANCELED;
+
 	err = REGMAP_READ(&chip->regmap, MAX1720X_CYCLES, &reg_cycle);
 	if (err < 0)
 		return err;
@@ -1929,6 +1938,7 @@ static int max1720x_get_property(struct power_supply *psy,
 		err = 0;
 		break;
 	case POWER_SUPPLY_PROP_PRESENT:
+
 		if (chip->gauge_type == -1) {
 			val->intval = 0;
 		} else if (chip->fake_battery != -1) {
@@ -1939,8 +1949,16 @@ static int max1720x_get_property(struct power_supply *psy,
 				break;
 
 			/* BST is 0 when the battery is present */
-			val->intval = (((u16) data) & MAX1720X_STATUS_BST)
-							? 0 : 1;
+			val->intval = !(data & MAX1720X_STATUS_BST);
+			if (!val->intval)
+				break;
+
+			/* chip->por prevent garbage in cycle count */
+			chip->por = data & MAX1720X_STATUS_POR;
+			if (chip->por && chip->model_ok) {
+				/* trigger reload model and clear of POR */
+				max1720x_fg_irq_thread_fn(-1, chip);
+			}
 		}
 		break;
 	case POWER_SUPPLY_PROP_TEMP:
