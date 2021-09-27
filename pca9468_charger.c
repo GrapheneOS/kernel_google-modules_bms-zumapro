@@ -2101,7 +2101,16 @@ static int pca9468_adjust_ta_voltage(struct pca9468_charger *pca9468)
 	} else if (iin < (pca9468->iin_cc - PD_MSG_TA_CUR_STEP)) {
 		/* TA current is lower than the target input current */
 
-		if (pca9468->ta_vol == pca9468->ta_max_vol) {
+		if (pca9468_check_status(pca9468) == STS_MODE_VFLT_LOOP) {
+			/* IIN current may not able to increase in CV */
+
+			logbuffer_prlog(pca9468, LOGLEVEL_DEBUG,
+					"End1-1, skip adjust for cv, ta_cur=%u, ta_vol=%u, iin_cc=%u, chg_mode=%u",
+					pca9468->ta_cur, pca9468->ta_vol,
+					pca9468->iin_cc, pca9468->chg_mode);
+
+			pca9468_return_to_loop(pca9468);
+		} else if (pca9468->ta_vol == pca9468->ta_max_vol) {
 			/* TA TA voltage is already at the maximum voltage */
 
 			logbuffer_prlog(pca9468, LOGLEVEL_DEBUG,
@@ -2186,7 +2195,14 @@ static int pca9468_adjust_rx_voltage(struct pca9468_charger *pca9468)
 	} else if (iin < iin_low) {
 		/* RX current is lower than the target input current */
 
-		if (pca9468->ta_vol == pca9468->ta_max_vol) {
+		if (pca9468_check_status(pca9468) == STS_MODE_VFLT_LOOP) {
+			/* RX current may not able to increase in CV */
+			logbuffer_prlog(pca9468, LOGLEVEL_DEBUG,
+					"End1-1, skip adjust for cv, rx_vol=%u, iin_cc=%u",
+					pca9468->ta_vol, pca9468->iin_cc);
+
+			pca9468_return_to_loop(pca9468);
+		} else if (pca9468->ta_vol == pca9468->ta_max_vol) {
 			/* RX current is already the maximum voltage */
 			logbuffer_prlog(pca9468, LOGLEVEL_DEBUG,
 					"End1, rx_vol=%u, iin_cc=%u, chg_mode=%u",
