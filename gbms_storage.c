@@ -507,7 +507,6 @@ static int gbms_storage_flush_all_internal(bool force)
 int gbms_storage_flush(gbms_tag_t tag)
 {
 	unsigned long flags;
-	int ret;
 
 	if (!gbms_storage_init_done)
 		return -EPROBE_DEFER;
@@ -516,7 +515,7 @@ int gbms_storage_flush(gbms_tag_t tag)
 
 	/* TODO: search for the provider */
 
-	ret = gbms_storage_flush_all_internal(false);
+	gbms_storage_flush_all_internal(false);
 	spin_unlock_irqrestore(&providers_lock, flags);
 
 	return 0;

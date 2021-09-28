@@ -1272,7 +1272,7 @@ static void max1720x_restore_battery_qh_capacity(struct max1720x_chip *chip)
 static void max1720x_handle_update_nconvgcfg(struct max1720x_chip *chip,
 					     int temp)
 {
-	int idx = -1, hysteresis_temp;
+	int idx = -1;
 
 	if (chip->temp_convgcfg == NULL)
 		return;
@@ -1292,8 +1292,6 @@ static void max1720x_handle_update_nconvgcfg(struct max1720x_chip *chip,
 	/* We want to switch to higher slot only if above temp + hysteresis
 	 * but when temperature drops, we want to change at the level
 	 */
-	hysteresis_temp = chip->temp_convgcfg[chip->curr_convgcfg_idx] +
-			  chip->convgcfg_hysteresis;
 	if ((idx != chip->curr_convgcfg_idx) &&
 	    (chip->curr_convgcfg_idx == -1 || idx < chip->curr_convgcfg_idx ||
 	     temp >= chip->temp_convgcfg[chip->curr_convgcfg_idx] +
