@@ -783,7 +783,8 @@ static void p9221_set_offline(struct p9221_charger_data *charger)
 
 	charger->force_bpp = false;
 	charger->chg_on_rtx = false;
-	charger->ll_bpp_cep = -EINVAL;
+	if (!charger->wait_for_online)
+		charger->ll_bpp_cep = -EINVAL;
 	p9221_reset_wlc_dc(charger);
 	charger->prop_mode_en = false;
 	set_renego_state(charger, P9XXX_AVAILABLE);

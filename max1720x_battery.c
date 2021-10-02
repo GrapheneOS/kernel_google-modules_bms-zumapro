@@ -236,6 +236,7 @@ struct max1720x_chip {
 #define MAX1720_EMPTY_VOLTAGE(profile, temp, cycle) \
 	profile->empty_voltage[temp * NB_CYCLE_BUCKETS + cycle]
 
+static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj);
 
 static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj);
 
@@ -1945,6 +1946,7 @@ static int max1720x_get_property(struct power_supply *psy,
 		err = 0;
 		break;
 	case POWER_SUPPLY_PROP_PRESENT:
+
 		if (chip->gauge_type == -1) {
 			val->intval = 0;
 		} else if (chip->fake_battery != -1) {
