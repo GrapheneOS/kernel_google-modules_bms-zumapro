@@ -793,10 +793,9 @@ static void ssoc_change_curve(struct batt_ssoc_state *ssoc_state, qnum_t delta,
 #define FAN_BT_LIMIT_MED	460
 #define FAN_BT_LIMIT_HIGH	480
 /* Fan levels limits from charge rate */
+#define FAN_CHG_LIMIT_NOT_CARE	10
 #define FAN_CHG_LIMIT_LOW	50
 #define FAN_CHG_LIMIT_MED	70
-/* Fan levels limits from health charge */
-#define FAN_HEALTH_LIMIT_LVL	FAN_LVL_LOW
 
 static int fan_bt_calculate_level(const struct batt_drv *batt_drv)
 {
@@ -833,27 +832,23 @@ static int fan_bt_calculate_level(const struct batt_drv *batt_drv)
 
 static int fan_calculate_level(const struct batt_drv *batt_drv)
 {
-	int charging_rate, fan_level, chg_fan_level;
-	int health_fan_level = FAN_LVL_NOT_CARE;
+	int charging_rate, fan_level, chg_fan_level, cc_max;
 
 	if (batt_drv->jeita_stop_charging == 1)
 		return FAN_LVL_ALARM;
 
 	/* defender limits from google_charger */
 	fan_level = fan_bt_calculate_level(batt_drv);
-	if (batt_drv->cc_max == 0 || batt_drv->battery_capacity == 0)
+
+	cc_max = get_effective_result_locked(batt_drv->fcc_votable);
+	if (cc_max <= 0 || batt_drv->battery_capacity == 0)
 		return fan_level;
 
-	if (batt_drv->msc_state == MSC_HEALTH_PAUSE ||
-	    batt_drv->msc_state == MSC_HEALTH)
-		health_fan_level = FAN_HEALTH_LIMIT_LVL;
-
-	if (health_fan_level > fan_level)
-		fan_level = health_fan_level;
-
-	/* cc_max should be 0 when disconnected */
-	charging_rate = batt_drv->cc_max / batt_drv->battery_capacity / 10;
-	if (charging_rate <= FAN_CHG_LIMIT_LOW)
+	/* cc_max is -1 when disconnected */
+	charging_rate = cc_max / batt_drv->battery_capacity / 10;
+	if (charging_rate < FAN_CHG_LIMIT_NOT_CARE)
+		chg_fan_level = FAN_LVL_NOT_CARE;
+	else if (charging_rate <= FAN_CHG_LIMIT_LOW)
 		chg_fan_level = FAN_LVL_LOW;
 	else if (charging_rate <= FAN_CHG_LIMIT_MED)
 		chg_fan_level = FAN_LVL_MED;
