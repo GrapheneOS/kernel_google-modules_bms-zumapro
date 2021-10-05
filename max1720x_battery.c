@@ -236,7 +236,6 @@ struct max1720x_chip {
 #define MAX1720_EMPTY_VOLTAGE(profile, temp, cycle) \
 	profile->empty_voltage[temp * NB_CYCLE_BUCKETS + cycle]
 
-static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj);
 
 static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj);
 
