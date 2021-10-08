@@ -2100,16 +2100,17 @@ static inline void batt_reset_chg_drv_state(struct batt_drv *batt_drv)
 
 /*
  * software JEITA, disable charging when outside the charge table.
- * NOTE: ->jeita_stop_charging is either -1 (init or disable) or 0
+ * NOTE: ->jeita_stop_charging is either -1 (init or reset), 1 (disable) or 0
  * TODO: need to be able to disable (leave to HW)
  */
-static bool msc_logic_soft_jeita(const struct batt_drv *batt_drv, int temp)
+static bool msc_logic_soft_jeita(struct batt_drv *batt_drv, int temp)
 {
 	const struct gbms_chg_profile *profile = &batt_drv->chg_profile;
 
 	if (temp < profile->temp_limits[0] ||
 	    temp > profile->temp_limits[profile->temp_nb_limits - 1]) {
 		if (batt_drv->jeita_stop_charging < 0) {
+			batt_drv->jeita_stop_charging = 1;
 			batt_prlog(BATT_PRLOG_ALWAYS,
 				   "MSC_JEITA temp=%d off limits, do not enable charging\n",
 				   temp);
