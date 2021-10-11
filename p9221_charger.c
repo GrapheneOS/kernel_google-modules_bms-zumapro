@@ -1618,6 +1618,18 @@ static void p9221_update_soc_stats(struct p9221_charger_data *charger,
 	soc_data->last_update = now;
 }
 
+static void p9221_check_adapter_type(struct p9221_charger_data *charger)
+{
+	/*  txid is available sometime after placing the device on the charger */
+	if (p9221_get_tx_id_str(charger) != NULL) {
+		u8 id_type = (charger->tx_id & TXID_TYPE_MASK) >> TXID_TYPE_SHIFT;
+
+		charger->chg_data.adapter_type = id_type;
+		pr_debug("%s: , tx_id=%08x, adapter_type=%d\n",
+			 __func__, charger->tx_id, charger->chg_data.adapter_type);
+	}
+}
+
 static int p9221_chg_data_head_dump(char *buff, int max_size,
 				    const struct p9221_charge_stats *chg_data)
 {
@@ -1852,6 +1864,7 @@ static void p9221_charge_stats_work(struct work_struct *work)
 		chg_data->start_time = 0;
 	}
 
+	p9221_check_adapter_type(charger);
 	p9221_stats_update_state(charger);
 
 	/* SOC changed, store data to the last one. */
