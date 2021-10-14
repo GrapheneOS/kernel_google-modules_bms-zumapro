@@ -33,6 +33,7 @@ google-bms-objs += gbms_storage.o
 google-bms-objs += google_eeprom.o
 # TODO(163679860) remove pmic-voter usage from bms
 google-bms-objs += pmic-voter-compat.o
+google-bms-objs += gs101_usecase.o
 
 # Battery
 obj-$(CONFIG_GOOGLE_BATTERY) += google-battery.o
