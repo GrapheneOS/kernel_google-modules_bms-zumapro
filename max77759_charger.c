@@ -48,6 +48,8 @@
 #define BATOILO_DET_30US 0x4
 #define MAX77759_DEFAULT_MODE	MAX77759_CHGR_MODE_ALL_OFF
 #define CHG_TERM_VOLT_DEBOUNCE	200
+#define MAX77759_OTG_5000_MV 5000
+#define GS101_OTG_DEFAULT_MV MAX77759_OTG_5000_MV
 
 /* CHG_DETAILS_01:CHG_DTLS */
 #define CHGR_DTLS_DEAD_BATTERY_MODE			0x00
@@ -729,6 +731,27 @@ static int gs101_cpout_mode(struct max77759_usecase_data *uc_data, int mode)
 	return ret;
 }
 
+static int max77759_otg_bypass_enable(struct max77759_usecase_data *uc_data, u8 vbyp)
+{
+	int ret;
+
+	ret = max77759_chg_reg_write(uc_data->client, MAX77759_CHG_CNFG_11, vbyp);
+	if (ret < 0) {
+		pr_err("%s: cannot set vbypset (%d)\n", __func__, ret);
+		return ret;
+	}
+
+	return max77759_chg_reg_update(uc_data->client, MAX77759_CHG_CNFG_18,
+				       MAX77759_CHG_CNFG_18_OTG_V_PGM,
+				       MAX77759_CHG_CNFG_18_OTG_V_PGM);
+}
+
+static int max77759_otg_bypass_disable(struct max77759_usecase_data *uc_data)
+{
+    return max77759_chg_reg_update(uc_data->client, MAX77759_CHG_CNFG_18,
+				   MAX77759_CHG_CNFG_18_OTG_V_PGM, 0);
+}
+
 static int max7759_otg_update_ilim(struct max77759_usecase_data *uc_data, int enable)
 {
 	u8 ilim;
@@ -1064,7 +1087,7 @@ static int gs101_otg_mode(struct max77759_usecase_data *uc_data, int to)
  */
 static int max7759_otg_enable(struct max77759_usecase_data *uc_data, int mode)
 {
-	int ret;
+	int ret, retn;
 
 	/* the code default to write to the MODE register */
 	if (uc_data->vin_is_valid >= 0) {
@@ -1081,6 +1104,12 @@ static int max7759_otg_enable(struct max77759_usecase_data *uc_data, int mode)
 			return ret;
 		}
 
+		ret = max77759_otg_bypass_enable(uc_data, uc_data->otg_value);
+		if (ret < 0) {
+			pr_debug("%s: cannot set otg voltage (%d)\n", __func__, ret);
+			return ret;
+		}
+
 		ret = max77759_chg_mode_write(uc_data->client,
 					      MAX77759_CHGR_MODE_OTG_BOOST_ON);
 		if (ret < 0) {
@@ -1092,7 +1121,8 @@ static int max7759_otg_enable(struct max77759_usecase_data *uc_data, int mode)
 		ret = gpio_get_value_cansleep(uc_data->vin_is_valid);
 		if (ret == 0) {
 			pr_debug("%s: VIN not VALID\n",  __func__);
-			return -EIO;
+			ret = -EIO;
+			goto reset_otg_voltage;
 		}
 
 		ret = max77759_ext_mode(uc_data, mode);
@@ -1101,13 +1131,18 @@ static int max7759_otg_enable(struct max77759_usecase_data *uc_data, int mode)
 				 __func__, ret);
 
 	} else {
+		ret = max77759_otg_bypass_enable(uc_data, uc_data->otg_value);
+		if (ret < 0) {
+			pr_debug("%s: cannot set otg voltage (%d)\n", __func__, ret);
+			return ret;
+		}
 
 		/* ext mode is defined when ext boost is avalaible */
 		ret = max77759_ext_mode(uc_data, mode);
 		if (ret < 0) {
 			pr_debug("%s: cannot change extmode ret:%d\n",
 				 __func__, ret);
-			return ret;
+			goto reset_otg_voltage;
 		}
 
 		mdelay(5);
@@ -1117,7 +1152,7 @@ static int max7759_otg_enable(struct max77759_usecase_data *uc_data, int mode)
 		if (ret < 0) {
 			pr_debug("%s: cannot close load switch (%d)\n",
 				 __func__, ret);
-			return ret;
+			goto reset_otg_voltage;
 		}
 
 		/* time for VBUS to be on (could check PWRSTAT in MW) */
@@ -1128,6 +1163,13 @@ static int max7759_otg_enable(struct max77759_usecase_data *uc_data, int mode)
 			gpio_set_value_cansleep(uc_data->otg_enable, 0);
 	}
 
+	goto exit;
+
+reset_otg_voltage:
+	retn = max77759_otg_bypass_disable(uc_data);
+	if (retn < 0)
+		pr_debug("%s: cannot reset otg voltage (%d)\n", __func__, retn);
+exit:
 	return ret;
 }
 
@@ -1145,17 +1187,9 @@ static int gs101_wlctx_otg_en(struct max77759_usecase_data *uc_data, bool enable
 		if (ret < 0)
 			pr_err("%s: cannot update otg_ilim (%d)\n", __func__, ret);
 
-		/* need this to be able to program ->otg_vbyp */
-		ret = max77759_chg_reg_update(uc_data->client, MAX77759_CHG_CNFG_18,
-					      MAX77759_CHG_CNFG_18_OTG_V_PGM,
-					      MAX77759_CHG_CNFG_18_OTG_V_PGM);
-		if (ret < 0) {
-			pr_err("%s: cannot set otg_v_pgm (%d)\n", __func__, ret);
-			return ret;
-                }
-
-		ret = max77759_chg_reg_write(uc_data->client, MAX77759_CHG_CNFG_11,
-					     uc_data->otg_vbyp);
+		ret = max77759_otg_bypass_enable(uc_data, uc_data->otg_vbyp);
+		if (ret < 0)
+			pr_err("%s: cannot set otg_vbyp (%d)\n", __func__, ret);
 	} else {
 		/* TODO: Discharge IN/OUT nodes with AO37 should be done in TCPM */
 
@@ -1168,9 +1202,7 @@ static int gs101_wlctx_otg_en(struct max77759_usecase_data *uc_data, bool enable
 			pr_err("%s: cannot restore otg_ilim (%d)\n", __func__, ret);
 
 		/* TODO: restore initial value on !MAX77759_CHG_CNFG_11 */
-
-		ret = max77759_chg_reg_update(uc_data->client, MAX77759_CHG_CNFG_18,
-					      MAX77759_CHG_CNFG_18_OTG_V_PGM, 0);
+		ret = max77759_otg_bypass_disable(uc_data);
 		if (ret < 0)
 			pr_err("%s: cannot reset otg_v_pgm (%d)\n", __func__, ret);
 
@@ -1621,7 +1653,7 @@ static int max77759_otg_vbyp_mv_to_code(u8 *code, int vbyp)
 {
 	if (vbyp >= 12000)
 		*code = 0x8c;
-	else if (vbyp > 5000)
+	else if (vbyp >= 5000)
 		*code = (vbyp - 5000) / 50;
 	else
 		return -EINVAL;
@@ -3997,6 +4029,7 @@ static int max77759_charger_probe(struct i2c_client *client,
 	struct max77759_chgr_data *data;
 	struct regmap *regmap;
 	const char *tmp;
+	u32 usb_otg_mv;
 	int ret = 0;
 	u8 ping;
 
@@ -4126,6 +4159,17 @@ static int max77759_charger_probe(struct i2c_client *client,
 		data->chg_term_volt_debounce = CHG_TERM_VOLT_DEBOUNCE;
 	if (data->chg_term_voltage == 0)
 		data->chg_term_volt_debounce = 0;
+
+	ret = of_property_read_u32(dev->of_node, "max77759,usb-otg-mv", &usb_otg_mv);
+	if (ret)
+		dev_err(dev, "usb-otg-mv not found, using default\n");
+
+	ret = max77759_otg_vbyp_mv_to_code(&data->uc_data.otg_value, ret ?
+					   GS101_OTG_DEFAULT_MV : usb_otg_mv);
+	if (ret < 0) {
+		dev_err(dev, "Invalid value of USB OTG voltage, set to 5000\n");
+		data->uc_data.otg_value = MAX77759_CHG_CNFG_11_OTG_VBYP_5000MV;
+	}
 
 	data->init_complete = 1;
 	data->resume_complete = 1;
