@@ -1622,7 +1622,7 @@ static int max77759_otg_vbyp_mv_to_code(u8 *code, int vbyp)
 	if (vbyp >= 12000)
 		*code = 0x8c;
 	else if (vbyp > 5000)
-		*code = (vbyp - 5000) / 20;
+		*code = (vbyp - 5000) / 50;
 	else
 		return -EINVAL;
 
