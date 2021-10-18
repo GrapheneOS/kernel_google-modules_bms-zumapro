@@ -3698,7 +3698,7 @@ static int chg_set_wlc_fcc_charge_cntl_limit(struct thermal_cooling_device *tcd,
 		if (wlc_state < 0)
 			pr_err("MSC_THERM_DC_FCC cannot offline ret=%d\n", wlc_state);
 
-		pr_info("MSC_THERM_DC lvl=%ld, dc disable wlc_state=%d\n",
+		pr_info("MSC_THERM_DC_FCC lvl=%ld, dc disable wlc_state=%d\n",
 			lvl, wlc_state);
 	} else {
 		wlc_state = chg_therm_set_wlc_online(chg_drv);

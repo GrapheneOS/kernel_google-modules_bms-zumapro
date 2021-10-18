@@ -839,6 +839,33 @@ static int p9221_send_eop(struct p9221_charger_data *chgr, u8 reason)
 	mutex_unlock(&chgr->cmd_lock);
 	return ret;
 }
+/* 3 times to make sure it works */
+static int p9412_send_3eop(struct p9221_charger_data *chgr, u8 reason)
+{
+	int count, ret = 0;
+	u8 val;
+
+	for (count = 0; count < 3; count++) {
+		/* Command P9412 to send EPT */
+		ret = chgr->reg_write_8(chgr, P9221R5_EPT_REG, reason);
+		if (ret == 0)
+			ret = chgr->chip_set_cmd(chgr, P9221R5_COM_SENDEPT);
+		if (ret < 0) {
+			dev_err(&chgr->client->dev, "fail send eop%d (%d)\n",
+				count, ret);
+			return ret;
+		} else
+			dev_info(&chgr->client->dev, "send eop command success\n");
+
+		mdelay(500);
+
+		ret = chgr->reg_read_8(chgr, P9221_STATUS_REG, &val);
+		if (ret < 0)
+			return ret;
+	}
+
+	return ret;
+}
 
 static int p9412_send_eop(struct p9221_charger_data *chgr, u8 reason)
 {
@@ -848,16 +875,7 @@ static int p9412_send_eop(struct p9221_charger_data *chgr, u8 reason)
 
 	mutex_lock(&chgr->cmd_lock);
 
-	/* Command P9412 to send EPT */
-	ret = chgr->reg_write_8(chgr, P9221R5_EPT_REG, reason);
-	if (ret == 0)
-		ret = chgr->chip_set_cmd(chgr, P9221R5_COM_SENDEPT);
-
-	/* Change P9412 mode to Disable Mode */
-	ret = p9412_capdiv_en(chgr, 0);
-	if (ret < 0)
-		dev_err(&chgr->client->dev,
-			"fail to switch cap to disable mode\n");
+	ret = p9412_send_3eop(chgr, reason);
 
 	mutex_unlock(&chgr->cmd_lock);
 

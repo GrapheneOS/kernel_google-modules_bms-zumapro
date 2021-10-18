@@ -537,7 +537,7 @@ static int p9221_reset_wlc_dc(struct p9221_charger_data *charger)
 	const int dc_sw_gpio = charger->pdata->dc_switch_gpio;
 	const int extben_gpio = charger->pdata->ext_ben_gpio;
 	const int req_pwr = EPP_MODE_REQ_PWR;
-	int ret;
+	int ret, i;
 	u8 cdmode;
 
 	if (!charger->wlc_dc_enabled)
@@ -550,6 +550,10 @@ static int p9221_reset_wlc_dc(struct p9221_charger_data *charger)
 		gpio_set_value_cansleep(extben_gpio, 0);
 
 	p9221_set_switch_reg(charger, false);
+
+	ret = p9221_set_hpp_dc_icl(charger, false);
+	if (ret < 0)
+		dev_warn(&charger->client->dev, "Cannot disable HPP_ICL (%d)\n", ret);
 
 	/* Check it's in Cap Div mode */
 	ret = charger->reg_read_8(charger, P9412_CDMODE_STS_REG, &cdmode);
@@ -568,7 +572,12 @@ static int p9221_reset_wlc_dc(struct p9221_charger_data *charger)
 				"p9221_reset_wlc_dc: Fail to request Tx power(%d)\n", ret);
 	}
 
-	msleep(3000);
+	/* total 3 seconds wait and early exit when WLC offline */
+	for (i = 0; i < 30; i += 1) {
+		usleep_range(100 * USEC_PER_MSEC, 120 * USEC_PER_MSEC);
+		if (!charger->online)
+			return 0;
+	}
 
 	/* Request Bypass mode */
 	ret = charger->chip_capdiv_en(charger, CDMODE_BYPASS_MODE);
@@ -584,10 +593,6 @@ static int p9221_reset_wlc_dc(struct p9221_charger_data *charger)
 			p9221_write_fod(charger);
 		}
 	}
-
-	ret = p9221_set_hpp_dc_icl(charger, false);
-	if (ret < 0)
-		dev_warn(&charger->client->dev, "Cannot disable HPP_ICL (%d)\n", ret);
 
 	return 0;
 }
@@ -2863,6 +2868,13 @@ static void p9221_notifier_work(struct work_struct *work)
 		 charger->ben_state,
 		 charger->check_dc, charger->check_np,
 		 charger->check_det);
+
+	charger->send_eop = get_client_vote(charger->dc_icl_votable, THERMAL_DAEMON_VOTER) == 0;
+	if (charger->send_eop && !charger->online) {
+		dev_info(&charger->client->dev, "WLC should be disabled!\n");
+		p9221_wlc_disable(charger, 1, P9221_EOP_UNKNOWN);
+		return;
+	}
 
 	if (charger->pdata->q_value != -1) {
 
@@ -5609,10 +5621,13 @@ int p9221_wlc_disable(struct p9221_charger_data *charger, int disable, u8 reason
 {
 	int ret = 0;
 
-	if (disable && charger->online)
+	if ((disable && charger->online) || charger->send_eop) {
 		ret = charger->chip_send_eop(charger, reason);
-	if (charger->pdata->qien_gpio >= 0)
-		gpio_set_value_cansleep(charger->pdata->qien_gpio, disable);
+		pr_info("Disable Rx communication channel(CMFET): 0xF4 & 0x11B\n");
+		charger->reg_write_8(charger, P9412_CMFET_L_REG, P9412_CMFET_DISABLE_ALL);
+		charger->reg_write_8(charger, P9412_HIVOUT_CMFET_REG, P9412_CMFET_DISABLE_ALL);
+		charger->send_eop = false;
+        }
 
 	pr_debug("%s: disable=%d, ept_reason=%d ret=%d\n", __func__,
 		 disable, reason, ret);
@@ -5631,9 +5646,10 @@ static int p9221_wlc_disable_callback(struct votable *votable, void *data,
 				      int disable, const char *client)
 {
 	struct p9221_charger_data *charger = data;
-	u8 val = EPT_END_OF_CHARGE;
+	u8 val = P9221_EOP_UNKNOWN;
 
-	if (get_client_vote(votable, CPOUT_EN_VOTER))
+	charger->send_eop = get_client_vote(charger->dc_icl_votable, THERMAL_DAEMON_VOTER) == 0;
+	if (!get_client_vote(votable, P9221_WLC_VOTER) && !charger->send_eop)
 		val = P9221_EOP_RESTART_POWER; /* auto restart */
 
 	return p9221_wlc_disable(charger, disable, val);
