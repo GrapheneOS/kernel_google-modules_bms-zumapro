@@ -536,7 +536,7 @@ int pca9468_get_charge_type(struct pca9468_charger *pca9468)
 		return POWER_SUPPLY_CHARGE_TYPE_FAST;
 	case DC_STATE_START_CV:
 	case DC_STATE_CV_MODE:
-		return POWER_SUPPLY_CHARGE_TYPE_TAPER_EXT;
+		return POWER_SUPPLY_CHARGE_TYPE_TAPER;
 	case DC_STATE_CHECK_ACTIVE: /* in preset */
 	case DC_STATE_CHARGING_DONE:
 		break;
