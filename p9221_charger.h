@@ -395,8 +395,10 @@
 #define P9412_V5P0AP_SWITCH_REG			0x81
 #define V5P0AP_SWITCH_EN			BIT(7)
 
+#define P9412_CMFET_L_REG			0xF4
 #define P9412_CDMODE_STS_REG			0x100
 #define P9412_CDMODE_REQ_REG			0x101
+#define P9412_HIVOUT_CMFET_REG			0x11B
 #define P9412_COM_CHAN_RESET_REG		0x13F
 #define P9412_COM_PACKET_TYPE_ADDR		0x800
 #define P9412_COM_CHAN_SEND_SIZE_REG		0x801
@@ -451,6 +453,8 @@
 #define P9412_CAL_STATE_2			BIT(3)
 #define P9412_EPP_CAL_STATE_MASK		(P9412_CAL_STATE_1 | \
 						 P9412_CAL_STATE_2)
+/* Rx Communication Modulation FET(CMFET) */
+#define P9412_CMFET_DISABLE_ALL			(0xF0) /* CM-A/B-1/2: REG[7:4]=0b1111 */
 
 #define P9221_CRC8_POLYNOMIAL			0x07    /* (x^8) + x^2 + x + 1 */
 #define P9412_ADT_TYPE_AUTH			0x02
@@ -729,6 +733,7 @@ struct p9221_charger_data {
 	ktime_t				irq_at;
 	int				renego_state;
 	struct mutex			renego_lock;
+	bool				send_eop;
 
 #if IS_ENABLED(CONFIG_GPIOLIB)
 	struct gpio_chip gpio;
