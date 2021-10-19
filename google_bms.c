@@ -168,6 +168,27 @@ static int gbms_read_cccm_limits(struct gbms_chg_profile *profile,
 		return ret;
 	}
 
+	memset(profile->topoff_limits, 0, sizeof(profile->topoff_limits));
+	profile->topoff_nb_limits =
+	    of_property_count_elems_of_size(node, "google,chg-topoff-limits",
+					    sizeof(u32));
+	if (profile->topoff_nb_limits > 0) {
+		if (profile->topoff_nb_limits > GBMS_CHG_TOPOFF_NB_LIMITS_MAX) {
+			gbms_err(profile, "chg-topoff-nb-limits exceeds driver max:%d\n",
+			       GBMS_CHG_TOPOFF_NB_LIMITS_MAX);
+			return -EINVAL;
+		}
+		ret = of_property_read_u32_array(node, "google,chg-topoff-limits",
+						(u32 *)profile->topoff_limits,
+						profile->topoff_nb_limits);
+		if (ret < 0) {
+			gbms_err(profile, "cannot read chg-topoff-limits table, ret=%d\n",
+				 ret);
+			return ret;
+		}
+		gbms_info(profile, "dynamic topoff enabled\n");
+	}
+
 	return 0;
 }
 
