@@ -284,6 +284,7 @@ struct batt_drv {
 
 	int fv_uv;
 	int cc_max;
+	int topoff;
 	int msc_update_interval;
 
 	bool disable_votes;
@@ -2888,6 +2889,7 @@ static int msc_logic(struct batt_drv *batt_drv)
 	batt_drv->vbatt_idx = vbatt_idx;
 	batt_drv->temp_idx = temp_idx;
 	batt_drv->cc_max = GBMS_CCCM_LIMITS(profile, temp_idx, vbatt_idx);
+	batt_drv->topoff = profile->topoff_limits[temp_idx];
 	batt_drv->fv_uv = fv_uv;
 
 	return 0;
@@ -5598,6 +5600,13 @@ static int gbatt_get_property(struct power_supply *psy,
 		} else {
 			err = -EINVAL;
 		}
+		break;
+
+	case POWER_SUPPLY_PROP_CHARGE_TERM_CURRENT:
+		if (batt_drv->topoff)
+			val->intval = batt_drv->topoff;
+		else
+			val->intval = -1;
 		break;
 
 	default:
