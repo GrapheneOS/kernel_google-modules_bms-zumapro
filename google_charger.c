@@ -220,6 +220,7 @@ struct chg_drv {
 	int batt_profile_fv_uv;		/* max/default fv_uv */
 	int fv_uv;
 	int cc_max;
+	int topoff;
 	int chg_cc_tolerance;
 	int chg_mode;			/* debug */
 	int stop_charging;		/* no power source */
@@ -549,7 +550,7 @@ static int info_ext_state(union gbms_ce_adapter_details *ad,
 }
 
 /* NOTE: do not call this directly */
-static int chg_set_charger(struct chg_drv *chg_drv, int fv_uv, int cc_max)
+static int chg_set_charger(struct chg_drv *chg_drv, int fv_uv, int cc_max, int topoff)
 {
 	struct power_supply *chg_psy = chg_drv->chg_psy;
 	union power_supply_propval pval;
@@ -595,10 +596,23 @@ static int chg_set_charger(struct chg_drv *chg_drv, int fv_uv, int cc_max)
 		}
 	}
 
+	if (chg_drv->topoff != topoff) {
+		pval.intval = topoff;
+
+		rc = power_supply_set_property(chg_psy, POWER_SUPPLY_PROP_CHARGE_TERM_CURRENT,
+					       &pval);
+		if (rc == -EAGAIN)
+			return rc;
+		if (rc != 0) {
+			pr_err("MSC_CHG cannot set topoff current rc=%d\n", rc);
+			return -EIO;
+		}
+	}
+
 	return rc;
 }
 
-static int chg_update_charger(struct chg_drv *chg_drv, int fv_uv, int cc_max)
+static int chg_update_charger(struct chg_drv *chg_drv, int fv_uv, int cc_max, int topoff)
 {
 	struct power_supply *chg_psy = chg_drv->chg_psy;
 	int rc = 0;
@@ -606,7 +620,7 @@ static int chg_update_charger(struct chg_drv *chg_drv, int fv_uv, int cc_max)
 	if (!chg_psy)
 		return 0;
 
-	if (chg_drv->fv_uv != fv_uv || chg_drv->cc_max != cc_max) {
+	if (chg_drv->fv_uv != fv_uv || chg_drv->cc_max != cc_max || chg_drv->topoff != topoff) {
 		const int taper_limit = chg_drv->batt_profile_fv_uv >= 0 ?
 					chg_drv->batt_profile_fv_uv : -1;
 		const int chg_cc_tolerance = chg_drv->chg_cc_tolerance;
@@ -625,15 +639,17 @@ static int chg_update_charger(struct chg_drv *chg_drv, int fv_uv, int cc_max)
 		if (chg_drv->chg_cc_tolerance)
 			fcc = (cc_max / 1000) * (1000 - chg_cc_tolerance);
 
-		rc = chg_set_charger(chg_drv, fv_uv, fcc);
+		rc = chg_set_charger(chg_drv, fv_uv, fcc, topoff);
 		if (rc == 0) {
-			pr_info("MSC_CHG fv_uv=%d->%d cc_max=%d->%d rc=%d\n",
+			pr_info("MSC_CHG fv_uv=%d->%d cc_max=%d->%d topoff=%d->%d rc=%d\n",
 				chg_drv->fv_uv, fv_uv,
 				chg_drv->cc_max, cc_max,
+				chg_drv->topoff, topoff,
 				rc);
 
 			chg_drv->cc_max = cc_max;
 			chg_drv->fv_uv = fv_uv;
+			chg_drv->topoff = topoff;
 		}
 	}
 
@@ -1890,7 +1906,7 @@ update_charger:
 		int res;
 
 		/* needs to disable_charging, will reschedule */
-		res = chg_update_charger(chg_drv, chg_drv->fv_uv, 0);
+		res = chg_update_charger(chg_drv, chg_drv->fv_uv, 0, chg_drv->topoff);
 		if (res < 0 && res != -EAGAIN)
 			pr_err("MSC_CHG cannot update charger (%d)\n", res);
 
@@ -3149,7 +3165,7 @@ static int msc_update_charger_cb(struct votable *votable,
 				 void *data, int interval,
 				 const char *client)
 {
-	int update_interval, rc = -EINVAL, fv_uv = -1, cc_max = -1;
+	int update_interval, rc = -EINVAL, fv_uv = -1, cc_max = -1, topoff = -1;
 	struct chg_drv *chg_drv = (struct chg_drv *)data;
 
 	__pm_stay_awake(chg_drv->chg_ws);
@@ -3172,6 +3188,8 @@ static int msc_update_charger_cb(struct votable *votable,
 	 */
 	fv_uv = get_effective_result_locked(chg_drv->msc_fv_votable);
 	cc_max = get_effective_result_locked(chg_drv->msc_fcc_votable);
+	if (chg_drv->bat_psy)
+		topoff = GPSY_GET_PROP(chg_drv->bat_psy, POWER_SUPPLY_PROP_CHARGE_TERM_CURRENT);
 
 	/* invalid values will cause the adapter to exit PPS */
 	if (cc_max < 0 || fv_uv < 0) {
@@ -3192,7 +3210,7 @@ static int msc_update_charger_cb(struct votable *votable,
 	}
 
 	/* adjust charger for target demand */
-	rc = chg_update_charger(chg_drv, fv_uv, cc_max);
+	rc = chg_update_charger(chg_drv, fv_uv, cc_max, topoff);
 	if (rc == -EAGAIN)
 		update_interval = CHG_WORK_EAGAIN_RETRY_MS;
 	else if (rc < 0)
