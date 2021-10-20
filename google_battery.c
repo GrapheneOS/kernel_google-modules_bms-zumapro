@@ -320,6 +320,7 @@ struct batt_drv {
 	/* time to full */
 	struct batt_ttf_stats ttf_stats;
 	bool ttf_debounce;
+	ktime_t ttf_est;
 
 	/* logging */
 	struct logbuffer *ssoc_log;
@@ -1124,6 +1125,37 @@ static void batt_rl_update_status(struct batt_drv *batt_drv)
 
 /* ------------------------------------------------------------------------- */
 
+static void bat_log_ttf_change(ktime_t estimate, int max_ratio, struct batt_drv *batt_drv)
+{
+	const struct gbms_charging_event *ce_data = &batt_drv->ce_data;
+	char buff[LOG_BUFFER_ENTRY_SIZE];
+	long elap, ibatt_avg, icl_avg;
+	int i, len = 0;
+
+	len += scnprintf(&buff[len], sizeof(buff) - len,
+			 "MSC_TTF: est:%lldmin, max_ratio:%d ", estimate / 60, max_ratio);
+
+	for (i = 0; i < GBMS_STATS_TIER_COUNT; i++) {
+		elap = ce_data->tier_stats[i].time_fast +
+				  ce_data->tier_stats[i].time_taper +
+				  ce_data->tier_stats[i].time_other;
+		if (elap) {
+			ibatt_avg = ce_data->tier_stats[i].ibatt_sum / elap;
+			icl_avg = ce_data->tier_stats[i].icl_sum / elap;
+		} else {
+			ibatt_avg = 0;
+			icl_avg = 0;
+		}
+
+		len += scnprintf(&buff[len], sizeof(buff) - len,
+				 "[%d:%ld,%ld,%ld]", i, elap / 60, ibatt_avg, icl_avg);
+	}
+
+	pr_info("%s", buff);
+
+	batt_drv->ttf_est = estimate;
+}
+
 /*
  * msc_logic_health() sync ce_data->ce_health to batt_drv->chg_health
  * . return -EINVAL when the device is not connected to power -ERANGE when
@@ -1133,7 +1165,8 @@ static void batt_rl_update_status(struct batt_drv *batt_drv)
  * . the estimate is negative during debounce, when in overheat, when
  *   custom charge levels are active.
  */
-static int batt_ttf_estimate(ktime_t *res, const struct batt_drv *batt_drv)
+#define MIN_DELTA_FOR_LOG_S 60
+static int batt_ttf_estimate(ktime_t *res, struct batt_drv *batt_drv)
 {
 	qnum_t raw_full = ssoc_point_full - qnum_rconst(SOC_ROUND_BASE);
 	qnum_t soc_raw = ssoc_get_real_raw(&batt_drv->ssoc_state);
@@ -1176,6 +1209,10 @@ static int batt_ttf_estimate(ktime_t *res, const struct batt_drv *batt_drv)
 		estimate = -1;
 	else
 		max_ratio = rc;
+
+	/* Log data when changed over 1 min */
+	if (abs(batt_drv->ttf_est - estimate) > MIN_DELTA_FOR_LOG_S)
+		bat_log_ttf_change(estimate, max_ratio, batt_drv);
 
 done:
 	*res = estimate;
@@ -5023,10 +5060,10 @@ static void bat_log_ttf_estimate(const char *label, int ssoc,
 
 	cc = GPSY_GET_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_CHARGE_COUNTER);
 	logbuffer_log(batt_drv->ttf_stats.ttf_log,
-		      "%s ssoc=%d cc=%d time=%ld %d:%d:%d (est=%ld)",
+		      "%s ssoc=%d cc=%d time=%ld %d:%d:%d (est=%ld, max_ratio=%d)",
 		      (label) ? label : "", ssoc, cc / 1000, get_boot_sec(),
 		      res / 3600, (res % 3600) / 60, (res % 3600) % 60,
-		      res);
+		      res, err);
 }
 
 static int batt_do_sha256(const u8 *data, unsigned int len, u8 *result)
