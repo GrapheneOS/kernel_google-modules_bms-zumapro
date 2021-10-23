@@ -1136,8 +1136,8 @@ static int batt_ttf_estimate(ktime_t *res, const struct batt_drv *batt_drv)
 {
 	qnum_t raw_full = ssoc_point_full - qnum_rconst(SOC_ROUND_BASE);
 	qnum_t soc_raw = ssoc_get_real_raw(&batt_drv->ssoc_state);
-	ktime_t estimate;
-	int rc;
+	ktime_t estimate = 0;
+	int rc = 0, max_ratio = 0;
 
 	if (batt_drv->ssoc_state.buck_enabled != 1)
 		return -EINVAL;
@@ -1173,10 +1173,12 @@ static int batt_ttf_estimate(ktime_t *res, const struct batt_drv *batt_drv)
 			      &batt_drv->ce_data, soc_raw, raw_full);
 	if (rc < 0)
 		estimate = -1;
+	else
+		max_ratio = rc;
 
 done:
 	*res = estimate;
-	return 0;
+	return max_ratio;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -5564,6 +5566,7 @@ static int gbatt_set_health(struct batt_drv *batt_drv, int health)
 	return 0;
 }
 
+#define TTF_REPORT_MAX_RATIO	300
 static int gbatt_get_property(struct power_supply *psy,
 				 enum power_supply_property psp,
 				 union power_supply_propval *val)
@@ -5682,12 +5685,15 @@ static int gbatt_get_property(struct power_supply *psy,
 	/* cannot set err, negative estimate will revert to HAL */
 	case POWER_SUPPLY_PROP_TIME_TO_FULL_NOW: {
 		ktime_t res;
+		int max_ratio;
 
-		rc = batt_ttf_estimate(&res, batt_drv);
-		if (rc == 0) {
+		max_ratio = batt_ttf_estimate(&res, batt_drv);
+		if (max_ratio == 0) {
 			if (res < 0)
 				res = 0;
 			val->intval = res;
+		} else if (max_ratio >= TTF_REPORT_MAX_RATIO) {
+			val->intval = 0;
 		} else if (!batt_drv->fg_psy) {
 			val->intval = -1;
 		} else {
