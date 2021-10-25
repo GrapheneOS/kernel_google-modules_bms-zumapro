@@ -788,8 +788,6 @@ static void p9221_set_offline(struct p9221_charger_data *charger)
 
 	charger->force_bpp = false;
 	charger->chg_on_rtx = false;
-	if (!charger->wait_for_online)
-		charger->ll_bpp_cep = -EINVAL;
 	p9221_reset_wlc_dc(charger);
 	charger->prop_mode_en = false;
 	set_renego_state(charger, P9XXX_AVAILABLE);
@@ -816,7 +814,10 @@ static void p9221_set_offline(struct p9221_charger_data *charger)
 	del_timer(&charger->vrect_timer);
 
 	/* clear all session features */
-	feature_update_session(charger, WLCF_DISABLE_ALL_FEATURE);
+	if (!charger->wait_for_online) {
+		charger->ll_bpp_cep = -EINVAL;
+		feature_update_session(charger, WLCF_DISABLE_ALL_FEATURE);
+	}
 
 	p9221_vote_defaults(charger);
 	if (charger->enabled)
@@ -974,6 +975,8 @@ static void p9221_power_mitigation_work(struct work_struct *work)
 		dev_info(&charger->client->dev, "power_mitigate: offline\n");
 		charger->fod_cnt = 0;
 		charger->trigger_power_mitigation = false;
+		charger->ll_bpp_cep = -EINVAL;
+		feature_update_session(charger, WLCF_DISABLE_ALL_FEATURE);
 		power_supply_changed(charger->wc_psy);
 		return;
 	}
@@ -1143,17 +1146,14 @@ static void p9221_align_work(struct work_struct *work)
 	struct p9221_charger_data *charger = container_of(work,
 			struct p9221_charger_data, align_work.work);
 
-	/* Disable misaligned message in high power mode, b/159066422 */
-	if (charger->prop_mode_en == true)
-		return;
-
 	if ((charger->chip_id == P9221_CHIP_ID) &&
 	    (charger->pdata->alignment_freq == NULL))
 		return;
 
 	charger->alignment = -1;
 
-	if (!charger->online)
+	/* b/159066422 Disable misaligned message in high power mode */
+	if (!charger->online || charger->prop_mode_en == true)
 		return;
 
 	/*
@@ -1658,9 +1658,12 @@ static void p9221_check_adapter_type(struct p9221_charger_data *charger)
 	if (p9221_get_tx_id_str(charger) != NULL) {
 		u8 id_type = (charger->tx_id & TXID_TYPE_MASK) >> TXID_TYPE_SHIFT;
 
+		if (id_type != charger->chg_data.adapter_type)
+			pr_debug("%s: tx_id=%08x, adapter_type=%x->%x\n", __func__,
+				 charger->tx_id, charger->chg_data.adapter_type,
+				 id_type);
+
 		charger->chg_data.adapter_type = id_type;
-		pr_debug("%s: , tx_id=%08x, adapter_type=%d\n",
-			 __func__, charger->tx_id, charger->chg_data.adapter_type);
 	}
 }
 
@@ -5672,20 +5675,32 @@ static int p9382a_tx_icl_vote_callback(struct votable *votable, void *data,
 	return ret;
 }
 
+/* called from */
 int p9221_wlc_disable(struct p9221_charger_data *charger, int disable, u8 reason)
 {
 	int ret = 0;
 
 	if ((disable && charger->online) || charger->send_eop) {
+		int rc;
+
 		ret = charger->chip_send_eop(charger, reason);
-		pr_info("Disable Rx communication channel(CMFET): 0xF4 & 0x11B\n");
-		charger->reg_write_8(charger, P9412_CMFET_L_REG, P9412_CMFET_DISABLE_ALL);
-		charger->reg_write_8(charger, P9412_HIVOUT_CMFET_REG, P9412_CMFET_DISABLE_ALL);
+
+		rc = charger->reg_write_8(charger, P9412_CMFET_L_REG, P9412_CMFET_DISABLE_ALL);
+		rc |= charger->reg_write_8(charger, P9412_HIVOUT_CMFET_REG, P9412_CMFET_DISABLE_ALL);
+
+		pr_info("Disabled Rx communication channel(CMFET): 0xF4 & 0x11B (%d)\n", rc);
 		charger->send_eop = false;
-        }
+	}
+
+	/*
+	 * could also change ->qien_gpio (e.g pull low when disable == 0)
+	 * and/or toggle inhibit via ->qi_vbus_en.
+	 * NOTE: using ->qien_gpio to disable the IC while VOUT sis present
+	 * might (is) not supported.
+	 */
 
 	pr_debug("%s: disable=%d, ept_reason=%d ret=%d\n", __func__,
-		 disable, reason, ret);
+		 disable, disable ? reason : -1, ret);
 
 	if (charger->last_disable != disable) {
 		pr_info("%s[%d]: disable=%d, ept_reason=%d ret=%d\n", __func__,
@@ -5870,8 +5885,8 @@ static int p9221_charger_probe(struct i2c_client *client,
 	}
 
 	/*
-	 * Create the WLC_DISABLE votable, use for send EPT and pull high
-	 * QI_EN_L
+	 * Create the WLC_DISABLE votable, use for send EPT
+	 * NOTE: pulling QI_EN_L might not be OK, verify this with EE
 	 */
 	charger->wlc_disable_votable = create_votable("WLC_DISABLE", VOTE_SET_ANY,
 						      p9221_wlc_disable_callback,
