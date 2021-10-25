@@ -3382,17 +3382,23 @@ static ssize_t max1720x_show_reg_all(struct file *filp, char __user *buf,
 					size_t count, loff_t *ppos)
 {
 	struct max1720x_chip *chip = (struct max1720x_chip *)filp->private_data;
+	const struct max17x0x_regmap *map = &chip->regmap;
 	u32 reg_address;
-	u16 data;
+	unsigned int data;
 	char *tmp;
 	int ret = 0, len = 0;
+
+	if (!map->regmap) {
+		pr_err("Failed to read, no regmap\n");
+		return -EIO;
+	}
 
 	tmp = kmalloc(PAGE_SIZE, GFP_KERNEL);
 	if (!tmp)
 		return -ENOMEM;
 
 	for (reg_address = 0; reg_address <= 0xFF; reg_address++) {
-		ret = REGMAP_READ(&chip->regmap, reg_address, &data);
+		ret = regmap_read(map->regmap, reg_address, &data);
 		if (ret < 0)
 			continue;
 
