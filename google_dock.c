@@ -15,7 +15,6 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-
 #include <linux/kernel.h>
 #include <linux/printk.h>
 #include <linux/module.h>
@@ -37,11 +36,10 @@
 #define DOCK_DELAY_INIT_MS		500
 #define DOCK_NOTIFIER_DELAY_MS		100
 #define DOCK_ICL_DEFAULT_UA		500000
-#define DOCK_CHGIN_VOUT_UV		5000000
 #define DOCK_15W_ILIM_UA		1250000
 #define DOCK_13_5W_ILIM_UA		1500000
 #define DOCK_13_5W_VOUT_UV		9000000
-#define DOCK_ICL_RAMP_DELAY_DEFAULT_MS	(2 * 1000)  /* 2 seconds */
+#define DOCK_ICL_RAMP_DELAY_DEFAULT_MS	(4 * 1000)	/* 4 seconds */
 
 struct dock_drv {
 	struct device *device;
@@ -61,6 +59,8 @@ struct dock_drv {
 	bool icl_ramp;
 	u32 icl_ramp_ua;
 	u32 icl_ramp_delay_ms;
+	int online;
+	int pogo_ovp_en;
 };
 
 static int dock_has_dc_in(struct dock_drv *dock)
@@ -123,13 +123,12 @@ static void google_dock_vote_defaults(struct dock_drv *dock)
 	vote(dock->dc_icl_votable, DOCK_AICL_VOTER, false, 0);
 }
 
-
-static enum alarmtimer_restart google_dock_icl_ramp_alarm_cb(struct alarm *alarm,
-						       ktime_t now)
+static enum alarmtimer_restart google_dock_icl_ramp_alarm_cb(struct alarm
+							     *alarm,
+							     ktime_t now)
 {
-	struct dock_drv *dock =
-			container_of(alarm, struct dock_drv,
-				     icl_ramp_alarm);
+	struct dock_drv *dock = container_of(alarm, struct dock_drv,
+					     icl_ramp_alarm);
 
 	/* Alarm is in atomic context, schedule work to complete the task */
 	schedule_delayed_work(&dock->icl_ramp_work, msecs_to_jiffies(100));
@@ -140,11 +139,15 @@ static enum alarmtimer_restart google_dock_icl_ramp_alarm_cb(struct alarm *alarm
 static void google_dock_icl_ramp_work(struct work_struct *work)
 {
 	struct dock_drv *dock = container_of(work, struct dock_drv,
-						 icl_ramp_work.work);
-	int voltage;
+					     icl_ramp_work.work);
+	int online, voltage;
+
+	online = GPSY_GET_PROP(dock->dc_psy, POWER_SUPPLY_PROP_ONLINE);
+	if (!online || online == dock->online)
+		goto out;
 
 	voltage = GPSY_GET_PROP(dock->dc_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
-	if ((voltage > DOCK_13_5W_VOUT_UV) || (voltage < DOCK_CHGIN_VOUT_UV))
+	if (voltage > DOCK_13_5W_VOUT_UV)
 		dock->icl_ramp_ua = DOCK_15W_ILIM_UA;
 	else
 		dock->icl_ramp_ua = DOCK_13_5W_ILIM_UA;
@@ -155,6 +158,10 @@ static void google_dock_icl_ramp_work(struct work_struct *work)
 		 dock->icl_ramp, dock->icl_ramp_ua);
 
 	google_dock_set_icl(dock);
+
+out:
+	pr_info("%s: online: %d->%d\n", __func__, dock->online, online);
+	dock->online = online;
 }
 
 static void google_dock_icl_ramp_reset(struct dock_drv *dock)
@@ -174,34 +181,10 @@ static void google_dock_icl_ramp_start(struct dock_drv *dock)
 	google_dock_icl_ramp_reset(dock);
 
 	dev_info(dock->device, "ICL ramp set alarm %dms, %dua, ramp=%d\n",
-		 dock->icl_ramp_delay_ms, dock->icl_ramp_ua,
-		 dock->icl_ramp);
+		 dock->icl_ramp_delay_ms, dock->icl_ramp_ua, dock->icl_ramp);
 
 	alarm_start_relative(&dock->icl_ramp_alarm,
 			     ms_to_ktime(dock->icl_ramp_delay_ms));
-}
-
-static int google_dock_notifier_cb(struct notifier_block *nb, unsigned long event,
-			     void *data)
-{
-	struct power_supply *psy = data;
-	struct dock_drv *dock =
-		container_of(nb, struct dock_drv, nb);
-
-	if (event != PSY_EVENT_PROP_CHANGED)
-		goto out;
-
-	if (dock->dc_psy_name && strcmp(psy->desc->name, "dc") == 0)
-		dock->check_dc = true;
-
-	if (!dock->check_dc)
-		goto out;
-
-	schedule_delayed_work(&dock->notifier_work,
-			      msecs_to_jiffies(DOCK_NOTIFIER_DELAY_MS));
-
-out:
-	return NOTIFY_OK;
 }
 
 static void google_dock_notifier_check_dc(struct dock_drv *dock)
@@ -220,6 +203,7 @@ static void google_dock_notifier_check_dc(struct dock_drv *dock)
 		google_dock_set_icl(dock);
 		google_dock_icl_ramp_start(dock);
 	} else {
+		dock->online = 0;
 		google_dock_vote_defaults(dock);
 		google_dock_icl_ramp_reset(dock);
 	}
@@ -230,12 +214,54 @@ static void google_dock_notifier_check_dc(struct dock_drv *dock)
 static void google_dock_notifier_work(struct work_struct *work)
 {
 	struct dock_drv *dock = container_of(work, struct dock_drv,
-						 notifier_work.work);
+					     notifier_work.work);
 
 	dev_info(dock->device, "notifier_work\n");
 
 	if (dock->check_dc)
 		google_dock_notifier_check_dc(dock);
+}
+
+static int google_dock_notifier_cb(struct notifier_block *nb,
+				   unsigned long event, void *data)
+{
+	struct power_supply *psy = data;
+	struct dock_drv *dock = container_of(nb, struct dock_drv, nb);
+
+	if (event != PSY_EVENT_PROP_CHANGED)
+		goto out;
+
+	if (dock->dc_psy_name &&
+	    (!strcmp(psy->desc->name, "dc")
+	     || !strcmp(psy->desc->name, "main-charger")))
+		dock->check_dc = true;
+
+	if (!dock->check_dc)
+		goto out;
+
+	schedule_delayed_work(&dock->notifier_work,
+			      msecs_to_jiffies(DOCK_NOTIFIER_DELAY_MS));
+
+out:
+	return NOTIFY_OK;
+}
+
+static int google_dock_parse_dt(struct device *dev,
+			  struct dock_drv *dock)
+{
+	int ret = 0;
+	struct device_node *node = dev->of_node;
+
+	/* POGO_OVP_EN */
+	ret = of_get_named_gpio(node, "google,pogo_ovp_en", 0);
+	dock->pogo_ovp_en = ret;
+	if (ret < 0)
+		dev_warn(dev, "unable to read google,pogo_ovp_en from dt: %d\n",
+			 ret);
+	else
+		dev_info(dev, "POGO_OVP_EN gpio:%d", dock->pogo_ovp_en);
+
+	return 0;
 }
 
 static enum power_supply_property dock_props[] = {
@@ -248,8 +274,8 @@ static enum power_supply_property dock_props[] = {
 };
 
 static int dock_get_property(struct power_supply *psy,
-				 enum power_supply_property psp,
-				 union power_supply_propval *val)
+			     enum power_supply_property psp,
+			     union power_supply_propval *val)
 {
 	struct dock_drv *dock = (struct dock_drv *)
 					power_supply_get_drvdata(psy);
@@ -294,8 +320,8 @@ static int dock_get_property(struct power_supply *psy,
 }
 
 static int dock_set_property(struct power_supply *psy,
-				 enum power_supply_property psp,
-				 const union power_supply_propval *val)
+			     enum power_supply_property psp,
+			     const union power_supply_propval *val)
 {
 	struct dock_drv *dock = (struct dock_drv *)
 					power_supply_get_drvdata(psy);
@@ -335,7 +361,7 @@ static int dock_set_property(struct power_supply *psy,
 }
 
 static int dock_property_is_writeable(struct power_supply *psy,
-					  enum power_supply_property psp)
+				      enum power_supply_property psp)
 {
 	switch (psp) {
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
@@ -362,7 +388,7 @@ static struct power_supply_desc dock_psy_desc = {
 static void google_dock_init_work(struct work_struct *work)
 {
 	struct dock_drv *dock = container_of(work, struct dock_drv,
-						 init_work.work);
+					     init_work.work);
 	struct power_supply *dc_psy = dock->dc_psy;
 	union power_supply_propval val;
 	int err = 0;
@@ -371,15 +397,16 @@ static void google_dock_init_work(struct work_struct *work)
 		dc_psy = power_supply_get_by_name(dock->dc_psy_name);
 		if (!dc_psy) {
 			dev_info(dock->device,
-				"failed to get \"%s\" power supply, retrying...\n",
-				dock->dc_psy_name);
+				 "failed to get \"%s\" power supply, retrying...\n",
+				 dock->dc_psy_name);
 			goto retry_init_work;
 		}
 		dock->dc_psy = dc_psy;
 
 		/* FIXME */
 		err = power_supply_get_property(dc_psy,
-						POWER_SUPPLY_PROP_PRESENT, &val);
+						POWER_SUPPLY_PROP_PRESENT,
+						&val);
 		if (err == -EAGAIN)
 			goto retry_init_work;
 	}
@@ -419,6 +446,7 @@ static int google_dock_probe(struct platform_device *pdev)
 		}
 	}
 
+	google_dock_parse_dt(dock->device, dock);
 	mutex_init(&dock->dock_lock);
 	INIT_DELAYED_WORK(&dock->init_work, google_dock_init_work);
 	INIT_DELAYED_WORK(&dock->icl_ramp_work, google_dock_icl_ramp_work);
@@ -426,6 +454,7 @@ static int google_dock_probe(struct platform_device *pdev)
 		   google_dock_icl_ramp_alarm_cb);
 
 	dock->icl_ramp_delay_ms = DOCK_ICL_RAMP_DELAY_DEFAULT_MS;
+	dock->online = 0;
 
 	platform_set_drvdata(pdev, dock);
 
@@ -463,8 +492,11 @@ static int google_dock_probe(struct platform_device *pdev)
 		return ret;
 	}
 
+	if (dock->pogo_ovp_en >= 0)
+		gpio_direction_output(dock->pogo_ovp_en, 1);
+
 	schedule_delayed_work(&dock->init_work,
-					msecs_to_jiffies(DOCK_DELAY_INIT_MS));
+			      msecs_to_jiffies(DOCK_DELAY_INIT_MS));
 
 	pr_info("google_dock_probe done\n");
 

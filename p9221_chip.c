@@ -1169,6 +1169,14 @@ static int p9412_capdiv_en(struct p9221_charger_data *chgr, u8 mode)
 
 	/* TODO: it probably needs a lock around this */
 
+	ret = chgr->reg_read_8(chgr, P9412_CDMODE_STS_REG, &cdmode);
+	if (ret < 0)
+		return ret;
+
+	/* If the results are as expected, no changes needed */
+	if ((cdmode & mask) == mask)
+		return ret;
+
 	ret = chgr->reg_write_8(chgr, P9412_CDMODE_REQ_REG, mask);
 	if (ret < 0)
 		return -EIO;
@@ -1195,13 +1203,12 @@ static int p9412_capdiv_en(struct p9221_charger_data *chgr, u8 mode)
 	return ((cdmode & mask) == mask) ? 0 :  -ETIMEDOUT;
 }
 
-/* For high power mode */
-static bool p9221_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
+static int p9221_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 {
 	return -ENOTSUPP;
 }
 
-static bool p9412_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
+static int p9412_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 {
 	int ret, loops;
 	u8 val8, cdmode, txpwr, pwr_stp, mode_sts, err_sts, prop_cur_pwr, prop_req_pwr;
@@ -1218,7 +1225,6 @@ static bool p9412_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 
 	if (val8 == P9XXX_SYS_OP_MODE_PROPRIETARY) {
 
-		/* Step0: don't even try if power is not supported */
 		ret = chgr->reg_read_8(chgr, P9412_PROP_TX_POTEN_PWR_REG, &txpwr);
 		txpwr = txpwr / 2;
 		if (ret != 0 || txpwr < HPP_MODE_PWR_REQUIRE) {
@@ -1424,7 +1430,7 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 		chgr->ints.over_uv_bit = 0;
 		chgr->ints.cc_send_busy_bit = P9221R5_STAT_CCSENDBUSY;
 		chgr->ints.cc_data_rcvd_bit = P9221R5_STAT_CCDATARCVD;
-		chgr->ints.pp_rcvd_bit = P9222_STAT_PPRCVD;
+		chgr->ints.pp_rcvd_bit = 0; /* TODO: b/200114045 */
 		chgr->ints.cc_error_bit = P9222_STAT_CCERROR;
 		chgr->ints.cc_reset_bit = 0;
 		chgr->ints.propmode_stat_bit = 0;
@@ -1727,7 +1733,7 @@ static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 	switch (offset) {
 	case P9XXX_GPIO_CPOUT_EN:
 		/* take offline (if online) and set/reset QI_EN_L */
-		ret = p9221_wlc_disable(charger, !value, EPT_END_OF_CHARGE);
+		ret = vote(charger->wlc_disable_votable, CPOUT_EN_VOTER, !value, 0);
 		break;
 	case P9412_GPIO_CPOUT21_EN:
 		/* TODO: no-op for FW38+ */

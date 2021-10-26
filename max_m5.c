@@ -264,14 +264,7 @@ static int max_m5_update_custom_parameters(struct max_m5_data *m5_data)
 	int tmp, ret;
 	u16 vfsoc;
 
-	ret = REGMAP_WRITE(regmap, MAX_M5_TEMPNOM, 0x1403);
-	if (ret == 0)
-		ret = REGMAP_WRITE(regmap, MAX_M5_COFF, 0x1);
-	if (ret == 0)
-		ret = REGMAP_WRITE(regmap, MAX_M5_REPCAP, 0x0);
-	if (ret == 0)
-		ret = REGMAP_WRITE_VERIFY(regmap, MAX_M5_IAVGEMPTY,
-					  cp->iavg_empty);
+	ret = REGMAP_WRITE(regmap, MAX_M5_REPCAP, 0x0);
 	if (ret == 0)
 		ret = REGMAP_WRITE_VERIFY(regmap, MAX_M5_RELAXCFG,
 					  cp->relaxcfg);
@@ -331,6 +324,8 @@ static int max_m5_update_custom_parameters(struct max_m5_data *m5_data)
 		ret = REGMAP_WRITE_VERIFY(regmap, MAX_M5_RCOMP0, cp->rcomp0);
 	if (ret == 0)
 		ret = REGMAP_WRITE_VERIFY(regmap, MAX_M5_TEMPCO, cp->tempco);
+	if (ret == 0)
+		ret = REGMAP_WRITE(regmap, MAX_M5_TASKPERIOD, cp->taskperiod);
 	if (ret == 0)
 		ret = REGMAP_WRITE(regmap, MAX_M5_ICHGTERM, cp->ichgterm);
 	if (ret == 0)
@@ -474,6 +469,15 @@ int max_m5_load_gauge_model(struct max_m5_data *m5_data)
 	if (!m5_data || !m5_data->custom_model || !m5_data->custom_model_size)
 		return -ENODATA;
 
+	/* check FStat.DNR to wait it clear for data ready */
+	for (retries = 20; retries > 0; retries--) {
+		ret = REGMAP_READ(regmap, MAX_M5_FSTAT, &data);
+		if (ret == 0 && !(data & MAX_M5_FSTAT_DNR))
+			break;
+		msleep(50);
+	}
+	dev_info(m5_data->dev, "retries:%d, FSTAT:%#x\n", retries, data);
+
 	/* loading in progress, this is not good (tm) */
 	ret = REGMAP_READ(regmap, MAX_M5_CONFIG2, &data);
 	if (ret == 0 && (data & MAX_M5_CONFIG2_LDMDL)) {
@@ -509,13 +513,6 @@ int max_m5_load_gauge_model(struct max_m5_data *m5_data)
 		return ret;
 	}
 
-	/*  b/177099997 cap_lsb gives the LSB for capacity conversions */
-	ret = REGMAP_WRITE(regmap, MAX_M5_TASKPERIOD,
-			   m5_data->parameters.taskperiod);
-	if (ret < 0) {
-		dev_err(m5_data->dev, "cannot update taskperiod (%d)\n", ret);
-		return ret;
-	}
 
 	m5_data->cap_lsb = max_m5_period2caplsb(m5_data->parameters.taskperiod);
 

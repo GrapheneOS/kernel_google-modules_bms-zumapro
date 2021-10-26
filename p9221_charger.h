@@ -18,6 +18,7 @@
 
 #include <linux/gpio.h>
 #include <linux/crc8.h>
+#include "pmic-voter.h" /* TODO(b/163679860): use gvotables */
 
 #define P9221_WLC_VOTER				"WLC_VOTER"
 #define P9221_USER_VOTER			"WLC_USER_VOTER"
@@ -27,6 +28,8 @@
 #define THERMAL_DAEMON_VOTER			"THERMAL_DAEMON_VOTER"
 #define HPP_DC_ICL_VOTER			"HPP_VOTER"
 #define DD_VOTER				"DD_VOTER"
+#define AUTH_DC_ICL_VOTER			"AUTH_VOTER"
+#define CPOUT_EN_VOTER				"CPOUT_EN_VOTER"
 #define WLC_MFG_GOOGLE				0x72
 #define P9221_DC_ICL_BPP_UA			700000
 #define P9221_DC_ICL_BPP_RAMP_DEFAULT_UA	900000
@@ -34,6 +37,8 @@
 #define P9221_DC_ICL_EPP_UA			1100000
 #define P9221_DC_ICL_HPP_UA			500000
 #define P9221_DC_ICL_RTX_UA			600000
+#define P9221_AUTH_DC_ICL_UA_500		500000
+#define P9221_AUTH_DC_ICL_UA_100		100000
 #define P9221_EPP_THRESHOLD_UV			7000000
 #define P9221_MAX_VOUT_SET_MV_DEFAULT		9000
 #define P9221_VOUT_SET_MIN_MV			3500
@@ -69,7 +74,8 @@
 #define P9XXX_NEG_POWER_10W		(10 / 0.5)
 #define P9XXX_NEG_POWER_11W		(11 / 0.5)
 #define P9382_RTX_TIMEOUT_MS		(2 * 1000)
-
+#define WLCDC_DEBOUNCE_TIME_S		400
+#define WLCDC_AUTH_CHECK_MS		(5 * 1000)
 /*
  * P9221 common registers
  */
@@ -531,6 +537,11 @@ struct p9221_charger_feature {
 	bool session_valid;
 };
 
+struct p9221_charger_cc_data_lock {
+	bool cc_use;
+	ktime_t cc_rcv_at;
+};
+
 struct p9221_charger_platform_data {
 	int				irq_gpio;
 	int				irq_int;
@@ -632,10 +643,12 @@ struct p9221_charger_data {
 	struct delayed_work		txid_work;
 	struct delayed_work		rtx_work;
 	struct delayed_work		power_mitigation_work;
+	struct delayed_work		auth_dc_icl_work;
 	struct work_struct		uevent_work;
 	struct work_struct		rtx_disable_work;
 	struct work_struct		rtx_reset_work;
 	struct alarm			icl_ramp_alarm;
+	struct alarm			auth_dc_icl_alarm;
 	struct timer_list		vrect_timer;
 	struct timer_list		align_timer;
 	struct bin_attribute		bin;
@@ -643,6 +656,7 @@ struct p9221_charger_data {
 	struct logbuffer		*rtx_log;
 	struct dentry			*debug_entry;
 	struct p9221_charger_feature	chg_features;
+	struct p9221_charger_cc_data_lock	cc_data_lock;
 	u16				chip_id;
 	int				online;
 	bool				enabled;
@@ -714,8 +728,16 @@ struct p9221_charger_data {
 	bool				trigger_power_mitigation;
 	bool				wait_for_online;
 	struct mutex			rtx_lock;
+	bool				rtx_wakelock;
 	ktime_t				online_at;
 	bool				p9412_gpio_ctl;
+	bool				auth_delay;
+	struct mutex			auth_lock;
+	int 				ll_bpp_cep;
+	int				last_disable;
+	ktime_t				irq_at;
+	int				renego_state;
+	struct mutex			renego_lock;
 
 #if IS_ENABLED(CONFIG_GPIOLIB)
 	struct gpio_chip gpio;
@@ -776,7 +798,7 @@ struct p9221_charger_data {
 
 	int (*chip_tx_mode_en)(struct p9221_charger_data *chgr, bool en);
 	int (*chip_renegotiate_pwr)(struct p9221_charger_data *chrg);
-	bool (*chip_prop_mode_en)(struct p9221_charger_data *chgr, int req_pwr);
+	int (*chip_prop_mode_en)(struct p9221_charger_data *chgr, int req_pwr);
 	void (*chip_check_neg_power)(struct p9221_charger_data *chgr);
 	int (*chip_send_txid)(struct p9221_charger_data *chgr);
 	int (*chip_send_csp_in_txmode)(struct p9221_charger_data *chgr, u8 stat);
@@ -787,6 +809,7 @@ u8 p9221_crc8(u8 *pdata, size_t nbytes, u8 crc);
 bool p9221_is_epp(struct p9221_charger_data *charger);
 bool p9xxx_is_capdiv_en(struct p9221_charger_data *charger);
 int p9221_wlc_disable(struct p9221_charger_data *charger, int disable, u8 reason);
+int p9221_set_auth_dc_icl(struct p9221_charger_data *charger, bool enable);
 
 void p9xxx_gpio_init(struct p9221_charger_data *charger);
 extern int p9221_chip_init_funcs(struct p9221_charger_data *charger,
@@ -811,6 +834,12 @@ enum p9382_rtx_err {
 	RTX_HARD_OCP,
 };
 
+enum p9xxx_renego_state {
+	P9XXX_AVAILABLE = 0,
+	P9XXX_SEND_DATA,
+	P9XXX_ENABLE_PROPMODE,
+};
+
 #define P9221_MA_TO_UA(ma)((ma) * 1000)
 #define P9221_UA_TO_MA(ua) ((ua) / 1000)
 #define P9221_MV_TO_UV(mv) ((mv) * 1000)
@@ -822,6 +851,8 @@ enum p9382_rtx_err {
 #define P9221_MILLIC_TO_DECIC(mc) ((mc) / 100)
 #define P9412_MW_TO_HW(mw) (((mw) * 2) / 1000) /* mw -> 0.5 W units */
 #define P9412_HW_TO_MW(hw) (((hw) / 2) * 1000) /* 0.5 W units -> mw */
+#define get_boot_sec() div_u64(ktime_to_ns(ktime_get_boottime()), NSEC_PER_SEC)
+#define get_boot_msec() div_u64(ktime_to_ns(ktime_get_boottime()), NSEC_PER_MSEC)
 
 #define p9xxx_chip_get_tx_id(chgr, id) (chgr->reg_tx_id_addr < 0 ? \
       -ENOTSUPP : chgr->reg_read_n(chgr, chgr->reg_tx_id_addr, id, sizeof(*id)))
@@ -835,4 +866,6 @@ enum p9382_rtx_err {
       -ENOTSUPP : chgr->reg_write_n(chgr, chgr->reg_set_fod_addr, data, len))
 #define p9xxx_chip_get_fod_reg(chgr, data, len) (chgr->reg_set_fod_addr == 0 ? \
       -ENOTSUPP : chgr->reg_read_n(chgr, chgr->reg_set_fod_addr, data, len))
+
+
 #endif /* __P9221_CHARGER_H__ */
