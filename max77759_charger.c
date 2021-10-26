@@ -82,6 +82,7 @@ struct max77759_chgr_data {
 	bool charge_done;
 	bool chgin_input_suspend;
 	bool wcin_input_suspend;
+	bool thm2_sts;
 
 	int irq_gpio;
 
@@ -3611,7 +3612,8 @@ static int uvilo_read_stats(struct ocpsmpl_stats *dst, struct max77759_chgr_data
 static u8 max77759_int_mask[MAX77759_CHG_INT_COUNT] = {
 	~(MAX77759_CHG_INT_MASK_CHGIN_M |
 	  MAX77759_CHG_INT_MASK_WCIN_M |
-	  MAX77759_CHG_INT_MASK_BAT_M),
+	  MAX77759_CHG_INT_MASK_BAT_M |
+	  MAX77759_CHG_INT_MASK_THM2_M_MASK),
 	(u8)~(MAX77759_CHG_INT2_MASK_INSEL_M |
 	  MAX77759_CHG_INT2_MASK_SYS_UVLO1_M |
 	  MAX77759_CHG_INT2_MASK_SYS_UVLO2_M |
@@ -3640,7 +3642,7 @@ static irqreturn_t max77759_chgr_irq(int irq, void *client)
 	if (ret < 0)
 		return IRQ_NONE;
 
-	pr_debug("INT : %02x %02x\n", chg_int[0], chg_int[1]);
+	pr_info("INT : %02x %02x\n", chg_int[0], chg_int[1]);
 
 	/* always broadcast battery events */
 	broadcast = chg_int[0] & MAX77759_CHG_INT_MASK_BAT_M;
@@ -3739,6 +3741,32 @@ static irqreturn_t max77759_chgr_irq(int irq, void *client)
 
 		if (data->wcin_psy)
 			power_supply_changed(data->wcin_psy);
+	}
+
+	/* THM2 is changed */
+	if (chg_int[0] & MAX77759_CHG_INT_MASK_THM2_M_MASK) {
+		uint8_t int_ok;
+		bool thm2_sts;
+
+		ret = max77759_reg_read(data->regmap, MAX77759_CHG_INT_OK, &int_ok);
+		if (ret == 0) {
+			thm2_sts = (_chg_int_ok_thm2_ok_get(int_ok))? false : true;
+
+			if (thm2_sts != data->thm2_sts) {
+				pr_info("%s: THM2 %d->%d\n", __func__, data->thm2_sts, thm2_sts);
+				if (!thm2_sts) {
+					pr_info("%s: THM2 run recover...\n", __func__);
+					ret = regmap_write_bits(data->regmap, MAX77759_CHG_CNFG_13,
+							MAX77759_CHG_CNFG_13_THM2_HW_CTRL, 0);
+					if (ret == 0)
+						ret = regmap_write_bits(data->regmap,
+								MAX77759_CHG_CNFG_13,
+								MAX77759_CHG_CNFG_13_THM2_HW_CTRL,
+								MAX77759_CHG_CNFG_13_THM2_HW_CTRL);
+				}
+				data->thm2_sts = thm2_sts;
+			}
+		}
 	}
 
 	/* someting is changed */
@@ -4047,8 +4075,14 @@ static int max77759_charger_probe(struct i2c_client *client,
 				MAX77759_CHG_CNFG_01_FCHGTIME_MASK,
 				MAX77759_CHG_CNFG_01_FCHGTIME_CLEAR);
 
-	/* b/193355117 disable THM2 monitoring */
-	if (!of_property_read_bool(dev->of_node, "max77759,usb-mon")) {
+	if (of_property_read_bool(dev->of_node, "google,max77759-thm2-monitor")) {
+		/* enable THM2 monitor at 60 degreeC */
+		max77759_chg_reg_update(data->uc_data.client, MAX77759_CHG_CNFG_13,
+				MAX77759_CHG_CNFG_13_THM2_HW_CTRL |
+				MAX77759_CHG_CNFG_13_USB_TEMP_MASK,
+				0xA);
+	} else if (!of_property_read_bool(dev->of_node, "max77759,usb-mon")) {
+		/* b/193355117 disable THM2 monitoring */
 		max77759_chg_reg_update(data->uc_data.client, MAX77759_CHG_CNFG_13,
 					MAX77759_CHG_CNFG_13_THM2_HW_CTRL |
 					MAX77759_CHG_CNFG_13_USB_TEMP_MASK,
