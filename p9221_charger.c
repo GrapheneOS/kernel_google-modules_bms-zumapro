@@ -2270,11 +2270,21 @@ static int p9221_set_property(struct power_supply *psy,
 
 	/* route to p9412 if for wlc_dc */
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
+		if (!charger->wlc_dc_enabled) {
+			dev_dbg(&charger->client->dev,
+				"Not WLC-DC, not allow to set dc current\n");
+			break;
+		}
 		/* uA */
 		charger->wlc_dc_current_now = val->intval;
 		ret = charger->chip_set_rx_ilim(charger, P9221_UA_TO_MA(charger->wlc_dc_current_now));
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
+		if (!charger->wlc_dc_enabled) {
+			dev_dbg(&charger->client->dev,
+				"Not WLC-DC, not allow to set Vout\n");
+			break;
+		}
 		/* uV */
 		charger->wlc_dc_voltage_now = val->intval;
 		ret = charger->chip_set_vout_max(charger, P9221_UV_TO_MV(charger->wlc_dc_voltage_now));
