@@ -19,6 +19,7 @@
 #include <linux/gpio.h>
 #include <linux/crc8.h>
 #include "pmic-voter.h" /* TODO(b/163679860): use gvotables */
+#include "gbms_power_supply.h"
 
 #define P9221_WLC_VOTER				"WLC_VOTER"
 #define P9221_USER_VOTER			"WLC_USER_VOTER"
@@ -71,6 +72,7 @@
 
 #define P9XXX_DC_ICL_EPP_1000		1000000
 #define P9XXX_DC_ICL_EPP_750		750000
+#define P9XXX_DC_ICL_EPP_100		100000
 #define P9XXX_NEG_POWER_10W		(10 / 0.5)
 #define P9XXX_NEG_POWER_11W		(11 / 0.5)
 #define P9382_RTX_TIMEOUT_MS		(2 * 1000)

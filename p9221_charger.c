@@ -21,7 +21,6 @@
 #include <linux/delay.h>
 #include <linux/alarmtimer.h>
 #include <misc/logbuffer.h>
-#include "gbms_power_supply.h"
 #include "p9221_charger.h"
 #include "p9221-dt-bindings.h"
 #include "google_dc_pps.h"
