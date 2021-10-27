@@ -1417,7 +1417,7 @@ static int max77759_to_usecase(struct max77759_usecase_data *uc_data, int use_ca
  * It could use cb_data->charge_done to turn off charging.
  * TODO: change chgr_on=>2 to (cc_max && chgr_ena)
  */
-static bool cb_data_is_chgr_on(struct max77759_foreach_cb_data *cb_data)
+static bool cb_data_is_chgr_on(const struct max77759_foreach_cb_data *cb_data)
 {
 	return cb_data->stby_on ? 0 : (cb_data->chgr_on >= 2);
 }
@@ -1758,7 +1758,7 @@ static void max77759_dump_usecasase_config(struct max77759_usecase_data *uc_data
  * that it needs to be.
  */
 static int max77759_set_insel(struct max77759_usecase_data *uc_data,
-			      struct max77759_foreach_cb_data *cb_data,
+			      const struct max77759_foreach_cb_data *cb_data,
 			      int from_uc, int use_case)
 {
 	const u8 insel_mask = MAX77759_CHG_CNFG_12_CHGINSEL_MASK |
@@ -1823,7 +1823,7 @@ static int max77759_set_insel(struct max77759_usecase_data *uc_data,
 
 /* switch to a use case, handle the transitions */
 static int max77759_set_usecase(struct max77759_chgr_data *data,
-				struct max77759_foreach_cb_data *cb_data,
+				const struct max77759_foreach_cb_data *cb_data,
 				int use_case)
 {
 	struct max77759_usecase_data *uc_data = &data->uc_data;
