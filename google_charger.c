@@ -920,29 +920,33 @@ static void chg_work_adapter_details(union gbms_ce_adapter_details *ad,
 		(void)info_usb_state(ad, chg_drv->usb_psy, chg_drv->tcpm_psy);
 }
 
+static bool chg_work_check_wlc_state(struct power_supply *wlc_psy)
+{
+	int wlc_online, wlc_present;
+
+	if (!wlc_psy)
+		return false;
+
+	wlc_online = GPSY_GET_PROP(wlc_psy, POWER_SUPPLY_PROP_ONLINE);
+	wlc_present = GPSY_GET_PROP(wlc_psy, POWER_SUPPLY_PROP_PRESENT);
+
+	return wlc_online == 1 || wlc_present == 1;
+}
+
 /* not executed when battery is NOT present */
 static int chg_work_roundtrip(struct chg_drv *chg_drv,
 			      union gbms_charger_state *chg_state)
 {
 	struct power_supply *chg_psy = chg_drv->chg_psy;
 	struct power_supply *wlc_psy = chg_drv->wlc_psy;
+	union gbms_charger_state batt_chg_state;
 	int fv_uv = -1, cc_max = -1;
 	int update_interval, rc;
-	int wlc_online = 0;
+	bool wlc_on = 0;
 
 	rc = gbms_read_charger_state(chg_state, chg_psy);
 	if (rc < 0)
 		return rc;
-
-	if (wlc_psy)
-		wlc_online = GPSY_GET_PROP(wlc_psy, POWER_SUPPLY_PROP_ONLINE);
-	/* DREAM-DEFEND disconnect for a short time. keep NOT_CHARGING */
-	if (wlc_online &&
-	    chg_state->f.chg_status == POWER_SUPPLY_STATUS_DISCHARGING) {
-		chg_state->f.chg_status = POWER_SUPPLY_STATUS_NOT_CHARGING;
-		chg_state->f.flags = gbms_gen_chg_flags(chg_state->f.chg_status,
-							chg_state->f.chg_type);
-	}
 
 	/* NOIRDROP is default for remote sensing */
 	if (chg_drv->chg_mode == CHG_DRV_MODE_NOIRDROP)
@@ -951,8 +955,30 @@ static int chg_work_roundtrip(struct chg_drv *chg_drv,
 	if (chg_is_custom_enabled(chg_drv))
 		chg_state->f.flags |= GBMS_CS_FLAG_CCLVL;
 
+	/*
+	 * The trigger of DREAM-DEFEND might look like a short disconnect.
+	 * NOTE: This logic needs to be moved out of google_charger and fixed
+	 * when we take care of b/202216343. google_charger should not be made
+	 * aware of DD or other device-dependent low level tricks.
+	 */
+	batt_chg_state.v = chg_state->v;
+
+	/*
+	 * Sending _NOT_CHARGING down to the battery (with buck_en=0) while on
+	 * WLC will keep dream defend stats in the same charging session.
+	 */
+	wlc_on = chg_work_check_wlc_state(wlc_psy);
+	if (wlc_on && batt_chg_state.f.chg_status == POWER_SUPPLY_STATUS_DISCHARGING) {
+		batt_chg_state.f.chg_status = POWER_SUPPLY_STATUS_NOT_CHARGING;
+		batt_chg_state.f.flags = gbms_gen_chg_flags(chg_state->f.chg_status,
+							    chg_state->f.chg_type);
+	}
+
+	pr_debug("%s: wlc_on=%d chg_state=%llx batt_chg_state=%llx\n", __func__,
+		 wlc_on, chg_state->v, batt_chg_state.v);
+
 	/* might return negative values in fv_uv and cc_max */
-	rc = chg_work_batt_roundtrip(chg_state, chg_drv->bat_psy,
+	rc = chg_work_batt_roundtrip(&batt_chg_state, chg_drv->bat_psy,
 				     &fv_uv, &cc_max);
 	if (rc < 0)
 		return rc;
