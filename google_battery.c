@@ -2932,6 +2932,13 @@ static void batt_prlog_din(union gbms_charger_state *chg_state, int log_level)
 		   chg_state->f.icl);
 }
 
+static bool chg_state_is_disconnected(union gbms_charger_state *chg_state)
+{
+	return ((chg_state->f.flags & GBMS_CS_FLAG_BUCK_EN) == 0) &&
+	       (chg_state->f.chg_status == POWER_SUPPLY_STATUS_DISCHARGING ||
+	       chg_state->f.chg_status == POWER_SUPPLY_STATUS_UNKNOWN);
+}
+
 /* called holding chg_lock */
 static int batt_chg_logic(struct batt_drv *batt_drv)
 {
@@ -2950,7 +2957,7 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 	batt_prlog_din(chg_state, BATT_PRLOG_ALWAYS);
 
 	/* disconnect! */
-	if ((batt_drv->chg_state.f.flags & GBMS_CS_FLAG_BUCK_EN) == 0) {
+	if (chg_state_is_disconnected(chg_state)) {
 		const qnum_t ssoc_delta = ssoc_get_delta(batt_drv);
 
 		if (batt_drv->ssoc_state.buck_enabled == 0)
