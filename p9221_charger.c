@@ -729,7 +729,7 @@ static int feature_update_session(struct p9221_charger_data *charger, u64 ft)
 
 	/* warn when a feature doesn't have a rule and align session_features */
 	if (session_features != ft)
-		logbuffer_log(charger->log, "session features %llx->%llx [%llx]\n",
+		logbuffer_log(charger->log, "session features %llx->%llx [%llx]",
 			      session_features, ft, chg_fts->session_features);
 	chg_fts->session_features = ft;
 
@@ -752,7 +752,6 @@ static void p9221_set_offline(struct p9221_charger_data *charger)
 	}
 
 	dev_info(&charger->client->dev, "Set offline\n");
-	logbuffer_log(charger->log, "offline\n");
 
 	mutex_lock(&charger->stats_lock);
 	charger->online = false;
@@ -798,6 +797,7 @@ static void p9221_set_offline(struct p9221_charger_data *charger)
 		mod_delayed_work(system_wq, &charger->dcin_pon_work,
 				 msecs_to_jiffies(P9221_DCIN_PON_DELAY_MS));
 
+	logbuffer_log(charger->log, "offline\n");
 }
 
 static void p9221_tx_work(struct work_struct *work)
@@ -819,10 +819,10 @@ static void p9221_vrect_timer_handler(struct timer_list *t)
 							t, vrect_timer);
 
 	if (charger->align == WLC_ALIGN_CHECKING) {
-		schedule_work(&charger->uevent_work);
 		charger->align = WLC_ALIGN_MOVE;
 		logbuffer_log(charger->log, "align: state: %s",
 			      align_status_str[charger->align]);
+		schedule_work(&charger->uevent_work);
 	}
 	dev_info(&charger->client->dev,
 		 "timeout waiting for VRECT, online=%d\n", charger->online);
@@ -840,9 +840,9 @@ static void p9221_align_timer_handler(struct timer_list *t)
 	struct p9221_charger_data *charger = from_timer(charger,
 							t, align_timer);
 
-	schedule_work(&charger->uevent_work);
 	charger->align = WLC_ALIGN_ERROR;
 	logbuffer_log(charger->log, "align: timeout no IRQ");
+	schedule_work(&charger->uevent_work);
 }
 
 #ifdef CONFIG_DC_RESET
@@ -1042,12 +1042,12 @@ static void p9xxx_align_check(struct p9221_charger_data *charger)
 		charger->alignment = 100;
 
 	if (charger->alignment != charger->alignment_last) {
-		schedule_work(&charger->uevent_work);
 		logbuffer_log(charger->log,
 			      "align: alignment=%i. op_freq=%u. current_avg=%u",
 			      charger->alignment, wlc_freq,
 			      charger->current_filtered);
 		charger->alignment_last = charger->alignment;
+		schedule_work(&charger->uevent_work);
 	}
 }
 
@@ -1100,12 +1100,12 @@ static void p9221_align_check(struct p9221_charger_data *charger,
 
 	if ((charger->alignment < charger->alignment_last) ||
 	    (wlc_adj_freq >= wlc_freq_threshold)) {
-		schedule_work(&charger->uevent_work);
 		logbuffer_log(charger->log,
 			      "align: alignment=%i. op_freq=%u. current_avg=%u",
 			      charger->alignment, wlc_freq,
 			      charger->current_filtered);
 		charger->alignment_last = charger->alignment;
+		schedule_work(&charger->uevent_work);
 	}
 }
 
