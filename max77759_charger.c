@@ -3698,7 +3698,7 @@ static irqreturn_t max77759_chgr_irq(int irq, void *client)
 	if (ret < 0)
 		return IRQ_NONE;
 
-	pr_info("INT : %02x %02x\n", chg_int[0], chg_int[1]);
+	pr_debug("INT : %02x %02x\n", chg_int[0], chg_int[1]);
 
 	/* always broadcast battery events */
 	broadcast = chg_int[0] & MAX77759_CHG_INT_MASK_BAT_M;
