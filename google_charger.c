@@ -2567,6 +2567,31 @@ static ssize_t bd_clear_store(struct device *dev,
 
 static DEVICE_ATTR_WO(bd_clear);
 
+static ssize_t
+bd_state_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct chg_drv *chg_drv = dev_get_drvdata(dev);
+	struct bd_data *bd_state = &chg_drv->bd_state;
+	long long temp_avg;
+	ssize_t len;
+
+	mutex_lock(&chg_drv->bd_lock);
+
+	temp_avg = bd_state->temp_sum / bd_state->time_sum;
+	len = scnprintf(buf, PAGE_SIZE,
+		       "t_sum=%lld, time_sum=%lld t_avg=%lld lst_v=%d lst_t=%d lst_u=%lld, dt=%lld, t=%d e=%d\n",
+		       bd_state->temp_sum, bd_state->time_sum, temp_avg,
+		       bd_state->last_voltage, bd_state->last_temp,
+		       bd_state->last_update, bd_state->disconnect_time,
+		       bd_state->triggered, bd_state->enabled);
+
+	mutex_unlock(&chg_drv->bd_lock);
+
+	return len;
+}
+
+static DEVICE_ATTR_RO(bd_state);
+
 /* TODO: now created in qcom code, create in chg_create_votables() */
 static int chg_find_votables(struct chg_drv *chg_drv)
 {
@@ -2992,6 +3017,13 @@ static int chg_init_fs(struct chg_drv *chg_drv)
 	ret = device_create_file(chg_drv->device, &dev_attr_bd_clear);
 	if (ret != 0) {
 		pr_err("Failed to create bd_clear files, ret=%d\n",
+		       ret);
+		return ret;
+	}
+
+	ret = device_create_file(chg_drv->device, &dev_attr_bd_state);
+	if (ret != 0) {
+		pr_err("Failed to create bd_state files, ret=%d\n",
 		       ret);
 		return ret;
 	}
