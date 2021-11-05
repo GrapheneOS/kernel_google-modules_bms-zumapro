@@ -32,8 +32,11 @@
 #define DUAL_FG_WORK_PERIOD_MS	10000
 #define DUAL_BATT_TEMP_VOTER	"daul_batt_temp"
 
-#define DUAL_BATT_VFLIP_OFFSET		50000
-#define DUAL_BATT_VFLIP_OFFSET_IDX	0
+#define DUAL_BATT_BALANCE_VOTER	"dual_batt_balance"
+#define DUAL_BATT_BALANCE_CC_ADJUST_STEP	100000  /* 100mA */
+
+#define DUAL_BATT_VSEC_OFFSET		50000
+#define DUAL_BATT_VSEC_OFFSET_IDX	0
 
 struct dual_fg_drv {
 	struct device *device;
@@ -52,20 +55,27 @@ struct dual_fg_drv {
 	struct gvotable_election *fcc_votable;
 
 	struct gbms_chg_profile chg_profile;
+	struct gbms_chg_profile base_profile;
+	struct gbms_chg_profile sec_profile;
 
 	struct notifier_block fg_nb;
 
 	u32 battery_capacity;
+	u32 base_capacity;
+	u32 sec_capacity;
 	int cc_max;
+	int cc_balance_offset;
+	int cc_balance_ratio;
 
 	int base_charge_full;
-	int flip_charge_full;
+	int sec_charge_full;
 
 	bool init_complete;
 	bool resume_complete;
 	bool cable_in;
 
-	u32 vflip_offset;
+	u32 vsec_offset;
+	u32 vsec_offset_max_idx;
 };
 
 static int gdbatt_resume_check(struct dual_fg_drv *dual_fg_drv) {
@@ -134,15 +144,66 @@ static int gdbatt_select_voltage_idx(struct gbms_chg_profile *profile, int vbatt
 	return vbatt_idx;
 }
 
+static void gdbatt_check_current(struct dual_fg_drv *dual_fg_drv, int temp_idx, int vbat_idx)
+{
+	int ibase, isec, cc_base, cc_sec, cc_offset, next_cc_max, cc_lowerbd;
+	int next_vbat_idx = vbat_idx + 1;
+	struct gbms_chg_profile *profile = &dual_fg_drv->chg_profile;
+	struct gbms_chg_profile *base_profile = &dual_fg_drv->base_profile;
+	struct gbms_chg_profile *sec_profile = &dual_fg_drv->sec_profile;
+
+	if (!dual_fg_drv->cable_in) {
+		dual_fg_drv->cc_balance_offset = 0;
+		gvotable_cast_int_vote(dual_fg_drv->fcc_votable, DUAL_BATT_BALANCE_VOTER,
+				       0, false);
+		return;
+	}
+
+	/* check for the last tier */
+	if (next_vbat_idx >= profile->volt_nb_limits)
+		next_vbat_idx = vbat_idx;
+
+	next_cc_max = GBMS_CCCM_LIMITS(profile, temp_idx, next_vbat_idx);
+	if (next_cc_max >= dual_fg_drv->cc_max)
+		cc_lowerbd = (next_cc_max * dual_fg_drv->cc_balance_ratio) / 100;
+	else
+		cc_lowerbd = next_cc_max;
+
+	cc_base = GBMS_CCCM_LIMITS(base_profile, temp_idx, vbat_idx);
+	cc_sec= GBMS_CCCM_LIMITS(sec_profile, temp_idx, vbat_idx);
+
+	ibase = GPSY_GET_PROP(dual_fg_drv->first_fg_psy, POWER_SUPPLY_PROP_CURRENT_AVG) * -1;
+	isec = GPSY_GET_PROP(dual_fg_drv->second_fg_psy, POWER_SUPPLY_PROP_CURRENT_AVG) * -1;
+
+	if ((ibase > cc_base) || (isec > cc_sec)) {
+		const int cc_offset_max = dual_fg_drv->cc_max - cc_lowerbd;
+
+		cc_offset = dual_fg_drv->cc_balance_offset + DUAL_BATT_BALANCE_CC_ADJUST_STEP;
+		if (cc_offset > cc_offset_max)
+			cc_offset = cc_offset_max;
+
+		gvotable_cast_int_vote(dual_fg_drv->fcc_votable, DUAL_BATT_BALANCE_VOTER,
+				       dual_fg_drv->cc_max - cc_offset, true);
+
+		pr_info("%s: battery OC base:%d/%d sec:%d/%d cc_offset:%d->%d cc_max:%d (%d/%d)\n",
+			__func__, ibase, cc_base, isec, cc_sec,
+			dual_fg_drv->cc_balance_offset, cc_offset,
+			dual_fg_drv->cc_max - cc_offset, next_cc_max, cc_lowerbd);
+		dual_fg_drv->cc_balance_offset = cc_offset;
+		power_supply_changed(dual_fg_drv->psy);
+	}
+}
+
 static void gdbatt_select_cc_max(struct dual_fg_drv *dual_fg_drv)
 {
 	struct gbms_chg_profile *profile = &dual_fg_drv->chg_profile;
-	int base_temp, flip_temp, base_vbatt, flip_vbatt;
-	int base_temp_idx, flip_temp_idx, base_vbatt_idx, flip_vbatt_idx;
-	int base_cc_max, flip_cc_max, cc_max;
+	int base_temp, sec_temp, base_vbatt, sec_vbatt;
+	int base_temp_idx, sec_temp_idx, base_vbatt_idx, sec_vbatt_idx, temp_idx, vbatt_idx;
+	int base_cc_max, sec_cc_max, cc_max;
 	struct power_supply *base_psy = dual_fg_drv->first_fg_psy;
-	struct power_supply *flip_psy = dual_fg_drv->second_fg_psy;
+	struct power_supply *sec_psy = dual_fg_drv->second_fg_psy;
 	int ret = 0;
+	bool check_current = false;
 
 	if (!dual_fg_drv->cable_in)
 		goto check_done;
@@ -151,7 +212,7 @@ static void gdbatt_select_cc_max(struct dual_fg_drv *dual_fg_drv)
 	if (ret < 0)
 		goto check_done;
 
-	ret = gdbatt_get_temp(flip_psy, &flip_temp);
+	ret = gdbatt_get_temp(sec_psy, &sec_temp);
 	if (ret < 0)
 		goto check_done;
 
@@ -159,35 +220,50 @@ static void gdbatt_select_cc_max(struct dual_fg_drv *dual_fg_drv)
 	if (base_vbatt < 0)
 		goto check_done;
 
-	flip_vbatt = GPSY_GET_PROP(flip_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
-	if (flip_vbatt < 0)
+	sec_vbatt = GPSY_GET_PROP(sec_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
+	if (sec_vbatt < 0)
 		goto check_done;
 
 	base_temp_idx = gdbatt_select_temp_idx(profile, base_temp);
-	flip_temp_idx = gdbatt_select_temp_idx(profile, flip_temp);
+	sec_temp_idx = gdbatt_select_temp_idx(profile, sec_temp);
 
 	base_vbatt_idx = gdbatt_select_voltage_idx(profile, base_vbatt);
-	flip_vbatt_idx = gdbatt_select_voltage_idx(profile,
-					  flip_vbatt - dual_fg_drv->vflip_offset);
+	sec_vbatt_idx = gdbatt_select_voltage_idx(profile,
+					  sec_vbatt - dual_fg_drv->vsec_offset);
 
 	/* only apply offset in allowed idx */
-	if (flip_vbatt_idx > DUAL_BATT_VFLIP_OFFSET_IDX)
-		flip_vbatt_idx = gdbatt_select_voltage_idx(profile, flip_vbatt);
+	if (sec_vbatt_idx > dual_fg_drv->vsec_offset_max_idx)
+		sec_vbatt_idx = gdbatt_select_voltage_idx(profile, sec_vbatt);
 
 	base_cc_max = GBMS_CCCM_LIMITS(profile, base_temp_idx, base_vbatt_idx);
-	flip_cc_max = GBMS_CCCM_LIMITS(profile, flip_temp_idx, flip_vbatt_idx);
-	cc_max = (base_cc_max <= flip_cc_max) ? base_cc_max : flip_cc_max;
-	if (cc_max == dual_fg_drv->cc_max)
+	sec_cc_max = GBMS_CCCM_LIMITS(profile, sec_temp_idx, sec_vbatt_idx);
+	if (base_cc_max <= sec_cc_max) {
+		cc_max = base_cc_max;
+		temp_idx = base_temp_idx;
+		vbatt_idx = base_vbatt_idx;
+	} else {
+		cc_max = sec_cc_max;
+		temp_idx = sec_temp_idx;
+		vbatt_idx = sec_vbatt_idx;
+	}
+	if (cc_max == dual_fg_drv->cc_max) {
+		check_current = true;
 		goto check_done;
+	}
 
 	if (!dual_fg_drv->fcc_votable)
 		dual_fg_drv->fcc_votable =
 			gvotable_election_get_handle(VOTABLE_MSC_FCC);
 	if (dual_fg_drv->fcc_votable) {
+		/* reset balance offset */
+		dual_fg_drv->cc_balance_offset = 0;
+		gvotable_cast_int_vote(dual_fg_drv->fcc_votable, DUAL_BATT_BALANCE_VOTER, 0, false);
+
+		/* set new cc_max by temp */
 		pr_info("temp:%d/%d(%d/%d), vbatt:%d/%d(%d/%d), cc_max:%d/%d(%d)\n",
-			base_temp, flip_temp, base_temp_idx, flip_temp_idx, base_vbatt,
-			flip_vbatt, base_vbatt_idx, flip_vbatt_idx, base_cc_max,
-			flip_cc_max, cc_max);
+			base_temp, sec_temp, base_temp_idx, sec_temp_idx, base_vbatt,
+			sec_vbatt, base_vbatt_idx, sec_vbatt_idx, base_cc_max,
+			sec_cc_max, cc_max);
 		gvotable_cast_int_vote(dual_fg_drv->fcc_votable,
 				       DUAL_BATT_TEMP_VOTER, cc_max, true);
 		dual_fg_drv->cc_max = cc_max;
@@ -195,19 +271,21 @@ static void gdbatt_select_cc_max(struct dual_fg_drv *dual_fg_drv)
 	}
 
 check_done:
+	if (check_current || !dual_fg_drv->cable_in)
+		gdbatt_check_current(dual_fg_drv, temp_idx, vbatt_idx);
 	pr_debug("check done. cable_in=%d (%d)\n", dual_fg_drv->cable_in, ret);
 }
 
-static int gdbatt_get_capacity(struct dual_fg_drv *dual_fg_drv, int base_soc, int flip_soc)
+static int gdbatt_get_capacity(struct dual_fg_drv *dual_fg_drv, int base_soc, int sec_soc)
 {
 	const int base_full = dual_fg_drv->base_charge_full / 1000;
-	const int flip_full = dual_fg_drv->flip_charge_full / 1000;
-	const int full_sum = base_full + flip_full;
+	const int sec_full = dual_fg_drv->sec_charge_full / 1000;
+	const int full_sum = base_full + sec_full;
 
-	if (!base_full || !flip_full)
-		return (base_soc + flip_soc) / 2;
+	if (!base_full || !sec_full)
+		return (base_soc + sec_soc) / 2;
 
-	return (base_soc * base_full + flip_soc * flip_full) / full_sum;
+	return (base_soc * base_full + sec_soc * sec_full) / full_sum;
 }
 
 static void google_dual_batt_work(struct work_struct *work)
@@ -215,27 +293,27 @@ static void google_dual_batt_work(struct work_struct *work)
 	struct dual_fg_drv *dual_fg_drv = container_of(work, struct dual_fg_drv,
 						 gdbatt_work.work);
 	struct power_supply *base_psy = dual_fg_drv->first_fg_psy;
-	struct power_supply *flip_psy = dual_fg_drv->second_fg_psy;
-	int base_data, flip_data;
+	struct power_supply *sec_psy = dual_fg_drv->second_fg_psy;
+	int base_data, sec_data;
 
 	mutex_lock(&dual_fg_drv->fg_lock);
 
 	if (!dual_fg_drv->init_complete)
 		goto error_done;
 
-	if (!base_psy || !flip_psy)
+	if (!base_psy || !sec_psy)
 		goto error_done;
 
 	gdbatt_select_cc_max(dual_fg_drv);
 
 	base_data = GPSY_GET_PROP(base_psy, POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN);
-	flip_data = GPSY_GET_PROP(flip_psy, POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN);
+	sec_data = GPSY_GET_PROP(sec_psy, POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN);
 
-	if (base_data <= 0 || flip_data <= 0)
+	if (base_data <= 0 || sec_data <= 0)
 		goto error_done;
 
 	dual_fg_drv->base_charge_full = base_data;
-	dual_fg_drv->flip_charge_full = flip_data;
+	dual_fg_drv->sec_charge_full = sec_data;
 
 error_done:
 	mod_delayed_work(system_wq, &dual_fg_drv->gdbatt_work,
@@ -388,6 +466,7 @@ static int gdbatt_set_property(struct power_supply *psy,
 				pr_err("Cannot set the second BATT_CE_CTRL, ret=%d\n", ret);
 		}
 		dual_fg_drv->cable_in = !!val->intval;
+		mod_delayed_work(system_wq, &dual_fg_drv->gdbatt_work, 0);
 		break;
 	case GBMS_PROP_HEALTH_ACT_IMPEDANCE:
 		/* TODO: discuss with BattEng to decide save data */
@@ -434,9 +513,51 @@ static struct power_supply_desc gdbatt_psy_desc = {
 
 /* ------------------------------------------------------------------------ */
 
+static int gdbatt_init_pack_chg_profile(struct gbms_chg_profile *pack_profile,
+					struct device_node *node,
+					const struct gbms_chg_profile *profile,
+					u32 capacity_ma)
+{
+	const u32 table_size = (profile->temp_nb_limits - 1) * profile->volt_nb_limits;
+	u32 ccm;
+	int vi, ti, ret;
+
+	/* copy profile to pack_profile */
+	memcpy(pack_profile, profile, sizeof(*pack_profile));
+
+	/* update C rates into pack_profile->cccm_limits */
+	pack_profile->cccm_limits = kzalloc(sizeof(s32) * table_size, GFP_KERNEL);
+	if (!pack_profile->cccm_limits)
+		return -ENOMEM;
+
+	ret = of_property_read_u32_array(node, "google,chg-pack-cc-limits",
+					 pack_profile->cccm_limits,
+					 table_size);
+	if (ret < 0) {
+		pr_err("cannot read chg-pack-cc-limits table, ret=%d\n", ret);
+		kfree(pack_profile->cccm_limits);
+		pack_profile->cccm_limits = NULL;
+		return -EINVAL;
+	}
+
+	/* chg-battery-capacity is in mAh, chg-cc-limits relative to 100 */
+	for (ti = 0; ti < pack_profile->temp_nb_limits - 1; ti++) {
+		for (vi = 0; vi < pack_profile->volt_nb_limits; vi++) {
+			ccm = GBMS_CCCM_LIMITS(pack_profile, ti, vi);
+			ccm *= capacity_ma * 10;
+
+			GBMS_CCCM_LIMITS_SET(pack_profile, ti, vi) = ccm;
+		}
+	}
+
+	return ret;
+}
+
+
 static int gdbatt_init_chg_profile(struct dual_fg_drv *dual_fg_drv)
 {
 	struct device_node *node = of_find_node_by_name(NULL, "google,battery");
+	struct device_node *dual_fg_node = dual_fg_drv->device->of_node;
 	struct gbms_chg_profile *profile = &dual_fg_drv->chg_profile;
 	int ret = 0;
 
@@ -452,7 +573,25 @@ static int gdbatt_init_chg_profile(struct dual_fg_drv *dual_fg_drv)
 	if (ret < 0)
 		pr_warn("battery not present, no default capacity, zero charge table\n");
 
+	ret = of_property_read_u32(dual_fg_node, "google,chg-base-battery-capacity",
+				   &dual_fg_drv->base_capacity);
+	if (ret < 0)
+		pr_warn("base battery not present, no default capacity, zero charge table\n");
+
+	ret = of_property_read_u32(dual_fg_node, "google,chg-sec-battery-capacity",
+				   &dual_fg_drv->sec_capacity);
+	if (ret < 0)
+		pr_warn("secondary battery not present, no default capacity, zero charge table\n");
+
 	gbms_init_chg_table(profile, node, dual_fg_drv->battery_capacity);
+	ret = gdbatt_init_pack_chg_profile(&dual_fg_drv->base_profile, dual_fg_node, profile,
+					   dual_fg_drv->base_capacity);
+	if (ret < 0)
+		return ret;
+	ret = gdbatt_init_pack_chg_profile(&dual_fg_drv->sec_profile, dual_fg_node, profile,
+					   dual_fg_drv->sec_capacity);
+	if (ret < 0)
+		return ret;
 
 	return ret;
 }
@@ -597,11 +736,11 @@ static int google_dual_batt_gauge_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
-	ret = of_property_read_u32(pdev->dev.of_node, "google,vflip-offset",
-				   &dual_fg_drv->vflip_offset);
+	ret = of_property_read_u32(pdev->dev.of_node, "google,vsec-offset",
+				   &dual_fg_drv->vsec_offset);
 	if (ret < 0) {
-		pr_debug("Couldn't set vflip_offset (%d)\n", ret);
-		dual_fg_drv->vflip_offset = DUAL_BATT_VFLIP_OFFSET;
+		pr_debug("Couldn't set vsec_offset (%d)\n", ret);
+		dual_fg_drv->vsec_offset = DUAL_BATT_VSEC_OFFSET;
 	}
 
 	INIT_DELAYED_WORK(&dual_fg_drv->init_work, google_dual_batt_gauge_init_work);
@@ -627,6 +766,16 @@ static int google_dual_batt_gauge_probe(struct platform_device *pdev)
 			"Couldn't register as power supply, ret=%d\n", ret);
 	}
 
+	ret = of_property_read_u32(pdev->dev.of_node, "google,cc-balance-ratio",
+				   &dual_fg_drv->cc_balance_ratio);
+	if (ret < 0)
+		dual_fg_drv->cc_balance_ratio = 100;
+
+	ret = of_property_read_u32(pdev->dev.of_node, "google,vfloat-offset-max-idx",
+				   &dual_fg_drv->vsec_offset_max_idx);
+	if (ret < 0)
+		dual_fg_drv->vsec_offset_max_idx = DUAL_BATT_VSEC_OFFSET_IDX;
+
 	schedule_delayed_work(&dual_fg_drv->init_work,
 					msecs_to_jiffies(DUAL_FG_DELAY_INIT_MS));
 
@@ -640,6 +789,8 @@ static int google_dual_batt_gauge_remove(struct platform_device *pdev)
 	struct dual_fg_drv *dual_fg_drv = platform_get_drvdata(pdev);
 
 	gbms_free_chg_profile(&dual_fg_drv->chg_profile);
+	kfree(dual_fg_drv->base_profile.cccm_limits);
+	kfree(dual_fg_drv->sec_profile.cccm_limits);
 
 	return 0;
 }
