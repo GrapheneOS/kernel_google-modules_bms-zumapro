@@ -67,9 +67,7 @@ max77729-pmic-objs += max77759_maxq.o
 obj-$(CONFIG_UIC_MAX77729)	+= max77729_uic.o
 obj-$(CONFIG_CHARGER_MAX77729)	+= max77729_charger.o
 # Muirwoods drivers for the single SSID (max77729_pmic is shared)
-obj-$(CONFIG_CHARGER_MAX77759)	+= max77759-charger.o
-max77759-charger-objs += max77759_charger.o
-max77759-charger-objs += gs101_usecase.o
+obj-$(CONFIG_CHARGER_MAX77759)	+= max77759_charger.o
 
 # Wireless charging
 obj-$(CONFIG_CHARGER_P9221)	+= p9221.o
@@ -124,7 +122,6 @@ CFLAGS_google_bms.o += -Wno-enum-conversion
 CFLAGS_google_cpm.o += $(WENUMS)
 CFLAGS_google_dual_batt_gauge.o += $(WENUMS)
 CFLAGS_google_dock.o += $(WENUMS)
-CFLAGS_gs101_usecase.o += $(WENUMS)
 
 KERNEL_SRC ?= /lib/modules/$(shell uname -r)/build
 M ?= $(shell pwd)
