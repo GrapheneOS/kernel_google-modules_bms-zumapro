@@ -32,6 +32,9 @@
 #define DUAL_FG_WORK_PERIOD_MS	10000
 #define DUAL_BATT_TEMP_VOTER	"daul_batt_temp"
 
+#define DUAL_BATT_VFLIP_OFFSET		50000
+#define DUAL_BATT_VFLIP_OFFSET_IDX	0
+
 struct dual_fg_drv {
 	struct device *device;
 	struct power_supply *psy;
@@ -58,6 +61,8 @@ struct dual_fg_drv {
 
 	bool init_complete;
 	bool cable_in;
+
+	u32 vflip_offset;
 };
 
 static enum power_supply_property gdbatt_fg_props[] = {
@@ -148,7 +153,12 @@ static void gdbatt_select_cc_max(struct dual_fg_drv *dual_fg_drv)
 	flip_temp_idx = gdbatt_select_temp_idx(profile, flip_temp);
 
 	base_vbatt_idx = gdbatt_select_voltage_idx(profile, base_vbatt);
-	flip_vbatt_idx = gdbatt_select_voltage_idx(profile, flip_vbatt);
+	flip_vbatt_idx = gdbatt_select_voltage_idx(profile,
+					  flip_vbatt - dual_fg_drv->vflip_offset);
+
+	/* only apply offset in allowed idx */
+	if (flip_vbatt_idx > DUAL_BATT_VFLIP_OFFSET_IDX)
+		flip_vbatt_idx = gdbatt_select_voltage_idx(profile, flip_vbatt);
 
 	base_cc_max = GBMS_CCCM_LIMITS(profile, base_temp_idx, base_vbatt_idx);
 	flip_cc_max = GBMS_CCCM_LIMITS(profile, flip_temp_idx, flip_vbatt_idx);
@@ -513,6 +523,13 @@ static int google_dual_batt_gauge_probe(struct platform_device *pdev)
 	if (!dual_fg_drv->first_fg_psy_name && !dual_fg_drv->second_fg_psy_name) {
 		pr_err("no dual gauge setting\n");
 		return -EINVAL;
+	}
+
+	ret = of_property_read_u32(pdev->dev.of_node, "google,vflip-offset",
+				   &dual_fg_drv->vflip_offset);
+	if (ret < 0) {
+		pr_debug("Couldn't set vflip_offset (%d)\n", ret);
+		dual_fg_drv->vflip_offset = DUAL_BATT_VFLIP_OFFSET;
 	}
 
 	INIT_DELAYED_WORK(&dual_fg_drv->init_work, google_dual_batt_gauge_init_work);

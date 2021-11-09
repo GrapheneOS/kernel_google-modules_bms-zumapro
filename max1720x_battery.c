@@ -889,28 +889,40 @@ static ssize_t max1720x_model_show_state(struct device *dev,
  * force is true when changing the model via debug props.
  * NOTE: call holding model_lock
  */
-static void max1720x_model_reload(struct max1720x_chip *chip, bool force)
+static int max1720x_model_reload(struct max1720x_chip *chip, bool force)
 {
 	const bool disabled = chip->model_reload == MAX_M5_LOAD_MODEL_DISABLED;
 	const bool pending = chip->model_reload != MAX_M5_LOAD_MODEL_IDLE;
+	int version_now, version_load;
+
+	if (chip->gauge_type != MAX_M5_GAUGE_TYPE)
+		return -EINVAL;
 
 	pr_debug("model_reload=%d force=%d pending=%d disabled=%d\n",
 		 chip->model_reload, force, pending, disabled);
 
 	if (!force && (pending || disabled))
-		return;
+		return -EEXIST;
+
+	version_now = max_m5_model_read_version(chip->model_data);
+	version_load = max_m5_fg_model_version(chip->model_data);
+
+	if (!force && version_now == version_load)
+		return -EEXIST;
 
 	/* REQUEST -> IDLE or set to the number of retries */
 	dev_info(chip->dev, "Schedule Load FG Model, ID=%d, ver:%d->%d cap_lsb:%d->%d\n",
 			chip->batt_id,
-			max_m5_model_read_version(chip->model_data),
-			max_m5_fg_model_version(chip->model_data),
+			version_now,
+			version_load,
 			max_m5_model_get_cap_lsb(chip->model_data),
 			max_m5_cap_lsb(chip->model_data));
 
 	chip->model_reload = MAX_M5_LOAD_MODEL_REQUEST;
 	chip->model_ok = false;
 	mod_delayed_work(system_wq, &chip->model_work, 0);
+
+	return 0;
 }
 
 static ssize_t max1720x_model_set_state(struct device *dev,
@@ -1362,8 +1374,11 @@ static void max1720x_restore_battery_cycle(struct max1720x_chip *chip)
 	eeprom_cycle = (chip->eeprom_cycle & 0x7FFF) << 1;
 	dev_info(chip->dev, "reg_cycle:%d, eeprom_cycle:%d, update:%c",
 		 reg_cycle, eeprom_cycle, eeprom_cycle > reg_cycle ? 'Y' : 'N');
-	if (eeprom_cycle > reg_cycle)
-		REGMAP_WRITE(&chip->regmap, MAX1720X_CYCLES, eeprom_cycle);
+	if (eeprom_cycle > reg_cycle) {
+		ret = REGMAP_WRITE_VERIFY(&chip->regmap, MAX1720X_CYCLES, eeprom_cycle);
+		if (ret < 0)
+			dev_warn(chip->dev, "fail to update cycles (%d)", ret);
+	}
 }
 
 static u16 max1720x_save_battery_cycle(const struct max1720x_chip *chip,
@@ -1373,6 +1388,9 @@ static u16 max1720x_save_battery_cycle(const struct max1720x_chip *chip,
 	u16 eeprom_cycle = chip->eeprom_cycle;
 
 	if (chip->gauge_type != MAX_M5_GAUGE_TYPE)
+		return eeprom_cycle;
+
+	if (chip->por)
 		return eeprom_cycle;
 
 	/* save half value to record over 655 cycles case */
@@ -2435,10 +2453,10 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 
 		/* trigger model load */
 		mutex_lock(&chip->model_lock);
-		if (chip->gauge_type == MAX_M5_GAUGE_TYPE)
-			max1720x_model_reload(chip, false);
-		else
+		err = max1720x_model_reload(chip, false);
+		if (err < 0)
 			fg_status_clr &= ~MAX1720X_STATUS_POR;
+
 		mutex_unlock(&chip->model_lock);
 	}
 
@@ -3362,17 +3380,23 @@ static ssize_t max1720x_show_reg_all(struct file *filp, char __user *buf,
 					size_t count, loff_t *ppos)
 {
 	struct max1720x_chip *chip = (struct max1720x_chip *)filp->private_data;
+	const struct max17x0x_regmap *map = &chip->regmap;
 	u32 reg_address;
-	u16 data;
+	unsigned int data;
 	char *tmp;
 	int ret = 0, len = 0;
+
+	if (!map->regmap) {
+		pr_err("Failed to read, no regmap\n");
+		return -EIO;
+	}
 
 	tmp = kmalloc(PAGE_SIZE, GFP_KERNEL);
 	if (!tmp)
 		return -ENOMEM;
 
 	for (reg_address = 0; reg_address <= 0xFF; reg_address++) {
-		ret = REGMAP_READ(&chip->regmap, reg_address, &data);
+		ret = regmap_read(map->regmap, reg_address, &data);
 		if (ret < 0)
 			continue;
 

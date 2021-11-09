@@ -96,7 +96,7 @@ struct model_state_save {
 	u16 qresidual10;
 	u16 qresidual20;
 	u16 qresidual30;
-	u16 mixcap;
+	u16 cv_mixcap;
 	u16 halftime;
 	u8 crc;
 } __attribute__((packed));
@@ -109,7 +109,7 @@ struct max_m5_data {
 	/* initial parameters are in device tree they are also learned */
 	struct max_m5_custom_parameters parameters;
 	u16 cycles;
-	u16 mixcap;
+	u16 cv_mixcap;
 	u16 halftime;
 
 	int custom_model_size;

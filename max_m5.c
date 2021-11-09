@@ -631,7 +631,7 @@ static u8 max_m5_data_crc(char *reason, struct model_state_save *state)
 		state->fullcaprep, state->fullcapnom,
 		state->qresidual00, state->qresidual10,
 		state->qresidual20, state->qresidual30,
-		state->cycles, state->mixcap,
+		state->cycles, state->cv_mixcap,
 		state->halftime, state->crc, crc);
 
 	return crc;
@@ -676,7 +676,7 @@ int max_m5_load_state_data(struct max_m5_data *m5_data)
 	cp->qresidual30 = m5_data->model_save.qresidual30;
 
 	m5_data->cycles = m5_data->model_save.cycles;
-	m5_data->mixcap = m5_data->model_save.mixcap;
+	m5_data->cv_mixcap = m5_data->model_save.cv_mixcap;
 	m5_data->halftime = m5_data->model_save.halftime;
 
 	return 0;
@@ -699,7 +699,7 @@ int max_m5_save_state_data(struct max_m5_data *m5_data)
 	m5_data->model_save.qresidual30 = cp->qresidual30;
 
 	m5_data->model_save.cycles = m5_data->cycles;
-	m5_data->model_save.mixcap = m5_data->mixcap;
+	m5_data->model_save.cv_mixcap = m5_data->cv_mixcap;
 	m5_data->model_save.halftime = m5_data->halftime;
 
 	m5_data->model_save.crc = max_m5_data_crc("save",
@@ -730,7 +730,7 @@ int max_m5_save_state_data(struct max_m5_data *m5_data)
 	    rb.qresidual20 != m5_data->model_save.qresidual20 ||
 	    rb.qresidual30 != m5_data->model_save.qresidual30 ||
 	    rb.cycles != m5_data->model_save.cycles ||
-	    rb.mixcap != m5_data->model_save.mixcap ||
+	    rb.cv_mixcap != m5_data->model_save.cv_mixcap ||
 	    rb.halftime != m5_data->model_save.halftime ||
 	    rb.crc != m5_data->model_save.crc)
 		return -EINVAL;
@@ -794,7 +794,8 @@ int max_m5_model_read_state(struct max_m5_data *m5_data)
 		rc = REGMAP_READ(regmap, MAX_M5_QRTABLE30,
 				 &m5_data->parameters.qresidual30);
 	if (rc == 0)
-		rc = REGMAP_READ(regmap, MAX_M5_MIXCAP, &m5_data->mixcap);
+		rc = REGMAP_READ(regmap, MAX_M5_CV_MIXCAP,
+				 &m5_data->cv_mixcap);
 	if (rc == 0)
 		rc = REGMAP_READ(regmap, MAX_M5_CV_HALFTIME,
 				 &m5_data->halftime);
@@ -825,8 +826,8 @@ ssize_t max_m5_model_state_cstr(char *buf, int max,
 			 m5_data->parameters.qresidual20);
 	len += scnprintf(&buf[len], max - len,"%02x:%02x\n", MAX_M5_QRTABLE30,
 			 m5_data->parameters.qresidual30);
-	len += scnprintf(&buf[len], max - len,"%02x:%02x\n", MAX_M5_MIXCAP,
-			 m5_data->mixcap);
+	len += scnprintf(&buf[len], max - len,"%02x:%02x\n", MAX_M5_CV_MIXCAP,
+			 m5_data->cv_mixcap);
 	len += scnprintf(&buf[len], max - len,"%02x:%02x\n", MAX_M5_CV_HALFTIME,
 			 m5_data->halftime);
 
@@ -847,13 +848,13 @@ ssize_t max_m5_gmsr_state_cstr(char *buf, int max)
 			"fullcaprep :%04X\ncycles     :%04X\n"
 			"fullcapnom :%04X\nqresidual00:%04X\n"
 			"qresidual10:%04X\nqresidual20:%04X\n"
-			"qresidual30:%04X\nmixcap     :%04X\n"
+			"qresidual30:%04X\ncv_mixcap  :%04X\n"
 			"halftime   :%04X\n",
 			saved_data.rcomp0, saved_data.tempco,
 			saved_data.fullcaprep, saved_data.cycles,
 			saved_data.fullcapnom, saved_data.qresidual00,
 			saved_data.qresidual10, saved_data.qresidual20,
-			saved_data.qresidual30, saved_data.mixcap,
+			saved_data.qresidual30, saved_data.cv_mixcap,
 			saved_data.halftime);
 
 	return len;
@@ -967,8 +968,8 @@ int max_m5_model_state_sscan(struct max_m5_data *m5_data, const char *buf,
 		case MAX_M5_QRTABLE30:
 			m5_data->parameters.qresidual30 = val;
 			break;
-		case MAX_M5_MIXCAP:
-			m5_data->mixcap = val;
+		case MAX_M5_CV_MIXCAP:
+			m5_data->cv_mixcap = val;
 			break;
 		case MAX_M5_CV_HALFTIME:
 			m5_data->halftime = val;
