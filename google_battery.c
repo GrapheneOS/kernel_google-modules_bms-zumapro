@@ -208,6 +208,14 @@ struct batt_res {
 	int res_temp_high;
 };
 
+/* battery pack status */
+struct batt_bpst {
+	struct mutex lock;
+	bool bpst_enable;
+	/* single battery disconnect status */
+	int bpst_sbd_status;
+};
+
 enum batt_paired_state {
 	BATT_PAIRING_WRITE_ERROR = -4,
 	BATT_PAIRING_READ_ERROR = -3,
@@ -440,6 +448,9 @@ struct batt_drv {
 
 	/* battery power metrics */
 	struct power_metrics power_metrics;
+
+	/* battery pack status */
+	struct batt_bpst bpst_state;
 };
 
 static int gbatt_get_temp(const struct batt_drv *batt_drv, int *temp);
@@ -3451,6 +3462,35 @@ static void google_battery_dump_profile(const struct gbms_chg_profile *profile)
 	}
 }
 
+/* cell fault: disconnect of one of the battery cells */
+static bool batt_cell_fault_detect(struct batt_bpst *bpst_state)
+{
+	int bpst_sbd_status;
+
+	/*
+	 * fake bpst_sbd_status by "echo 1 > /d/bpst/bpst_sbd_status"
+	 * TODO: will implement the code from the algo in b/203019566
+	 */
+	bpst_sbd_status = bpst_state->bpst_sbd_status;
+
+	/* report detection result*/
+	bpst_state->bpst_sbd_status = 0;
+
+	return !!bpst_sbd_status;
+}
+
+static int batt_init_bpst_profile(struct batt_drv *batt_drv)
+{
+	struct batt_bpst *bpst_state = &batt_drv->bpst_state;
+	struct device_node *node = batt_drv->device->of_node;
+
+	bpst_state->bpst_enable = of_property_read_bool(node, "google,bpst-enable");
+	if (!bpst_state->bpst_enable)
+		return -EINVAL;
+
+	return 0;
+}
+
 /* called holding chg_lock */
 static int batt_chg_logic(struct batt_drv *batt_drv)
 {
@@ -3475,6 +3515,16 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 	/* disconnect! */
 	if (chg_state_is_disconnected(chg_state)) {
 		const qnum_t ssoc_delta = ssoc_get_delta(batt_drv);
+
+		/* update bpst */
+		mutex_lock(&batt_drv->bpst_state.lock);
+		if (batt_drv->bpst_state.bpst_enable) {
+			bool cell_fault_detect = batt_cell_fault_detect(&batt_drv->bpst_state);
+
+			if (cell_fault_detect)
+				pr_info("MSC_BPST: cell_fault_detect in disconnected\n");
+		}
+		mutex_unlock(&batt_drv->bpst_state.lock);
 
 		if (batt_drv->ssoc_state.buck_enabled == 0)
 			goto msc_logic_exit;
@@ -4303,6 +4353,32 @@ static ssize_t debug_get_power_metrics(struct file *filp, char __user *buf,
 }
 
 BATTERY_DEBUG_ATTRIBUTE(debug_power_metrics_fops, debug_get_power_metrics, NULL);
+
+static int debug_bpst_sbd_status_read(void *data, u64 *val)
+{
+	struct batt_drv *batt_drv = (struct batt_drv *)data;
+
+	*val = batt_drv->bpst_state.bpst_sbd_status;
+	return 0;
+}
+
+static int debug_bpst_sbd_status_write(void *data, u64 val)
+{
+	struct batt_drv *batt_drv = (struct batt_drv *)data;
+
+	if (val < 0 || val > 1)
+		return -EINVAL;
+
+	mutex_lock(&batt_drv->bpst_state.lock);
+	batt_drv->bpst_state.bpst_sbd_status = val;
+	mutex_unlock(&batt_drv->bpst_state.lock);
+
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(debug_bpst_sbd_status_fops,
+			debug_bpst_sbd_status_read,
+			debug_bpst_sbd_status_write, "%llu\n");
 #endif
 
 /* ------------------------------------------------------------------------- */
@@ -5926,6 +6002,22 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	return 0;
 }
 
+/* bpst detection */
+static int batt_bpst_init_fs(struct batt_drv *batt_drv)
+{
+	if (batt_drv->bpst_state.bpst_enable) {
+		struct dentry *de = NULL;
+
+		de = debugfs_create_dir("bpst", 0);
+		if (IS_ERR_OR_NULL(de))
+			return 0;
+
+		debugfs_create_file("bpst_sbd_status", 0600, de, batt_drv,
+				    &debug_bpst_sbd_status_fops);
+	}
+	return 0;
+}
+
 /* ------------------------------------------------------------------------- */
 
 /* could also use battery temperature, age */
@@ -7115,6 +7207,7 @@ static void google_battery_init_work(struct work_struct *work)
 	mutex_init(&batt_drv->batt_lock);
 	mutex_init(&batt_drv->stats_lock);
 	mutex_init(&batt_drv->cc_data.lock);
+	mutex_init(&batt_drv->bpst_state.lock);
 
 	if (!batt_drv->fg_psy) {
 
@@ -7187,6 +7280,11 @@ static void google_battery_init_work(struct work_struct *work)
 		pr_err("Unable to read swelling data, ret=%d\n", ret);
 		batt_drv->sd.is_enable = false;
 	}
+
+	/* init bpst setting */
+	ret = batt_init_bpst_profile(batt_drv);
+	if (ret < 0)
+		pr_err("bpst profile disabled, ret=%d\n", ret);
 
 	/* cycle count is cached: read here bc SSOC, chg_profile might use it */
 	batt_update_cycle_count(batt_drv);
@@ -7357,6 +7455,9 @@ static void google_battery_init_work(struct work_struct *work)
 
 	/* debugfs */
 	(void)batt_init_fs(batt_drv);
+
+	/* bpst */
+	(void)batt_bpst_init_fs(batt_drv);
 
 	/* power metrics */
 	schedule_delayed_work(&batt_drv->power_metrics.work,
