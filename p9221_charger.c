@@ -5046,6 +5046,10 @@ static void p9221_irq_handler(struct p9221_charger_data *charger, u16 irq_src)
 	if (irq_src & charger->ints.cc_send_busy_bit) {
 		charger->tx_busy = false;
 		charger->tx_done = true;
+		if (charger->cc_reset_pending) {
+			charger->cc_reset_pending = false;
+			wake_up_all(&charger->ccreset_wq);
+		}
 		cancel_delayed_work(&charger->tx_work);
 		sysfs_notify(&charger->dev->kobj, NULL, "txbusy");
 		sysfs_notify(&charger->dev->kobj, NULL, "txdone");
@@ -5132,7 +5136,6 @@ static irqreturn_t p9221_irq_thread(int irq, void *irq_data)
 			}
 		}
 	}
-
 	p9221_irq_handler(charger, irq_src);
 
 out:
@@ -5807,6 +5810,8 @@ static int p9221_charger_probe(struct i2c_client *client,
 		   p9221_icl_ramp_alarm_cb);
 	alarm_init(&charger->auth_dc_icl_alarm, ALARM_BOOTTIME,
 		   p9221_auth_dc_icl_alarm_cb);
+
+	init_waitqueue_head(&charger->ccreset_wq);
 
 	/* setup function pointers for platform */
 	/* first from *_charger.c -> *_chip.c */

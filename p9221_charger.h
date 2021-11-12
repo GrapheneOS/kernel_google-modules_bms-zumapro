@@ -729,6 +729,8 @@ struct p9221_charger_data {
 	int 				ll_bpp_cep;
 	int				last_disable;
 	bool				send_eop;
+	wait_queue_head_t		ccreset_wq;
+	bool				cc_reset_pending;
 
 #if IS_ENABLED(CONFIG_GPIOLIB)
 	struct gpio_chip gpio;
