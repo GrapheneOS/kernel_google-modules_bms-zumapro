@@ -3835,6 +3835,24 @@ static ssize_t mitigate_threshold_store(struct device *dev,
 
 static DEVICE_ATTR_RW(mitigate_threshold);
 
+/*
+ * b/205193265 AP needs to wait for Cal-mode1 and mode2 to clear (calibration
+ * to be complete) before attempting both authentication and re-negotiation.
+ * The HAL API calls for authentication can check this node.
+ */
+static ssize_t wpc_ready_show(struct device *dev,
+			    struct device_attribute *attr,
+			    char *buf)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct p9221_charger_data *charger = i2c_get_clientdata(client);
+
+	return scnprintf(buf, PAGE_SIZE, "%c\n",
+			 p9412_is_calibration_done(charger) ? 'Y' : 'N');
+}
+
+static DEVICE_ATTR_RO(wpc_ready);
+
 /* ------------------------------------------------------------------------ */
 static ssize_t rx_lvl_show(struct device *dev,
 			   struct device_attribute *attr,
@@ -4469,6 +4487,7 @@ static struct attribute *p9221_attributes[] = {
 	&dev_attr_authtype.attr,
 	&dev_attr_features.attr,
 	&dev_attr_mitigate_threshold.attr,
+	&dev_attr_wpc_ready.attr,
 	NULL
 };
 
