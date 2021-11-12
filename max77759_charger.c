@@ -3333,7 +3333,7 @@ static int bat_oilo_set(void *d, u64 val)
 	struct max77759_chgr_data *data = d;
 	int ret;
 
-	if (val > 0xf)
+	if (val > 0xff)
 		return -EINVAL;
 
 	ret = max77759_reg_write(data->regmap, MAX77759_CHG_CNFG_14, (u8) val);
@@ -3698,7 +3698,7 @@ static irqreturn_t max77759_chgr_irq(int irq, void *client)
 	if (ret < 0)
 		return IRQ_NONE;
 
-	pr_info("INT : %02x %02x\n", chg_int[0], chg_int[1]);
+	pr_debug("INT : %02x %02x\n", chg_int[0], chg_int[1]);
 
 	/* always broadcast battery events */
 	broadcast = chg_int[0] & MAX77759_CHG_INT_MASK_BAT_M;

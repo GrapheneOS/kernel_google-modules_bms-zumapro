@@ -260,6 +260,7 @@ struct batt_drv {
 	int soh;
 	int fake_capacity;
 	int batt_health;
+	int report_health;
 	bool dead_battery;
 	int capacity_level;
 	bool chg_done;
@@ -5520,6 +5521,14 @@ static int gbatt_get_property(struct power_supply *psy,
 			if (rc < 0)
 				val->intval = POWER_SUPPLY_HEALTH_UNKNOWN;
 			batt_drv->soh = val->intval;
+		}
+		if (batt_drv->report_health != val->intval) {
+			/* Log health change for debug */
+			logbuffer_log(batt_drv->ttf_stats.ttf_log,
+				      "h:%d->%d batt_health:%d dry_run:%d soh:%d\n",
+				      batt_drv->report_health, val->intval, batt_drv->batt_health,
+				      gbms_temp_defend_dry_run(false, false), batt_drv->soh);
+			batt_drv->report_health = val->intval;
 		}
 		break;
 
