@@ -59,6 +59,8 @@
 
 #define HISTORY_DEVICENAME "maxfg_history"
 
+#define FILTERCFG_TEMP_HYSTERESIS	30
+
 #include "max1720x.h"
 #include "max1730x.h"
 #include "max_m5.h"
@@ -205,6 +207,7 @@ struct max1720x_chip {
 	s16 *temp_convgcfg;
 	u16 *convgcfg_values;
 	struct mutex convgcfg_lock;
+	struct max1720x_dyn_filtercfg dyn_filtercfg;
 	bool shadow_override;
 	int nb_empty_voltage;
 	u16 *empty_voltage;
@@ -1318,6 +1321,41 @@ static void max1720x_handle_update_nconvgcfg(struct max1720x_chip *chip,
 	mutex_unlock(&chip->convgcfg_lock);
 }
 
+static void max1720x_handle_update_filtercfg(struct max1720x_chip *chip,
+					     int temp)
+{
+	struct max1720x_dyn_filtercfg *filtercfg = &chip->dyn_filtercfg;
+	s16 hysteresis_temp;
+	u16 filtercfg_val;
+
+	if (filtercfg->temp == -1)
+		return;
+
+	mutex_lock(&filtercfg->lock);
+	if (temp <= filtercfg->temp)
+		filtercfg_val = filtercfg->adjust_val;
+	else
+		filtercfg_val = filtercfg->default_val;
+
+	hysteresis_temp = filtercfg->temp + filtercfg->hysteresis;
+	if ((filtercfg_val != filtercfg->curr_val) &&
+	    (filtercfg->curr_val == 0 || temp < filtercfg->temp ||
+	     temp >= hysteresis_temp)) {
+		struct max17x0x_regmap *regmap;
+
+		if (chip->gauge_type == MAX_M5_GAUGE_TYPE)
+			regmap = &chip->regmap;
+		else
+			regmap = &chip->regmap_nvram;
+
+		REGMAP_WRITE(regmap, MAX1720X_FILTERCFG, filtercfg_val);
+		dev_info(chip->dev, "updating filtercfg to 0x%04x as temp is %d\n",
+			 filtercfg_val, temp);
+		filtercfg->curr_val = filtercfg_val;
+	}
+	mutex_unlock(&filtercfg->lock);
+}
+
 #define EEPROM_CC_OVERFLOW_BIT	BIT(15)
 #define MAXIM_CYCLE_COUNT_RESET 655
 static void max1720x_restore_battery_cycle(struct max1720x_chip *chip)
@@ -1975,6 +2013,7 @@ static int max1720x_get_property(struct power_supply *psy,
 
 		val->intval = reg_to_deci_deg_cel(data);
 		max1720x_handle_update_nconvgcfg(chip, val->intval);
+		max1720x_handle_update_filtercfg(chip, val->intval);
 		max1720x_handle_update_empty_voltage(chip, val->intval);
 		break;
 	case POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG:
@@ -3014,6 +3053,45 @@ error:
 		chip->temp_convgcfg = NULL;
 	}
 
+	return ret;
+}
+
+static int max1720x_handle_dt_filtercfg(struct max1720x_chip *chip)
+{
+	struct device_node *node = chip->dev->of_node;
+	struct max1720x_dyn_filtercfg *filtercfg = &chip->dyn_filtercfg;
+	int ret = 0;
+
+	mutex_init(&filtercfg->lock);
+
+	ret = of_property_read_s32(node, "maxim,filtercfg-temp",
+				   &filtercfg->temp);
+	if (ret)
+		goto not_enable;
+
+	ret = of_property_read_s32(node, "maxim,filtercfg-temp-hysteresis",
+				   &filtercfg->hysteresis);
+	if (ret)
+		filtercfg->hysteresis = FILTERCFG_TEMP_HYSTERESIS;
+
+	ret = of_property_read_u16(node, "maxim,filtercfg-default",
+				   &filtercfg->default_val);
+	if (ret)
+		goto not_enable;
+
+	ret = of_property_read_u16(node, "maxim,filtercfg-adjust",
+				   &filtercfg->adjust_val);
+	if (ret)
+		goto not_enable;
+
+	dev_info(chip->dev, "%s filtercfg: temp:%d(hys:%d), default:%#X adjust:%#X\n",
+		 node->name, filtercfg->temp, filtercfg->hysteresis,
+		 filtercfg->default_val, filtercfg->adjust_val);
+
+	return ret;
+
+not_enable:
+	filtercfg->temp = -1;
 	return ret;
 }
 
@@ -4182,6 +4260,7 @@ static int max1720x_init_chip(struct max1720x_chip *chip)
 		return ret;
 
 	(void) max1720x_handle_dt_nconvgcfg(chip);
+	(void) max1720x_handle_dt_filtercfg(chip);
 
 	/* recall, force & reset SW */
 	if (chip->needs_reset) {
