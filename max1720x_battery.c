@@ -1399,14 +1399,8 @@ static void max1720x_restore_battery_cycle(struct max1720x_chip *chip)
 		return;
 	}
 
-	if (chip->eeprom_cycle & EEPROM_CC_OVERFLOW_BIT) {
-		/* TODO: Remove after EEPROM porting finished */
-		chip->eeprom_cycle = chip->eeprom_cycle & 0x7FFF;
-		ret = gbms_storage_write(GBMS_TAG_CNHS,
-					 &chip->eeprom_cycle,
-					 sizeof(chip->eeprom_cycle));
-		/* TODO: chip->cycle_count_offset = MAXIM_CYCLE_COUNT_RESET; */
-	}
+	if (chip->eeprom_cycle & EEPROM_CC_OVERFLOW_BIT)
+		chip->cycle_count_offset = MAXIM_CYCLE_COUNT_RESET;
 
 	eeprom_cycle = (chip->eeprom_cycle & 0x7FFF) << 1;
 	dev_info(chip->dev, "reg_cycle:%d, eeprom_cycle:%d, update:%c",
