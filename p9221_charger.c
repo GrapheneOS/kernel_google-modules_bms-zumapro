@@ -639,7 +639,9 @@ static int feature_set_dc_icl(struct p9221_charger_data *charger, u32 ilim_ua)
 		charger->icl_ramp_alt_ua = 0;
 	}
 
+	p9221_set_auth_dc_icl(charger, false);
 	p9221_icl_ramp_reset(charger);
+
 	dev_info(&charger->client->dev, "ICL ramp set alarm %dms, %dua, ramp=%d\n",
 		 charger->pdata->icl_ramp_delay_ms, charger->icl_ramp_alt_ua,
 		 charger->icl_ramp);
@@ -754,7 +756,7 @@ static int feature_update_session(struct p9221_charger_data *charger, u64 ft)
 
 	/* warn when a feature doesn't have a rule and align session_features */
 	if (session_features != ft)
-		logbuffer_log(charger->log, "session features %llx->%llx [%llx]\n",
+		logbuffer_log(charger->log, "session features %llx->%llx [%llx]",
 			      session_features, ft, chg_fts->session_features);
 	chg_fts->session_features = ft;
 
@@ -777,7 +779,6 @@ static void p9221_set_offline(struct p9221_charger_data *charger)
 	}
 
 	dev_info(&charger->client->dev, "Set offline\n");
-	logbuffer_log(charger->log, "offline\n");
 
 	mutex_lock(&charger->stats_lock);
 	charger->online = false;
@@ -824,6 +825,7 @@ static void p9221_set_offline(struct p9221_charger_data *charger)
 		mod_delayed_work(system_wq, &charger->dcin_pon_work,
 				 msecs_to_jiffies(P9221_DCIN_PON_DELAY_MS));
 
+	logbuffer_log(charger->log, "offline\n");
 }
 
 static void p9221_tx_work(struct work_struct *work)
@@ -846,10 +848,10 @@ static void p9221_vrect_timer_handler(struct timer_list *t)
 							t, vrect_timer);
 
 	if (charger->align == WLC_ALIGN_CHECKING) {
-		schedule_work(&charger->uevent_work);
 		charger->align = WLC_ALIGN_MOVE;
 		logbuffer_log(charger->log, "align: state: %s",
 			      align_status_str[charger->align]);
+		schedule_work(&charger->uevent_work);
 	}
 	dev_info(&charger->client->dev,
 		 "timeout waiting for VRECT, online=%d\n", charger->online);
@@ -867,9 +869,9 @@ static void p9221_align_timer_handler(struct timer_list *t)
 	struct p9221_charger_data *charger = from_timer(charger,
 							t, align_timer);
 
-	schedule_work(&charger->uevent_work);
 	charger->align = WLC_ALIGN_ERROR;
 	logbuffer_log(charger->log, "align: timeout no IRQ");
+	schedule_work(&charger->uevent_work);
 }
 
 #ifdef CONFIG_DC_RESET
@@ -1069,12 +1071,12 @@ static void p9xxx_align_check(struct p9221_charger_data *charger)
 		charger->alignment = 100;
 
 	if (charger->alignment != charger->alignment_last) {
-		schedule_work(&charger->uevent_work);
 		logbuffer_log(charger->log,
 			      "align: alignment=%i. op_freq=%u. current_avg=%u",
 			      charger->alignment, wlc_freq,
 			      charger->current_filtered);
 		charger->alignment_last = charger->alignment;
+		schedule_work(&charger->uevent_work);
 	}
 }
 
@@ -1127,12 +1129,12 @@ static void p9221_align_check(struct p9221_charger_data *charger,
 
 	if ((charger->alignment < charger->alignment_last) ||
 	    (wlc_adj_freq >= wlc_freq_threshold)) {
-		schedule_work(&charger->uevent_work);
 		logbuffer_log(charger->log,
 			      "align: alignment=%i. op_freq=%u. current_avg=%u",
 			      charger->alignment, wlc_freq,
 			      charger->current_filtered);
 		charger->alignment_last = charger->alignment;
+		schedule_work(&charger->uevent_work);
 	}
 }
 
@@ -2161,7 +2163,7 @@ static void p9221_dream_defend(struct p9221_charger_data *charger)
 		ret = delayed_work_pending(&charger->power_mitigation_work);
 		if (!ret)
 			schedule_delayed_work(&charger->power_mitigation_work,
-			    msecs_to_jiffies( P9221_POWER_MITIGATE_DELAY_MS));
+			    msecs_to_jiffies(P9221_POWER_MITIGATE_DELAY_MS));
 	}
 
 }
@@ -2184,6 +2186,10 @@ static void p9221_ll_bpp_cep(struct p9221_charger_data *charger, int capacity)
 			 "power_mitigate: set ICL to %duA\n", icl_ua);
 }
 
+/*
+ * identify TXID_DD_TYPE2 checking PTCPM and ID
+ * return -EAGAIN until the id is available, 0 on non match
+ */
 static int p9221_ll_check_id(struct p9221_charger_data *charger)
 {
 	uint16_t ptmc_id = charger->mfg;
@@ -2505,34 +2511,67 @@ static enum alarmtimer_restart p9221_auth_dc_icl_alarm_cb(struct alarm *alarm,
 	return ALARMTIMER_NORESTART;
 }
 
+/*
+ * only for Qi 1.3 EPP Tx,
+ * < 0 error, 0 no support, != support
+ */
+static int p9221_check_qi1_3_auth(struct p9221_charger_data *chgr)
+{
+	u8 temp = 0;
+	int ret;
+
+	ret = p9221_reg_read_8(chgr, P9221R5_EPP_TX_CAPABILITY_FLAGS_REG, &temp);
+	pr_debug("%s: caps=%x (%d)\n", __func__, temp, ret);
+	if (ret < 0)
+		return -EIO;
+
+	return !!(temp & P9221R5_EPP_TX_CAPABILITY_FLAGS_AR);
+}
+
 static void p9221_auth_dc_icl_work(struct work_struct *work)
 {
 	struct p9221_charger_data *charger = container_of(work,
 			struct p9221_charger_data, auth_dc_icl_work.work);
-	const ktime_t now = get_boot_sec();
+	const ktime_t elap = get_boot_sec() - charger->online_at;
 	int auth_check = 0;
 
 	mutex_lock(&charger->auth_lock);
 
 	/* done already */
-	if (!charger->auth_delay)
+	if (!charger->auth_delay || !p9221_is_online(charger))
 		goto exit_done;
 
-	if (now - charger->online_at < WLCDC_DEBOUNCE_TIME_S)
+	/*
+	 * check_id for Qi 1.2.4 EPP Tx and check Qi1.3 EPP Tx until the id is
+	 * available (i.e. return different from -EGAIN)
+	 */
+	if (p9221_is_epp(charger)) {
 		auth_check = p9221_ll_check_id(charger);
+		if (auth_check == -EAGAIN)
+			auth_check = p9221_check_qi1_3_auth(charger);
+	}
 
-	pr_debug("%s: now=%lld online_at=%lld elap=%lld timeout=%d auth_check=%d\n",
-		 __func__, now, charger->online_at, now - charger->online_at,
-		 WLCDC_DEBOUNCE_TIME_S, auth_check);
+	pr_debug("%s: online_at=%lld elap=%lld timeout=%d auth_check=%d\n",
+		__func__, charger->online_at, elap, WLCDC_AUTH_CHECK_S,
+		auth_check);
 
-	if (auth_check < 0) {
-		dev_warn(&charger->client->dev, "auth_check=%d reschedule in %ds\n",
-			 auth_check, WLCDC_DEBOUNCE_TIME_S);
-		schedule_delayed_work(&charger->auth_dc_icl_work,
-					msecs_to_jiffies(WLCDC_AUTH_CHECK_MS));
-	} else if (auth_check == 0) {
+	/* b/202213483 retry for WLCDC_AUTH_CHECK_S */
+	if (auth_check <= 0 && elap < WLCDC_AUTH_CHECK_S)
+		auth_check = -EAGAIN;
+
+	/* p9221_auth_dc_icl_alarm_cb() will reschedule at timeout */
+	if (auth_check == 0) {
 		p9221_set_auth_dc_icl(charger, false);
+
+		/* TODO: use a different wakesource? */
 		pm_relax(charger->dev);
+	} else if (auth_check < 0) {
+		schedule_delayed_work(&charger->auth_dc_icl_work,
+				      msecs_to_jiffies(WLCDC_AUTH_CHECK_INTERVAL_MS));
+	} else {
+		dev_info(&charger->client->dev,
+			 "Auth limit online_at=%lld, will timeout in %llds\n",
+			 charger->online_at, WLCDC_DEBOUNCE_TIME_S - elap);
 	}
 
 exit_done:
@@ -2680,13 +2719,12 @@ static void p9221_set_online(struct p9221_charger_data *charger)
 
 		ret = p9221_set_auth_dc_icl(charger, true);
 		if (ret < 0)
-			dev_err(&charger->client->dev,
-				"cannot set Auth ICL: %d\n", ret);
+			dev_err(&charger->client->dev, "cannot set Auth ICL: %d\n", ret);
 
 		pm_stay_awake(charger->dev);
 		alarm_start_relative(&charger->auth_dc_icl_alarm, timeout);
 		schedule_delayed_work(&charger->auth_dc_icl_work,
-			msecs_to_jiffies(WLCDC_AUTH_CHECK_MS));
+				      msecs_to_jiffies(WLCDC_AUTH_CHECK_INIT_DELAY_MS));
 	}
 
 }
@@ -5219,6 +5257,7 @@ static void p9382_rtx_disable_work(struct work_struct *work)
 			"unable to disable rtx: %d\n", ret);
 }
 
+/* send out a uevent notification and log iout/vout */
 static void p9221_uevent_work(struct work_struct *work)
 {
 	struct p9221_charger_data *charger = container_of(work,
