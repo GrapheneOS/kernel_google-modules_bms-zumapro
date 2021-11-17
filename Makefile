@@ -124,13 +124,14 @@ M ?= $(shell pwd)
 
 KBUILD_OPTIONS += $(foreach m,$(GBMS_MODULES),CONFIG_$(m)=m )
 
-modules:
-	$(MAKE) -C $(KERNEL_SRC) M=$(M) W=1 $(KBUILD_OPTIONS) \
-		EXTRA_CFLAGS="-DDYNAMIC_DEBUG_MODULE $(foreach m,$(GBMS_MODULES),-DCONFIG_$(m)_MODULE)" \
-		$(@)
+EXTRA_CFLAGS += -DDYNAMIC_DEBUG_MODULE
+EXTRA_CFLAGS += $(foreach m,$(GBMS_MODULES),-DCONFIG_$(m)_MODULE)
 
-modules_install clean:
-	$(MAKE) -C $(KERNEL_SRC) M=$(M) W=1 $(KBUILD_OPTIONS) $(@)
+include $(KERNEL_SRC)/../gs/kernel/device-modules/Makefile.include
+
+modules modules_install clean:
+	$(MAKE) -C $(KERNEL_SRC) M=$(M) W=1 \
+	$(KBUILD_OPTIONS) EXTRA_CFLAGS="$(EXTRA_CFLAGS)" KBUILD_EXTRA_SYMBOLS="$(EXTRA_SYMBOLS)" $(@)
 
 print-%:
 	@echo $* = $($*)

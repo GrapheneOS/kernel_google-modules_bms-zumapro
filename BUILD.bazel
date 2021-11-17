@@ -20,6 +20,13 @@ filegroup(
 
 kernel_module(
     name = "bms.slider",
+    srcs = glob([
+        "**/*.c",
+        "**/*.h",
+        "Kbuild",
+    ]) + [
+        "//gs/kernel/device-modules:gs101_soc_headers",
+    ],
     outs = [
         "google-battery.ko",
         "google-bms.ko",
@@ -41,6 +48,9 @@ kernel_module(
         # "pca9468-google.ko",
     ],
     kernel_build = "//gs/kernel/device-modules:slider",
+    kernel_module_deps = [
+        "//gs/kernel/device-modules:gs101_soc",
+    ],
     visibility = [
         "//gs/google-modules/power/reset:__subpackages__",
         "//gs/kernel/device-modules:__pkg__",
