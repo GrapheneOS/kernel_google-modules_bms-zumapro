@@ -1002,8 +1002,10 @@ static void p9221_init_align(struct p9221_charger_data *charger)
 	charger->current_sample_cnt = 0;
 	charger->mfg_check_count = 0;
 	/* Disable misaligned message in high power mode, b/159066422 */
-	if (charger->prop_mode_en == true)
+	if (charger->prop_mode_en == true) {
+		charger->align = WLC_ALIGN_CENTERED;
 		return;
+	}
 	schedule_delayed_work(&charger->align_work,
 			      msecs_to_jiffies(P9221_ALIGN_DELAY_MS));
 }
@@ -1126,8 +1128,10 @@ static void p9221_align_work(struct work_struct *work)
 	charger->alignment = -1;
 
 	/* b/159066422 Disable misaligned message in high power mode */
-	if (!charger->online || charger->prop_mode_en == true)
+	if (!charger->online || charger->prop_mode_en == true) {
+		charger->align = WLC_ALIGN_CENTERED;
 		return;
+	}
 
 	/*
 	 *  NOTE: mfg may be zero due to race condition during boot. If the
