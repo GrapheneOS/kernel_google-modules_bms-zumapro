@@ -1227,6 +1227,7 @@ static int p9412_capdiv_en(struct p9221_charger_data *chgr, u8 mode)
 	return ((cdmode & mask) == mask) ? 0 :  -ETIMEDOUT;
 }
 
+
 static int p9221_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 {
 	return -ENOTSUPP;
