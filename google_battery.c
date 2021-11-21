@@ -2522,8 +2522,9 @@ static bool msc_logic_health(struct batt_drv *batt_drv)
 		goto done_exit;
 	}
 
-	/* Decide enter PAUSE state or not by time */
-	if (msc_health_pause(batt_drv, ttf, now, rest_state)) {
+	/* Decide enter PAUSE state or not by time if not set ACA */
+	if (aon_enabled == false &&
+	    msc_health_pause(batt_drv, ttf, now, rest_state)) {
 		rest_state = CHG_HEALTH_PAUSE;
 		goto done_exit;
 	}
@@ -4139,8 +4140,12 @@ static ssize_t batt_show_chg_deadline(struct device *dev,
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv =(struct batt_drv *)
 					power_supply_get_drvdata(psy);
+	const struct batt_chg_health *rest = &batt_drv->chg_health;
+	const bool aon_enabled = rest->always_on_soc != -1;
 	const ktime_t now = get_boot_sec();
 	long long deadline = 0;
+	ktime_t ttf = 0;
+	int ret = 0;
 
 	mutex_lock(&batt_drv->chg_lock);
 
@@ -4155,6 +4160,16 @@ static ssize_t batt_show_chg_deadline(struct device *dev,
 	 *   (stage == 'Active' || stage == 'Enabled') && deadline > 0
 	 */
 	deadline = batt_drv->chg_health.rest_deadline;
+
+	/* ACA: show time to full when ACA triggered */
+	if (aon_enabled && rest->rest_state == CHG_HEALTH_ACTIVE) {
+		ret = batt_ttf_estimate(&ttf, batt_drv);
+		if (ret < 0)
+			pr_debug("unable to get ttf (%d)\n", ret);
+		else
+			deadline = now + ttf;
+	}
+
 	if (deadline > 0 && deadline > now)
 		deadline -= now;
 	else if (deadline > 0)
