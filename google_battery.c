@@ -68,6 +68,7 @@
 #define SW_JEITA_VOTER	"sw_jeita"
 #define RL_STATE_VOTER	"rl_state"
 #define MSC_HEALTH_VOTER "chg_health"
+#define BPST_DETECT_VOTER "bpst_detect"
 
 #define UICURVE_MAX	3
 
@@ -212,9 +213,11 @@ struct batt_res {
 struct batt_bpst {
 	struct mutex lock;
 	bool bpst_enable;
+	bool bpst_detect_disable;
 	/* single battery disconnect status */
 	int bpst_sbd_status;
 	int bpst_count_threshold;
+	int bpst_chg_rate;
 	u8 bpst_count;
 };
 
@@ -3478,13 +3481,16 @@ static bool batt_cell_fault_detect(struct batt_bpst *bpst_state)
 	bpst_sbd_status = bpst_state->bpst_sbd_status;
 	bpst_state->bpst_sbd_status = 0;
 
-	return !!bpst_sbd_status;
+	return !!bpst_sbd_status && !bpst_state->bpst_detect_disable;
 }
 
 static int batt_bpst_detect_begin(struct batt_bpst *bpst_state)
 {
 	u8 data;
 	int ret;
+
+	if (bpst_state->bpst_detect_disable)
+		return 0;
 
 	ret = gbms_storage_read(GBMS_TAG_BPST, &data, sizeof(data));
 	if (ret < 0)
@@ -3535,14 +3541,20 @@ static int batt_bpst_reset(struct batt_bpst *bpst_state)
 	return 0;
 }
 
+#define BATT_BPST_DEFAULT_CHG_RATE 100
 static int batt_init_bpst_profile(struct batt_drv *batt_drv)
 {
 	struct batt_bpst *bpst_state = &batt_drv->bpst_state;
 	struct device_node *node = batt_drv->device->of_node;
+	int ret;
 
 	bpst_state->bpst_enable = of_property_read_bool(node, "google,bpst-enable");
 	if (!bpst_state->bpst_enable)
 		return -EINVAL;
+
+	ret = of_property_read_u32(node, "google,bpst-chg-rate", &bpst_state->bpst_chg_rate);
+	if (ret < 0)
+		bpst_state->bpst_chg_rate = BATT_BPST_DEFAULT_CHG_RATE;
 
 	return 0;
 }
@@ -3802,6 +3814,18 @@ msc_logic_done:
 				       MSC_LOGIC_VOTER, batt_drv->cc_max,
 				       !disable_votes &&
 				       (batt_drv->cc_max != -1));
+
+		/* bpst detection */
+		if (batt_drv->bpst_state.bpst_detect_disable) {
+			const int chg_rate = batt_drv->bpst_state.bpst_chg_rate;
+			const int bpst_cc_max = (batt_drv->cc_max == -1) ? batt_drv->cc_max
+							: ((batt_drv->cc_max * chg_rate) / 100);
+
+			gvotable_cast_int_vote(batt_drv->fcc_votable,
+					       BPST_DETECT_VOTER, bpst_cc_max,
+					       !disable_votes &&
+					       (bpst_cc_max != -1));
+		}
 	}
 
 	if (!batt_drv->msc_interval_votable)
@@ -5482,6 +5506,40 @@ static ssize_t bpst_reset_store(struct device *dev,
 
 static DEVICE_ATTR_WO(bpst_reset);
 
+static ssize_t show_bpst_detect_disable(struct device *dev,
+				        struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n",
+			 batt_drv->bpst_state.bpst_detect_disable);
+}
+
+static ssize_t set_bpst_detect_disable(struct device *dev,
+				       struct device_attribute *attr,
+				       const char *buf, size_t count)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	int ret = 0, val;
+
+	ret = kstrtoint(buf, 0, &val);
+	if (ret < 0)
+		return ret;
+
+	mutex_lock(&batt_drv->bpst_state.lock);
+	batt_drv->bpst_state.bpst_detect_disable = !!val;
+	mutex_unlock(&batt_drv->bpst_state.lock);
+	if (batt_drv->psy)
+		power_supply_changed(batt_drv->psy);
+
+	return count;
+}
+
+static DEVICE_ATTR(bpst_detect_disable, 0660,
+		   show_bpst_detect_disable, set_bpst_detect_disable);
+
 /* ------------------------------------------------------------------------- */
 
 static ssize_t aacr_state_store(struct device *dev,
@@ -6097,23 +6155,30 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 /* bpst detection */
 static int batt_bpst_init_fs(struct batt_drv *batt_drv)
 {
-	if (batt_drv->bpst_state.bpst_enable) {
-		struct dentry *de = NULL;
-		int ret;
+	struct dentry *de = NULL;
+	int ret;
 
-		ret = device_create_file(&batt_drv->psy->dev, &dev_attr_bpst_reset);
-		if (ret)
-			dev_err(&batt_drv->psy->dev, "Failed to create bpst_reset\n");
+	if (!batt_drv->bpst_state.bpst_enable)
+		return 0;
 
-		de = debugfs_create_dir("bpst", 0);
-		if (IS_ERR_OR_NULL(de))
-			return 0;
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_bpst_reset);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create bpst_reset\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_bpst_detect_disable);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create bpst_detect_disable\n");
 
-		debugfs_create_file("bpst_sbd_status", 0600, de, batt_drv,
-				    &debug_bpst_sbd_status_fops);
-		debugfs_create_u32("bpst_count_threshold", 0600, de,
-				   &batt_drv->bpst_state.bpst_count_threshold);
-	}
+	de = debugfs_create_dir("bpst", 0);
+	if (IS_ERR_OR_NULL(de))
+		return 0;
+
+	debugfs_create_file("bpst_sbd_status", 0600, de, batt_drv,
+			    &debug_bpst_sbd_status_fops);
+	debugfs_create_u32("bpst_count_threshold", 0600, de,
+			    &batt_drv->bpst_state.bpst_count_threshold);
+	debugfs_create_u32("bpst_chg_rate", 0600, de,
+			    &batt_drv->bpst_state.bpst_chg_rate);
+
 	return 0;
 }
 
