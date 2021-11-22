@@ -1031,8 +1031,10 @@ static void p9221_init_align(struct p9221_charger_data *charger)
 	charger->current_sample_cnt = 0;
 	charger->mfg_check_count = 0;
 	/* Disable misaligned message in high power mode, b/159066422 */
-	if (charger->prop_mode_en == true)
+	if (charger->prop_mode_en == true) {
+		charger->align = WLC_ALIGN_CENTERED;
 		return;
+	}
 	schedule_delayed_work(&charger->align_work,
 			      msecs_to_jiffies(P9221_ALIGN_DELAY_MS));
 }
@@ -1155,8 +1157,10 @@ static void p9221_align_work(struct work_struct *work)
 	charger->alignment = -1;
 
 	/* b/159066422 Disable misaligned message in high power mode */
-	if (!charger->online || charger->prop_mode_en == true)
+	if (!charger->online || charger->prop_mode_en == true) {
+		charger->align = WLC_ALIGN_CENTERED;
 		return;
+	}
 
 	/*
 	 *  NOTE: mfg may be zero due to race condition during boot. If the
@@ -2307,11 +2311,21 @@ static int p9221_set_property(struct power_supply *psy,
 
 	/* route to p9412 if for wlc_dc */
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
+		if (!charger->wlc_dc_enabled) {
+			dev_dbg(&charger->client->dev,
+				"Not WLC-DC, not allow to set dc current\n");
+			break;
+		}
 		/* uA */
 		charger->wlc_dc_current_now = val->intval;
 		ret = charger->chip_set_rx_ilim(charger, P9221_UA_TO_MA(charger->wlc_dc_current_now));
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
+		if (!charger->wlc_dc_enabled) {
+			dev_dbg(&charger->client->dev,
+				"Not WLC-DC, not allow to set Vout\n");
+			break;
+		}
 		/* uV */
 		charger->wlc_dc_voltage_now = val->intval;
 		ret = charger->chip_set_vout_max(charger, P9221_UV_TO_MV(charger->wlc_dc_voltage_now));
@@ -3879,6 +3893,24 @@ static ssize_t mitigate_threshold_store(struct device *dev,
 
 static DEVICE_ATTR_RW(mitigate_threshold);
 
+/*
+ * b/205193265 AP needs to wait for Cal-mode1 and mode2 to clear (calibration
+ * to be complete) before attempting both authentication and re-negotiation.
+ * The HAL API calls for authentication can check this node.
+ */
+static ssize_t wpc_ready_show(struct device *dev,
+			    struct device_attribute *attr,
+			    char *buf)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct p9221_charger_data *charger = i2c_get_clientdata(client);
+
+	return scnprintf(buf, PAGE_SIZE, "%c\n",
+			 p9412_is_calibration_done(charger) ? 'Y' : 'N');
+}
+
+static DEVICE_ATTR_RO(wpc_ready);
+
 /* ------------------------------------------------------------------------ */
 static ssize_t rx_lvl_show(struct device *dev,
 			   struct device_attribute *attr,
@@ -4513,6 +4545,7 @@ static struct attribute *p9221_attributes[] = {
 	&dev_attr_authtype.attr,
 	&dev_attr_features.attr,
 	&dev_attr_mitigate_threshold.attr,
+	&dev_attr_wpc_ready.attr,
 	NULL
 };
 
@@ -5094,6 +5127,10 @@ static void p9221_irq_handler(struct p9221_charger_data *charger, u16 irq_src)
 		charger->tx_done = true;
 		charger->cc_data_lock.cc_use = true;
 		charger->cc_data_lock.cc_rcv_at = 0;
+		if (charger->cc_reset_pending) {
+			charger->cc_reset_pending = false;
+			wake_up_all(&charger->ccreset_wq);
+		}
 		cancel_delayed_work(&charger->tx_work);
 		sysfs_notify(&charger->dev->kobj, NULL, "txbusy");
 		sysfs_notify(&charger->dev->kobj, NULL, "txdone");
@@ -5187,7 +5224,6 @@ static irqreturn_t p9221_irq_thread(int irq, void *irq_data)
 			}
 		}
 	}
-
 	p9221_irq_handler(charger, irq_src);
 
 out:
@@ -5864,6 +5900,8 @@ static int p9221_charger_probe(struct i2c_client *client,
 		   p9221_icl_ramp_alarm_cb);
 	alarm_init(&charger->auth_dc_icl_alarm, ALARM_BOOTTIME,
 		   p9221_auth_dc_icl_alarm_cb);
+
+	init_waitqueue_head(&charger->ccreset_wq);
 
 	/* setup function pointers for platform */
 	/* first from *_charger.c -> *_chip.c */
