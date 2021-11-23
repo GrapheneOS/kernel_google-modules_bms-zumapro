@@ -3522,6 +3522,17 @@ static int batt_bpst_detect_update(struct batt_drv *batt_drv)
 	return 0;
 }
 
+static int batt_bpst_reset(struct batt_bpst *bpst_state)
+{
+	if (bpst_state->bpst_enable) {
+		u8 data = 0;
+
+		return gbms_storage_write(GBMS_TAG_BPST, &data, sizeof(data));
+	}
+
+	return 0;
+}
+
 static int batt_init_bpst_profile(struct batt_drv *batt_drv)
 {
 	struct batt_bpst *bpst_state = &batt_drv->bpst_state;
@@ -5444,6 +5455,31 @@ static ssize_t set_health_safety_margin(struct device *dev,
 static DEVICE_ATTR(health_safety_margin, 0660,
 		    show_health_safety_margin, set_health_safety_margin);
 
+/* bpst detection */
+static ssize_t bpst_reset_store(struct device *dev,
+			      struct device_attribute *attr,
+			      const char *buf, size_t count)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	struct batt_bpst *bpst_state = &batt_drv->bpst_state;
+	int ret = 0, val = 0;
+
+	ret = kstrtoint(buf, 0, &val);
+	if (ret < 0)
+		return ret;
+
+	if (val) {
+		ret = batt_bpst_reset(bpst_state);
+		if (ret < 0)
+			pr_err("%s: MSC_BPST: Cannot reset GBMS_TAG_BPST (%d)\n", __func__, ret);
+	}
+
+	return count;
+}
+
+static DEVICE_ATTR_WO(bpst_reset);
+
 /* ------------------------------------------------------------------------- */
 
 static ssize_t aacr_state_store(struct device *dev,
@@ -6061,6 +6097,11 @@ static int batt_bpst_init_fs(struct batt_drv *batt_drv)
 {
 	if (batt_drv->bpst_state.bpst_enable) {
 		struct dentry *de = NULL;
+		int ret;
+
+		ret = device_create_file(&batt_drv->psy->dev, &dev_attr_bpst_reset);
+		if (ret)
+			dev_err(&batt_drv->psy->dev, "Failed to create bpst_reset\n");
 
 		de = debugfs_create_dir("bpst", 0);
 		if (IS_ERR_OR_NULL(de))
