@@ -2146,6 +2146,8 @@ static void p9221_ll_bpp_cep(struct p9221_charger_data *charger, int capacity)
 		icl_ua = 600000;
 	if (capacity > 98)
 		icl_ua = 300000;
+	if (capacity > 99)
+		icl_ua = 200000;
 
 	vote(charger->dc_icl_votable, DD_VOTER, icl_ua > 0, icl_ua);
 	if (icl_ua > 0)
