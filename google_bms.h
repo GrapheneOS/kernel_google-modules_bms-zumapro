@@ -17,6 +17,7 @@
 #ifndef __GOOGLE_BMS_H_
 #define __GOOGLE_BMS_H_
 
+#include <linux/minmax.h>
 #include <linux/types.h>
 #include <linux/usb/pd.h>
 #include "gbms_power_supply.h"
@@ -28,6 +29,7 @@ struct device_node;
 #define GBMS_CHG_TEMP_NB_LIMITS_MAX 10
 #define GBMS_CHG_VOLT_NB_LIMITS_MAX 5
 #define GBMS_CHG_TOPOFF_NB_LIMITS_MAX 6
+#define GBMS_AACR_DATA_MAX 10
 
 struct gbms_chg_profile {
 	const char *owner_name;
@@ -54,6 +56,11 @@ struct gbms_chg_profile {
 	u32 fv_uv_resolution;
 	/* experimental */
 	u32 cv_otv_margin;
+
+	/* AACR feature */
+	u32 reference_cycles[GBMS_AACR_DATA_MAX];
+	u32 reference_fade10[GBMS_AACR_DATA_MAX];
+	u32 aacr_nb_limits;
 };
 
 #define WLC_BPP_THRESHOLD_UV	700000
@@ -379,6 +386,9 @@ uint8_t gbms_gen_chg_flags(int chg_status, int chg_type);
 /* newgen charging: read/gen charger state  */
 int gbms_read_charger_state(union gbms_charger_state *chg_state,
 			    struct power_supply *chg_psy);
+/* calculate aacr reference capacity */
+int gbms_aacr_reference_capacity(struct gbms_chg_profile *profile,
+				 int cycles, int design_cap);
 
 /* debug/print */
 const char *gbms_chg_type_s(int chg_type);
