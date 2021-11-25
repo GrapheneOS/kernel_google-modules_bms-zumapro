@@ -1227,6 +1227,30 @@ static int max77759_chgin_get_ilim_max_ua(struct max77759_chgr_data *data,
 	return 0;
 }
 
+static int max77759_set_topoff_current_max_ma(struct max77759_chgr_data *data,
+					       int current_ma)
+{
+	u8 value;
+	int ret;
+
+	if (current_ma < 0)
+		return 0;
+
+	if (current_ma <= 150)
+		value = 0x0;
+	else if (current_ma >= 500)
+		value = 0x7;
+	else
+		value = (current_ma - 150) / 50;
+
+	value = VALUE2FIELD(MAX77759_CHG_CNFG_03_TO_ITH, value);
+	ret = max77759_reg_update(data, MAX77759_CHG_CNFG_03,
+				   MAX77759_CHG_CNFG_03_TO_ITH_MASK,
+				   value);
+
+	return ret;
+}
+
 static int max77759_wcin_set_ilim_max_ua(struct max77759_chgr_data *data,
 					 int ilim_ua)
 {
@@ -1898,6 +1922,11 @@ static int max77759_psy_set_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_ONLINE:
 		ret = max77759_set_online(data, pval->intval != 0);
 		break;
+	case POWER_SUPPLY_PROP_CHARGE_TERM_CURRENT:
+		ret = max77759_set_topoff_current_max_ma(data, pval->intval);
+		pr_debug("%s: topoff_current=%d (%d)\n",
+			__func__, pval->intval, ret);
+		break;
 	default:
 		break;
 	}
@@ -2005,6 +2034,7 @@ static int max77759_psy_is_writeable(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
 	case GBMS_PROP_CHARGE_DISABLE:
+	case POWER_SUPPLY_PROP_CHARGE_TERM_CURRENT:
 		return 1;
 	default:
 		break;

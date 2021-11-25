@@ -284,6 +284,7 @@ struct batt_drv {
 
 	int fv_uv;
 	int cc_max;
+	int topoff;
 	int msc_update_interval;
 
 	bool disable_votes;
@@ -2058,6 +2059,7 @@ static inline void batt_reset_rest_state(struct batt_chg_health *chg_health)
 	}
 
 	chg_health->dry_run_deadline = 0;
+	chg_health->active_time = 0;
 }
 
 /* should not reset rl state */
@@ -2347,12 +2349,13 @@ static enum chg_health_state msc_health_active(const struct batt_drv *batt_drv)
 
 #define HEALTH_PAUSE_DEBOUNCE 180
 #define HEALTH_PAUSE_MAX_SSOC 95
+#define HEALTH_PAUSE_TIME 3
 static bool msc_health_pause(struct batt_drv *batt_drv, const ktime_t ttf,
 			      const ktime_t now,
 			      const enum chg_health_state rest_state) {
 	const struct gbms_charging_event *ce_data = &batt_drv->ce_data;
 	const struct gbms_ce_tier_stats	*h = &ce_data->health_stats;
-	const struct batt_chg_health *rest = &batt_drv->chg_health;
+	struct batt_chg_health *rest = &batt_drv->chg_health;
 	const ktime_t deadline = rest->rest_deadline;
 	const ktime_t safety_margin = (ktime_t)batt_drv->health_safety_margin;
 	/* Note: We only capture ACTIVE time in health stats */
@@ -2376,16 +2379,30 @@ static bool msc_health_pause(struct batt_drv *batt_drv, const ktime_t ttf,
 		return false;
 
 	/*
-	 * elap_h: running active for a while wait status and current stable
 	 * ssoc: transfer in high soc impact charge full condition, disable pause
 	 * behavior in high soc
 	 */
-	if (elap_h < HEALTH_PAUSE_DEBOUNCE || ssoc > HEALTH_PAUSE_MAX_SSOC)
+	if (ssoc > HEALTH_PAUSE_MAX_SSOC)
+		return false;
+
+	/*
+	 * elap_h: running active for a while wait status and current stable
+	 * need to re-check before re-enter pause, so we need to minus previous
+	 * health active time (rest->active_time) for next HEALTH_PAUSE_DEBOUNCE
+	 */
+	if (elap_h - rest->active_time < HEALTH_PAUSE_DEBOUNCE)
+		return false;
+
+	/* prevent enter <---> leave PAUSE too many times */
+	if (rest->active_time > (HEALTH_PAUSE_TIME * HEALTH_PAUSE_DEBOUNCE))
 		return false;
 
 	/* check if time meets the PAUSE condition or not */
 	if (ttf > 0 && deadline > now + ttf + safety_margin)
 		return true;
+
+	/* record time for next pause check */
+	rest->active_time = elap_h;
 
 	return false;
 }
@@ -2573,13 +2590,17 @@ done_no_op:
 		return false;
 
 	batt_prlog(BATT_PRLOG_ALWAYS,
-		   "MSC_HEALTH: now=%lld deadline=%lld aon_soc=%d ttf=%lld state=%d->%d fv_uv=%d, cc_max=%d\n",
+		   "MSC_HEALTH: now=%lld deadline=%lld aon_soc=%d ttf=%lld state=%d->%d fv_uv=%d, cc_max=%d"
+		   " safety_margin=%d active_time:%lld\n",
 		   now, rest->rest_deadline, rest->always_on_soc, ttf,
-		   rest->rest_state, rest_state, fv_uv, cc_max);
+		   rest->rest_state, rest_state, fv_uv, cc_max,
+		   batt_drv->health_safety_margin, rest->active_time);
 	logbuffer_log(batt_drv->ttf_stats.ttf_log,
-		      "MSC_HEALTH: now=%lld deadline=%lld aon_soc=%d ttf=%lld state=%d->%d fv_uv=%d, cc_max=%d",
+		      "MSC_HEALTH: now=%lld deadline=%lld aon_soc=%d ttf=%lld state=%d->%d fv_uv=%d, cc_max=%d"
+		      " safety_margin=%d active_time:%lld",
 		      now, rest->rest_deadline, rest->always_on_soc,
-		      ttf, rest->rest_state, rest_state, fv_uv, cc_max);
+		      ttf, rest->rest_state, rest_state, fv_uv, cc_max,
+		      batt_drv->health_safety_margin, rest->active_time);
 
 	rest->rest_state = rest_state;
 	memcpy(&batt_drv->ce_data.ce_health, &batt_drv->chg_health,
@@ -2868,6 +2889,7 @@ static int msc_logic(struct batt_drv *batt_drv)
 	batt_drv->vbatt_idx = vbatt_idx;
 	batt_drv->temp_idx = temp_idx;
 	batt_drv->cc_max = GBMS_CCCM_LIMITS(profile, temp_idx, vbatt_idx);
+	batt_drv->topoff = profile->topoff_limits[temp_idx];
 	batt_drv->fv_uv = fv_uv;
 
 	return 0;
@@ -5578,6 +5600,13 @@ static int gbatt_get_property(struct power_supply *psy,
 		} else {
 			err = -EINVAL;
 		}
+		break;
+
+	case POWER_SUPPLY_PROP_CHARGE_TERM_CURRENT:
+		if (batt_drv->topoff)
+			val->intval = batt_drv->topoff;
+		else
+			val->intval = -1;
 		break;
 
 	default:
