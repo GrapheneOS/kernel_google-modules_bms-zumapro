@@ -367,6 +367,7 @@
 #define TX_ACCESSORY_TYPE			(ACCESSORY_TYPE_PHONE | \
 						 AICL_ENABLED)
 #define TXID_SEND_DELAY_MS			(1 * 1000)
+#define TXID_SEND_AGAIN_DELAY_MS		(300 * 1000)
 #define TXSOC_SEND_DELAY_MS			(5 * 1000)
 
 #define COM_BUSY_MAX				10
@@ -731,6 +732,7 @@ struct p9221_charger_data {
 	bool				send_eop;
 	wait_queue_head_t		ccreset_wq;
 	bool				cc_reset_pending;
+	int				send_txid_cnt;
 
 #if IS_ENABLED(CONFIG_GPIOLIB)
 	struct gpio_chip gpio;
