@@ -2928,7 +2928,7 @@ static void p9221_notifier_work(struct work_struct *work)
 	if (charger->send_eop && !charger->online) {
 		dev_info(&charger->client->dev, "WLC should be disabled!\n");
 		p9221_wlc_disable(charger, 1, P9221_EOP_UNKNOWN);
-		return;
+		goto done_relax;
 	}
 
 	if (charger->pdata->q_value != -1) {
@@ -2969,6 +2969,7 @@ static void p9221_notifier_work(struct work_struct *work)
 	if (charger->check_dc)
 		p9221_notifier_check_dc(charger);
 
+done_relax:
 	if (relax)
 		pm_relax(charger->dev);
 }
