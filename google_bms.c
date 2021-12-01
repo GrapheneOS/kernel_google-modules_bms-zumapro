@@ -93,13 +93,22 @@ EXPORT_SYMBOL_GPL(gbms_chg_ev_adapter_s);
  * NOTE: the call covert C rates to chanrge currents IN PLACE, ie you cannot
  * call this twice.
  */
-void gbms_init_chg_table(struct gbms_chg_profile *profile, u32 capacity_ma)
+void gbms_init_chg_table(struct gbms_chg_profile *profile,
+			 struct device_node *node, u32 capacity_ma)
 {
 	u32 ccm;
-	int vi, ti;
+	int vi, ti, ret;
 	const int fv_uv_step = profile->fv_uv_resolution;
+	u32 cccm_array_size = (profile->temp_nb_limits - 1)
+			       * profile->volt_nb_limits;
 
 	profile->capacity_ma = capacity_ma;
+
+	ret = of_property_read_u32_array(node, "google,chg-cc-limits",
+					 profile->cccm_limits,
+					 cccm_array_size);
+	if (ret < 0)
+		pr_warn("unable to get default cccm_limits.\n");
 
 	/* chg-battery-capacity is in mAh, chg-cc-limits relative to 100 */
 	for (ti = 0; ti < profile->temp_nb_limits - 1; ti++) {

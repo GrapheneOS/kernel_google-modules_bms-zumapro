@@ -3255,7 +3255,7 @@ static int batt_init_chg_profile(struct batt_drv *batt_drv)
 	}
 
 	/* NOTE: with NG charger tolerance is applied from "charger" */
-	gbms_init_chg_table(&batt_drv->chg_profile, batt_drv->battery_capacity);
+	gbms_init_chg_table(profile, node, batt_drv->battery_capacity);
 
 	return 0;
 }
