@@ -432,29 +432,6 @@ static int p9222_chip_set_vout_max(struct p9221_charger_data *chgr, u32 mv)
 	return ret;
 }
 
-/* p9412 GPIO control */
-static int p9412_gpio_set(struct p9221_charger_data *chgr, u8 gpios, bool set)
-{
-	int ret = 0;
-	u8 val;
-
-	if (!chgr->pdata->has_p9412_gpio)
-		return ret;
-
-	logbuffer_log(chgr->rtx_log, "Set p9412 gpio: %02x(%d)\n", gpios, set);
-
-	ret = chgr->reg_read_8(chgr, P9412_GPIOS_REG, &val);
-	if (ret < 0)
-		return ret;
-
-	if (set)
-		val |= gpios;
-	else
-		val &= ~gpios;
-
-	return chgr->reg_write_8(chgr, P9412_GPIOS_REG, val);
-}
-
 /* system mode register */
 static int p9221_chip_get_sys_mode(struct p9221_charger_data *chgr, u8 *mode)
 {
@@ -743,10 +720,6 @@ static int p9412_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 		if (ret)
 			logbuffer_log(chgr->rtx_log,
 				      "error waiting for tx_mode (%d)", ret);
-
-		/* Set 7V after mode changed */
-		ret = p9412_gpio_set(chgr, P9412_GPIO_GP3_CTL, 1);
-
 	} else {
 		ret = chgr->chip_set_cmd(chgr, P9221R5_COM_RENEGOTIATE);
 		if (ret == 0) {
@@ -1806,7 +1779,12 @@ static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 			gpio_direction_output(charger->pdata->qi_vbus_en, !!value);
 		break;
 	case P9XXX_GPIO_BST_SEL:
-		/* TODO: no need before TX mode ready */
+		logbuffer_log(charger->rtx_log, "Set p9412 gpio: %02x(%d)\n",
+			      P9412_APBSTPING_REG, value);
+		if (value)
+			charger->reg_write_8(charger, P9412_APBSTPING_REG, P9412_APBSTPING_7V);
+		else
+			charger->reg_write_8(charger, P9412_APBSTPING_REG, 0);
 		break;
 	default:
 		ret = -EINVAL;

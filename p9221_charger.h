@@ -469,11 +469,9 @@
 
 #define RTX_RESET_COUNT_MAX			3
 
-/* p9412 GPIOS */
-#define P9412_GPIOS_REG				0xF5
-#define P9412_GPIO_GP2_CTL			BIT(0)
-#define P9412_GPIO_GP3_CTL			BIT(1)
-#define P9412_GPIO_OD4_CTL			BIT(2)
+/* p9412 AP BOOST PING register */
+#define P9412_APBSTPING_REG			0xF0
+#define P9412_APBSTPING_7V			BIT(0)
 
 /* Features */
 typedef enum {
