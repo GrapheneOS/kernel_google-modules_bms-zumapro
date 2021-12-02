@@ -567,6 +567,10 @@ static int max77759_get_usecase(struct max77759_foreach_cb_data *cb_data)
 		}
 	}
 
+	/* TODO: GSU_MODE_USB_OTG_WLC_DC */
+	if (dc_on && cb_data->wlc_rx)
+		cb_data->otg_on = 0;
+
 	/* OTG modes override the others, might need to move under usb_wlc */
 	if (cb_data->otg_on || cb_data->frs_on)
 		return max77759_get_otg_usecase(cb_data);

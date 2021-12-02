@@ -543,6 +543,16 @@ int gs101_to_standby(struct max77759_usecase_data *uc_data, int use_case)
 			pr_err("%s: cannot enable WLC (%d)\n", __func__, ret);
 	}
 
+	/* from WLC-DC to STBY */
+	if (from_uc == GSU_MODE_WLC_DC) {
+		ret = gs101_ext_mode(uc_data, EXT_MODE_OFF);
+		if (ret < 0) {
+			pr_debug("%s: cannot change extmode ret:%d\n",
+				 __func__, ret);
+			return ret;
+		}
+	}
+
 	/*
 	 * There is no direct transition to STBY from BPP_RX+OTG  but we might
 	 * get here on error and when forcing raw values. This makes sure that
@@ -1037,6 +1047,14 @@ int gs101_to_usecase(struct max77759_usecase_data *uc_data, int use_case)
 			if (ret == 0)
 				ret = gs101_otg_mode(uc_data, GSU_MODE_USB_OTG);
 		}
+		if (from_uc == GSU_MODE_WLC_DC) {
+			ret = gs101_ext_mode(uc_data, EXT_MODE_OFF);
+			if (ret < 0) {
+				pr_debug("%s: cannot change extmode ret:%d\n",
+					 __func__, ret);
+				return ret;
+			}
+		}
 		break;
 	case GSU_MODE_USB_CHG:
 	case GSU_MODE_USB_DC:
@@ -1047,6 +1065,14 @@ int gs101_to_usecase(struct max77759_usecase_data *uc_data, int use_case)
 	case GSU_MODE_USB_WLC_RX:
 	case GSU_RAW_MODE:
 		/* just write the value to the register (it's in stby) */
+		break;
+	case GSU_MODE_WLC_DC:
+		ret = gs101_ext_mode(uc_data, EXT_MODE_OTG_5_0V);
+		if (ret < 0) {
+			pr_debug("%s: cannot change extmode ret:%d\n",
+				 __func__, ret);
+			return ret;
+		}
 		break;
 	default:
 		break;
