@@ -360,7 +360,8 @@ int gbms_init_chg_profile_internal(struct gbms_chg_profile *profile,
 #define gbms_init_chg_profile(p, n) \
 	gbms_init_chg_profile_internal(p, n, KBUILD_MODNAME)
 
-void gbms_init_chg_table(struct gbms_chg_profile *profile, u32 capacity);
+void gbms_init_chg_table(struct gbms_chg_profile *profile,
+			 struct device_node *node, u32 capacity);
 
 void gbms_free_chg_profile(struct gbms_chg_profile *profile);
 
