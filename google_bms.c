@@ -377,23 +377,20 @@ void gbms_free_chg_profile(struct gbms_chg_profile *profile)
 EXPORT_SYMBOL_GPL(gbms_free_chg_profile);
 
 /* NOTE: I should really pass the scale */
-void gbms_dump_raw_profile(const struct gbms_chg_profile *profile, int scale)
+void gbms_dump_raw_profile(char *buff, size_t len, const struct gbms_chg_profile *profile, int scale)
 {
 	const int tscale = (scale == 1) ? 1 : 10;
-	/* with scale == 1 voltage takes 7 bytes, add 7 bytes of temperature */
-	char buff[GBMS_CHG_VOLT_NB_LIMITS_MAX * 9 + 7];
-	int ti, vi, count, len = sizeof(buff);
+	int ti, vi, count = 0;
 
-	gbms_info(profile, "Profile constant charge limits:\n");
-	count = 0;
+	count += scnprintf(buff + count, len - count, "Profile constant charge limits:\n");
+	count += scnprintf(buff + count, len - count, "|T \\ V");
 	for (vi = 0; vi < profile->volt_nb_limits; vi++) {
 		count += scnprintf(buff + count, len - count, "  %4d",
 				   profile->volt_limits[vi] / scale);
 	}
-	gbms_info(profile, "|T \\ V%s\n", buff);
+	count += scnprintf(buff + count, len - count, "\n");
 
 	for (ti = 0; ti < profile->temp_nb_limits - 1; ti++) {
-		count = 0;
 		count += scnprintf(buff + count, len - count, "|%2d:%2d",
 				   profile->temp_limits[ti] / tscale,
 				   profile->temp_limits[ti + 1] / tscale);
@@ -402,7 +399,7 @@ void gbms_dump_raw_profile(const struct gbms_chg_profile *profile, int scale)
 					   GBMS_CCCM_LIMITS(profile, ti, vi)
 					   / scale);
 		}
-		gbms_info(profile, "%s\n", buff);
+		count += scnprintf(buff + count, len - count, "\n");
 	}
 }
 EXPORT_SYMBOL_GPL(gbms_dump_raw_profile);
