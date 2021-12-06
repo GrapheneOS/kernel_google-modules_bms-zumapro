@@ -3703,6 +3703,29 @@ static int debug_chg_health_set_stage(void *data, u64 val)
 /* Adaptive Charging */
 DEFINE_SIMPLE_ATTRIBUTE(debug_chg_health_stage_fops, NULL,
 			debug_chg_health_set_stage, "%llu\n");
+
+static ssize_t debug_get_chg_raw_profile(struct file *filp,
+					 char __user *buf,
+					 size_t count, loff_t *ppos)
+{
+	struct batt_drv *batt_drv = (struct batt_drv *)filp->private_data;
+	char *tmp;
+	int len;
+
+	tmp = kzalloc(GBMS_CHG_ALG_BUF, GFP_KERNEL);
+	if (!tmp)
+		return -ENOMEM;
+
+	gbms_dump_chg_profile(tmp, GBMS_CHG_ALG_BUF, &batt_drv->chg_profile);
+	len = simple_read_from_buffer(buf, count, ppos, tmp, strlen(tmp));
+
+	kfree(tmp);
+
+	return len;
+}
+BATTERY_DEBUG_ATTRIBUTE(debug_chg_raw_profile_fops,
+			debug_get_chg_raw_profile,
+			NULL);
 #endif
 
 /* ------------------------------------------------------------------------- */
@@ -4905,6 +4928,10 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	debugfs_create_file("chg_health_stage", 0600, de, batt_drv,
 			    &debug_chg_health_stage_fops);
 
+	/* charging table */
+	debugfs_create_file("chg_raw_profile", 0644, de, batt_drv,
+			    &debug_chg_raw_profile_fops);
+
 	return 0;
 }
 
@@ -5856,6 +5883,7 @@ static void google_battery_init_work(struct work_struct *work)
 						 init_work.work);
 	struct device_node *node = batt_drv->device->of_node;
 	struct power_supply *fg_psy = batt_drv->fg_psy;
+	char *buff;
 	int ret = 0;
 
 	batt_rl_reset(batt_drv);
@@ -5945,7 +5973,12 @@ static void google_battery_init_work(struct work_struct *work)
 	if (ret < 0) {
 		pr_err("charging profile disabled, ret=%d\n", ret);
 	} else if (batt_drv->battery_capacity) {
-		gbms_dump_chg_profile(&batt_drv->chg_profile);
+		buff = kzalloc(GBMS_CHG_ALG_BUF, GFP_KERNEL);
+		if (buff) {
+			gbms_dump_chg_profile(buff, GBMS_CHG_ALG_BUF, &batt_drv->chg_profile);
+			pr_info("%s", buff);
+			kfree(buff);
+		}
 	}
 
 	cev_stats_init(&batt_drv->ce_data, &batt_drv->chg_profile);

@@ -28,6 +28,7 @@ struct device_node;
 
 #define GBMS_CHG_TEMP_NB_LIMITS_MAX 10
 #define GBMS_CHG_VOLT_NB_LIMITS_MAX 5
+#define GBMS_CHG_ALG_BUF 500
 #define GBMS_AACR_DATA_MAX 10
 
 struct gbms_chg_profile {
@@ -369,8 +370,8 @@ void gbms_init_chg_table(struct gbms_chg_profile *profile,
 
 void gbms_free_chg_profile(struct gbms_chg_profile *profile);
 
-void gbms_dump_raw_profile(const struct gbms_chg_profile *profile, int scale);
-#define gbms_dump_chg_profile(profile) gbms_dump_raw_profile(profile, 1000)
+void gbms_dump_raw_profile(char *buff, size_t len, const struct gbms_chg_profile *profile, int scale);
+#define gbms_dump_chg_profile(buff, len, profile) gbms_dump_raw_profile(buff, len, profile, 1000)
 
 /* newgen charging: charge profile */
 int gbms_msc_temp_idx(const struct gbms_chg_profile *profile, int temp);
