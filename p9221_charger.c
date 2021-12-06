@@ -2968,7 +2968,7 @@ static void p9221_notifier_work(struct work_struct *work)
 	if (charger->send_eop && !charger->online) {
 		dev_info(&charger->client->dev, "WLC should be disabled!\n");
 		p9221_wlc_disable(charger, 1, P9221_EOP_UNKNOWN);
-		return;
+		goto done_relax;
 	}
 
 	if (charger->pdata->q_value != -1) {
@@ -3009,6 +3009,7 @@ static void p9221_notifier_work(struct work_struct *work)
 	if (charger->check_dc)
 		p9221_notifier_check_dc(charger);
 
+done_relax:
 	if (relax)
 		pm_relax(charger->dev);
 }
@@ -4737,6 +4738,15 @@ static void p9382_txid_work(struct work_struct *work)
 	struct p9221_charger_data *charger = container_of(work,
 			struct p9221_charger_data, txid_work.work);
 	int ret = 0;
+	bool attached = 0;
+	u16 status_reg;
+	const u16 rx_connected_bit = charger->ints.rx_connected_bit;
+
+	/* check rx_is_connected */
+	ret = p9221_reg_read_16(charger, P9221_STATUS_REG, &status_reg);
+	attached = (ret == 0) ? (status_reg & rx_connected_bit) : 0;
+	if (!attached)
+		return;
 
 	if (charger->ints.pppsent_bit && charger->com_busy) {
 		if (charger->com_busy >= COM_BUSY_MAX) {
@@ -4761,6 +4771,11 @@ static void p9382_txid_work(struct work_struct *work)
 		dev_info(&charger->client->dev, "Fast serial ID send(%s)\n",
 			 charger->fast_id_str);
 		charger->com_busy += 1;
+		if (charger->send_txid_cnt > 0) {
+			charger->send_txid_cnt--;
+			schedule_delayed_work(&charger->txid_work,
+					      msecs_to_jiffies(TXID_SEND_AGAIN_DELAY_MS));
+		}
 	}
 }
 
@@ -4897,9 +4912,12 @@ static void rtx_irq_handler(struct p9221_charger_data *charger, u16 irq_src)
 		schedule_work(&charger->uevent_work);
 		if (attached) {
 			cancel_delayed_work_sync(&charger->txid_work);
+			charger->send_txid_cnt = 2;
 			schedule_delayed_work(&charger->txid_work,
 					msecs_to_jiffies(TXID_SEND_DELAY_MS));
 		} else {
+			cancel_delayed_work_sync(&charger->txid_work);
+			charger->send_txid_cnt = 0;
 			charger->rtx_csp = 0;
 			charger->com_busy = 0;
 		}
