@@ -3454,8 +3454,6 @@ static ssize_t max1720x_set_debug_data(struct file *filp,
 BATTERY_DEBUG_ATTRIBUTE(debug_reg_data_fops, max1720x_show_debug_data,
 			max1720x_set_debug_data);
 
-
-
 static ssize_t max1720x_show_reg_all(struct file *filp, char __user *buf,
 					size_t count, loff_t *ppos)
 {
@@ -3493,6 +3491,20 @@ static ssize_t max1720x_show_reg_all(struct file *filp, char __user *buf,
 
 BATTERY_DEBUG_ATTRIBUTE(debug_reg_all_fops, max1720x_show_reg_all, NULL);
 
+static ssize_t max1720x_force_psy_update(struct file *filp,
+					 const char __user *user_buf,
+					 size_t count, loff_t *ppos)
+{
+	struct max1720x_chip *chip = (struct max1720x_chip *)filp->private_data;
+
+	if (chip->psy)
+		power_supply_changed(chip->psy);
+
+	return count;
+}
+
+BATTERY_DEBUG_ATTRIBUTE(debug_force_psy_update_fops, NULL,
+			max1720x_force_psy_update);
 /*
  * TODO: add the building blocks of google capacity
  *
@@ -3516,9 +3528,9 @@ static int max17x0x_init_debugfs(struct max1720x_chip *chip)
 	debugfs_create_file("nvram_por", 0440, de, chip, &debug_nvram_por_fops);
 	debugfs_create_file("fg_reset", 0400, de, chip, &debug_fg_reset_fops);
 	debugfs_create_file("ce_start", 0400, de, chip, &debug_ce_start_fops);
-	debugfs_create_file("fake_battery", 0400, de,
-			    chip, &debug_fake_battery_fops);
+	debugfs_create_file("fake_battery", 0400, de, chip, &debug_fake_battery_fops);
 	debugfs_create_file("batt_id", 0600, de, chip, &debug_batt_id_fops);
+	debugfs_create_file("force_psy_update", 0600, de, chip, &debug_force_psy_update_fops);
 
 	if (chip->regmap.reglog)
 		debugfs_create_file("regmap_writes", 0440, de,
