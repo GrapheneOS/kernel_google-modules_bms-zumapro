@@ -214,6 +214,8 @@ struct batt_bpst {
 	bool bpst_enable;
 	/* single battery disconnect status */
 	int bpst_sbd_status;
+	int bpst_count_threshold;
+	u8 bpst_count;
 };
 
 enum batt_paired_state {
@@ -3472,11 +3474,52 @@ static bool batt_cell_fault_detect(struct batt_bpst *bpst_state)
 	 * TODO: will implement the code from the algo in b/203019566
 	 */
 	bpst_sbd_status = bpst_state->bpst_sbd_status;
-
-	/* report detection result*/
 	bpst_state->bpst_sbd_status = 0;
 
 	return !!bpst_sbd_status;
+}
+
+static int batt_bpst_detect_begin(struct batt_bpst *bpst_state)
+{
+	u8 data;
+	int ret;
+
+	ret = gbms_storage_read(GBMS_TAG_BPST, &data, sizeof(data));
+	if (ret < 0)
+		return -EINVAL;
+
+	if (data == 0xff) {
+		data = 0;
+		ret = gbms_storage_write(GBMS_TAG_BPST, &data, sizeof(data));
+		if (ret < 0)
+			return -EINVAL;
+	}
+	bpst_state->bpst_count = data;
+
+	pr_debug("%s: MSC_BPST: %d in connected\n", __func__, data);
+	return 0;
+}
+
+static int batt_bpst_detect_update(struct batt_drv *batt_drv)
+{
+	struct batt_bpst *bpst_state = &batt_drv->bpst_state;
+	const u8 data = bpst_state->bpst_count + 1;
+	const int bpst_count_threshold = bpst_state->bpst_count_threshold;
+	int ret;
+
+	if (data < 0xff) {
+		ret = gbms_storage_write(GBMS_TAG_BPST, &data, sizeof(data));
+		if (ret < 0)
+			return -EINVAL;
+	}
+	if (bpst_count_threshold > 0 && data >= (u8)bpst_count_threshold) {
+		pr_info("%s: MSC_BPST: single battery disconnect, shutdown.\n", __func__);
+		batt_drv->capacity_level = POWER_SUPPLY_CAPACITY_LEVEL_CRITICAL;
+		power_supply_changed(batt_drv->psy);
+	}
+
+	pr_debug("%s: MSC_BPST: %d in disconnected\n", __func__, data);
+	return 0;
 }
 
 static int batt_init_bpst_profile(struct batt_drv *batt_drv)
@@ -3516,16 +3559,6 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 	if (chg_state_is_disconnected(chg_state)) {
 		const qnum_t ssoc_delta = ssoc_get_delta(batt_drv);
 
-		/* update bpst */
-		mutex_lock(&batt_drv->bpst_state.lock);
-		if (batt_drv->bpst_state.bpst_enable) {
-			bool cell_fault_detect = batt_cell_fault_detect(&batt_drv->bpst_state);
-
-			if (cell_fault_detect)
-				pr_info("MSC_BPST: cell_fault_detect in disconnected\n");
-		}
-		mutex_unlock(&batt_drv->bpst_state.lock);
-
 		if (batt_drv->ssoc_state.buck_enabled == 0)
 			goto msc_logic_exit;
 
@@ -3552,6 +3585,18 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 		/* TODO: move earlier and include the change to the curve */
 		ssoc_change_state(&batt_drv->ssoc_state, 0);
 		changed = true;
+
+		/* update bpst */
+		mutex_lock(&batt_drv->bpst_state.lock);
+		if (batt_drv->bpst_state.bpst_enable) {
+			bool cell_fault_detect = batt_cell_fault_detect(&batt_drv->bpst_state);
+
+			if (cell_fault_detect) {
+				rc = batt_bpst_detect_update(batt_drv);
+				pr_info("MSC_BPST: cell_fault_detect in disconnected(%d)\n", rc);
+			}
+		}
+		mutex_unlock(&batt_drv->bpst_state.lock);
 
 		goto msc_logic_done;
 	}
@@ -3599,6 +3644,15 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 		/* TODO: move earlier and include the change to the curve */
 		ssoc_change_state(&batt_drv->ssoc_state, 1);
 		changed = true;
+
+		/* start bpst detect */
+		mutex_lock(&batt_drv->bpst_state.lock);
+		if (batt_drv->bpst_state.bpst_enable) {
+			rc = batt_bpst_detect_begin(&batt_drv->bpst_state);
+			if (rc < 0)
+				pr_err("MSC_BPST: Cannot start bpst detect\n");
+		}
+		mutex_unlock(&batt_drv->bpst_state.lock);
 	}
 
 	/*
@@ -6014,6 +6068,8 @@ static int batt_bpst_init_fs(struct batt_drv *batt_drv)
 
 		debugfs_create_file("bpst_sbd_status", 0600, de, batt_drv,
 				    &debug_bpst_sbd_status_fops);
+		debugfs_create_u32("bpst_count_threshold", 0600, de,
+				   &batt_drv->bpst_state.bpst_count_threshold);
 	}
 	return 0;
 }
