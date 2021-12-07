@@ -40,10 +40,15 @@
 #define BATT_EEPROM_TAG_CELC_LEN	1
 #define BATT_EEPROM_TAG_HIST_OFFSET	0x5E
 #define BATT_EEPROM_TAG_HIST_LEN	BATT_ONE_HIST_LEN
-#define BATT_EEPROM_TAG_BPST_OFFSET	0x6A
-#define BATT_EEPROM_TAG_BPST_LEN	1
 #define BATT_EEPROM_TAG_BGPN_OFFSET	0x03
 #define BATT_EEPROM_TAG_BGPN_LEN	GBMS_BGPN_LEN
+
+static struct gbms_storage_desc *gbee_desc;
+
+#define GBEE_GET_NVRAM(ptr) ((struct nvmem_device *)(ptr))
+#define GBEE_STORAGE_INFO(tag, addr, count, ptr) \
+	(gbee_desc && gbee_desc->info) ? gbee_desc->info(tag, addr, count, ptr) : \
+		gbee_storage_info(tag, addr, count, ptr)
 
 /*
  * I2C error when try to write continuous data.
@@ -52,8 +57,7 @@
  */
 #define BATT_WAIT_INTERNAL_WRITE_MS	1
 
-static int gbee_storage_info(gbms_tag_t tag, size_t *addr, size_t *count,
-			    void *ptr)
+int gbee_storage_info(gbms_tag_t tag, size_t *addr, size_t *count, void *ptr)
 {
 	int ret = 0;
 
@@ -99,10 +103,6 @@ static int gbee_storage_info(gbms_tag_t tag, size_t *addr, size_t *count,
 		*addr = BATT_EEPROM_TAG_CELC_OFFSET;
 		*count = BATT_EEPROM_TAG_CELC_LEN;
 		break;
-	case GBMS_TAG_BPST:
-		*addr = BATT_EEPROM_TAG_BPST_OFFSET;
-		*count = BATT_EEPROM_TAG_BPST_LEN;
-		break;
 	default:
 		ret = -ENOENT;
 		break;
@@ -113,12 +113,12 @@ static int gbee_storage_info(gbms_tag_t tag, size_t *addr, size_t *count,
 
 static int gbee_storage_iter(int index, gbms_tag_t *tag, void *ptr)
 {
-	static gbms_tag_t keys[] = { GBMS_TAG_BGPN, GBMS_TAG_MINF,
-				     GBMS_TAG_DINF, GBMS_TAG_HIST,
-				     GBMS_TAG_BRID, GBMS_TAG_SNUM,
-				     GBMS_TAG_GMSR, GBMS_TAG_BCNT,
-				     GBMS_TAG_CNHS, GBMS_TAG_SELC,
-				     GBMS_TAG_CELC, GBMS_TAG_BPST };
+	static const gbms_tag_t keys[] = { GBMS_TAG_BGPN, GBMS_TAG_MINF,
+					   GBMS_TAG_DINF, GBMS_TAG_HIST,
+					   GBMS_TAG_BRID, GBMS_TAG_SNUM,
+					   GBMS_TAG_GMSR, GBMS_TAG_BCNT,
+					   GBMS_TAG_CNHS, GBMS_TAG_SELC,
+					   GBMS_TAG_CELC, GBMS_TAG_LOTR };
 	const int count = ARRAY_SIZE(keys);
 
 	if (index < 0 || index >= count)
@@ -128,10 +128,9 @@ static int gbee_storage_iter(int index, gbms_tag_t *tag, void *ptr)
 	return 0;
 }
 
-static int gbee_storage_read(gbms_tag_t tag, void *buff, size_t size,
-			    void *ptr)
+static int gbee_storage_read(gbms_tag_t tag, void *buff, size_t size, void *ptr)
 {
-	struct nvmem_device *nvmem = ptr;
+	struct nvmem_device *nvmem = GBEE_GET_NVRAM(ptr);
 	size_t offset = 0, len = 0;
 	int ret;
 
@@ -150,7 +149,7 @@ static int gbee_storage_read(gbms_tag_t tag, void *buff, size_t size,
 		return len;
 	}
 
-	ret = gbee_storage_info(tag, &offset, &len, ptr);
+	ret = GBEE_STORAGE_INFO(tag, &offset, &len, ptr);
 	if (ret < 0)
 		return ret;
 	if (!len)
@@ -178,7 +177,7 @@ static int gbee_storage_write(gbms_tag_t tag, const void *buff, size_t size,
 	    (tag != GBMS_TAG_BPST))
 		return -ENOENT;
 
-	ret = gbee_storage_info(tag, &offset, &len, ptr);
+	ret = GBEE_STORAGE_INFO(tag, &offset, &len, ptr);
 	if (ret < 0)
 		return ret;
 	if (size > len)
@@ -200,13 +199,13 @@ static int gbee_storage_write(gbms_tag_t tag, const void *buff, size_t size,
 static int gbee_storage_read_data(gbms_tag_t tag, void *data, size_t count,
 				  int idx, void *ptr)
 {
-	struct nvmem_device *nvmem = ptr;
+	struct nvmem_device *nvmem = GBEE_GET_NVRAM(ptr);
 	size_t offset = 0, len = 0;
 	int ret;
 
 	switch (tag) {
 	case GBMS_TAG_HIST:
-		ret = gbee_storage_info(tag, &offset, &len, ptr);
+		ret = GBEE_STORAGE_INFO(tag, &offset, &len, ptr);
 		break;
 	default:
 		ret = -ENOENT;
@@ -245,13 +244,13 @@ static int gbee_storage_read_data(gbms_tag_t tag, void *data, size_t count,
 static int gbee_storage_write_data(gbms_tag_t tag, const void *data,
 				   size_t count, int idx, void *ptr)
 {
-	struct nvmem_device *nvmem = ptr;
+	struct nvmem_device *nvmem = GBEE_GET_NVRAM(ptr);
 	size_t offset = 0, len = 0;
 	int ret, write_size = 0;
 
 	switch (tag) {
 	case GBMS_TAG_HIST:
-		ret = gbee_storage_info(tag, &offset, &len, ptr);
+		ret = GBEE_STORAGE_INFO(tag, &offset, &len, ptr);
 		break;
 	default:
 		ret = -ENOENT;
@@ -286,7 +285,6 @@ static int gbee_storage_write_data(gbms_tag_t tag, const void *data,
 	return ret;
 }
 
-
 static struct gbms_storage_desc gbee_storage_dsc = {
 	.info = gbee_storage_info,
 	.iter = gbee_storage_iter,
@@ -296,14 +294,74 @@ static struct gbms_storage_desc gbee_storage_dsc = {
 	.write_data = gbee_storage_write_data,
 };
 
+struct gbms_storage_desc gbee_storage01_dsc = {
+	.info = gbee_storage01_info,
+	.iter = gbee_storage01_iter,
+	.read = gbee_storage_read,
+	.write = gbee_storage_write,
+	.read_data = gbee_storage_read_data,
+	.write_data = gbee_storage_write_data,
+};
+
+/* LOTR in a fixed position */
+static int gbms_lotr_update(struct nvmem_device *nvmem, int lotr)
+{
+	int ret, lotr_ver = 0;
+
+	ret = nvmem_device_read(nvmem, BATT_EEPROM_TAG_LOTR_OFFSET,
+				BATT_EEPROM_TAG_LOTR_LEN, &lotr_ver);
+	if (ret < 0 || lotr_ver == lotr)
+		return ret;
+
+	/* TODO: convert one layout to the other */
+	/* eg: zero history when moving from 0xff to 0x01 */
+
+	/* now write lotr to the right place */
+	return nvmem_device_write(nvmem, BATT_EEPROM_TAG_LOTR_OFFSET,
+				  BATT_EEPROM_TAG_LOTR_LEN, &lotr_ver);
+}
+
+static struct gbms_storage_desc *gbms_lotr_2_dsc(int lotr_ver)
+{
+	switch (lotr_ver) {
+	case GBMS_LOTR_V1:
+		return &gbee_storage01_dsc;
+	default:
+		return &gbee_storage_dsc;
+	}
+}
+
 /*
  * Caller will use something like of_nvmem_device_get() to retrieve the
  * nvmem_device instance.
+ * TODO: this only supports a singleton but the model can be extended to
+ * multiple eeproms passing a structure to gbms_storage_register() and
+ * modifying the implementation of GBEE_GET_NVRAM and GBEE_STORAGE_INFO
  * TODO: map nvram cells to tags
  */
-int gbee_register_device(const char *name, struct nvmem_device *nvram)
+int gbee_register_device(const char *name, int lotr, struct nvmem_device *nvram)
 {
-	return gbms_storage_register(&gbee_storage_dsc, name, nvram);
+	int ret;
+
+	gbee_desc = gbms_lotr_2_dsc(lotr);
+	if (!gbee_desc)
+		return -EINVAL;
+
+	/* convert the layout (if needed) */
+	ret = gbms_lotr_update(nvram, lotr);
+	if (ret < 0) {
+		pr_err("gbee %s update lotr failed, %d\n", name, ret);
+		goto error_exit;
+	}
+
+	/* watch out for races on gbee_desc */
+	ret = gbms_storage_register(gbee_desc, name, nvram);
+	if (ret == 0)
+		return 0;
+
+error_exit:
+	gbee_desc = NULL;
+	return ret;
 }
 EXPORT_SYMBOL_GPL(gbee_register_device);
 
@@ -314,5 +372,5 @@ void gbee_destroy_device(void)
 EXPORT_SYMBOL_GPL(gbee_destroy_device);
 
 MODULE_AUTHOR("AleX Pelosi <apelosi@google.com>");
-MODULE_DESCRIPTION("Google EPROM");
+MODULE_DESCRIPTION("Google EEPROM");
 MODULE_LICENSE("GPL");

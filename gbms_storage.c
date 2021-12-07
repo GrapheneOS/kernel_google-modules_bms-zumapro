@@ -1126,6 +1126,8 @@ static struct gbee_data {
 	const char *bee_name;
 	enum gbee_status bee_status;
 	struct nvmem_device *bee_nvram;
+
+	int lotr_version;
 } bee_data;
 
 struct delayed_work bee_work;
@@ -1134,6 +1136,7 @@ static struct mutex bee_lock;
 /*
  * lookup for battery eeprom.
  * TODO: extend this to multiple NVM like providers
+ * TODO: do we need more than an singleton?
  */
 static void gbee_probe_work(struct work_struct *work)
 {
@@ -1168,10 +1171,11 @@ static void gbee_probe_work(struct work_struct *work)
 		return;
 	}
 
-	/* TODO: use nvram cells to resolve GBMS_TAGS*/
-	ret = gbee_register_device(beed->bee_name, bee_nvram);
+	/* TODO: use nvram cells to resolve GBMS_TAGS */
+	ret = gbee_register_device(beed->bee_name, beed->lotr_version, bee_nvram);
 	if (ret < 0) {
 		pr_err("gbee %s ERROR %d\n", beed->bee_name, ret);
+
 		beed->bee_status = GBEE_STATUS_NOENT;
 		nvmem_device_put(bee_nvram);
 		mutex_unlock(&bee_lock);
@@ -1181,6 +1185,7 @@ static void gbee_probe_work(struct work_struct *work)
 	beed->bee_nvram = bee_nvram;
 	beed->bee_status = GBEE_STATUS_OK;
 	mutex_unlock(&bee_lock);
+
 	pr_info("gbee@ %s OK\n", beed->bee_name);
 }
 
@@ -1285,6 +1290,14 @@ static int __init gbms_storage_init(void)
 
 		/* late init list */
 		gbms_storage_parse_provider_refs(node);
+
+		/* read lotr version */
+		ret = of_property_read_u32(node, "google,lotr-version",
+					   &bee_data.lotr_version);
+		if (ret < 0)
+			bee_data.lotr_version = 0xff;
+
+		pr_info("LOTR: %x\n", bee_data.lotr_version);
 	}
 
 	gbms_storage_init_done = true;

@@ -43,6 +43,8 @@
 
 #define GBMS_CCBIN_BUCKET_COUNT	10
 
+#define GBMS_LOTR_V1 1
+
 /*
  * Tags are u32 constants: hardcoding as hex since characters constants of more
  * than one byte such as 'BGCE' are frown upon.
@@ -158,15 +160,33 @@ struct nvmem_device;
 
 #if IS_ENABLED(CONFIG_GOOGLE_BEE)
 
-extern int gbee_register_device(const char *name, struct nvmem_device *nvram);
+/* defaults */
+extern int gbee_register_device(const char *name, int lotr, struct nvmem_device *nvram);
 extern void gbee_destroy_device(void);
 
+/* version 1 */
+extern int gbee_storage01_info(gbms_tag_t tag, size_t *addr, size_t *count, void *ptr);
+extern int gbee_storage01_iter(int index, gbms_tag_t *tag, void *ptr);
+
+/* defaults */
+extern int gbee_storage_info(gbms_tag_t tag, size_t *addr, size_t *count, void *ptr);
+
 #else
+
 static inline int gbee_register_device(const char *name,
 				       struct nvmem_device *nvram)
 { return -ENODEV; }
 
 static inline void gbee_destroy_device(void) { }
+
+static inline int gbee_storage01_info(gbms_tag_t tag, size_t *addr, size_t *count, void *ptr)
+{ return -ENODEV; }
+
+static inline int gbee_storage01_iter(int index, gbms_tag_t *tag, void *ptr)
+{ return -ENODEV; }
+
+static inline int gbee_storage_info(gbms_tag_t tag, size_t *addr, size_t *count, void *ptr)
+{ return -ENODEV; }
 
 #endif
 
