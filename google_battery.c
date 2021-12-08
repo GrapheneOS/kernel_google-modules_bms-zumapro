@@ -347,6 +347,7 @@ struct batt_drv {
 	struct votable	*msc_interval_votable;
 	struct votable	*fcc_votable;
 	struct votable	*fv_votable;
+	struct votable	*temp_dryrun_votable;
 
 	/* FAN level */
 	struct votable	*fan_level_votable;
@@ -5963,6 +5964,18 @@ static enum power_supply_property gbatt_battery_props[] = {
 	/*  hard limit to 26 */
 };
 
+static bool temp_defend_dry_run(struct votable	*temp_dryrun_votable)
+{
+	bool dry_run = 1;
+
+	if (!temp_dryrun_votable)
+		temp_dryrun_votable = find_votable(VOTABLE_TEMP_DRYRUN);
+	if (temp_dryrun_votable)
+		dry_run = !!get_effective_result_locked(temp_dryrun_votable);
+
+	return dry_run;
+}
+
 /*
  * status is:
  * . _UNKNOWN during init
@@ -5992,7 +6005,7 @@ static int gbatt_get_status(struct batt_drv *batt_drv,
 	/* ->buck_enabled = 1, from here ownward device is connected */
 
 	if (batt_drv->batt_health == POWER_SUPPLY_HEALTH_OVERHEAT &&
-	    !gbms_temp_defend_dry_run(false, false)) {
+	    !temp_defend_dry_run(batt_drv->temp_dryrun_votable)) {
 		val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
 		return 0;
 	}
@@ -6200,7 +6213,7 @@ static int gbatt_get_property(struct power_supply *psy,
 	/* health */
 	case POWER_SUPPLY_PROP_HEALTH:
 		if (batt_drv->batt_health == POWER_SUPPLY_HEALTH_OVERHEAT &&
-		    gbms_temp_defend_dry_run(false, false)) {
+		    temp_defend_dry_run(batt_drv->temp_dryrun_votable)) {
 			val->intval = POWER_SUPPLY_HEALTH_GOOD;
 		} else if (batt_drv->batt_health !=
 			   POWER_SUPPLY_HEALTH_UNKNOWN) {
@@ -6219,7 +6232,8 @@ static int gbatt_get_property(struct power_supply *psy,
 			logbuffer_log(batt_drv->ttf_stats.ttf_log,
 				      "h:%d->%d batt_health:%d dry_run:%d soh:%d\n",
 				      batt_drv->report_health, val->intval, batt_drv->batt_health,
-				      gbms_temp_defend_dry_run(false, false), batt_drv->soh);
+				      temp_defend_dry_run(batt_drv->temp_dryrun_votable),
+				      batt_drv->soh);
 			batt_drv->report_health = val->intval;
 		}
 		break;

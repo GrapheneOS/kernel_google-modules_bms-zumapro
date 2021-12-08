@@ -213,6 +213,7 @@ struct chg_drv {
 	struct votable	*msc_fcc_votable;
 	struct votable	*msc_chg_disable_votable;
 	struct votable	*msc_pwr_disable_votable;
+	struct votable  *msc_temp_dry_run_votable;
 	struct votable	*usb_icl_votable;
 	struct votable	*dc_suspend_votable;
 	struct votable	*dc_icl_votable;
@@ -1293,7 +1294,7 @@ static int bd_fan_calculate_level(struct bd_data *bd_state)
 	long long temp_avg = 0;
 	int bd_fan_level = FAN_LVL_NOT_CARE;
 
-	if (gbms_temp_defend_dry_run(false, false))
+	if (bd_state->bd_temp_dry_run)
 		return FAN_LVL_NOT_CARE;
 
 	if (bd_state->time_sum)
@@ -1312,6 +1313,16 @@ static int bd_fan_calculate_level(struct bd_data *bd_state)
 		 bd_fan_level, bd_state->time_sum, temp_avg);
 
 	return bd_fan_level;
+}
+
+static int msc_temp_defend_dryrun_cb(struct votable *votable, void *data,
+				     int is_dry_run, const char *client)
+{
+	struct chg_drv *chg_drv = (struct chg_drv *)data;
+
+	chg_drv->bd_state.bd_temp_dry_run = !!is_dry_run;
+
+	return 0;
 }
 
 /* bd_state->triggered = 1 when charging needs to be disabled */
@@ -1451,9 +1462,6 @@ static int bd_batt_set_state(struct chg_drv *chg_drv, bool hot, int soc)
 	const bool lock_soc = false; /* b/173141442 */
 	const bool freeze = soc != -1;
 	int ret = 0; /* LOOK! */
-
-	/* update temp-defend dry run */
-	gbms_temp_defend_dry_run(true, chg_drv->bd_state.bd_temp_dry_run);
 
 	/*
 	 * OVERHEAT changes handling of writes to POWER_SUPPLY_PROP_CAPACITY.
@@ -1609,12 +1617,8 @@ static int chg_start_bd_work(struct chg_drv *chg_drv)
 	mutex_lock(&chg_drv->bd_lock);
 
 	/* always track disconnect time */
-	if (!bd_state->disconnect_time) {
-		gbms_temp_defend_dry_run(true,
-					 chg_drv->bd_state.bd_temp_dry_run);
-
+	if (!bd_state->disconnect_time)
 		bd_state->disconnect_time = get_boot_sec();
-	}
 
 	/* caller might reset bd_state */
 	if (!bd_state->triggered || !bd_ena) {
@@ -2633,9 +2637,15 @@ static ssize_t set_bd_temp_dry_run(struct device *dev,
 		return ret;
 
 	if (val > 0 && !dry_run) {
-		chg_drv->bd_state.bd_temp_dry_run = true;
+		ret = vote(chg_drv->msc_temp_dry_run_votable, MSC_USER_VOTER, true, 0);
+		if (ret < 0)
+			dev_err(chg_drv->device, "Couldn't vote true"
+				" to bd_temp_dry_run ret=%d\n", ret);
 	} else if (val <= 0 && dry_run) {
-		chg_drv->bd_state.bd_temp_dry_run = false;
+		ret = vote(chg_drv->msc_temp_dry_run_votable, MSC_USER_VOTER, false, 0);
+		if (ret < 0)
+			dev_err(chg_drv->device, "Couldn't disable "
+				"bd_temp_dry_run ret=%d\n", ret);
 		if (chg_drv->bd_state.triggered)
 			bd_reset(&chg_drv->bd_state);
 	}
@@ -3536,6 +3546,17 @@ static int chg_create_votables(struct chg_drv *chg_drv)
 		goto error_exit;
 	}
 
+	chg_drv->msc_temp_dry_run_votable =
+		create_votable(VOTABLE_TEMP_DRYRUN,
+			VOTE_SET_ANY,
+			msc_temp_defend_dryrun_cb,
+			chg_drv);
+	if (IS_ERR(chg_drv->msc_temp_dry_run_votable)) {
+		ret = PTR_ERR(chg_drv->msc_temp_dry_run_votable);
+		chg_drv->msc_temp_dry_run_votable = NULL;
+		goto error_exit;
+	}
+
 	chg_drv->csi_status_votable =
 		gvotable_create_int_election(NULL, gvotable_comparator_int_min,
 					     csi_status_cb, chg_drv);
@@ -3570,6 +3591,7 @@ error_exit:
 	destroy_votable(chg_drv->msc_interval_votable);
 	destroy_votable(chg_drv->msc_chg_disable_votable);
 	destroy_votable(chg_drv->msc_pwr_disable_votable);
+	destroy_votable(chg_drv->msc_temp_dry_run_votable);
 	gvotable_destroy_election(chg_drv->csi_status_votable);
 	gvotable_destroy_election(chg_drv->csi_type_votable);
 
@@ -3578,6 +3600,7 @@ error_exit:
 	chg_drv->msc_interval_votable = NULL;
 	chg_drv->msc_chg_disable_votable = NULL;
 	chg_drv->msc_pwr_disable_votable = NULL;
+	chg_drv->msc_temp_dry_run_votable = NULL;
 	chg_drv->csi_status_votable = NULL;
 	chg_drv->csi_type_votable = NULL;
 
@@ -4493,6 +4516,7 @@ static void chg_destroy_votables(struct chg_drv *chg_drv)
 	destroy_votable(chg_drv->msc_fcc_votable);
 	destroy_votable(chg_drv->msc_chg_disable_votable);
 	destroy_votable(chg_drv->msc_pwr_disable_votable);
+	destroy_votable(chg_drv->msc_temp_dry_run_votable);
 	gvotable_destroy_election(chg_drv->csi_status_votable);
 	gvotable_destroy_election(chg_drv->csi_type_votable);
 }
