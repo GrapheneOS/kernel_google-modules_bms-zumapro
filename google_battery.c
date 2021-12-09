@@ -211,6 +211,15 @@ enum batt_lfcollect_status {
 	BATT_LFCOLLECT_COLLECT = 2,
 };
 
+enum batt_aacr_state {
+	BATT_AACR_UNKNOWN = -3,
+	BATT_AACR_INVALID_CAP = -2,
+	BATT_AACR_UNDER_CYCLES = -1,
+	BATT_AACR_DISABLED = 0,
+	BATT_AACR_ENABLED = 1,
+	BATT_AACR_MAX,
+};
+
 /* battery driver state */
 struct batt_drv {
 	struct device *device;
@@ -339,6 +348,9 @@ struct batt_drv {
 
 	/* Fan control */
 	int fan_level;
+
+	/* AACR: Aged Adjusted Charging Rate */
+	enum batt_aacr_state aacr_state;
 };
 
 static int gbatt_get_temp(const struct batt_drv *batt_drv, int *temp);
@@ -2641,6 +2653,40 @@ static int msc_pm_hold(int msc_state)
 	return pm_state;
 }
 
+#define AACR_START_CYCLE 100
+static u32 aacr_limits(struct batt_drv *batt_drv)
+{
+	const int design_capacity = batt_drv->battery_capacity;
+	int full_capacity, reference_capacity, full_cap_nom, aacr_capacity;
+	struct power_supply *fg_psy = batt_drv->fg_psy;
+
+	if (batt_drv->aacr_state == BATT_AACR_DISABLED)
+		return batt_drv->battery_capacity;
+
+	if (batt_drv->cycle_count < AACR_START_CYCLE) {
+		batt_drv->aacr_state = BATT_AACR_UNDER_CYCLES;
+		return batt_drv->battery_capacity;
+	}
+
+	reference_capacity = gbms_aacr_reference_capacity(&batt_drv->chg_profile,
+						batt_drv->cycle_count, design_capacity);
+	if (reference_capacity < 0)
+		goto data_not_ready;
+
+	full_cap_nom = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_CHARGE_FULL);
+	if (full_cap_nom < 0)
+		goto data_not_ready;
+
+	full_capacity = min(min(full_cap_nom, design_capacity), reference_capacity);
+	aacr_capacity = max(full_capacity, (design_capacity * 80 / 100));
+
+	return (u32)aacr_capacity;
+
+data_not_ready:
+	batt_drv->aacr_state = BATT_AACR_INVALID_CAP;
+	return batt_drv->battery_capacity;
+}
+
 /* TODO: factor msc_logic_irdop from the logic about tier switch */
 static int msc_logic(struct batt_drv *batt_drv)
 {
@@ -2648,6 +2694,7 @@ static int msc_logic(struct batt_drv *batt_drv)
 	int msc_state = MSC_NONE;
 	struct power_supply *fg_psy = batt_drv->fg_psy;
 	struct gbms_chg_profile *profile = &batt_drv->chg_profile;
+	struct device_node *node = batt_drv->device->of_node;
 	int vbatt_idx = batt_drv->vbatt_idx, fv_uv = batt_drv->fv_uv, temp_idx;
 	int temp, ibatt, vbatt, ioerr;
 	int update_interval = MSC_DEFAULT_UPDATE_INTERVAL;
@@ -2696,9 +2743,11 @@ static int msc_logic(struct batt_drv *batt_drv)
 
 		msc_state = MSC_SEED;
 
-		/* seed voltage only on connect, book 0 time */
-		if (batt_drv->vbatt_idx == -1)
+		/* seed voltage and charging table only on connect, book 0 time */
+		if (batt_drv->vbatt_idx == -1) {
 			vbatt_idx = gbms_msc_voltage_idx(profile, vbatt);
+			gbms_init_chg_table(profile, node, aacr_limits(batt_drv));
+		}
 
 		batt_prlog(BATT_PRLOG_ALWAYS,
 			   "MSC_SEED temp=%d vb=%d temp_idx:%d->%d, vbatt_idx:%d->%d\n",
@@ -3656,6 +3705,29 @@ static int debug_chg_health_set_stage(void *data, u64 val)
 /* Adaptive Charging */
 DEFINE_SIMPLE_ATTRIBUTE(debug_chg_health_stage_fops, NULL,
 			debug_chg_health_set_stage, "%llu\n");
+
+static ssize_t debug_get_chg_raw_profile(struct file *filp,
+					 char __user *buf,
+					 size_t count, loff_t *ppos)
+{
+	struct batt_drv *batt_drv = (struct batt_drv *)filp->private_data;
+	char *tmp;
+	int len;
+
+	tmp = kzalloc(GBMS_CHG_ALG_BUF, GFP_KERNEL);
+	if (!tmp)
+		return -ENOMEM;
+
+	gbms_dump_chg_profile(tmp, GBMS_CHG_ALG_BUF, &batt_drv->chg_profile);
+	len = simple_read_from_buffer(buf, count, ppos, tmp, strlen(tmp));
+
+	kfree(tmp);
+
+	return len;
+}
+BATTERY_DEBUG_ATTRIBUTE(debug_chg_raw_profile_fops,
+			debug_get_chg_raw_profile,
+			NULL);
 #endif
 
 /* ------------------------------------------------------------------------- */
@@ -4666,6 +4738,39 @@ static ssize_t set_health_safety_margin(struct device *dev,
 static DEVICE_ATTR(health_safety_margin, 0660,
 		    show_health_safety_margin, set_health_safety_margin);
 
+static ssize_t aacr_state_store(struct device *dev,
+			       struct device_attribute *attr,
+			       const char *buf, size_t count) {
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	int state, ret = 0;
+
+	ret = kstrtoint(buf, 0, &state);
+	if (ret < 0)
+		return ret;
+
+	if ((state != BATT_AACR_DISABLED) && (state != BATT_AACR_ENABLED))
+		return -ERANGE;
+
+	if (batt_drv->aacr_state == state)
+		return count;
+
+	batt_drv->aacr_state = state;
+
+	return count;
+}
+
+static ssize_t aacr_state_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->aacr_state);
+}
+
+static const DEVICE_ATTR_RW(aacr_state);
+
 /* ------------------------------------------------------------------------- */
 
 static int batt_init_fs(struct batt_drv *batt_drv)
@@ -4789,6 +4894,9 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_health_safety_margin);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create health safety margin\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_aacr_state);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create aacr state\n");
 
 	de = debugfs_create_dir("google_battery", 0);
 	if (IS_ERR_OR_NULL(de))
@@ -4821,6 +4929,10 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 			    &debug_chg_health_rest_rate_fops);
 	debugfs_create_file("chg_health_stage", 0600, de, batt_drv,
 			    &debug_chg_health_stage_fops);
+
+	/* charging table */
+	debugfs_create_file("chg_raw_profile", 0644, de, batt_drv,
+			    &debug_chg_raw_profile_fops);
 
 	return 0;
 }
@@ -5780,6 +5892,7 @@ static void google_battery_init_work(struct work_struct *work)
 						 init_work.work);
 	struct device_node *node = batt_drv->device->of_node;
 	struct power_supply *fg_psy = batt_drv->fg_psy;
+	char *buff;
 	int ret = 0;
 
 	batt_rl_reset(batt_drv);
@@ -5869,7 +5982,12 @@ static void google_battery_init_work(struct work_struct *work)
 	if (ret < 0) {
 		pr_err("charging profile disabled, ret=%d\n", ret);
 	} else if (batt_drv->battery_capacity) {
-		gbms_dump_chg_profile(&batt_drv->chg_profile);
+		buff = kzalloc(GBMS_CHG_ALG_BUF, GFP_KERNEL);
+		if (buff) {
+			gbms_dump_chg_profile(buff, GBMS_CHG_ALG_BUF, &batt_drv->chg_profile);
+			pr_info("%s", buff);
+			kfree(buff);
+		}
 	}
 
 	cev_stats_init(&batt_drv->ce_data, &batt_drv->chg_profile);

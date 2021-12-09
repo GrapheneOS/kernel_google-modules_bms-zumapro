@@ -201,6 +201,80 @@ static int gbms_read_cccm_limits(struct gbms_chg_profile *profile,
 	return 0;
 }
 
+static int gbms_read_aacr_limits(struct gbms_chg_profile *profile,
+				  struct device_node *node)
+{
+	int ret = 0, cycle_nb_limits = 0, fade10_nb_limits = 0;
+
+	ret = of_property_count_elems_of_size(node,
+					      "google,aacr-ref-cycles", sizeof(u32));
+	if (ret < 0)
+		goto no_data;
+
+	cycle_nb_limits = ret;
+
+	ret = of_property_count_elems_of_size(node,
+					      "google,aacr-ref-fade10", sizeof(u32));
+	if (ret < 0)
+		goto no_data;
+
+	fade10_nb_limits = ret;
+
+	if (cycle_nb_limits != fade10_nb_limits ||
+	    cycle_nb_limits > GBMS_AACR_DATA_MAX ||
+	    cycle_nb_limits == 0) {
+		gbms_warn(profile, "aacr not enable, cycle_nb:%d, fade10_nb:%d, max:%d",
+			  cycle_nb_limits, fade10_nb_limits, GBMS_AACR_DATA_MAX);
+		profile->aacr_nb_limits = 0;
+		return -ERANGE;
+	}
+
+	ret = of_property_read_u32_array(node, "google,aacr-ref-cycles",
+					 (u32 *)profile->reference_cycles, cycle_nb_limits);
+	if (ret < 0)
+		return ret;
+
+	ret = of_property_read_u32_array(node, "google,aacr-ref-fade10",
+					 (u32 *)profile->reference_fade10, fade10_nb_limits);
+	if (ret < 0)
+		return ret;
+
+	profile->aacr_nb_limits = cycle_nb_limits;
+
+	return 0;
+
+no_data:
+	profile->aacr_nb_limits = 0;
+	return ret;
+}
+
+int gbms_aacr_reference_capacity(struct gbms_chg_profile *profile,
+				  int cycles, int design_cap)
+{
+	int idx, ref_cap, fade10;
+	int cycle_f, cycle_s = 0, fade_f, fade_s = 0;
+
+	if (profile->aacr_nb_limits == 0)
+		return -EINVAL;
+
+	for (idx = 0; idx < profile->aacr_nb_limits; idx++)
+		if (cycles < profile->reference_cycles[idx])
+			break;
+
+	/* Interpolation */
+	cycle_f = profile->reference_cycles[idx];
+	fade_f = profile->reference_fade10[idx];
+	if (idx > 0) {
+		cycle_s = profile->reference_cycles[idx - 1];
+		fade_s = profile->reference_fade10[idx - 1];
+	}
+	fade10 = (cycles - cycle_s) * (fade_f - fade_s) / (cycle_f - cycle_s) + fade_s;
+	ref_cap = design_cap - (design_cap * fade10 / 1000);
+
+	return ref_cap;
+}
+EXPORT_SYMBOL_GPL(gbms_aacr_reference_capacity);
+
 int gbms_init_chg_profile_internal(struct gbms_chg_profile *profile,
 			  struct device_node *node,
 			  const char *owner_name)
@@ -213,6 +287,10 @@ int gbms_init_chg_profile_internal(struct gbms_chg_profile *profile,
 	ret = gbms_read_cccm_limits(profile, node);
 	if (ret < 0)
 		return ret;
+
+	ret = gbms_read_aacr_limits(profile, node);
+	if (ret == 0)
+		gbms_info(profile, "support AACR\n");
 
 	cccm_array_size = (profile->temp_nb_limits - 1)
 			  * profile->volt_nb_limits;
@@ -299,23 +377,20 @@ void gbms_free_chg_profile(struct gbms_chg_profile *profile)
 EXPORT_SYMBOL_GPL(gbms_free_chg_profile);
 
 /* NOTE: I should really pass the scale */
-void gbms_dump_raw_profile(const struct gbms_chg_profile *profile, int scale)
+void gbms_dump_raw_profile(char *buff, size_t len, const struct gbms_chg_profile *profile, int scale)
 {
 	const int tscale = (scale == 1) ? 1 : 10;
-	/* with scale == 1 voltage takes 7 bytes, add 7 bytes of temperature */
-	char buff[GBMS_CHG_VOLT_NB_LIMITS_MAX * 9 + 7];
-	int ti, vi, count, len = sizeof(buff);
+	int ti, vi, count = 0;
 
-	gbms_info(profile, "Profile constant charge limits:\n");
-	count = 0;
+	count += scnprintf(buff + count, len - count, "Profile constant charge limits:\n");
+	count += scnprintf(buff + count, len - count, "|T \\ V");
 	for (vi = 0; vi < profile->volt_nb_limits; vi++) {
 		count += scnprintf(buff + count, len - count, "  %4d",
 				   profile->volt_limits[vi] / scale);
 	}
-	gbms_info(profile, "|T \\ V%s\n", buff);
+	count += scnprintf(buff + count, len - count, "\n");
 
 	for (ti = 0; ti < profile->temp_nb_limits - 1; ti++) {
-		count = 0;
 		count += scnprintf(buff + count, len - count, "|%2d:%2d",
 				   profile->temp_limits[ti] / tscale,
 				   profile->temp_limits[ti + 1] / tscale);
@@ -324,7 +399,7 @@ void gbms_dump_raw_profile(const struct gbms_chg_profile *profile, int scale)
 					   GBMS_CCCM_LIMITS(profile, ti, vi)
 					   / scale);
 		}
-		gbms_info(profile, "%s\n", buff);
+		count += scnprintf(buff + count, len - count, "\n");
 	}
 }
 EXPORT_SYMBOL_GPL(gbms_dump_raw_profile);
