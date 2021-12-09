@@ -15,11 +15,11 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-
 #include <linux/kernel.h>
 #include <linux/printk.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/pm_runtime.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <misc/gvotable.h>
@@ -60,10 +60,22 @@ struct dual_fg_drv {
 	int flip_charge_full;
 
 	bool init_complete;
+	bool resume_complete;
 	bool cable_in;
 
 	u32 vflip_offset;
 };
+
+static int gdbatt_resume_check(struct dual_fg_drv *dual_fg_drv) {
+	int ret = 0;
+
+	pm_runtime_get_sync(dual_fg_drv->device);
+	if (!dual_fg_drv->init_complete || !dual_fg_drv->resume_complete)
+		ret = -EAGAIN;
+	pm_runtime_put_sync(dual_fg_drv->device);
+
+	return ret;
+}
 
 static enum power_supply_property gdbatt_fg_props[] = {
 	POWER_SUPPLY_PROP_STATUS,
@@ -239,8 +251,9 @@ static int gdbatt_get_property(struct power_supply *psy,
 	union power_supply_propval fg_1;
 	union power_supply_propval fg_2;
 
-	if (!dual_fg_drv->init_complete)
-		return -EAGAIN;
+	err = gdbatt_resume_check(dual_fg_drv);
+	if (err != 0)
+		return err;
 
 	if (!dual_fg_drv->first_fg_psy && !dual_fg_drv->second_fg_psy)
 		return -EAGAIN;
@@ -343,6 +356,10 @@ static int gdbatt_set_property(struct power_supply *psy,
 	struct dual_fg_drv *dual_fg_drv = (struct dual_fg_drv *)
 					power_supply_get_drvdata(psy);
 	int ret = 0;
+
+	ret = gdbatt_resume_check(dual_fg_drv);
+	if (ret != 0)
+		return ret;
 
 	switch (psp) {
 	case GBMS_PROP_BATT_CE_CTRL:
@@ -478,6 +495,7 @@ static void google_dual_batt_gauge_init_work(struct work_struct *work)
 		dev_info(dual_fg_drv->device,"fail to init chg profile (%d)\n", err);
 
 	dual_fg_drv->init_complete = true;
+	dual_fg_drv->resume_complete = true;
 	mod_delayed_work(system_wq, &dual_fg_drv->gdbatt_work, 0);
 	dev_info(dual_fg_drv->device, "google_dual_batt_gauge_init_work done\n");
 
@@ -574,6 +592,34 @@ static int google_dual_batt_gauge_remove(struct platform_device *pdev)
 	return 0;
 }
 
+static int __maybe_unused google_dual_batt_pm_suspend(struct device *dev)
+{
+	struct platform_device *pdev = to_platform_device(dev);
+	struct dual_fg_drv *dual_fg_drv = platform_get_drvdata(pdev);
+
+	pm_runtime_get_sync(dual_fg_drv->device);
+	dual_fg_drv->resume_complete = false;
+	pm_runtime_put_sync(dual_fg_drv->device);
+
+	return 0;
+}
+
+static int __maybe_unused google_dual_batt_pm_resume(struct device *dev)
+{
+	struct platform_device *pdev = to_platform_device(dev);
+	struct dual_fg_drv *dual_fg_drv = platform_get_drvdata(pdev);
+
+	pm_runtime_get_sync(dual_fg_drv->device);
+	dual_fg_drv->resume_complete = true;
+	pm_runtime_put_sync(dual_fg_drv->device);
+
+	return 0;
+}
+
+static SIMPLE_DEV_PM_OPS(google_dual_batt_pm_ops,
+			 google_dual_batt_pm_suspend,
+			 google_dual_batt_pm_resume);
+
 static const struct of_device_id google_dual_batt_gauge_of_match[] = {
 	{.compatible = "google,dual_batt_gauge"},
 	{},
@@ -586,6 +632,7 @@ static struct platform_driver google_dual_batt_gauge_driver = {
 		   .owner = THIS_MODULE,
 		   .of_match_table = google_dual_batt_gauge_of_match,
 		   .probe_type = PROBE_PREFER_ASYNCHRONOUS,
+		   .pm = &google_dual_batt_pm_ops,
 		   },
 	.probe = google_dual_batt_gauge_probe,
 	.remove = google_dual_batt_gauge_remove,
