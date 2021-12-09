@@ -9,21 +9,19 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": %s " fmt, __func__
 
 #include <linux/kernel.h>
+#include <linux/slab.h>
 #include <linux/pm_runtime.h>
 #include <linux/nvmem-consumer.h>
 #include <linux/module.h>
 #include <linux/delay.h>
 #include "gbms_storage.h"
 
-#define BATT_TOTAL_HIST_LEN	924
-#define BATT_ONE_HIST_LEN	12
-#define BATT_MAX_HIST_CNT	\
-		(BATT_TOTAL_HIST_LEN / BATT_ONE_HIST_LEN) // 77
-
-#define BATT_EEPROM_TAG_BRID_OFFSET	0x17
-#define BATT_EEPROM_TAG_BRID_LEN	1
 #define BATT_EEPROM_TAG_MINF_OFFSET	0x00
 #define BATT_EEPROM_TAG_MINF_LEN	GBMS_MINF_LEN
+#define BATT_EEPROM_TAG_BGPN_OFFSET	0x03
+#define BATT_EEPROM_TAG_BGPN_LEN	GBMS_BGPN_LEN
+#define BATT_EEPROM_TAG_BRID_OFFSET	0x17
+#define BATT_EEPROM_TAG_BRID_LEN	1
 #define BATT_EEPROM_TAG_DINF_OFFSET	0x1E
 #define BATT_EEPROM_TAG_DINF_LEN	GBMS_DINF_LEN
 #define BATT_EEPROM_TAG_BCNT_OFFSET	0x2E
@@ -38,10 +36,9 @@
 #define BATT_EEPROM_TAG_SELC_LEN	1
 #define BATT_EEPROM_TAG_CELC_OFFSET	0x5D
 #define BATT_EEPROM_TAG_CELC_LEN	1
+
 #define BATT_EEPROM_TAG_HIST_OFFSET	0x5E
 #define BATT_EEPROM_TAG_HIST_LEN	BATT_ONE_HIST_LEN
-#define BATT_EEPROM_TAG_BGPN_OFFSET	0x03
-#define BATT_EEPROM_TAG_BGPN_LEN	GBMS_BGPN_LEN
 
 static struct gbms_storage_desc *gbee_desc;
 
@@ -303,22 +300,78 @@ struct gbms_storage_desc gbee_storage01_dsc = {
 	.write_data = gbee_storage_write_data,
 };
 
-/* LOTR in a fixed position */
-static int gbms_lotr_update(struct nvmem_device *nvmem, int lotr)
+/* TODO: factor history mechanics out of google battery? */
+static int gbms_hist_move(struct nvmem_device *nvmem, int from, int to, int len)
 {
-	int ret, lotr_ver = 0;
+	u8 *buff, *p;
+	int index, ret;
+
+	buff = kzalloc(len, GFP_KERNEL);
+	if (!buff)
+		return -ENOMEM;
+
+	/* move only the entries that are used */
+	p = buff;
+	for (index = 0; index < BATT_MAX_HIST_CNT; index++) {
+		ret = nvmem_device_read(nvmem, from, BATT_ONE_HIST_LEN, p);
+		if (ret < 0) {
+			pr_err("%s: cannot read history data (%d)\n", __func__, ret);
+			goto exit;
+		}
+
+		/* verify 1st byte for tempco */
+		if (*p == 0xff)
+			break;
+		/* move to next history entry */
+		from += BATT_ONE_HIST_LEN;
+		p += BATT_ONE_HIST_LEN;
+	}
+
+	ret = nvmem_device_write(nvmem, to, (BATT_ONE_HIST_LEN * index), buff);
+	if (ret < 0)
+		pr_err("%s: cannot write history data (%d)\n", __func__, ret);
+
+exit:
+	kfree(buff);
+	return ret;
+}
+
+/* LOTR is in a fixed position, move  */
+static int gbms_lotr_update(struct nvmem_device *nvmem, int lotr_to)
+{
+	int ret, lotr_from = 0;
+	static u8 init_data[5]= { 0 };
 
 	ret = nvmem_device_read(nvmem, BATT_EEPROM_TAG_LOTR_OFFSET,
-				BATT_EEPROM_TAG_LOTR_LEN, &lotr_ver);
-	if (ret < 0 || lotr_ver == lotr)
+				BATT_EEPROM_TAG_LOTR_LEN, &lotr_from);
+	if (ret < 0 || lotr_from == lotr_to)
 		return ret;
 
-	/* TODO: convert one layout to the other */
-	/* eg: zero history when moving from 0xff to 0x01 */
+	if (lotr_to != GBMS_LOTR_V1 || lotr_from != GBMS_LOTR_DEFAULT)
+		return 0;
+
+	ret = gbms_hist_move(nvmem, 0x5E, 0x64, BATT_TOTAL_HIST_LEN);
+	if (ret < 0) {
+		pr_err("%s: cannot move history\n", __func__);
+		return ret;
+		/* TODO: flag this in BPST? */
+	}
+
+	ret = nvmem_device_write(nvmem, 0x5E, sizeof(init_data), init_data);
+	if (ret != sizeof(init_data)) {
+		pr_err("%s: cannot init new fields\n", __func__);
+		return ret < 0 ? ret : -EINVAL;
+	}
+
+	/* TODO: how do we handle backporting? */
 
 	/* now write lotr to the right place */
-	return nvmem_device_write(nvmem, BATT_EEPROM_TAG_LOTR_OFFSET,
-				  BATT_EEPROM_TAG_LOTR_LEN, &lotr_ver);
+	ret = nvmem_device_write(nvmem, BATT_EEPROM_TAG_LOTR_OFFSET,
+				BATT_EEPROM_TAG_LOTR_LEN, &lotr_to);
+	if (ret == BATT_EEPROM_TAG_LOTR_LEN)
+		pr_info("%s: lotr migrated %d->%d\n", __func__, lotr_from, lotr_to);
+
+	return ret;
 }
 
 static struct gbms_storage_desc *gbms_lotr_2_dsc(int lotr_ver)

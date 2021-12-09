@@ -15,17 +15,18 @@
 #include <linux/delay.h>
 #include "gbms_storage.h"
 
-#define BATT_TOTAL_HIST_LEN	924
-#define BATT_ONE_HIST_LEN	12
-#define BATT_MAX_HIST_CNT	\
-		(BATT_TOTAL_HIST_LEN / BATT_ONE_HIST_LEN) // 77
-
+/* battery health */
 #define BATT_EEPROM_TAG_BPST_OFFSET	0x5E
 #define BATT_EEPROM_TAG_BPST_LEN	1
+/* swelling data */
+#define BATT_EEPROM_TAG_STRD_OFFSET	0x5F
+#define BATT_EEPROM_TAG_STRD_LEN	4
+
+/* */
 #define BATT_EEPROM_TAG_HIST_OFFSET	0x64
 #define BATT_EEPROM_TAG_HIST_LEN	BATT_ONE_HIST_LEN
 
-/* add GBMS_TAG_BPST a target specific entry */
+/* Add GBMS_TAG_BPST and GBMS_TAG_STRD move down history */
 int gbee_storage01_info(gbms_tag_t tag, size_t *addr, size_t *count, void *ptr)
 {
 	int ret = 0;
@@ -34,6 +35,10 @@ int gbee_storage01_info(gbms_tag_t tag, size_t *addr, size_t *count, void *ptr)
 	case GBMS_TAG_BPST:
 		*addr = BATT_EEPROM_TAG_BPST_OFFSET;
 		*count = BATT_EEPROM_TAG_BPST_LEN;
+		break;
+	case GBMS_TAG_STRD:
+		*addr = BATT_EEPROM_TAG_STRD_OFFSET;
+		*count = BATT_EEPROM_TAG_STRD_LEN;
 		break;
 	case GBMS_TAG_HIST:
 		*addr = BATT_EEPROM_TAG_HIST_OFFSET;
@@ -56,7 +61,7 @@ int gbee_storage01_iter(int index, gbms_tag_t *tag, void *ptr)
 					   GBMS_TAG_GMSR, GBMS_TAG_BCNT,
 					   GBMS_TAG_CNHS, GBMS_TAG_SELC,
 					   GBMS_TAG_CELC, GBMS_TAG_LOTR,
-					   GBMS_TAG_BPST };
+					   GBMS_TAG_BPST, GBMS_TAG_STRD };
 	const int max = ARRAY_SIZE(keys);
 
 	if (index < 0 || index >= max)
