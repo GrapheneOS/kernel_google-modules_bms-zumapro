@@ -117,6 +117,7 @@ enum gbms_msc_states_t {
 	MSC_NYET,	/* in taper */
 	MSC_HEALTH,
 	MSC_HEALTH_PAUSE,
+	MSC_HEALTH_ALWAYS_ON,
 	MSC_STATES_COUNT,
 };
 
@@ -268,6 +269,7 @@ enum gbms_stats_tier_idx_t {
 	GBMS_STATS_AC_TI_PAUSE_AON = 17,
 	GBMS_STATS_AC_TI_V2_PREDICT = 18,
 	GBMS_STATS_AC_TI_V2_PREDICT_SUCCESS = 19,
+	GBMS_STATS_AC_TI_DONE_AON = 20,
 
 	/* TODO: rename, these are not really related to AC */
 	GBMS_STATS_AC_TI_FULL_CHARGE = 100,
@@ -302,6 +304,11 @@ struct batt_chg_health {
 
 #define CHG_HEALTH_REST_IS_PAUSE(rest) \
 	((rest)->rest_state == CHG_HEALTH_PAUSE)
+
+#define CHG_HEALTH_REST_IS_AON(rest, ssoc) \
+	(((rest)->rest_state == CHG_HEALTH_ACTIVE) ? \
+	(((rest)->always_on_soc != -1) ? \
+	(ssoc >= (rest)->always_on_soc) : 0) : 0)
 
 #define CHG_HEALTH_REST_SOC(rest) (((rest)->always_on_soc != -1) ? \
 			(rest)->always_on_soc : (rest)->rest_soc)

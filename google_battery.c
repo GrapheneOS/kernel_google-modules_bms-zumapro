@@ -1503,7 +1503,7 @@ static void batt_chg_stats_update(struct batt_drv *batt_drv, int temp_idx,
 					   elap, cc,
 					   &ce_data->health_pause_stats);
 
-	} else if (msc_state == MSC_HEALTH) {
+	} else if (msc_state == MSC_HEALTH || msc_state == MSC_HEALTH_ALWAYS_ON) {
 		/*
 		 * It works because msc_logic call BEFORE updating msc_state.
 		 * NOTE: that OVERHEAT and CCLVL disable AC, I should not be
@@ -1611,7 +1611,10 @@ static int batt_chg_health_vti(const struct batt_chg_health *chg_health)
 		break;
 	/* active, worked */
 	case CHG_HEALTH_DONE:
-		tier_idx = GBMS_STATS_AC_TI_VALID;
+		if (aon_enabled)
+			tier_idx = GBMS_STATS_AC_TI_DONE_AON;
+		else
+			tier_idx = GBMS_STATS_AC_TI_VALID;
 		break;
 	default:
 		break;
@@ -1820,7 +1823,7 @@ static int batt_chg_tier_stats_cstr(char *buff, int size,
 			  tier_stat->time_other;
 	const static char *codes[] = {"n", "s", "d", "l", "v", "vo", "p", "f",
 					"t", "dl", "st", "tc", "r", "w", "rs",
-					"n", "ny", "h", "hp"};
+					"n", "ny", "h", "hp", "ha"};
 	long temp_avg, ibatt_avg, icl_avg;
 	int j, len = 0;
 
@@ -1906,6 +1909,7 @@ static int batt_health_stats_cstr(char *buff, int size,
 		len += batt_chg_tier_stats_cstr(&buff[len], size - len,
 						&ce_data->health_pause_stats,
 						verbose);
+
 	return len;
 }
 
@@ -2714,6 +2718,8 @@ static int msc_pm_hold(int msc_state)
 	case MSC_LAST:
 	case MSC_RSTC:
 	case MSC_HEALTH:
+	case MSC_HEALTH_PAUSE:
+	case MSC_HEALTH_ALWAYS_ON:
 	case MSC_WAIT:
 	case MSC_FAST:
 	case MSC_NYET:
@@ -3154,6 +3160,7 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 	bool jeita_stop;
 	bool changed = false;
 	const bool disable_votes = batt_drv->disable_votes;
+	const int ssoc = ssoc_get_capacity(&batt_drv->ssoc_state);
 	union gbms_charger_state *chg_state = &batt_drv->chg_state;
 	int log_vote_level = BATT_PRLOG_DEBUG;
 
@@ -3276,7 +3283,10 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 	 * charging is active
 	 */
 	changed |= msc_logic_health(batt_drv);
-	if (CHG_HEALTH_REST_IS_ACTIVE(&batt_drv->chg_health)) {
+	if (CHG_HEALTH_REST_IS_AON(&batt_drv->chg_health, ssoc)) {
+		batt_drv->msc_state = MSC_HEALTH_ALWAYS_ON;
+		batt_drv->fv_uv = 0;
+	} else if (CHG_HEALTH_REST_IS_ACTIVE(&batt_drv->chg_health)) {
 		batt_drv->msc_state = MSC_HEALTH;
 		/* make sure using rest_fv_uv when HEALTH_ACTIVE */
 		batt_drv->fv_uv = 0;
