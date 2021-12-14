@@ -385,8 +385,7 @@ uint8_t gbms_gen_chg_flags(int chg_status, int chg_type);
 int gbms_read_charger_state(union gbms_charger_state *chg_state,
 			    struct power_supply *chg_psy);
 /* calculate aacr reference capacity */
-int gbms_aacr_reference_capacity(struct gbms_chg_profile *profile,
-				 int cycles, int design_cap);
+int gbms_aacr_fade10(const struct gbms_chg_profile *profile, int cycles);
 
 /* debug/print */
 const char *gbms_chg_type_s(int chg_type);
