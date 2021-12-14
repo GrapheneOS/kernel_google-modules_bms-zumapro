@@ -2021,7 +2021,9 @@ static int max1720x_get_property(struct power_supply *psy,
 			chip->por = data & MAX1720X_STATUS_POR;
 			if (chip->por && chip->model_ok) {
 				/* trigger reload model and clear of POR */
+				mutex_unlock(&chip->model_lock);
 				max1720x_fg_irq_thread_fn(-1, chip);
+				return err;
 			}
 		}
 		break;
