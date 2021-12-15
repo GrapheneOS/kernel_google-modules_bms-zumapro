@@ -2183,6 +2183,8 @@ static void p9221_ll_bpp_cep(struct p9221_charger_data *charger, int capacity)
 		icl_ua = 600000;
 	if (capacity > 98)
 		icl_ua = 300000;
+	if (capacity > 99)
+		icl_ua = 200000;
 
 	vote(charger->dc_icl_votable, DD_VOTER, icl_ua > 0, icl_ua);
 	if (icl_ua > 0)
@@ -2284,9 +2286,24 @@ static int p9221_set_property(struct power_supply *psy,
 		}
 		changed = !!rc;
 		break;
-	case POWER_SUPPLY_PROP_CAPACITY:
-		p9221_set_capacity(charger, val->intval);
+	case POWER_SUPPLY_PROP_CAPACITY: {
+		int capacity = val->intval;
+
+		/* TODO: ignore the direct calls when fuel-gauge is defined */
+		if (charger->fg_psy) {
+			union power_supply_propval prop;
+
+			rc = power_supply_get_property(charger->fg_psy,
+					POWER_SUPPLY_PROP_CAPACITY, &prop);
+			if (rc == 0)
+				capacity = prop.intval;
+
+			pr_info("%s: orig=%d new=%d\n", __func__, val->intval, capacity);
+		}
+
+		p9221_set_capacity(charger, capacity);
 		break;
+	}
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
 		if (val->intval < 0) {
 			ret = -EINVAL;
@@ -2371,6 +2388,8 @@ static int p9221_notifier_cb(struct notifier_block *nb, unsigned long event,
 	struct power_supply *psy = data;
 	struct p9221_charger_data *charger =
 		container_of(nb, struct p9221_charger_data, nb);
+	const char *fg_name = IS_ERR_OR_NULL(charger->fg_psy) || !charger->fg_psy->desc ?
+			      NULL : charger->fg_psy->desc->name;
 
 	if (charger->ben_state)
 		goto out;
@@ -2381,6 +2400,8 @@ static int p9221_notifier_cb(struct notifier_block *nb, unsigned long event,
 	if (strcmp(psy->desc->name, "dc") == 0) {
 		charger->dc_psy = psy;
 		charger->check_dc = true;
+	} else if (fg_name && strcmp(psy->desc->name, fg_name) == 0) {
+		schedule_delayed_work(&charger->fg_work, 0);
 	}
 
 	if (!charger->check_dc)
@@ -5838,10 +5859,43 @@ static bool p9221_check_online(struct p9221_charger_data *charger)
 	return false;
 }
 
+static void p9221_fg_work(struct work_struct *work)
+{
+	struct p9221_charger_data *charger = container_of(work,
+			struct p9221_charger_data, fg_work.work);
+	union power_supply_propval prop = { };
+	int err;
+
+	if (!charger->fg_psy) {
+		static struct power_supply *psy[2];
+
+		err = power_supply_get_by_phandle_array(charger->dev->of_node,
+							"idt,fuel-gauge",
+							psy, ARRAY_SIZE(psy));
+		if (err < 0) {
+			schedule_delayed_work(&charger->fg_work, msecs_to_jiffies(1000));
+			pr_info("%s: wait for fg err=%d\n", __func__, err);
+			return;
+		}
+
+		dev_info(charger->dev, "Reading CSP from %s\n",
+			 psy[0]->desc && psy[0]->desc->name ? psy[0]->desc->name : "<>");
+		charger->fg_psy = psy[0];
+	}
+
+	/* triggered from notifier_cb */
+	err = power_supply_get_property(charger->fg_psy, POWER_SUPPLY_PROP_CAPACITY,
+					&prop);
+	if (err == 0)
+		p9221_set_capacity(charger, prop.intval);
+
+	pr_info("%s: err=%d capacity=%d\n", __func__, err, prop.intval);
+}
+
 static int p9221_charger_probe(struct i2c_client *client,
 				const struct i2c_device_id *id)
 {
-	struct device_node *of_node = client->dev.of_node;
+	struct device_node *dn, *of_node = client->dev.of_node;
 	struct p9221_charger_data *charger;
 	struct p9221_charger_platform_data *pdata = client->dev.platform_data;
 	struct power_supply_config psy_cfg = {};
@@ -5909,6 +5963,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	INIT_DELAYED_WORK(&charger->dcin_pon_work, p9221_dcin_pon_work);
 	INIT_DELAYED_WORK(&charger->rtx_work, p9382_rtx_work);
 	INIT_DELAYED_WORK(&charger->auth_dc_icl_work, p9221_auth_dc_icl_work);
+	INIT_DELAYED_WORK(&charger->fg_work, p9221_fg_work);
 	INIT_WORK(&charger->uevent_work, p9221_uevent_work);
 	INIT_WORK(&charger->rtx_disable_work, p9382_rtx_disable_work);
 	INIT_WORK(&charger->rtx_reset_work, p9xxx_rtx_reset_work);
@@ -6118,6 +6173,11 @@ static int p9221_charger_probe(struct i2c_client *client,
 		debugfs_create_bool("no_fod", 0644, charger->debug_entry, &charger->no_fod);
 	}
 
+	/* can independently read battery capacity */
+	dn = of_parse_phandle(of_node, "idt,fuel-gauge", 0);
+	if (dn)
+		schedule_delayed_work(&charger->fg_work, 0);
+
 	/*
 	 * Register notifier so we can detect changes on DC_IN
 	 */
@@ -6201,6 +6261,8 @@ static int p9221_charger_remove(struct i2c_client *client)
 	device_init_wakeup(charger->dev, false);
 	cancel_delayed_work_sync(&charger->notifier_work);
 	power_supply_unreg_notifier(&charger->nb);
+	if (!IS_ERR_OR_NULL(charger->fg_psy))
+		power_supply_put(charger->fg_psy);
 	mutex_destroy(&charger->io_lock);
 	mutex_destroy(&charger->stats_lock);
 	mutex_destroy(&charger->chg_features.feat_lock);
