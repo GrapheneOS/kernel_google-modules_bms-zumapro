@@ -248,13 +248,13 @@ no_data:
 	return ret;
 }
 
-int gbms_aacr_reference_capacity(struct gbms_chg_profile *profile,
-				  int cycles, int design_cap)
+/* return the pct amount of capacity fade at cycles or negative if not enabled */
+int gbms_aacr_fade10(const struct gbms_chg_profile *profile, int cycles)
 {
-	int idx, ref_cap, fade10;
-	int cycle_f, cycle_s = 0, fade_f, fade_s = 0;
+	int cycle_s = 0, fade_s = 0;
+	int idx, cycle_f, fade_f;
 
-	if (profile->aacr_nb_limits == 0)
+	if (profile->aacr_nb_limits == 0 || cycles < 0)
 		return -EINVAL;
 
 	for (idx = 0; idx < profile->aacr_nb_limits; idx++)
@@ -268,12 +268,10 @@ int gbms_aacr_reference_capacity(struct gbms_chg_profile *profile,
 		cycle_s = profile->reference_cycles[idx - 1];
 		fade_s = profile->reference_fade10[idx - 1];
 	}
-	fade10 = (cycles - cycle_s) * (fade_f - fade_s) / (cycle_f - cycle_s) + fade_s;
-	ref_cap = design_cap - (design_cap * fade10 / 1000);
 
-	return ref_cap;
+	return (cycles - cycle_s) * (fade_f - fade_s) / (cycle_f - cycle_s) + fade_s;
 }
-EXPORT_SYMBOL_GPL(gbms_aacr_reference_capacity);
+EXPORT_SYMBOL_GPL(gbms_aacr_fade10);
 
 int gbms_init_chg_profile_internal(struct gbms_chg_profile *profile,
 			  struct device_node *node,
@@ -288,9 +286,10 @@ int gbms_init_chg_profile_internal(struct gbms_chg_profile *profile,
 	if (ret < 0)
 		return ret;
 
+	/* TODO: dump the AACR table if supported */
 	ret = gbms_read_aacr_limits(profile, node);
 	if (ret == 0)
-		gbms_info(profile, "support AACR\n");
+		gbms_info(profile, "AACR: supported\n");
 
 	cccm_array_size = (profile->temp_nb_limits - 1)
 			  * profile->volt_nb_limits;
