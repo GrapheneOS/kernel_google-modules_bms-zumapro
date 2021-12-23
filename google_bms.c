@@ -431,7 +431,12 @@ int gbms_msc_temp_idx(const struct gbms_chg_profile *profile, int temp)
 {
 	int temp_idx = 0;
 
-	while (temp_idx < profile->temp_nb_limits - 1 &&
+	/*
+	 * needs to limit under table size after the last ++
+	 * ex. temp_nb_limits=7 make 6 temp range from 0 to 5
+	 * so we need to limit in temp_nb_limits - 2
+	 */
+	while (temp_idx < profile->temp_nb_limits - 2 &&
 	       temp >= profile->temp_limits[temp_idx + 1])
 		temp_idx++;
 
