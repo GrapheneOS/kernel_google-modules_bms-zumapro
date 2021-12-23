@@ -2164,7 +2164,7 @@ static bool msc_logic_soft_jeita(struct batt_drv *batt_drv, int temp)
 	const struct gbms_chg_profile *profile = &batt_drv->chg_profile;
 
 	if (temp < profile->temp_limits[0] ||
-	    temp > profile->temp_limits[profile->temp_nb_limits - 1]) {
+	    temp >= profile->temp_limits[profile->temp_nb_limits - 1]) {
 		if (batt_drv->jeita_stop_charging < 0) {
 			batt_drv->jeita_stop_charging = 1;
 			batt_prlog(BATT_PRLOG_ALWAYS,
