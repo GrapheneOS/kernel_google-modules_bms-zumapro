@@ -1294,8 +1294,7 @@ static void max1720x_handle_update_nconvgcfg(struct max1720x_chip *chip,
 			  chip->convgcfg_hysteresis;
 	if ((idx != chip->curr_convgcfg_idx) &&
 	    (chip->curr_convgcfg_idx == -1 || idx < chip->curr_convgcfg_idx ||
-	     temp >= chip->temp_convgcfg[chip->curr_convgcfg_idx] +
-	     chip->convgcfg_hysteresis)) {
+	     temp >= hysteresis_temp)) {
 		REGMAP_WRITE(&chip->regmap_nvram, MAX1720X_NCONVGCFG,
 			     chip->convgcfg_values[idx]);
 		chip->curr_convgcfg_idx = idx;

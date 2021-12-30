@@ -2941,7 +2941,6 @@ static ssize_t p9221_show_version(struct device *dev,
 	struct p9221_charger_data *charger = i2c_get_clientdata(client);
 	int count = 0;
 	int i;
-	int ret;
 	u8 val8 = 0;
 
 	if (!p9221_is_online(charger))
@@ -2964,7 +2963,7 @@ static ssize_t p9221_show_version(struct device *dev,
 
 	count += scnprintf(buf + count, PAGE_SIZE - count, "otp fw date: ");
 	for (i = 0; i < P9221_OTP_FW_DATE_SIZE; i++) {
-		ret = p9221_reg_read_8(charger,
+		p9221_reg_read_8(charger,
 				       P9221_OTP_FW_DATE_REG + i, &val8);
 		if (val8)
 			count += scnprintf(buf + count, PAGE_SIZE - count,
@@ -2973,7 +2972,7 @@ static ssize_t p9221_show_version(struct device *dev,
 
 	count += scnprintf(buf + count, PAGE_SIZE - count, "\notp fw time: ");
 	for (i = 0; i < P9221_OTP_FW_TIME_SIZE; i++) {
-		ret = p9221_reg_read_8(charger,
+		p9221_reg_read_8(charger,
 				       P9221_OTP_FW_TIME_REG + i, &val8);
 		if (val8)
 			count += scnprintf(buf + count, PAGE_SIZE - count,
@@ -2989,7 +2988,7 @@ static ssize_t p9221_show_version(struct device *dev,
 
 	count += scnprintf(buf + count, PAGE_SIZE - count, "ram fw date: ");
 	for (i = 0; i < P9221_SRAM_FW_DATE_SIZE; i++) {
-		ret = p9221_reg_read_8(charger,
+		p9221_reg_read_8(charger,
 				       P9221_SRAM_FW_DATE_REG + i, &val8);
 		if (val8)
 			count += scnprintf(buf + count, PAGE_SIZE - count,
@@ -2998,7 +2997,7 @@ static ssize_t p9221_show_version(struct device *dev,
 
 	count += scnprintf(buf + count, PAGE_SIZE - count, "\nram fw time: ");
 	for (i = 0; i < P9221_SRAM_FW_TIME_SIZE; i++) {
-		ret = p9221_reg_read_8(charger,
+		p9221_reg_read_8(charger,
 				       P9221_SRAM_FW_TIME_REG + i, &val8);
 		if (val8)
 			count += scnprintf(buf + count, PAGE_SIZE - count,

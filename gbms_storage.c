@@ -504,25 +504,6 @@ static int gbms_storage_flush_all_internal(bool force)
 	return success ? 0 : -EIO;
 }
 
-int gbms_storage_flush(gbms_tag_t tag)
-{
-	unsigned long flags;
-	int ret;
-
-	if (!gbms_storage_init_done)
-		return -EPROBE_DEFER;
-
-	spin_lock_irqsave(&providers_lock, flags);
-
-	/* TODO: search for the provider */
-
-	ret = gbms_storage_flush_all_internal(false);
-	spin_unlock_irqrestore(&providers_lock, flags);
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL(gbms_storage_flush);
-
 int gbms_storage_flush_all(void)
 {
 	unsigned long flags;
