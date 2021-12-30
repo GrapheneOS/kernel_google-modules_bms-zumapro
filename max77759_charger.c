@@ -649,7 +649,8 @@ static int max77759_get_otg_usecase(struct max77759_foreach_cb_data *cb_data)
  * Determines the use case to switch to. This is device/system dependent and
  * will likely be factored to a separate file (compile module).
  */
-static int max77759_get_usecase(struct max77759_foreach_cb_data *cb_data)
+static int max77759_get_usecase(struct max77759_foreach_cb_data *cb_data,
+				struct max77759_usecase_data *uc_data)
 {
 	const int buck_on = cb_data->chgin_off ? 0 : cb_data->buck_on;
 	const int chgr_on = cb_data_is_chgr_on(cb_data);
@@ -682,7 +683,7 @@ static int max77759_get_usecase(struct max77759_foreach_cb_data *cb_data)
 		return max77759_get_otg_usecase(cb_data);
 
 	/* USB will disable wlc_rx */
-	if (cb_data->buck_on)
+	if (cb_data->buck_on && !uc_data->dcin_is_dock)
 		wlc_rx = false;
 
 	/* buck_on is wired, wlc_rx is wireless, might still need rTX */
@@ -735,6 +736,9 @@ static int max77759_get_usecase(struct max77759_foreach_cb_data *cb_data)
 			usecase = GSU_MODE_WLC_DC;
 		}
 
+		if (uc_data->dcin_is_dock)
+			usecase = GSU_MODE_DOCK;
+
 	} else {
 
 		/* MODE_BUCK_ON is inflow */
@@ -771,12 +775,14 @@ static int max77759_get_usecase(struct max77759_foreach_cb_data *cb_data)
 	return usecase;
 }
 
+static int max77759_wcin_is_valid(struct max77759_chgr_data *data);
 /*
  * adjust *INSEL (only one source can be enabled at a given time)
  * NOTE: providing compatibility with input_suspend makes this more complex
  * that it needs to be.
  */
-static int max77759_set_insel(struct max77759_usecase_data *uc_data,
+static int max77759_set_insel(struct max77759_chgr_data *data,
+			      struct max77759_usecase_data *uc_data,
 			      const struct max77759_foreach_cb_data *cb_data,
 			      int from_uc, int use_case)
 {
@@ -818,6 +824,12 @@ static int max77759_set_insel(struct max77759_usecase_data *uc_data,
 			insel_value |= MAX77759_CHG_CNFG_12_WCINSEL;
 
 		force_wlc = true;
+	}
+
+	/* always disable USB when Dock is present */
+	if (uc_data->dcin_is_dock && max77759_wcin_is_valid(data) && !cb_data->wlcin_off) {
+		insel_value &= ~MAX77759_CHG_CNFG_12_CHGINSEL;
+		insel_value |= MAX77759_CHG_CNFG_12_WCINSEL;
 	}
 
 	if (from_uc != use_case || force_wlc || wlc_on) {
@@ -878,7 +890,7 @@ static int max77759_set_usecase(struct max77759_chgr_data *data,
 	}
 
 	/* always fix/adjust insel (solves multiple input_suspend) */
-	ret = max77759_set_insel(uc_data, cb_data, from_uc, use_case);
+	ret = max77759_set_insel(data, uc_data, cb_data, from_uc, use_case);
 	if (ret < 0) {
 		dev_err(data->dev, "use_case=%d->%d set_insel failed ret:%d\n",
 			from_uc, use_case, ret);
@@ -1008,7 +1020,7 @@ static void max77759_mode_callback(struct gvotable_election *el,
 			cb_data.frs_on = cb_data.otg_on;
 
 		/* figure out next use case if not in raw mode */
-		use_case = max77759_get_usecase(&cb_data);
+		use_case = max77759_get_usecase(&cb_data, uc_data);
 		if (use_case < 0) {
 			dev_err(data->dev, "no valid use case %d\n", use_case);
 			goto unlock_done;
@@ -2877,6 +2889,11 @@ static int max77759_charger_probe(struct i2c_client *client,
 		dev_err(dev, "Invalid value of USB OTG voltage, set to 5000\n");
 		data->uc_data.otg_value = MAX77759_CHG_CNFG_11_OTG_VBYP_5000MV;
 	}
+
+	if (of_property_read_bool(dev->of_node, "max77759,dcin-is-dock"))
+		data->uc_data.dcin_is_dock = true;
+	else
+		data->uc_data.dcin_is_dock = false;
 
 	data->init_complete = 1;
 	data->resume_complete = 1;

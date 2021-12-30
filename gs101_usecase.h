@@ -40,6 +40,8 @@ struct max77759_usecase_data {
 	struct i2c_client *client;
 	bool init_done;
 	int use_case;
+
+	bool dcin_is_dock;
 };
 
 enum gsu_usecases {
@@ -63,6 +65,8 @@ enum gsu_usecases {
 	GSU_MODE_USB_OTG_WLC_TX	= 12,	/* 7-2, 1060, */
 
 	GSU_MODE_USB_WLC_RX	= 13,
+
+	GSU_MODE_DOCK		= 14,
 };
 
 extern int gs101_wlc_en(struct max77759_usecase_data *uc_data, bool wlc_on);

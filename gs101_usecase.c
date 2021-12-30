@@ -438,6 +438,7 @@ int gs101_to_standby(struct max77759_usecase_data *uc_data, int use_case)
 	case GSU_MODE_USB_CHG:
 		need_stby = use_case != GSU_MODE_USB_CHG_WLC_TX &&
 			    use_case != GSU_MODE_WLC_RX &&
+			    use_case != GSU_MODE_DOCK &&
 			    use_case != GSU_MODE_USB_DC &&
 			    use_case != GSU_MODE_USB_OTG_FRS;
 		break;
