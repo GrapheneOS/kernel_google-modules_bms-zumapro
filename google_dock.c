@@ -143,30 +143,27 @@ static void google_dock_icl_ramp_work(struct work_struct *work)
 	int online, voltage;
 
 	online = GPSY_GET_PROP(dock->dc_psy, POWER_SUPPLY_PROP_ONLINE);
-	if (!online || online == dock->online)
-		goto out;
-
 	voltage = GPSY_GET_PROP(dock->dc_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
 	if (voltage > DOCK_13_5W_VOUT_UV)
 		dock->icl_ramp_ua = DOCK_15W_ILIM_UA;
 	else
 		dock->icl_ramp_ua = DOCK_13_5W_ILIM_UA;
 
-	dock->icl_ramp = true;
+	if (online)
+		dock->icl_ramp = true;
 
 	dev_info(dock->device, "ICL ramp work, ramp=%d icl=%d\n",
 		 dock->icl_ramp, dock->icl_ramp_ua);
 
 	google_dock_set_icl(dock);
 
-out:
 	pr_info("%s: online: %d->%d\n", __func__, dock->online, online);
 	dock->online = online;
 }
 
 static void google_dock_icl_ramp_reset(struct dock_drv *dock)
 {
-	dev_info(dock->device, "ICL ramp reset, ramp=%d\n", dock->icl_ramp);
+	dev_info(dock->device, "ICL ramp reset, ramp=%d->0\n", dock->icl_ramp);
 
 	dock->icl_ramp = false;
 
