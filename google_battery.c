@@ -225,6 +225,17 @@ enum batt_aacr_state {
 	BATT_AACR_MAX,
 };
 
+#define BATT_TEMP_RECORD_THR 3
+struct swelling_data {
+	/* Time in different temperature */
+	bool is_enable;
+	u32 temp_thr[BATT_TEMP_RECORD_THR];
+	u32 soc_thr[BATT_TEMP_RECORD_THR];
+	ktime_t chg[BATT_TEMP_RECORD_THR];
+	ktime_t dischg[BATT_TEMP_RECORD_THR];
+	ktime_t last_update;
+};
+
 /* battery driver state */
 struct batt_drv {
 	struct device *device;
@@ -359,6 +370,8 @@ struct batt_drv {
 	enum batt_aacr_state aacr_state;
 	int aacr_cycle_grace;
 	int aacr_cycle_max;
+
+	struct swelling_data sd;
 };
 
 static int gbatt_get_temp(const struct batt_drv *batt_drv, int *temp);
@@ -4996,6 +5009,28 @@ static ssize_t aacr_cycle_max_show(struct device *dev,
 
 static const DEVICE_ATTR_RW(aacr_cycle_max);
 
+static ssize_t swelling_data_show(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	struct swelling_data *sd = &batt_drv->sd;
+	int len = 0, i;
+
+	len += scnprintf(&buf[len], PAGE_SIZE - len,
+			 "temp/soc\tcharge(s)\tdischarge(s)\n");
+	for (i = 0; i < BATT_TEMP_RECORD_THR ; i++) {
+		len += scnprintf(&buf[len], PAGE_SIZE - len,
+				 "%d/%d\t%llu\t%llu\n",
+				 sd->temp_thr[i]/10, sd->soc_thr[i],
+				 sd->chg[i], sd->dischg[i]);
+	}
+
+	return len;
+}
+
+static const DEVICE_ATTR_RO(swelling_data);
+
 /* ------------------------------------------------------------------------- */
 
 static int batt_init_fs(struct batt_drv *batt_drv)
@@ -5129,6 +5164,9 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_aacr_cycle_max);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create aacr cycle max\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_swelling_data);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create swelling_data\n");
 
 	de = debugfs_create_dir("google_battery", 0);
 	if (IS_ERR_OR_NULL(de))
@@ -5394,6 +5432,32 @@ static int batt_history_data_work(struct batt_drv *batt_drv)
 	return 0;
 }
 
+static void gbatt_record_over_temp(struct batt_drv *batt_drv)
+{
+	struct swelling_data *sd = &batt_drv->sd;
+	struct batt_ssoc_state *ssoc_state = &batt_drv->ssoc_state;
+	const bool charge = batt_drv->fg_status == POWER_SUPPLY_STATUS_CHARGING ||
+			    (batt_drv->fg_status == POWER_SUPPLY_STATUS_FULL &&
+			    !batt_drv->chg_done);
+	const int temp = batt_drv->batt_temp;
+	const int soc = ssoc_get_real(ssoc_state);
+	const ktime_t now = get_boot_sec();
+	ktime_t elap = now - sd->last_update;
+	int i;
+
+	for (i = 0; i < BATT_TEMP_RECORD_THR; i++) {
+		if (temp < sd->temp_thr[i] || soc < sd->soc_thr[i])
+			continue;
+
+		if (charge)
+			sd->chg[i] += elap;
+		else
+			sd->dischg[i] += elap;
+	}
+
+	sd->last_update = now;
+}
+
 /*
  * poll the battery, run SOC%, dead battery, critical.
  * scheduled from psy_changed and from timer
@@ -5533,6 +5597,9 @@ static void google_battery_work(struct work_struct *work)
 			notify_psy_changed = true;
 		}
 	}
+
+	if (batt_drv->sd.is_enable)
+		gbatt_record_over_temp(batt_drv);
 
 	mutex_unlock(&batt_drv->batt_lock);
 
@@ -6198,6 +6265,17 @@ static void google_battery_init_work(struct work_struct *work)
 				   &batt_drv->health_safety_margin);
 	if (ret < 0)
 		batt_drv->health_safety_margin = DEFAULT_HEALTH_SAFETY_MARGIN;
+
+	ret = of_property_read_u32_array(node, "google,temp-record-thr",
+					 batt_drv->sd.temp_thr,
+					 BATT_TEMP_RECORD_THR);
+	if (ret == 0) {
+		ret = of_property_read_u32_array(node, "google,soc-record-thr",
+						 batt_drv->sd.soc_thr,
+						 BATT_TEMP_RECORD_THR);
+		if (ret == 0)
+			batt_drv->sd.is_enable = true;
+	}
 
 	/* cycle count is cached: read here bc SSOC, chg_profile might use it */
 	batt_update_cycle_count(batt_drv);
