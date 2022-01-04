@@ -27,7 +27,6 @@
 #include <linux/thermal.h>
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
-#include <linux/regulator/pmic_class.h>
 #include <misc/gvotable.h>
 #include "gbms_power_supply.h"
 #include "google_bms.h"
@@ -35,16 +34,6 @@
 #include "max77759.h"
 #include "max77759_charger.h"
 
-#define VD_BATTERY_VOLTAGE 4200
-#define VD_UPPER_LIMIT 3350
-#define VD_LOWER_LIMIT 2600
-#define VD_STEP 50
-#define VD_DELAY 300
-#define BO_UPPER_LIMIT 6800
-#define BO_LOWER_LIMIT 3800
-#define BO_STEP 200
-#define THERMAL_IRQ_COUNTER_LIMIT 5
-#define THERMAL_HYST_LEVEL 100
 #define BATOILO_DET_30US 0x4
 #define MAX77759_DEFAULT_MODE	MAX77759_CHGR_MODE_ALL_OFF
 #define CHG_TERM_VOLT_DEBOUNCE	200
@@ -112,6 +101,127 @@ static inline int max77759_reg_update(struct max77759_chgr_data *data,
 
 	return ret;
 }
+
+/* ----------------------------------------------------------------------- */
+
+static int max77759_get_vdroop_ok(struct i2c_client *client, bool *state)
+{
+	struct max77759_chgr_data *data;
+	u8 val;
+
+	if (!client)
+		return -ENODEV;
+
+	data = i2c_get_clientdata(client);
+	if (!data || !data->regmap)
+		return -ENODEV;
+
+
+	if (max77759_reg_read(data->regmap, MAX77759_CHG_DETAILS_01, &val) < 0)
+		return -EINVAL;
+
+	*state = _chg_details_01_vdroop2_ok_get(val);;
+	return 0;
+}
+
+static int max77759_get_batoilo_lvl(struct i2c_client *client, unsigned int *lvl)
+{
+	struct max77759_chgr_data *data;
+	u8 val;
+
+	if (!client)
+		return -ENODEV;
+
+	data = i2c_get_clientdata(client);
+	if (!data || !data->regmap)
+		return -ENODEV;
+
+	if (max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_14, &val) < 0)
+		return -EINVAL;
+	*lvl = (BO_STEP * ((val & MAX77759_CHG_CNFG_14_BAT_OILO_MASK)
+			>> MAX77759_CHG_CNFG_14_BAT_OILO_SHIFT) + BO_LOWER_LIMIT);
+	return 0;
+}
+
+static int max77759_set_batoilo_lvl(struct i2c_client *client, unsigned int lvl)
+{
+	struct max77759_chgr_data *data;
+	u8 val;
+
+	if (!client)
+		return -ENODEV;
+
+	if ((lvl < BO_LOWER_LIMIT) || (lvl > BO_UPPER_LIMIT))
+		return -EIO;
+	data = i2c_get_clientdata(client);
+	if (!data || !data->regmap)
+		return -ENODEV;
+
+	/* TODO: use rmw */
+	if (max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_14, &val) < 0)
+		return -EINVAL;
+	val &= ~MAX77759_CHG_CNFG_14_BAT_OILO_MASK;
+	val |= (lvl - BO_LOWER_LIMIT) / 200;
+	if (max77759_reg_write(data->regmap, MAX77759_CHG_CNFG_14, val) < 0)
+		return -EIO;
+	return 0;
+}
+
+static int max77759_get_uvlo_lvl(struct i2c_client *client, uint8_t mode, unsigned int *lvl)
+{
+	struct max77759_chgr_data *data;
+	u8 val;
+	u8 reg;
+
+	if (!client)
+		return -ENODEV;
+
+	data = i2c_get_clientdata(client);
+	if (!data || !data->regmap)
+		return -ENODEV;
+
+	reg = (mode == 1) ? MAX77759_CHG_CNFG_15 : MAX77759_CHG_CNFG_16;
+
+	if (max77759_reg_read(data->regmap, reg, &val) < 0)
+		return -EINVAL;
+	*lvl = VD_STEP * ((val & MAX77759_CHG_CNFG_15_SYS_UVLO1_MASK)
+			  >> MAX77759_CHG_CNFG_15_SYS_UVLO1_SHIFT) + VD_LOWER_LIMIT;
+	return 0;
+}
+
+static int max77759_set_uvlo_lvl(struct i2c_client *client, uint8_t mode, unsigned int lvl)
+{
+	struct max77759_chgr_data *data;
+	u8 val;
+	u8 reg;
+
+	if (!client)
+		return -ENODEV;
+
+	if ((lvl < VD_LOWER_LIMIT) || (lvl > VD_UPPER_LIMIT))
+		return -EIO;
+	data = i2c_get_clientdata(client);
+	if (!data || !data->regmap)
+		return -ENODEV;
+
+	reg = (mode == UVLO1) ? MAX77759_CHG_CNFG_15 : MAX77759_CHG_CNFG_16;
+
+	if (max77759_reg_read(data->regmap, reg, &val) < 0)
+		return -EINVAL;
+	val &= ~MAX77759_CHG_CNFG_15_SYS_UVLO1_MASK;
+	val |= (lvl - VD_LOWER_LIMIT) / 50;
+	if (max77759_reg_write(data->regmap, reg, val) < 0)
+		return -EIO;
+	return 0;
+}
+
+static const struct bcl_ifpmic_ops bcl_ifpmic_ops = {
+	max77759_get_vdroop_ok,
+	max77759_set_uvlo_lvl,
+	max77759_get_uvlo_lvl,
+	max77759_set_batoilo_lvl,
+	max77759_get_batoilo_lvl,
+};
 
 /* ----------------------------------------------------------------------- */
 
@@ -2123,7 +2233,8 @@ exit_done:
 
 static DEVICE_ATTR(fship_dtls, 0444, show_fship_dtls, NULL);
 
-#if IS_ENABLED(CONFIG_GOOGLE_BCL)
+/* -- BCL ------------------------------------------------------------------ */
+
 static int vdroop2_ok_get(void *d, u64 *val)
 {
 	struct max77759_chgr_data *data = d;
@@ -2207,107 +2318,7 @@ static int vdp2_stp_bst_set(void *d, u64 val)
 
 DEFINE_SIMPLE_ATTRIBUTE(vdp2_stp_bst_fops, vdp2_stp_bst_get, vdp2_stp_bst_set, "%llu\n");
 
-static int bat_oilo_get(void *d, u64 *val)
-{
-	struct max77759_chgr_data *data = d;
-	int ret = 0;
-	u8 chg_cnfg14;
-
-	ret = max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_14, &chg_cnfg14);
-	if (ret < 0)
-		return -EIO;
-
-	*val = chg_cnfg14;
-	return 0;
-}
-
-static int bat_oilo_set(void *d, u64 val)
-{
-	struct max77759_chgr_data *data = d;
-	int ret;
-
-	if (val > 0xff)
-		return -EINVAL;
-
-	ret = max77759_reg_write(data->regmap, MAX77759_CHG_CNFG_14, (u8) val);
-	if (ret < 0)
-		return -EIO;
-
-	data->triggered_lvl[BATOILO] = (BO_STEP * ((val & MAX77759_CHG_CNFG_14_BAT_OILO_MASK)
-			>> MAX77759_CHG_CNFG_14_BAT_OILO_SHIFT) + BO_LOWER_LIMIT)
-			- THERMAL_HYST_LEVEL;
-
-	return 0;
-}
-
-DEFINE_SIMPLE_ATTRIBUTE(bat_oilo_fops, bat_oilo_get, bat_oilo_set, "0x%llx\n");
-
-static int sys_uvlo1_get(void *d, u64 *val)
-{
-	struct max77759_chgr_data *data = d;
-	int ret = 0;
-	u8 chg_cnfg15;
-
-	ret = max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_15, &chg_cnfg15);
-	if (ret < 0)
-		return -EIO;
-
-	*val = chg_cnfg15;
-	return 0;
-}
-
-static int sys_uvlo1_set(void *d, u64 val)
-{
-	struct max77759_chgr_data *data = d;
-	int ret;
-
-	ret = max77759_reg_write(data->regmap, MAX77759_CHG_CNFG_15, (u8) val);
-	if (ret < 0)
-		return -EIO;
-
-	data->triggered_lvl[VDROOP1] = VD_BATTERY_VOLTAGE - (VD_STEP *
-			((val & MAX77759_CHG_CNFG_15_SYS_UVLO1_MASK)
-			>> MAX77759_CHG_CNFG_15_SYS_UVLO1_SHIFT) + VD_LOWER_LIMIT)
-			- THERMAL_HYST_LEVEL;
-
-	return 0;
-}
-
-DEFINE_SIMPLE_ATTRIBUTE(sys_uvlo1_fops, sys_uvlo1_get, sys_uvlo1_set, "0x%llx\n");
-
-static int sys_uvlo2_get(void *d, u64 *val)
-{
-	struct max77759_chgr_data *data = d;
-	int ret = 0;
-	u8 chg_cnfg16;
-
-	ret = max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_16, &chg_cnfg16);
-	if (ret < 0)
-		return -EIO;
-
-	*val = chg_cnfg16;
-	return 0;
-}
-
-static int sys_uvlo2_set(void *d, u64 val)
-{
-	struct max77759_chgr_data *data = d;
-	int ret;
-
-	ret = max77759_reg_write(data->regmap, MAX77759_CHG_CNFG_16, (u8) val);
-	if (ret < 0)
-		return -EIO;
-
-	data->triggered_lvl[VDROOP2] = VD_BATTERY_VOLTAGE - (VD_STEP *
-			((val & MAX77759_CHG_CNFG_16_SYS_UVLO2_MASK)
-			>> MAX77759_CHG_CNFG_16_SYS_UVLO2_SHIFT) + VD_LOWER_LIMIT)
-			- THERMAL_HYST_LEVEL;
-
-	return 0;
-}
-
-DEFINE_SIMPLE_ATTRIBUTE(sys_uvlo2_fops, sys_uvlo2_get, sys_uvlo2_set, "0x%llx\n");
-#endif
+/* -- input protection ----------------------------------------------------- */
 
 /* write to INPUT_MASK_CLR in to re-enable detection */
 static int max77759_chgr_input_mask_clear(struct max77759_chgr_data *data)
@@ -2342,6 +2353,8 @@ static int input_mask_clear_set(void *d, u64 val)
 
 DEFINE_SIMPLE_ATTRIBUTE(input_mask_clear_fops, NULL, input_mask_clear_set, "%llu\n");
 
+/* -- charge control ------------------------------------------------------ */
+
 static int charger_restart_set(void *d, u64 val)
 {
 	struct max77759_chgr_data *data = d;
@@ -2355,6 +2368,7 @@ static int charger_restart_set(void *d, u64 val)
 
 DEFINE_SIMPLE_ATTRIBUTE(charger_restart_fops, NULL, charger_restart_set, "%llu\n");
 
+/* -- debug --------------------------------------------------------------- */
 
 static int max77759_chg_debug_reg_read(void *d, u64 *val)
 {
@@ -2399,20 +2413,13 @@ static int dbg_init_fs(struct max77759_chgr_data *data)
 	debugfs_create_atomic_t("early_topoff_cnt", 0644, data->de,
 				&data->early_topoff_cnt);
 
-#if IS_ENABLED(CONFIG_GOOGLE_BCL)
+	/* BCL */
 	debugfs_create_file("vdroop2_ok", 0400, data->de, data,
 			    &vdroop2_ok_fops);
 	debugfs_create_file("vdp1_stp_bst", 0600, data->de, data,
 			    &vdp1_stp_bst_fops);
 	debugfs_create_file("vdp2_stp_bst", 0600, data->de, data,
 			    &vdp2_stp_bst_fops);
-	debugfs_create_file("sys_uvlo1", 0600, data->de, data,
-			    &sys_uvlo1_fops);
-	debugfs_create_file("sys_uvlo2", 0600, data->de, data,
-			    &sys_uvlo2_fops);
-	debugfs_create_file("bat_oilo", 0600, data->de, data,
-			    &bat_oilo_fops);
-#endif
 
 	debugfs_create_file("input_mask_clear", 0600, data->de, data,
 			    &input_mask_clear_fops);
@@ -2440,96 +2447,6 @@ static const struct regmap_config max77759_chg_regmap_cfg = {
 
 };
 
-#if IS_ENABLED(CONFIG_GOOGLE_BCL)
-static int max77759_irq_work(struct max77759_chgr_data *data, u8 idx)
-{
-	u8 chg_dtls1;
-	int ret;
-	u64 val;
-	struct delayed_work *irq_wq = &data->triggered_irq_work[idx];
-
-	mutex_lock(&data->triggered_irq_lock[idx]);
-	ret = max77759_reg_read(data->regmap, MAX77759_CHG_DETAILS_01, &chg_dtls1);
-	if (ret < 0) {
-		mutex_unlock(&data->triggered_irq_lock[idx]);
-		return -ENODEV;
-	}
-	val = _chg_details_01_vdroop2_ok_get(chg_dtls1);
-
-	if (((val >> 7) & 0x1) == 0) {
-		/* Still below threshold */
-		mod_delayed_work(system_wq, irq_wq,
-				   msecs_to_jiffies(VD_DELAY));
-		mutex_unlock(&data->triggered_irq_lock[idx]);
-	} else {
-		data->triggered_counter[idx] = 0;
-		mutex_unlock(&data->triggered_irq_lock[idx]);
-		enable_irq(data->triggered_irq[idx]);
-	}
-
-	return 0;
-}
-
-static void max77759_vdroop1_work(struct work_struct *work)
-{
-	struct max77759_chgr_data *chg_data =
-	    container_of(work, struct max77759_chgr_data, triggered_irq_work[VDROOP1].work);
-
-	max77759_irq_work(chg_data, VDROOP1);
-}
-
-static void max77759_vdroop2_work(struct work_struct *work)
-{
-	struct max77759_chgr_data *chg_data =
-	    container_of(work, struct max77759_chgr_data, triggered_irq_work[VDROOP2].work);
-
-	max77759_irq_work(chg_data, VDROOP2);
-}
-
-static void max77759_batoilo_work(struct work_struct *work)
-{
-	struct max77759_chgr_data *chg_data =
-	    container_of(work, struct max77759_chgr_data, triggered_irq_work[BATOILO].work);
-
-	max77759_irq_work(chg_data, BATOILO);
-}
-
-static void max77759_triggered_irq_work(void *data, int id)
-{
-	struct max77759_chgr_data *chg_data = data;
-	struct thermal_zone_device *tvid = chg_data->tz_miti[id];
-
-	disable_irq_nosync(chg_data->triggered_irq[id]);
-	mutex_lock(&chg_data->triggered_irq_lock[id]);
-	if (chg_data->triggered_counter[id] == 0) {
-		chg_data->triggered_counter[id] += 1;
-		if (tvid)
-			thermal_zone_device_update(tvid, THERMAL_EVENT_UNSPECIFIED);
-	}
-	mod_delayed_work(system_wq, &chg_data->triggered_irq_work[id],
-			 msecs_to_jiffies(VD_DELAY));
-	mutex_unlock(&chg_data->triggered_irq_lock[id]);
-}
-
-static int uvilo_read_stats(struct ocpsmpl_stats *dst, struct max77759_chgr_data *data)
-{
-	int ret;
-
-	if (!dst || !data)
-		return -EINVAL;
-
-	ret = max77759_find_fg(data);
-	if (ret == 0)
-		ret = max1720x_get_capacity(data->fg_i2c_client, &dst->capacity);
-	if (ret == 0)
-		ret = max1720x_get_voltage_now(data->fg_i2c_client, &dst->voltage);
-	if (ret < 0)
-		return -EINVAL;
-
-	dst->_time = ktime_to_ms(ktime_get());
-	return (dst->capacity == -1 || dst->voltage == -1) ? -EIO : 0;
-}
-#endif
 
 /*
  * int[0]
@@ -2607,34 +2524,26 @@ static irqreturn_t max77759_chgr_irq(int irq, void *client)
 	}
 
 #if IS_ENABLED(CONFIG_GOOGLE_BCL)
+	/* TODO: make this an interrupt controller */
 	if (chg_int[1] & MAX77759_CHG_INT2_SYS_UVLO1_I) {
 		pr_debug("%s: SYS_UVLO1\n", __func__);
 
-		if (data->bcl_dev) {
-			atomic_inc(&data->bcl_dev->if_triggered_cnt[VDROOP1]);
-			uvilo_read_stats(&data->bcl_dev->if_triggered_stats[VDROOP1], data);
-		}
-		max77759_triggered_irq_work(data, VDROOP1);
+		if (data->bcl_dev)
+			google_bcl_irq_changed(data->bcl_dev, UVLO1);
 	}
 
 	if (chg_int[1] & MAX77759_CHG_INT2_SYS_UVLO2_I) {
 		pr_debug("%s: SYS_UVLO2\n", __func__);
 
-		if (data->bcl_dev) {
-			atomic_inc(&data->bcl_dev->if_triggered_cnt[VDROOP2]);
-			uvilo_read_stats(&data->bcl_dev->if_triggered_stats[VDROOP2], data);
-		}
-		max77759_triggered_irq_work(data, VDROOP2);
+		if (data->bcl_dev)
+			google_bcl_irq_changed(data->bcl_dev, UVLO2);
 	}
 
 	if (chg_int[1] & MAX77759_CHG_INT2_BAT_OILO_I) {
 		pr_debug("%s: BAT_OILO\n", __func__);
 
-		if (data->bcl_dev) {
-			atomic_inc(&data->bcl_dev->if_triggered_cnt[BATOILO]);
-			uvilo_read_stats(&data->bcl_dev->if_triggered_stats[BATOILO], data);
-		}
-		max77759_triggered_irq_work(data, BATOILO);
+		if (data->bcl_dev)
+			google_bcl_irq_changed(data->bcl_dev, BATOILO);
 	}
 #endif
 
@@ -2777,142 +2686,43 @@ static int max77759_setup_votables(struct max77759_chgr_data *data)
 }
 
 #if IS_ENABLED(CONFIG_GOOGLE_BCL)
-static int max77759_miti_read_level(void *data, int *val, int id)
+static void max77759_register_bcl(struct work_struct *work)
 {
-	struct max77759_chgr_data *chg_data = data;
-	int triggered_counter = chg_data->triggered_counter[id];
-	unsigned int triggered_lvl = chg_data->triggered_lvl[id];
+	struct max77759_chgr_data *data = container_of(work, struct max77759_chgr_data,
+						       init_bcl.work);
+	struct bcl_device *bcl_dev;
 
-	if ((triggered_counter != 0) && (triggered_counter < THERMAL_IRQ_COUNTER_LIMIT)) {
-		*val = triggered_lvl + THERMAL_HYST_LEVEL;
-		triggered_counter += 1;
-	} else {
-		*val = triggered_lvl;
-		triggered_counter = 0;
-	}
-	chg_data->triggered_counter[id] = triggered_counter;
+	bcl_dev = google_retrieve_bcl_handle();
+	if (!bcl_dev)
+		goto retry_init_work;
 
-	return 0;
+	if (google_bcl_register_ifpmic(bcl_dev, &bcl_ifpmic_ops) == 0)
+		data->bcl_dev = bcl_dev;
+
+	return;
+retry_init_work:
+	schedule_delayed_work(&data->init_bcl, msecs_to_jiffies(1000));
 }
 
-static int max77759_vdroop1_read_temp(void *data, int *val)
+static int max77759_init_bcl(struct max77759_chgr_data *data)
 {
-	return max77759_miti_read_level(data, val, VDROOP1);
-}
-
-static int max77759_vdroop2_read_temp(void *data, int *val)
-{
-	return max77759_miti_read_level(data, val, VDROOP2);
-}
-
-static int max77759_batoilo_read_temp(void *data, int *val)
-{
-	return max77759_miti_read_level(data, val, BATOILO);
-}
-
-static const struct thermal_zone_of_device_ops vdroop1_tz_ops = {
-	.get_temp = max77759_vdroop1_read_temp,
-};
-
-static const struct thermal_zone_of_device_ops vdroop2_tz_ops = {
-	.get_temp = max77759_vdroop2_read_temp,
-};
-
-static const struct thermal_zone_of_device_ops batoilo_tz_ops = {
-	.get_temp = max77759_batoilo_read_temp,
-};
-
-static int max77759_init_vdroop(void *data_)
-{
-	struct max77759_chgr_data *data = data_;
-	int ret = 0;
 	u8 regdata;
+	int ret;
 
-	INIT_DELAYED_WORK(&data->triggered_irq_work[VDROOP1], max77759_vdroop1_work);
-	INIT_DELAYED_WORK(&data->triggered_irq_work[VDROOP2], max77759_vdroop2_work);
-	INIT_DELAYED_WORK(&data->triggered_irq_work[BATOILO], max77759_batoilo_work);
-	data->triggered_counter[VDROOP1] = 0;
-	data->triggered_counter[VDROOP2] = 0;
-	data->triggered_counter[BATOILO] = 0;
-	mutex_init(&data->triggered_irq_lock[VDROOP1]);
-	mutex_init(&data->triggered_irq_lock[VDROOP2]);
-	mutex_init(&data->triggered_irq_lock[BATOILO]);
-
+	/* TODO: use RMW */
 	ret = max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_17, &regdata);
-	if (ret < 0)
-		return -ENODEV;
-
-	ret = max77759_reg_write(data->regmap, MAX77759_CHG_CNFG_17,
-				 (u8) regdata | BATOILO_DET_30US);
+	if (ret == 0)
+		ret = max77759_reg_write(data->regmap, MAX77759_CHG_CNFG_17,
+					 regdata | BATOILO_DET_30US);
 	if (ret < 0)
 		return -EIO;
 
-	ret = max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_15, &regdata);
-	if (ret < 0)
-		return -ENODEV;
+	INIT_DELAYED_WORK(&data->init_bcl, max77759_register_bcl);
+	schedule_delayed_work(&data->init_bcl, msecs_to_jiffies(1000));
 
-	data->triggered_lvl[VDROOP1] = VD_BATTERY_VOLTAGE
-			- (VD_STEP * ((regdata & MAX77759_CHG_CNFG_15_SYS_UVLO1_MASK)
-			>> MAX77759_CHG_CNFG_15_SYS_UVLO1_SHIFT)
-			+ VD_LOWER_LIMIT) - THERMAL_HYST_LEVEL;
-
-	ret = max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_16, &regdata);
-	if (ret < 0)
-		return -ENODEV;
-
-	data->triggered_lvl[VDROOP2] = VD_BATTERY_VOLTAGE
-			- (VD_STEP * ((regdata & MAX77759_CHG_CNFG_16_SYS_UVLO2_MASK)
-			>> MAX77759_CHG_CNFG_16_SYS_UVLO2_SHIFT)
-			+ VD_LOWER_LIMIT) - THERMAL_HYST_LEVEL;
-
-	ret = max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_14, &regdata);
-	if (ret < 0)
-		return -ENODEV;
-
-	data->triggered_lvl[BATOILO] = (BO_STEP * ((regdata & MAX77759_CHG_CNFG_14_BAT_OILO_MASK)
-			>> MAX77759_CHG_CNFG_14_BAT_OILO_SHIFT) + BO_LOWER_LIMIT)
-			- THERMAL_HYST_LEVEL;
-
-
-	data->tz_miti[VDROOP1] = thermal_zone_of_sensor_register(data->dev, VDROOP1, data,
-								 &vdroop1_tz_ops);
-	if (IS_ERR(data->tz_miti[VDROOP1])) {
-		dev_err(data->dev, "TZ register vdroop%d failed, err:%ld\n", VDROOP1,
-			PTR_ERR(data->tz_miti[VDROOP1]));
-	} else {
-		thermal_zone_device_enable(data->tz_miti[VDROOP1]);
-		thermal_zone_device_update(data->tz_miti[VDROOP1], THERMAL_DEVICE_UP);
-	}
-
-	data->tz_miti[VDROOP2] = thermal_zone_of_sensor_register(data->dev, VDROOP2, data,
-								 &vdroop2_tz_ops);
-	if (IS_ERR(data->tz_miti[VDROOP2])) {
-		dev_err(data->dev, "TZ register vdroop%d failed, err:%ld\n", VDROOP2,
-			PTR_ERR(data->tz_miti[VDROOP2]));
-	} else {
-		thermal_zone_device_enable(data->tz_miti[VDROOP2]);
-		thermal_zone_device_update(data->tz_miti[VDROOP2], THERMAL_DEVICE_UP);
-	}
-
-	data->tz_miti[BATOILO] = thermal_zone_of_sensor_register(data->dev, BATOILO, data,
-								 &batoilo_tz_ops);
-	if (IS_ERR(data->tz_miti[BATOILO])) {
-		dev_err(data->dev, "TZ register BATOILO failed, err:%ld\n",
-			PTR_ERR(data->tz_miti[BATOILO]));
-	} else {
-		thermal_zone_device_enable(data->tz_miti[BATOILO]);
-		thermal_zone_device_update(data->tz_miti[BATOILO], THERMAL_DEVICE_UP);
-	}
-
-	return 0;
-}
-#else
-static int max77759_init_vdroop(void *data_)
-{
-	return 0;
+	return ret;
 }
 #endif
-
 
 static int max77759_charger_probe(struct i2c_client *client,
 				  const struct i2c_device_id *id)
@@ -2951,6 +2761,16 @@ static int max77759_charger_probe(struct i2c_client *client,
 	atomic_set(&data->early_topoff_cnt, 0);
 	i2c_set_clientdata(client, data);
 
+#if IS_ENABLED(CONFIG_GOOGLE_BCL)
+	/*
+	 * NOTE: this should possibly be retried later. Startip seems to be
+	 * a little "racey".
+	 */
+	ret = max77759_init_bcl(data);
+	if (ret < 0)
+	        pr_err("Failed to register BCL callback %d\n", ret);
+#endif
+
 	data->usecase_wake_lock = wakeup_source_register(NULL, "max77759-usecase");
 	if (!data->usecase_wake_lock) {
 		pr_err("Failed to register wakeup source\n");
@@ -2981,9 +2801,6 @@ static int max77759_charger_probe(struct i2c_client *client,
 	ret = max77759_setup_votables(data);
 	if (ret < 0)
 		return ret;
-
-	if (max77759_init_vdroop(data) < 0)
-		dev_err(dev, "vdroop initialization failed %d.\n", ret);
 
 	data->irq_gpio = of_get_named_gpio(dev->of_node, "max77759,irq-gpio", 0);
 	if (data->irq_gpio < 0) {
@@ -3071,27 +2888,16 @@ static int max77759_charger_probe(struct i2c_client *client,
 	if (ret < 0)
 		pr_err("Couldn't register dc power supply (%d)\n", ret);
 
-#if IS_ENABLED(CONFIG_GOOGLE_BCL)
-	data->bcl_dev = google_retrieve_bcl_handle();
-#endif
-
 	dev_info(dev, "registered as %s\n", max77759_psy_desc.name);
 	return 0;
 }
 
 static int max77759_charger_remove(struct i2c_client *client)
 {
-#if IS_ENABLED(CONFIG_GOOGLE_BCL)
 	struct max77759_chgr_data *data = i2c_get_clientdata(client);
 
-	if (data->tz_miti[VDROOP1])
-		thermal_zone_of_sensor_unregister(data->dev, data->tz_miti[VDROOP2]);
-	if (data->tz_miti[VDROOP2])
-		thermal_zone_of_sensor_unregister(data->dev, data->tz_miti[VDROOP2]);
-	if (data->tz_miti[BATOILO])
-		thermal_zone_of_sensor_unregister(data->dev, data->tz_miti[BATOILO]);
-#endif
-
+	if (data->de)
+		debugfs_remove(data->de);
 	wakeup_source_unregister(data->usecase_wake_lock);
 
 	return 0;
