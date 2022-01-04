@@ -36,12 +36,11 @@ int max777x9_pmic_reg_write(struct i2c_client *client,
 			    u8 addr, const u8 *val, int len);
 int max777x9_pmic_reg_update(struct i2c_client *client,
 			     u8 reg, u8 mask, u8 value);
-
 /* write to a register */
 int max77759_chg_reg_write(struct i2c_client *client, u8 reg, u8 value);
-/* write to a register */
+/* read a register */
 int max77759_chg_reg_read(struct i2c_client *client, u8 reg, u8 *value);
-/* udate a register */
+/* update a register */
 int max77759_chg_reg_update(struct i2c_client *client, u8 reg, u8 mask, u8 value);
 /* change the mode register */
 int max77759_chg_mode_write(struct i2c_client *client, enum max77759_charger_modes mode);

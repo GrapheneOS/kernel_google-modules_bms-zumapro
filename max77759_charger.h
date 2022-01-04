@@ -57,13 +57,8 @@ struct max77759_chgr_data {
 
 	/* thermal BCL */
 #if IS_ENABLED(CONFIG_GOOGLE_BCL)
-	struct thermal_zone_device *tz_miti[IFPMIC_SENSOR_MAX];
-	int triggered_counter[IFPMIC_SENSOR_MAX];
-	unsigned int triggered_lvl[IFPMIC_SENSOR_MAX];
-	unsigned int triggered_irq[IFPMIC_SENSOR_MAX];
-	struct mutex triggered_irq_lock[IFPMIC_SENSOR_MAX];
-	struct delayed_work triggered_irq_work[IFPMIC_SENSOR_MAX];
 	struct bcl_device *bcl_dev;
+	struct delayed_work init_bcl;
 #endif
 
 	int chg_term_voltage;
