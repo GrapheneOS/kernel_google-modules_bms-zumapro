@@ -192,7 +192,7 @@ static void google_dock_icl_ramp_work(struct work_struct *work)
 
 static void google_dock_icl_ramp_reset(struct dock_drv *dock)
 {
-	dev_info(dock->device, "ICL ramp reset, ramp=%d->0\n", dock->icl_ramp);
+	dev_info(dock->device, "ICL ramp reset\n");
 
 	dock->icl_ramp = false;
 
@@ -203,12 +203,7 @@ static void google_dock_icl_ramp_reset(struct dock_drv *dock)
 
 static void google_dock_icl_ramp_start(struct dock_drv *dock)
 {
-
-	google_dock_icl_ramp_reset(dock);
-
-	dev_info(dock->device, "ICL ramp set alarm %dms, %dua, ramp=%d\n",
-		 dock->icl_ramp_delay_ms, dock->icl_ramp_ua, dock->icl_ramp);
-
+	dev_info(dock->device, "ICL ramp set alarm %dms\n", dock->icl_ramp_delay_ms);
 	alarm_start_relative(&dock->icl_ramp_alarm,
 			     ms_to_ktime(dock->icl_ramp_delay_ms));
 }
@@ -227,11 +222,14 @@ static void google_dock_notifier_check_dc(struct dock_drv *dock)
 
 	if (dc_in) {
 		google_dock_set_icl(dock);
+		google_dock_icl_ramp_reset(dock);
 		google_dock_icl_ramp_start(dock);
 	} else {
-		dock->online = 0;
 		google_dock_vote_defaults(dock);
 		google_dock_icl_ramp_reset(dock);
+
+		pr_info("%s: online: %d->0\n", __func__, dock->online);
+		dock->online = 0;
 	}
 
 	power_supply_changed(dock->psy);
@@ -257,9 +255,7 @@ static int google_dock_notifier_cb(struct notifier_block *nb,
 	if (event != PSY_EVENT_PROP_CHANGED)
 		goto out;
 
-	if (dock->dc_psy_name &&
-	    (!strcmp(psy->desc->name, "dc")
-	     || !strcmp(psy->desc->name, "main-charger")))
+	if (dock->dc_psy_name && !strcmp(psy->desc->name, dock->dc_psy_name))
 		dock->check_dc = true;
 
 	if (!dock->check_dc)
