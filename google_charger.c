@@ -99,6 +99,14 @@
 
 #define get_boot_sec() div_u64(ktime_to_ns(ktime_get_boottime()), NSEC_PER_SEC)
 
+
+#define PDO_FIXED_FLAGS \
+	(PDO_FIXED_DUAL_ROLE | PDO_FIXED_DATA_SWAP | PDO_FIXED_USB_COMM)
+#define PD_SNK_MAX_MA			3000
+#define PD_SNK_MAX_MA_9V		2200
+#define OP_SNK_MW			7600 /* see b/159863291 */
+
+
 struct chg_drv;
 
 enum chg_thermal_devices {
@@ -365,6 +373,29 @@ static inline void chg_init_state(struct chg_drv *chg_drv)
 	pps_init_state(&chg_drv->pps_data);
 	if (chg_drv->pps_data.nr_snk_pdo)
 		chg_drv->pps_data.stage = PPS_NONE;
+}
+
+/*
+ * called from google_charger direcly on a tcpm_psy.
+ * NOTE: Do not call on anything else!
+ */
+static int chg_update_capability(struct power_supply *tcpm_psy, unsigned int nr_pdo,
+				 u32 pps_cap)
+{
+	struct tcpm_port *port;
+	const u32 pdo[] = {PDO_FIXED(5000, PD_SNK_MAX_MA, PDO_FIXED_FLAGS),
+			   PDO_FIXED(PD_SNK_MAX_MV, PD_SNK_MAX_MA_9V, 0),
+			   pps_cap};
+	int ret = -ENODEV;
+
+	if (!tcpm_psy || !nr_pdo || nr_pdo > PDO_MAX_SUPP)
+		return -EINVAL;
+
+	port = chg_get_tcpm_port(tcpm_psy);
+	if (port)
+		ret = tcpm_update_sink_capabilities(port, pdo, nr_pdo, OP_SNK_MW);
+
+	return ret;
 }
 
 /* NOTE: doesn't reset chg_drv->adapter_details.v = 0 see chg_work() */
@@ -1708,6 +1739,80 @@ static int chg_run_defender(struct chg_drv *chg_drv)
 
 	return 0;
 }
+
+/* ------------------------------------------------------------------------ */
+
+/*
+ * Note: Some adapters have several PPS profiles providing different voltage
+ * ranges and different maximal currents. If the device demands more power from
+ * the adapter but reached the maximum it can get in the current profile,
+ * search if there exists another profile providing more power. If it demands
+ * less power, search if there exists another profile providing enough power
+ * with higher current.
+ *
+ * return negative on errors or no suitable profile
+ * return 0 on successful profile switch
+ */
+int chg_switch_profile(struct pd_pps_data *pps, struct power_supply *tcpm_psy,
+		       bool more_pwr)
+{
+	u32 max_mv, max_ma, max_mw;
+	u32 current_mw, current_ma;
+	int i, ret = -ENODATA;
+	u32 pdo;
+
+	if (!pps || !tcpm_psy || pps->nr_src_cap < 2)
+		return -EINVAL;
+
+	current_ma = pps->op_ua / 1000;
+	current_mw = (pps->out_uv / 1000) * current_ma / 1000;
+
+	for (i = 1; i < pps->nr_src_cap; i++) {
+		pdo = pps->src_caps[i];
+
+		if (pdo_type(pdo) != PDO_TYPE_APDO)
+			continue;
+
+		/* TODO: use pps_data sink capabilities */
+		max_mv = min_t(u32, PD_SNK_MAX_MV,
+			       pdo_pps_apdo_max_voltage(pdo));
+		/* TODO: use pps_data sink capabilities */
+		max_ma = min_t(u32, PD_SNK_MAX_MA,
+			       pdo_pps_apdo_max_current(pdo));
+		max_mw = max_mv * max_ma / 1000;
+
+		if (more_pwr && max_mw > current_mw) {
+			/* export maximal capability, TODO: use sink cap */
+			pdo = PDO_PPS_APDO(PD_SNK_MIN_MV,
+					   PD_SNK_MAX_MV,
+					   PD_SNK_MAX_MA);
+			ret = chg_update_capability(tcpm_psy, PDO_PPS, pdo);
+			if (ret < 0)
+				pps_log(pps, "Failed to update sink caps, ret %d",
+					ret);
+			break;
+		} else if (!more_pwr && max_mw >= current_mw &&
+			   max_ma > current_ma) {
+
+			/* TODO: tune the max_mv, fix this */
+			pdo = PDO_PPS_APDO(PD_SNK_MIN_MV, 6000, PD_SNK_MAX_MA);
+			ret = chg_update_capability(tcpm_psy, PDO_PPS, pdo);
+			if (ret < 0)
+				pps_log(pps, "Failed to update sink caps, ret %d",
+					ret);
+			break;
+		}
+	}
+
+	if (ret == 0) {
+		pps->keep_alive_cnt = 0;
+		pps->stage = PPS_NONE;
+	}
+
+	return ret;
+}
+
+/* ------------------------------------------------------------------------ */
 
 /* No op on battery not present */
 static void chg_work(struct work_struct *work)

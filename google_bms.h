@@ -42,7 +42,7 @@ struct gbms_chg_profile {
 	int topoff_nb_limits;
 	s32 topoff_limits[GBMS_CHG_TOPOFF_NB_LIMITS_MAX];
 	/* Array of constant current limits */
-	s32 *cccm_limits;
+	u32 *cccm_limits;
 	/* used to fill table  */
 	u32 capacity_ma;
 

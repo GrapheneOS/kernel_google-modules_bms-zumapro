@@ -580,7 +580,7 @@ static qnum_t ssoc_rl_max_delta(const struct batt_ssoc_rl_state *rls,
 {
 	int i;
 	const qnum_t max_delta = ((qnumd_t)rls->rl_delta_max_soc * delta_time) /
-				  rls->rl_delta_max_time;
+				  (rls->rl_delta_max_time ? rls->rl_delta_max_time : 1);
 
 	if (rls->rl_fast_track)
 		return max_delta;
@@ -5340,8 +5340,7 @@ static int batt_do_sha256(const u8 *data, unsigned int len, u8 *result)
 
 
 /* called with a lock on ->chg_lock */
-static enum batt_paired_state
-batt_check_pairing_state(struct batt_drv *batt_drv)
+static enum batt_paired_state batt_check_pairing_state(struct batt_drv *batt_drv)
 {
 	const int len = strlen(dev_sn);
 	char dev_info[GBMS_DINF_LEN];

@@ -127,7 +127,7 @@ static void pmic_voter_compat_cb(struct gvotable_election *el,
 
 /* Allow redefining the allocator: required for testing */
 #ifndef kzalloc_votable
-#define kzalloc_votable(p, f) kzalloc(sizeof(*p), f)
+#define kzalloc_votable(p, f) (typeof(p))kzalloc(sizeof(*(p)), f)
 #endif
 
 struct votable *create_votable(const char *name,

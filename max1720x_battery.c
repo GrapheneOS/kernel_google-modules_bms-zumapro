@@ -260,8 +260,8 @@ static bool max17x0x_reglog_init(struct max1720x_chip *chip)
 /* TODO: split between NV and Volatile? */
 
 
-static const struct max17x0x_reg *
-max17x0x_find_by_index(struct max17x0x_regtags *tags, int index)
+static const struct max17x0x_reg * max17x0x_find_by_index(struct max17x0x_regtags *tags,
+							  int index)
 {
 	if (index < 0 || !tags || index >= tags->max)
 		return NULL;
@@ -269,8 +269,8 @@ max17x0x_find_by_index(struct max17x0x_regtags *tags, int index)
 	return &tags->map[index];
 }
 
-static const struct max17x0x_reg *
-max17x0x_find_by_tag(struct max17x0x_regmap *map, enum max17x0x_reg_tags tag)
+static const struct max17x0x_reg * max17x0x_find_by_tag(struct max17x0x_regmap *map,
+							enum max17x0x_reg_tags tag)
 {
 	return max17x0x_find_by_index(&map->regtags, tag);
 }
