@@ -53,6 +53,8 @@ struct dual_fg_drv {
 
 	struct gbms_chg_profile chg_profile;
 
+	struct notifier_block fg_nb;
+
 	u32 battery_capacity;
 	int cc_max;
 
@@ -436,6 +438,31 @@ static int gdbatt_init_chg_profile(struct dual_fg_drv *dual_fg_drv)
 	return ret;
 }
 
+static int psy_changed(struct notifier_block *nb,
+		       unsigned long action, void *data)
+{
+	struct power_supply *psy = data;
+	struct dual_fg_drv *dual_fg_drv = container_of(nb, struct dual_fg_drv, fg_nb);
+
+	if ((action != PSY_EVENT_PROP_CHANGED) || (psy == NULL) || (psy->desc == NULL) ||
+	    (psy->desc->name == NULL))
+		return NOTIFY_OK;
+
+	pr_debug("name=%s evt=%lu\n", psy->desc->name, action);
+
+	if (action == PSY_EVENT_PROP_CHANGED) {
+		bool is_first_fg = (dual_fg_drv->first_fg_psy_name != NULL) &&
+				   !strcmp(psy->desc->name, dual_fg_drv->first_fg_psy_name);
+		bool is_second_fg = (dual_fg_drv->second_fg_psy_name != NULL) &&
+				    !strcmp(psy->desc->name, dual_fg_drv->second_fg_psy_name);
+
+		if (is_first_fg || is_second_fg)
+			power_supply_changed(dual_fg_drv->psy);
+	}
+
+	return NOTIFY_OK;
+}
+
 static void google_dual_batt_gauge_init_work(struct work_struct *work)
 {
 	struct dual_fg_drv *dual_fg_drv = container_of(work, struct dual_fg_drv,
@@ -494,6 +521,11 @@ static void google_dual_batt_gauge_init_work(struct work_struct *work)
 	err = gdbatt_init_chg_profile(dual_fg_drv);
 	if (err < 0)
 		dev_info(dual_fg_drv->device,"fail to init chg profile (%d)\n", err);
+
+	dual_fg_drv->fg_nb.notifier_call = psy_changed;
+	err = power_supply_reg_notifier(&dual_fg_drv->fg_nb);
+	if (err < 0)
+		pr_err("cannot register power supply notifer (%d)\n", err);
 
 	dual_fg_drv->init_complete = true;
 	dual_fg_drv->resume_complete = true;
