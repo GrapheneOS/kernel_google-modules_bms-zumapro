@@ -83,6 +83,7 @@ struct max_m5_custom_parameters {
 	u16 convgcfg;
 	u16 filtercfg; 	/* write to 0x0029 */
 	u16 taskperiod;
+	u16 cgain;
 } __attribute__((packed));
 
 /* this is what is saved and restored to/from GMSR */
