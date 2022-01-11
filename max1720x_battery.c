@@ -1428,7 +1428,7 @@ static u16 max1720x_save_battery_cycle(const struct max1720x_chip *chip,
 	if (chip->gauge_type != MAX_M5_GAUGE_TYPE)
 		return eeprom_cycle;
 
-	if (chip->por)
+	if (chip->por || reg_cycle == 0)
 		return eeprom_cycle;
 
 	/* save half value to record over 655 cycles case */
