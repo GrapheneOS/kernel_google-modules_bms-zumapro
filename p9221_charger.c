@@ -4010,6 +4010,38 @@ static ssize_t rtx_err_show(struct device *dev,
 
 static DEVICE_ATTR_RO(rtx_err);
 
+static ssize_t qien_show(struct device *dev,
+			 struct device_attribute *attr,
+			 char *buf)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct p9221_charger_data *charger = i2c_get_clientdata(client);
+	int value;
+
+	if (charger->pdata->qien_gpio < 0)
+		return -ENODEV;
+
+	value = gpio_get_value_cansleep(charger->pdata->qien_gpio);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", value != 0);
+}
+
+static ssize_t qien_store(struct device *dev,
+			  struct device_attribute *attr,
+			  const char *buf, size_t count)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct p9221_charger_data *charger = i2c_get_clientdata(client);
+
+	if (charger->pdata->qien_gpio < 0)
+		return -ENODEV;
+
+	gpio_set_value_cansleep(charger->pdata->qien_gpio, buf[0] != '0');
+
+	return count;
+}
+static DEVICE_ATTR_RW(qien);
+
 static ssize_t qi_vbus_en_show(struct device *dev,
 			       struct device_attribute *attr,
 			       char *buf)
@@ -4567,6 +4599,7 @@ static struct attribute *p9221_attributes[] = {
 	&dev_attr_features.attr,
 	&dev_attr_mitigate_threshold.attr,
 	&dev_attr_wpc_ready.attr,
+	&dev_attr_qien.attr,
 	NULL
 };
 
