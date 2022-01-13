@@ -63,6 +63,35 @@ struct dock_drv {
 	int pogo_ovp_en;
 };
 
+
+/* ------------------------------------------------------------------------- */
+static ssize_t is_dock_show(struct device *dev,
+			   struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct dock_drv *dock = power_supply_get_drvdata(psy);
+	int online;
+
+	online = GPSY_GET_PROP(dock->dc_psy, POWER_SUPPLY_PROP_ONLINE);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", online);
+}
+
+static DEVICE_ATTR_RO(is_dock);
+
+static int dock_init_fs(struct dock_drv *dock)
+{
+	int ret;
+
+	/* is_dock */
+	ret = device_create_file(&dock->psy->dev, &dev_attr_is_dock);
+	if (ret)
+		dev_err(&dock->psy->dev, "Failed to create is_dock\n");
+
+	return ret;
+}
+/* ------------------------------------------------------------------------- */
+
 static int dock_has_dc_in(struct dock_drv *dock)
 {
 	union power_supply_propval prop;
@@ -407,6 +436,8 @@ static void google_dock_init_work(struct work_struct *work)
 		if (err == -EAGAIN)
 			goto retry_init_work;
 	}
+
+	(void)dock_init_fs(dock);
 
 	dock->init_complete = true;
 	dev_info(dock->device, "google_dock_init_work done\n");
