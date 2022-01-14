@@ -76,6 +76,7 @@ static bool p9221_check_feature(struct p9221_charger_data *charger, u64 ft);
 static const char *p9221_get_tx_id_str(struct p9221_charger_data *charger);
 static int p9221_set_bpp_vout(struct p9221_charger_data *charger);
 static int p9221_set_hpp_dc_icl(struct p9221_charger_data *charger, bool enable);
+static void p9221_ll_bpp_cep(struct p9221_charger_data *charger, int capacity);
 
 static char *align_status_str[] = {
 	"...", "M2C", "OK", "-1"
@@ -996,6 +997,7 @@ static void p9221_power_mitigation_work(struct work_struct *work)
 			charger->chip_set_vout_max(charger, vout_5500mv);
 			dev_info(&charger->client->dev, "power_mitigate: write 0 to 0xF4\n");
 			p9221_reg_write_8(charger, 0xF4, 0);
+			p9221_ll_bpp_cep(charger, charger->last_capacity);
 		}
 		charger->fod_cnt = 0;
 		dev_info(&charger->client->dev,
@@ -2193,6 +2195,20 @@ static void p9221_dream_defend(struct p9221_charger_data *charger)
 
 }
 
+static void p9221_ll_check_chg_term(struct p9221_charger_data *charger, int capacity)
+{
+	if (capacity < 97) {
+		gvotable_cast_int_vote(charger->dc_icl_votable, LL_BPP_CEP_VOTER, 0, false);
+		dev_dbg(&charger->client->dev, "power_mitigate: remove LL_BPP_CEP_VOTER\n");
+	} else if (capacity == 100) {
+		/* when gdf==100, it's chg_term and vote 200mA */
+		gvotable_cast_int_vote(charger->dc_icl_votable, LL_BPP_CEP_VOTER,
+				       P9221_LL_BPP_CHG_TERM_UA, true);
+		dev_dbg(&charger->client->dev, "power_mitigate: vote DC_ICL=%duA\n",
+			 P9221_LL_BPP_CHG_TERM_UA);
+	}
+}
+
 /* improve LL BPP CEP_timeout */
 static void p9221_ll_bpp_cep(struct p9221_charger_data *charger, int capacity)
 {
@@ -2204,14 +2220,16 @@ static void p9221_ll_bpp_cep(struct p9221_charger_data *charger, int capacity)
 		icl_ua = 600000;
 	if (capacity > 98)
 		icl_ua = 300000;
-	if (capacity > 99)
-		icl_ua = 200000;
 
 	gvotable_cast_int_vote(charger->dc_icl_votable,
 			       DD_VOTER, icl_ua, icl_ua > 0);
+
+	p9221_ll_check_chg_term(charger, capacity);
+
 	if (icl_ua > 0)
 		dev_info(&charger->client->dev,
-			 "power_mitigate: set ICL to %duA\n", icl_ua);
+			 "power_mitigate: set ICL to %duA\n",
+			 gvotable_get_current_int_vote(charger->dc_icl_votable));
 }
 
 /*
@@ -2288,7 +2306,7 @@ static void p9221_set_capacity(struct p9221_charger_data *charger, int capacity)
 		p9221_ll_bpp_cep(charger, charger->last_capacity);
 
 unlock_done:
-	  mutex_unlock(&charger->stats_lock);
+	mutex_unlock(&charger->stats_lock);
 }
 
 static int p9221_set_property(struct power_supply *psy,
@@ -6091,6 +6109,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	charger->rtx_wakelock = false;
 	charger->last_disable = -1;
 	charger->irq_at = 0;
+	charger->ll_bpp_cep = -EINVAL;
 	mutex_init(&charger->io_lock);
 	mutex_init(&charger->cmd_lock);
 	mutex_init(&charger->stats_lock);
