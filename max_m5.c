@@ -513,6 +513,10 @@ int max_m5_load_gauge_model(struct max_m5_data *m5_data)
 		return ret;
 	}
 
+	ret = REGMAP_WRITE(regmap, MAX_M5_CGAIN,
+			   m5_data->parameters.cgain);
+	if (ret < 0)
+		dev_err(m5_data->dev, "cannot update cgain (%d)\n", ret);
 
 	m5_data->cap_lsb = max_m5_period2caplsb(m5_data->parameters.taskperiod);
 
@@ -799,6 +803,9 @@ int max_m5_model_read_state(struct max_m5_data *m5_data)
 	if (rc == 0)
 		rc = REGMAP_READ(regmap, MAX_M5_CV_HALFTIME,
 				 &m5_data->halftime);
+	if (rc == 0)
+		rc = REGMAP_READ(regmap, MAX_M5_CGAIN,
+				 &m5_data->parameters.cgain);
 
 	return rc;
 }
@@ -974,6 +981,9 @@ int max_m5_model_state_sscan(struct max_m5_data *m5_data, const char *buf,
 		case MAX_M5_CV_HALFTIME:
 			m5_data->halftime = val;
 			break;
+		case MAX_M5_CGAIN:
+			m5_data->parameters.cgain = val;
+			break;
 		default:
 			dev_err(m5_data->dev, "@%d: reg=%x out of range\n",
 				index, reg);
@@ -1065,11 +1075,14 @@ int max_m5_fg_model_sscan(struct max_m5_data *m5_data, const char *buf, int max)
 }
 
 /* Initial values??? */
+#define CGAIN_RESET_VAL 0x0400
 static int m5_init_custom_parameters(struct device *dev,
 				     struct max_m5_custom_parameters *cp,
 				     struct device_node *node)
 {
 	const char *propname = "maxim,fg-params";
+	const int cnt_default = sizeof(*cp) / 2 - 1;
+	const int cnt_w_cgain = sizeof(*cp) / 2;
 	int ret, cnt;
 
 	memset(cp, 0, sizeof(*cp));
@@ -1078,7 +1091,8 @@ static int m5_init_custom_parameters(struct device *dev,
 	if (cnt < 0)
 		return -ENODATA;
 
-	if (cnt != sizeof(*cp) / 2) {
+	cp->cgain = CGAIN_RESET_VAL;
+	if (cnt != cnt_default && cnt != cnt_w_cgain) {
 		dev_err(dev, "fg-params: %s has %d elements, need %ld\n",
 			propname, cnt, sizeof(*cp) / 2);
 		return -ERANGE;

@@ -377,7 +377,7 @@ static inline int chg_reset_state(struct chg_drv *chg_drv)
 	if (chg_drv->chg_term.enable)
 		chg_reset_termination_data(chg_drv);
 
-	if (!pps_is_disabled(chg_drv->pps_data.stage)) {
+	if (!pps_is_disabled(chg_drv->pps_data.stage) || chg_drv->chg_term.usb_5v == 1) {
 		unsigned int nr_pdo = chg_drv->pps_data.default_pps_pdo ?
 				      PDO_PPS : PDO_FIXED_HIGH_VOLTAGE;
 
