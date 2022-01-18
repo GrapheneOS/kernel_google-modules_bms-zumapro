@@ -1216,12 +1216,14 @@ static int max1720x_get_battery_health(struct max1720x_chip *chip)
 		return POWER_SUPPLY_HEALTH_OVERVOLTAGE;
 	}
 
-	if (chip->health_status & MAX1720X_STATUS_TMN) {
+	if ((chip->health_status & MAX1720X_STATUS_TMN) &&
+	    (chip->RConfig & MAX1720X_CONFIG_TS)) {
 		chip->health_status &= ~MAX1720X_STATUS_TMN;
 		return POWER_SUPPLY_HEALTH_COLD;
 	}
 
-	if (chip->health_status & MAX1720X_STATUS_TMX) {
+	if ((chip->health_status & MAX1720X_STATUS_TMX) &&
+	    (chip->RConfig & MAX1720X_CONFIG_TS)) {
 		chip->health_status &= ~MAX1720X_STATUS_TMX;
 		return POWER_SUPPLY_HEALTH_HOT;
 	}
