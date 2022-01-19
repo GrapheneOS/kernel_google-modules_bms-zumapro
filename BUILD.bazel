@@ -25,7 +25,7 @@ kernel_module(
         "**/*.h",
         "Kbuild",
     ]) + [
-        "//gs/kernel/device-modules:gs101_soc_headers",
+        "//gs/google-modules/soc-modules:gs101_soc_headers",
     ],
     outs = [
         "google-battery.ko",
@@ -47,12 +47,12 @@ kernel_module(
         # "max77759.ko",
         # "pca9468-google.ko",
     ],
-    kernel_build = "//gs/kernel/device-modules:slider",
+    kernel_build = "//gs/google-modules/soc-modules:slider",
     kernel_module_deps = [
-        "//gs/kernel/device-modules:gs101_soc",
+        "//gs/google-modules/soc-modules:gs101_soc",
     ],
     visibility = [
         "//gs/google-modules/power/reset:__subpackages__",
-        "//gs/kernel/device-modules:__pkg__",
+        "//gs/google-modules/soc-modules:__pkg__",
     ],
 )
