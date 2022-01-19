@@ -2279,14 +2279,16 @@ static int max1720x_monitor_log_data(struct max1720x_chip *chip)
 	if (ret < 0)
 		return ret;
 
-	logbuffer_log(chip->monitor_log, "%02X:%04X %02X:%04X %02X:%04X %02X:%04X"
-	" %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
-	" %02X:%04X %02X:%04X",
-		MAX1720X_REPSOC, data, MAX1720X_VFSOC, vfsoc, MAX1720X_AVCAP, avcap,
-		MAX1720X_REPCAP, repcap, MAX1720X_FULLCAP, fullcap, MAX1720X_FULLCAPREP,
-		fullcaprep, MAX1720X_FULLCAPNOM, fullcapnom, MAX1720X_QH0, qh0,
-		MAX1720X_QH, qh, MAX1720X_DQACC, dqacc, MAX1720X_DPACC, dpacc,
-		MAX1720X_QRESIDUAL, qresidual, MAX1720X_FSTAT, fstat);
+	gbms_logbuffer_prlog(chip->monitor_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+			     "%s %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
+			     " %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
+			     " %02X:%04X %02X:%04X %02X:%04X",
+			     __func__, MAX1720X_REPSOC, data, MAX1720X_VFSOC, vfsoc,
+			     MAX1720X_AVCAP, avcap, MAX1720X_REPCAP, repcap,
+			     MAX1720X_FULLCAP, fullcap, MAX1720X_FULLCAPREP, fullcaprep,
+			     MAX1720X_FULLCAPNOM, fullcapnom, MAX1720X_QH0, qh0,
+			     MAX1720X_QH, qh, MAX1720X_DQACC, dqacc, MAX1720X_DPACC, dpacc,
+			     MAX1720X_QRESIDUAL, qresidual, MAX1720X_FSTAT, fstat);
 
 	chip->pre_repsoc = repsoc;
 
