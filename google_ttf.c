@@ -15,7 +15,6 @@
 #include <linux/kernel.h>
 #include <linux/printk.h>
 #include <linux/of.h>
-#include <misc/logbuffer.h>
 #include <linux/slab.h>
 #include "google_bms.h"
 #include "google_psy.h"

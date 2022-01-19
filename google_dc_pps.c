@@ -20,7 +20,6 @@
 #include <linux/usb/pd.h>
 #include <linux/usb/tcpm.h>
 #include <linux/alarmtimer.h>
-#include <misc/logbuffer.h>
 #include "google_bms.h"
 #include "google_psy.h"
 #include "google_dc_pps.h"

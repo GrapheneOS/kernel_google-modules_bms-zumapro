@@ -20,6 +20,7 @@
 #include <linux/minmax.h>
 #include <linux/types.h>
 #include <linux/usb/pd.h>
+#include <misc/logbuffer.h>
 #include "gbms_power_supply.h"
 #include "qmath.h"
 #include "gbms_storage.h"
@@ -406,6 +407,11 @@ int gbms_read_charger_state(union gbms_charger_state *chg_state,
 			    struct power_supply *chg_psy);
 /* calculate aacr reference capacity */
 int gbms_aacr_fade10(const struct gbms_chg_profile *profile, int cycles);
+
+/* logbuffer and syslog */
+__printf(5,6)
+void gbms_logbuffer_prlog(struct logbuffer *log, int level, int debug_no_logbuffer,
+			  int debug_printk_prlog, const char *f, ...);
 
 /* debug/print */
 const char *gbms_chg_type_s(int chg_type);

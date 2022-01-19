@@ -34,7 +34,6 @@
 #include "google_bms.h"
 #include "google_dc_pps.h"
 #include "google_psy.h"
-#include <misc/logbuffer.h>
 
 #include <linux/debugfs.h>
 
@@ -224,23 +223,6 @@ struct gcpm_drv  {
 /* Logging ----------------------------------------------------------------- */
 
 int debug_printk_prlog = LOGLEVEL_INFO;
-
-/*
- * A \n in a logbuffer string has a special meaning and is usually not included
- * in the debug messages for it. The \n is necessary for printk.
- */
-static void logbuffer_prlog(struct gcpm_drv *gcpm, int level, const char *f, ...)
-{
-	va_list args;
-
-	va_start(args, f);
-
-	logbuffer_vlog(gcpm->log, f, args);
-	if (level <= debug_printk_prlog)
-		vprintk(f, args);
-
-	va_end(args);
-}
 
 /* ------------------------------------------------------------------------- */
 
@@ -1292,10 +1274,10 @@ static void gcpm_pps_wlc_dc_work(struct work_struct *work)
 		if (!dc_disable)
 			gcpm->dc_state = DC_IDLE;
 
-		logbuffer_prlog(gcpm, LOGLEVEL_INFO,
-			       "PPS_Work: done elap=%lld dc_state=%d %d->%d\n",
-			       elap, gcpm->dc_state, active_index,
-			       gcpm->chg_psy_active);
+		gbms_logbuffer_prlog(gcpm->log, LOGLEVEL_INFO, 0, debug_printk_prlog,
+				     "PPS_Work: done elap=%lld dc_state=%d %d->%d\n",
+				     elap, gcpm->dc_state, active_index,
+				     gcpm->chg_psy_active);
 
 		/* TODO: send a ps event? */
 		goto pps_dc_done;

@@ -26,7 +26,6 @@
 #include <linux/regmap.h>
 #include "google_bms.h"
 #include "google_psy.h"
-#include <misc/logbuffer.h>
 
 #include "max_m5.h"
 

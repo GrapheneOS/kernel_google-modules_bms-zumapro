@@ -676,3 +676,19 @@ int gbms_get_property(struct power_supply *psy, enum gbms_property psp,
 }
 EXPORT_SYMBOL_GPL(gbms_get_property);
 
+void gbms_logbuffer_prlog(struct logbuffer *log, int level, int debug_no_logbuffer,
+			  int debug_printk_prlog, const char *f, ...)
+{
+	va_list args;
+
+	va_start(args, f);
+
+	if (!debug_no_logbuffer)
+		logbuffer_vlog(log, f, args);
+
+	if (level <= debug_printk_prlog)
+		vprintk(f, args);
+
+	va_end(args);
+}
+EXPORT_SYMBOL_GPL(gbms_logbuffer_prlog);

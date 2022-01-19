@@ -34,7 +34,6 @@
 #include <linux/seq_file.h> /* seq_read, seq_lseek, single_release */
 #include "gbms_power_supply.h"
 #include "google_bms.h"
-#include <misc/logbuffer.h>
 #include "max1720x_battery.h"
 
 #include <linux/debugfs.h>
