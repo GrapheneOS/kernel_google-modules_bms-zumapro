@@ -242,6 +242,14 @@ struct swelling_data {
 	ktime_t last_update;
 };
 
+struct battery_health
+{
+	int algo_ver;
+	int index;
+	int perf_index;
+	enum bhi_status status;
+};
+
 /* battery driver state */
 struct batt_drv {
 	struct device *device;
@@ -377,7 +385,14 @@ struct batt_drv {
 	int aacr_cycle_grace;
 	int aacr_cycle_max;
 
+	/* health related */
+	struct battery_health health;
 	struct swelling_data sd;
+
+	/* CSI: charging speeed */
+	struct votable	*csi_status_votable;
+	struct votable	*csi_type_votable;
+	int charging_speed;
 };
 
 static int gbatt_get_temp(const struct batt_drv *batt_drv, int *temp);
@@ -5058,6 +5073,77 @@ static ssize_t swelling_data_show(struct device *dev,
 
 static const DEVICE_ATTR_RO(swelling_data);
 
+static ssize_t health_index_show(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health.index);
+}
+
+static const DEVICE_ATTR_RO(health_index);
+
+static ssize_t health_status_show(struct device *dev,
+				  struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health.status);
+}
+
+static const DEVICE_ATTR_RO(health_status);
+
+static ssize_t health_perf_index_show(struct device *dev,
+				      struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health.perf_index);
+}
+
+static const DEVICE_ATTR_RO(health_perf_index);
+
+static ssize_t health_algo_store(struct device *dev,
+				 struct device_attribute *attr,
+				 const char *buf, size_t count)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	int value, ret;
+
+	ret = kstrtoint(buf, 0, &value);
+	if (ret < 0)
+		return ret;
+
+	batt_drv->health.algo_ver = value;
+	return count;
+}
+
+static ssize_t health_algo_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health.algo_ver);
+}
+
+static const DEVICE_ATTR_RW(health_algo);
+
+static ssize_t charging_speed_show(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->charging_speed);
+}
+
+static const DEVICE_ATTR_RO(charging_speed);
+
 /* ------------------------------------------------------------------------- */
 
 static int batt_init_fs(struct batt_drv *batt_drv)
@@ -5191,9 +5277,26 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_aacr_cycle_max);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create aacr cycle max\n");
+	/* health and health index */
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_swelling_data);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create swelling_data\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_health_index);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create health index\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_health_status);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create health status\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_health_perf_index);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create health perf index\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_health_algo);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create health algo\n");
+	/* csi */
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_charging_speed);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create charging speed\n");
 
 	de = debugfs_create_dir("google_battery", 0);
 	if (IS_ERR_OR_NULL(de))

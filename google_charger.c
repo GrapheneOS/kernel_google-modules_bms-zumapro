@@ -30,6 +30,7 @@
 #include <linux/usb/pd.h>
 #include <linux/usb/tcpm.h>
 #include <linux/alarmtimer.h>
+#include <misc/gvotable.h>
 #include "gbms_power_supply.h"
 #include "pmic-voter.h" /* TODO(b/163679860): use gvotables */
 #include "google_bms.h"
@@ -264,6 +265,9 @@ struct chg_drv {
 
 	/* prevent overcharge */
 	struct chg_termination	chg_term;
+
+	struct gvotable_election *csi_status_votable;
+	struct gvotable_election *csi_type_votable;
 
 	/* debug */
 	struct dentry *debug_entry;
@@ -3015,6 +3019,47 @@ DEFINE_SIMPLE_ATTRIBUTE(debug_pps_cc_tolerance_fops,
 					debug_set_pps_cc_tolerance, "%llu\n");
 
 
+static void csi_status_cb(struct gvotable_election *el,
+				 const char *reason,
+				 void *value)
+{
+	/* TODO: log the change to chargign status */
+}
+
+static void csi_type_cb(struct gvotable_election *el,
+				 const char *reason,
+				 void *value)
+{
+	/* TODO: log the change to charging type */
+}
+
+static ssize_t
+charging_status_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct chg_drv *chg_drv = dev_get_drvdata(dev);
+	int value = CSI_STATUS_UNKNOWN;
+
+	if (chg_drv->csi_status_votable)
+		value = gvotable_get_current_int_vote(chg_drv->csi_status_votable);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", value);
+}
+
+static DEVICE_ATTR_RO(charging_status);
+
+static ssize_t
+charging_type_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct chg_drv *chg_drv = dev_get_drvdata(dev);
+	int value = CSI_TYPE_UNKNOWN;
+
+	if (chg_drv->csi_type_votable)
+		value = gvotable_get_current_int_vote(chg_drv->csi_type_votable);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", value);
+}
+
+static DEVICE_ATTR_RO(charging_type);
 
 static int chg_init_fs(struct chg_drv *chg_drv)
 {
@@ -3022,65 +3067,56 @@ static int chg_init_fs(struct chg_drv *chg_drv)
 
 	ret = device_create_file(chg_drv->device, &dev_attr_charge_stop_level);
 	if (ret != 0) {
-		pr_err("Failed to create charge_stop_level files, ret=%d\n",
-		       ret);
+		pr_err("Failed to create charge_stop_level files, ret=%d\n", ret);
 		return ret;
 	}
 
 	ret = device_create_file(chg_drv->device, &dev_attr_charge_start_level);
 	if (ret != 0) {
-		pr_err("Failed to create charge_start_level files, ret=%d\n",
-		       ret);
+		pr_err("Failed to create charge_start_level files, ret=%d\n", ret);
 		return ret;
 	}
 
 	ret = device_create_file(chg_drv->device, &dev_attr_bd_temp_enable);
 	if (ret != 0) {
-		pr_err("Failed to create bd_temp_enable files, ret=%d\n",
-		       ret);
+		pr_err("Failed to create bd_temp_enable files, ret=%d\n", ret);
 		return ret;
 	}
 
 	ret = device_create_file(chg_drv->device, &dev_attr_bd_trigger_voltage);
 	if (ret != 0) {
-		pr_err("Failed to create bd_trigger_voltage files, ret=%d\n",
-		       ret);
+		pr_err("Failed to create bd_trigger_voltage files, ret=%d\n", ret);
 		return ret;
 	}
 
 	ret = device_create_file(chg_drv->device, &dev_attr_bd_drainto_soc);
 	if (ret != 0) {
-		pr_err("Failed to create bd_drainto_soc files, ret=%d\n",
-		       ret);
+		pr_err("Failed to create bd_drainto_soc files, ret=%d\n", ret);
 		return ret;
 	}
 
 	ret = device_create_file(chg_drv->device, &dev_attr_bd_trigger_temp);
 	if (ret != 0) {
-		pr_err("Failed to create bd_trigger_temp files, ret=%d\n",
-		       ret);
+		pr_err("Failed to create bd_trigger_temp files, ret=%d\n", ret);
 		return ret;
 	}
 
 	ret = device_create_file(chg_drv->device, &dev_attr_bd_trigger_time);
 	if (ret != 0) {
-		pr_err("Failed to create bd_trigger_time files, ret=%d\n",
-		       ret);
+		pr_err("Failed to create bd_trigger_time files, ret=%d\n", ret);
 		return ret;
 	}
 
 	ret = device_create_file(chg_drv->device,
 				&dev_attr_bd_recharge_voltage);
 	if (ret != 0) {
-		pr_err("Failed to create bd_recharge_voltage files, ret=%d\n",
-		       ret);
+		pr_err("Failed to create bd_recharge_voltage files, ret=%d\n", ret);
 		return ret;
 	}
 
 	ret = device_create_file(chg_drv->device, &dev_attr_bd_recharge_soc);
 	if (ret != 0) {
-		pr_err("Failed to create bd_recharge_soc files, ret=%d\n",
-		       ret);
+		pr_err("Failed to create bd_recharge_soc files, ret=%d\n", ret);
 		return ret;
 	}
 
@@ -3100,38 +3136,47 @@ static int chg_init_fs(struct chg_drv *chg_drv)
 
 	ret = device_create_file(chg_drv->device, &dev_attr_bd_resume_temp);
 	if (ret != 0) {
-		pr_err("Failed to create bd_resume_temp files, ret=%d\n",
-		       ret);
+		pr_err("Failed to create bd_resume_temp files, ret=%d\n", ret);
 		return ret;
 	}
 
 	ret = device_create_file(chg_drv->device, &dev_attr_bd_resume_soc);
 	if (ret != 0) {
-		pr_err("Failed to create bd_resume_soc files, ret=%d\n",
-		       ret);
+		pr_err("Failed to create bd_resume_soc files, ret=%d\n", ret);
 		return ret;
 	}
 
 	ret = device_create_file(chg_drv->device, &dev_attr_bd_temp_dry_run);
 	if (ret != 0) {
-		pr_err("Failed to create bd_temp_dry_run files, ret=%d\n",
-		       ret);
+		pr_err("Failed to create bd_temp_dry_run files, ret=%d\n", ret);
 		return ret;
 	}
 
 	ret = device_create_file(chg_drv->device, &dev_attr_bd_clear);
 	if (ret != 0) {
-		pr_err("Failed to create bd_clear files, ret=%d\n",
-		       ret);
+		pr_err("Failed to create bd_clear files, ret=%d\n", ret);
 		return ret;
 	}
 
 	ret = device_create_file(chg_drv->device, &dev_attr_bd_state);
 	if (ret != 0) {
-		pr_err("Failed to create bd_state files, ret=%d\n",
-		       ret);
+		pr_err("Failed to create bd_state files, ret=%d\n", ret);
 		return ret;
 	}
+
+	ret = device_create_file(chg_drv->device, &dev_attr_charging_status);
+	if (ret != 0) {
+		pr_err("Failed to create charging_status, ret=%d\n", ret);
+		return ret;
+	}
+
+	ret = device_create_file(chg_drv->device, &dev_attr_charging_type);
+	if (ret != 0) {
+		pr_err("Failed to create charging_type, ret=%d\n", ret);
+		return ret;
+	}
+
+
 
 	chg_drv->debug_entry = debugfs_create_dir("google_charger", 0);
 	if (IS_ERR_OR_NULL(chg_drv->debug_entry)) {
@@ -3492,6 +3537,32 @@ static int chg_create_votables(struct chg_drv *chg_drv)
 		goto error_exit;
 	}
 
+	chg_drv->csi_status_votable =
+		gvotable_create_int_election(NULL, gvotable_comparator_int_min,
+					     csi_status_cb, chg_drv);
+	if (IS_ERR_OR_NULL(chg_drv->csi_status_votable)) {
+		ret = PTR_ERR(chg_drv->csi_status_votable);
+		chg_drv->csi_status_votable = NULL;
+		goto error_exit;
+	}
+
+	gvotable_set_default(chg_drv->csi_status_votable, (void *)CSI_STATUS_UNKNOWN);
+	gvotable_set_vote2str(chg_drv->csi_status_votable, gvotable_v2s_int);
+	gvotable_election_set_name(chg_drv->csi_status_votable, VOTABLE_CSI_STATUS);
+
+	chg_drv->csi_type_votable =
+		gvotable_create_int_election(NULL, gvotable_comparator_int_min,
+					     csi_type_cb, chg_drv);
+	if (IS_ERR_OR_NULL(chg_drv->csi_type_votable)) {
+		ret = PTR_ERR(chg_drv->csi_type_votable);
+		chg_drv->csi_type_votable = NULL;
+		goto error_exit;
+	}
+
+	gvotable_set_default(chg_drv->csi_type_votable, (void *)CSI_TYPE_UNKNOWN);
+	gvotable_set_vote2str(chg_drv->csi_type_votable, gvotable_v2s_int);
+	gvotable_election_set_name(chg_drv->csi_type_votable, VOTABLE_CSI_TYPE);
+
 	return 0;
 
 error_exit:
@@ -3500,12 +3571,16 @@ error_exit:
 	destroy_votable(chg_drv->msc_interval_votable);
 	destroy_votable(chg_drv->msc_chg_disable_votable);
 	destroy_votable(chg_drv->msc_pwr_disable_votable);
+	gvotable_destroy_election(chg_drv->csi_status_votable);
+	gvotable_destroy_election(chg_drv->csi_type_votable);
 
 	chg_drv->msc_fv_votable = NULL;
 	chg_drv->msc_fcc_votable = NULL;
 	chg_drv->msc_interval_votable = NULL;
 	chg_drv->msc_chg_disable_votable = NULL;
 	chg_drv->msc_pwr_disable_votable = NULL;
+	chg_drv->csi_status_votable = NULL;
+	chg_drv->csi_type_votable = NULL;
 
 	return ret;
 }
@@ -4419,6 +4494,8 @@ static void chg_destroy_votables(struct chg_drv *chg_drv)
 	destroy_votable(chg_drv->msc_fcc_votable);
 	destroy_votable(chg_drv->msc_chg_disable_votable);
 	destroy_votable(chg_drv->msc_pwr_disable_votable);
+	gvotable_destroy_election(chg_drv->csi_status_votable);
+	gvotable_destroy_election(chg_drv->csi_type_votable);
 }
 
 static int google_charger_remove(struct platform_device *pdev)

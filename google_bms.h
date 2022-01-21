@@ -412,6 +412,9 @@ const char *gbms_chg_ev_adapter_s(int adapter);
 #define VOTABLE_FAN_LEVEL	"FAN_LEVEL"
 #define VOTABLE_DEAD_BATTERY	"DEAD_BATTERY"
 
+#define VOTABLE_CSI_STATUS	"CSI_STATUS"
+#define VOTABLE_CSI_TYPE	"CSI_TYPE"
+
 #define FAN_LVL_UNKNOWN		-1
 #define FAN_LVL_NOT_CARE	0
 #define FAN_LVL_LOW		1
@@ -492,5 +495,36 @@ enum gbms_charger_modes {
 };
 
 #define GBMS_MODE_VOTABLE "CHARGER_MODE"
+
+enum bhi_status {
+	BH_UNKNOWN = -1,
+	BH_NOMINAL,
+	BH_MARGINAL,
+	BH_NEEDS_REPLACEMENT,
+	BH_FAILED,
+};
+
+enum csi_type {
+	CSI_TYPE_UNKNOWN = -1,
+	CSI_TYPE_None = 0,		// Disconnected
+	CSI_TYPE_Fault = 1,		// Internal Failures
+	CSI_TYPE_JEITA = 2,		// HW limits
+	CSI_TYPE_LongLife = 3, 		// DefenderConditions
+	CSI_TYPE_Adaptive = 4,		// AdaptiveCharging
+	CSI_TYPE_Normal = 5,
+};
+
+enum csi_status {
+	CSI_STATUS_UNKNOWN = -1,
+	CSI_STATUS_Discharging = 0,
+	CSI_STATUS_Health_Cold = 10,	// JEITA battery, mutex with Hot
+	CSI_STATUS_Health_Hot = 11,	// JEITA battery, mutex with Cold
+	CSI_STATUS_System_Thermals = 20,//
+	CSI_STATUS_System_Load = 21,	// Load will eventually become thermals
+	CSI_STATUS_Adapter_Power = 30,	//
+	CSI_STATUS_Adapter_Quality = 31,// Adapter or cable (low voltage)
+	CSI_STATUS_Adapter_Auth = 32,	// Missing authentication (if supported)
+	CSI_STATUS_Normal = 100,	//
+};
 
 #endif  /* __GOOGLE_BMS_H_ */
