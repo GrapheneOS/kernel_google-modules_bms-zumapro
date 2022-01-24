@@ -492,9 +492,8 @@ static void max77729_dcicl_callback(struct gvotable_election *el,
 	const bool suspend = dc_icl == 0;
 	int ret;
 
-	ret = gvotable_cast_vote(data->dc_suspend_votable, "DC_ICL",
-				  (void *)1,
-				  suspend);
+	ret = gvotable_cast_long_vote(data->dc_suspend_votable,
+				      "DC_ICL", 1, suspend);
 	if (ret < 0)
 		dev_err(data->dev, "cannot set DC_SUSPEND=%d (%d)\n",
 			suspend, ret);
@@ -503,18 +502,16 @@ static void max77729_dcicl_callback(struct gvotable_election *el,
 static int max77729_set_charge_enabled(struct max77729_chgr_data *data,
 				       int enabled, const char *reason)
 {
-	return gvotable_cast_vote(data->mode_votable, reason,
-				  (void *)CHGR_MODE_CHGR_BUCK_ON,
-				  enabled);
+	return gvotable_cast_long_vote(data->mode_votable, reason,
+				       CHGR_MODE_CHGR_BUCK_ON, enabled);
 }
 
 static int max77729_input_suspend(struct max77729_chgr_data *data,
 				  bool enabled, const char *reason)
 {
 	data->input_suspend = enabled;
-	return gvotable_cast_vote(data->mode_votable, reason,
-				  (void *)CHGR_MODE_ALL_OFF,
-				  enabled);
+	return gvotable_cast_long_vote(data->mode_votable, reason,
+				       CHGR_MODE_ALL_OFF, enabled);
 }
 
 

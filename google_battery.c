@@ -28,10 +28,10 @@
 #include <linux/thermal.h>
 #include <linux/slab.h>
 #include "gbms_power_supply.h"
-#include "pmic-voter.h" /* TODO(b/163679860): use gvotables */
 #include "google_bms.h"
 #include "google_psy.h"
 #include "qmath.h"
+#include <misc/gvotable.h>
 #include <crypto/hash.h>
 
 #include <linux/debugfs.h>
@@ -239,7 +239,7 @@ enum batt_aacr_state {
 #define SD_CHG_START 0
 #define SD_DISCHG_START BATT_TEMP_RECORD_THR
 #define BATT_SD_SAVE_SIZE (BATT_TEMP_RECORD_THR * 2)
-#define BATT_SD_MAX_HOURS 15120 // 90 weeks
+#define BATT_SD_MAX_HOURS 15120 /* 90 weeks */
 struct swelling_data {
 	/* Time in different temperature */
 	bool is_enable;
@@ -348,13 +348,13 @@ struct batt_drv {
 	int msc_update_interval;
 
 	bool disable_votes;
-	struct votable	*msc_interval_votable;
-	struct votable	*fcc_votable;
-	struct votable	*fv_votable;
-	struct votable	*temp_dryrun_votable;
+	struct gvotable_election *msc_interval_votable;
+	struct gvotable_election *fcc_votable;
+	struct gvotable_election *fv_votable;
+	struct gvotable_election *temp_dryrun_votable;
 
 	/* FAN level */
-	struct votable	*fan_level_votable;
+	struct gvotable_election *fan_level_votable;
 	int fan_last_level;
 
 	/* stats */
@@ -416,8 +416,8 @@ struct batt_drv {
 	struct swelling_data sd;
 
 	/* CSI: charging speeed */
-	struct votable	*csi_status_votable;
-	struct votable	*csi_type_votable;
+	struct gvotable_election *csi_status_votable;
+	struct gvotable_election *csi_type_votable;
 	int charging_speed;
 };
 
@@ -954,7 +954,7 @@ static int fan_calculate_level(const struct batt_drv *batt_drv)
 	/* defender limits from google_charger */
 	fan_level = fan_bt_calculate_level(batt_drv);
 
-	cc_max = get_effective_result_locked(batt_drv->fcc_votable);
+	cc_max = gvotable_get_current_int_vote(batt_drv->fcc_votable);
 	if (cc_max <= 0 || batt_drv->battery_capacity == 0)
 		return fan_level;
 
@@ -980,31 +980,31 @@ static void fan_level_reset(const struct batt_drv *batt_drv)
 {
 
 	if (batt_drv->fan_level_votable)
-		vote(batt_drv->fan_level_votable, "MSC_BATT", false, 0);
+		gvotable_cast_int_vote(batt_drv->fan_level_votable,
+				       "MSC_BATT", 0, false);
 }
 
-static int fan_level_cb(struct votable *votable, void *data,
-			int lvl, const char *client)
+static void fan_level_cb(struct gvotable_election *el,
+			 const char *reason, void *vote)
 {
-	struct batt_drv *batt_drv = (struct batt_drv *)data;
+	struct batt_drv *batt_drv = gvotable_get_data(el);
+	int lvl = (int)(uintptr_t)vote;
 
 	if (!batt_drv)
-		return 0;
+		return;
 
 	if (batt_drv->fan_last_level != lvl) {
 		pr_debug("FAN_LEVEL %d->%d reason=%s\n",
-			 batt_drv->fan_last_level, lvl, client ? client : "<>");
+			 batt_drv->fan_last_level, lvl, reason ? reason : "<>");
 		logbuffer_log(batt_drv->ttf_stats.ttf_log,
 			      "FAN_LEVEL %d->%d reason=%s",
 			      batt_drv->fan_last_level, lvl,
-			      client ? client : "<>");
+			      reason ? reason : "<>");
 
 		batt_drv->fan_last_level = lvl;
 		if (batt_drv->psy)
 			power_supply_changed(batt_drv->psy);
 	}
-
-	return 0;
 }
 /* ------------------------------------------------------------------------- */
 
@@ -2205,31 +2205,34 @@ static void batt_set_csi_type(struct batt_drv *batt_drv)
 {
 	bool is_ac, is_longlife;
 
-	if (!batt_drv->csi_type_votable)
-		batt_drv->csi_type_votable = find_votable(VOTABLE_CSI_TYPE);
+	if (!batt_drv->csi_type_votable) {
+		batt_drv->csi_type_votable =
+			gvotable_election_get_handle(VOTABLE_CSI_TYPE);
 
-	if (!batt_drv->csi_type_votable)
-		return;
+		if (!batt_drv->csi_type_votable)
+			return;
+	}
 
 	/* ChargingType_NONE */
-	vote(batt_drv->csi_type_votable, "CSI_TYPE_NONE",
-	     chg_state_is_disconnected(&batt_drv->chg_state), CSIType_None);
+	gvotable_cast_long_vote(batt_drv->csi_type_votable, "CSI_TYPE_NONE",
+		CSIType_None, chg_state_is_disconnected(&batt_drv->chg_state));
 
 	/* ChargingType_JEITA */
-	vote(batt_drv->csi_type_votable, "CSI_TYPE_JEITA",
-	     batt_drv->jeita_stop_charging == 1, CSIType_JEITA);
+	gvotable_cast_long_vote(batt_drv->csi_type_votable, "CSI_TYPE_JEITA",
+		CSIType_JEITA, batt_drv->jeita_stop_charging == 1);
 
 	/* ChargingType_LongLife */
 	is_longlife = batt_drv->ssoc_state.bd_trickle_cnt > 0 ||
 		      batt_drv->batt_health == POWER_SUPPLY_HEALTH_OVERHEAT;
-	vote(batt_drv->csi_type_votable, "CSI_TYPE_LONGLIFE", is_longlife,
-	     CSIType_LongLife);
+	gvotable_cast_long_vote(batt_drv->csi_type_votable, "CSI_TYPE_LONGLIFE",
+				CSIType_LongLife, is_longlife);
 
 	/* ChargingType_Adaptive */
 	is_ac = batt_drv->msc_state == MSC_HEALTH ||
 		batt_drv->msc_state == MSC_HEALTH_PAUSE ||
 		batt_drv->msc_state == MSC_HEALTH_ALWAYS_ON;
-	vote(batt_drv->csi_type_votable, "CSI_TYPE_AC", is_ac, CSIType_Adaptive);
+	gvotable_cast_long_vote(batt_drv->csi_type_votable, "CSI_TYPE_AC",
+				CSIType_Adaptive, is_ac);
 }
 
 
@@ -3426,7 +3429,8 @@ msc_logic_done:
 	if (batt_drv->fan_level_votable) {
 		int level = fan_calculate_level(batt_drv);
 
-		vote(batt_drv->fan_level_votable, "MSC_BATT", true, level);
+		gvotable_cast_int_vote(batt_drv->fan_level_votable,
+				       "MSC_BATT", level, true);
 		pr_debug("MSC_FAN_LVL: level=%d\n", level);
 	}
 
@@ -3457,54 +3461,56 @@ msc_logic_done:
 	  * Votes for MSC_LOGIC_VOTER will be all disabled.
 	  */
 	if (!batt_drv->fv_votable)
-		batt_drv->fv_votable = find_votable(VOTABLE_MSC_FV);
+		batt_drv->fv_votable =
+			gvotable_election_get_handle(VOTABLE_MSC_FV);
 	if (batt_drv->fv_votable) {
 		const int rest_fv_uv = batt_drv->chg_health.rest_fv_uv;
 
-		vote(batt_drv->fv_votable, MSC_LOGIC_VOTER,
-			!disable_votes && (batt_drv->fv_uv > 0),
-			batt_drv->fv_uv);
+		gvotable_cast_int_vote(batt_drv->fv_votable,
+				       MSC_LOGIC_VOTER, batt_drv->fv_uv,
+				       !disable_votes && (batt_drv->fv_uv > 0));
 
-		vote(batt_drv->fv_votable, MSC_HEALTH_VOTER,
-			!disable_votes && (rest_fv_uv > 0),
-			rest_fv_uv);
+		gvotable_cast_int_vote(batt_drv->fv_votable,
+				       MSC_HEALTH_VOTER, rest_fv_uv,
+				       !disable_votes && (rest_fv_uv > 0));
 	}
 
 	if (!batt_drv->fcc_votable)
-		batt_drv->fcc_votable = find_votable(VOTABLE_MSC_FCC);
+		batt_drv->fcc_votable =
+			gvotable_election_get_handle(VOTABLE_MSC_FCC);
 	if (batt_drv->fcc_votable) {
 		enum batt_rl_status rl_status = batt_drv->ssoc_state.rl_status;
 		const int rest_cc_max = batt_drv->chg_health.rest_cc_max;
 
 		/* while in RL => ->cc_max != -1 && ->fv_uv != -1 */
-		vote(batt_drv->fcc_votable, RL_STATE_VOTER,
-			!disable_votes &&
-			(rl_status == BATT_RL_STATUS_DISCHARGE),
-			0);
+		gvotable_cast_int_vote(batt_drv->fcc_votable, RL_STATE_VOTER, 0,
+				       !disable_votes &&
+				       (rl_status == BATT_RL_STATUS_DISCHARGE));
 
 		/* jeita_stop_charging != 0 => ->fv_uv = -1 && cc_max == -1 */
-		vote(batt_drv->fcc_votable, SW_JEITA_VOTER,
-			!disable_votes && jeita_stop,
-			0);
+		gvotable_cast_int_vote(batt_drv->fcc_votable, SW_JEITA_VOTER, 0,
+				       !disable_votes && jeita_stop);
 
 		/* health based charging */
-		vote(batt_drv->fcc_votable, MSC_HEALTH_VOTER,
-			!disable_votes && (rest_cc_max != -1),
-			rest_cc_max);
+		gvotable_cast_int_vote(batt_drv->fcc_votable,
+				       MSC_HEALTH_VOTER, rest_cc_max,
+				       !disable_votes && (rest_cc_max != -1));
 
-		vote(batt_drv->fcc_votable, MSC_LOGIC_VOTER,
-			!disable_votes && (batt_drv->cc_max != -1),
-			batt_drv->cc_max);
-
+		gvotable_cast_int_vote(batt_drv->fcc_votable,
+				       MSC_LOGIC_VOTER, batt_drv->cc_max,
+				       !disable_votes &&
+				       (batt_drv->cc_max != -1));
 	}
 
 	if (!batt_drv->msc_interval_votable)
 		batt_drv->msc_interval_votable =
-			find_votable(VOTABLE_MSC_INTERVAL);
+			gvotable_election_get_handle(VOTABLE_MSC_INTERVAL);
 	if (batt_drv->msc_interval_votable)
-		vote(batt_drv->msc_interval_votable, MSC_LOGIC_VOTER,
-			!disable_votes && (batt_drv->msc_update_interval != -1),
-			batt_drv->msc_update_interval);
+		gvotable_cast_int_vote(batt_drv->msc_interval_votable,
+				       MSC_LOGIC_VOTER,
+				       batt_drv->msc_update_interval,
+				       !disable_votes &&
+				       (batt_drv->msc_update_interval != -1));
 
 	/* Update CSI Type */
 	batt_set_csi_type(batt_drv);
@@ -3853,12 +3859,12 @@ static int debug_set_ssoc_rls(void *data, u64 val)
 	mutex_lock(&batt_drv->chg_lock);
 	batt_drv->ssoc_state.rl_status = val;
 	if (!batt_drv->fcc_votable)
-		batt_drv->fcc_votable = find_votable(VOTABLE_MSC_FCC);
+		batt_drv->fcc_votable =
+			gvotable_election_get_handle(VOTABLE_MSC_FCC);
 	if (batt_drv->fcc_votable)
-		vote(batt_drv->fcc_votable, RL_STATE_VOTER,
-			batt_drv->ssoc_state.rl_status ==
-						BATT_RL_STATUS_DISCHARGE,
-			0);
+		gvotable_cast_int_vote(batt_drv->fcc_votable, RL_STATE_VOTER, 0,
+				       batt_drv->ssoc_state.rl_status ==
+				       BATT_RL_STATUS_DISCHARGE);
 	mutex_unlock(&batt_drv->chg_lock);
 
 	return 0;
@@ -5047,7 +5053,8 @@ static ssize_t fan_level_show(struct device *dev,
 	int result = 0;
 
 	if (batt_drv->fan_level == -1 && batt_drv->fan_level_votable)
-		result = get_effective_result_locked(batt_drv->fan_level_votable);
+		result = gvotable_get_current_int_vote(
+				batt_drv->fan_level_votable);
 	else
 		result = batt_drv->fan_level;
 
@@ -6063,14 +6070,15 @@ static enum power_supply_property gbatt_battery_props[] = {
 	/*  hard limit to 26 */
 };
 
-static bool temp_defend_dry_run(struct votable	*temp_dryrun_votable)
+static bool temp_defend_dry_run(struct gvotable_election *temp_dryrun_votable)
 {
 	bool dry_run = 1;
 
 	if (!temp_dryrun_votable)
-		temp_dryrun_votable = find_votable(VOTABLE_TEMP_DRYRUN);
+		temp_dryrun_votable =
+			gvotable_election_get_handle(VOTABLE_TEMP_DRYRUN);
 	if (temp_dryrun_votable)
-		dry_run = !!get_effective_result_locked(temp_dryrun_votable);
+		dry_run = !!gvotable_get_current_int_vote(temp_dryrun_votable);
 
 	return dry_run;
 }
@@ -6580,7 +6588,7 @@ static void google_battery_init_hist_work(struct work_struct *work)
 
 static int batt_init_sd(struct swelling_data *sd)
 {
-	int ret = 0, i, j;
+	int ret, i, j;
 
 	if (!sd->is_enable)
 		return 0;
@@ -6992,13 +7000,19 @@ static int google_battery_probe(struct platform_device *pdev)
 	batt_drv->fan_level = -1;
 	batt_drv->fan_last_level = -1;
 	batt_drv->fan_level_votable =
-		create_votable(VOTABLE_FAN_LEVEL, VOTE_MAX, fan_level_cb, batt_drv);
-	if (IS_ERR(batt_drv->fan_level_votable)) {
+		gvotable_create_int_election(NULL, gvotable_comparator_int_max,
+					     fan_level_cb, batt_drv);
+	if (IS_ERR_OR_NULL(batt_drv->fan_level_votable)) {
 		ret = PTR_ERR(batt_drv->fan_level_votable);
 		dev_err(batt_drv->device, "Fail to create fan_level_votable\n");
 		batt_drv->fan_level_votable = NULL;
 	} else {
-		vote(batt_drv->fan_level_votable, "DEFAULT", true, FAN_LVL_UNKNOWN);
+		gvotable_set_vote2str(batt_drv->fan_level_votable,
+				      gvotable_v2s_int);
+		gvotable_election_set_name(batt_drv->fan_level_votable,
+					   VOTABLE_FAN_LEVEL);
+		gvotable_cast_long_vote(batt_drv->fan_level_votable,
+					"DEFAULT", FAN_LVL_UNKNOWN, true);
 	}
 
 	/* AACR server side */
@@ -7042,7 +7056,7 @@ static int google_battery_remove(struct platform_device *pdev)
 	wakeup_source_unregister(batt_drv->taper_ws);
 	wakeup_source_unregister(batt_drv->poll_ws);
 
-	destroy_votable(batt_drv->fan_level_votable);
+	gvotable_destroy_election(batt_drv->fan_level_votable);
 	batt_drv->fan_level_votable = NULL;
 
 	return 0;

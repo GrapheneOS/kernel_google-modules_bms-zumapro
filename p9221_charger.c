@@ -521,8 +521,8 @@ static void p9221_vote_defaults(struct p9221_charger_data *charger)
 		return;
 	}
 
-	ret = vote(charger->dc_icl_votable, P9221_WLC_VOTER, true,
-			P9221_DC_ICL_BPP_UA);
+	ret = gvotable_cast_long_vote(charger->dc_icl_votable, P9221_WLC_VOTER,
+				      P9221_DC_ICL_BPP_UA, true);
 	if (ret)
 		dev_err(&charger->client->dev,
 			"Could not vote DC_ICL %d\n", ret);
@@ -530,15 +530,20 @@ static void p9221_vote_defaults(struct p9221_charger_data *charger)
 	ocp_icl = (charger->dc_icl_epp > 0) ?
 		   charger->dc_icl_epp : P9221_DC_ICL_EPP_UA;
 
-	ret = vote(charger->dc_icl_votable, P9221_OCP_VOTER, true, ocp_icl);
+	ret = gvotable_cast_int_vote(charger->dc_icl_votable,
+				     P9221_OCP_VOTER, ocp_icl, true);
 	if (ret)
 		dev_err(&charger->client->dev,
 			"Could not reset OCP DC_ICL voter %d\n", ret);
 
-	vote(charger->dc_icl_votable, P9382A_RTX_VOTER, false, 0);
-	vote(charger->dc_icl_votable, DCIN_AICL_VOTER, false, 0);
-	vote(charger->dc_icl_votable, HPP_DC_ICL_VOTER, false, 0);
-	vote(charger->dc_icl_votable, DD_VOTER, false, 0);
+	gvotable_cast_int_vote(charger->dc_icl_votable,
+			       P9382A_RTX_VOTER, 0, false);
+	gvotable_cast_int_vote(charger->dc_icl_votable,
+			       DCIN_AICL_VOTER, 0, false);
+	gvotable_cast_int_vote(charger->dc_icl_votable,
+			       HPP_DC_ICL_VOTER, 0, false);
+	gvotable_cast_int_vote(charger->dc_icl_votable,
+			       DD_VOTER, 0, false);
 	p9221_set_auth_dc_icl(charger, false);
 }
 
@@ -672,9 +677,10 @@ static int feature_15w_enable(struct p9221_charger_data *charger, bool enable)
 		if (ret == 0)
 			ret = feature_set_dc_icl(charger, CHARGE_15W_ILIM_UA);
 		if (ret == 0)
-			ret = vote(charger->dc_icl_votable, P9221_OCP_VOTER, true,
-				   CHARGE_15W_ILIM_UA);
-
+			ret = gvotable_cast_long_vote(charger->dc_icl_votable,
+						      P9221_OCP_VOTER,
+						      CHARGE_15W_ILIM_UA,
+						      true);
 	} else if (!enable && (chg_fts->session_features & WLCF_CHARGE_15W)) {
 		int ocp_icl;
 
@@ -685,7 +691,8 @@ static int feature_15w_enable(struct p9221_charger_data *charger, bool enable)
 		/* WLCF_CHARGE_15W is not not set on !P9412_CHIP_ID */
 		ocp_icl = (charger->dc_icl_epp > 0) ?
 			   charger->dc_icl_epp : P9221_DC_ICL_EPP_UA;
-		ret = vote(charger->dc_icl_votable, P9221_OCP_VOTER, true, ocp_icl);
+		ret = gvotable_cast_long_vote(charger->dc_icl_votable,
+					      P9221_OCP_VOTER, ocp_icl, true);
 	}
 
 	return ret;
@@ -1479,9 +1486,11 @@ static int p9221_get_psy_online(struct p9221_charger_data *charger)
 	int suspend = -EINVAL;
 
 	if (!charger->dc_suspend_votable)
-		charger->dc_suspend_votable = find_votable("DC_SUSPEND");
+		charger->dc_suspend_votable =
+			gvotable_election_get_handle("DC_SUSPEND");
 	if (charger->dc_suspend_votable)
-		suspend = get_effective_result(charger->dc_suspend_votable);
+		suspend = gvotable_get_current_int_vote(
+				charger->dc_suspend_votable);
 
 	/* TODO: not sure if this needs to be reported */
 	if (suspend < 0)
@@ -1582,7 +1591,8 @@ static void p9221_update_head_stats(struct p9221_charger_data *charger)
 		int iout_ua;
 
 		/* the unit charger->dc_icl_votable is uA, need to change to mA */
-		iout_ua = get_effective_result(charger->dc_icl_votable);
+		iout_ua =
+			gvotable_get_current_int_vote(charger->dc_icl_votable);
 		if (iout_ua < 0)
 			iout_ma = 0;
 		else
@@ -1785,7 +1795,8 @@ static int p9221_get_property(struct power_supply *psy,
 		} else {
 			if (!charger->dc_icl_votable)
 				return -EAGAIN;
-			val->intval = get_effective_result(charger->dc_icl_votable);
+			val->intval = gvotable_get_current_int_vote(
+						charger->dc_icl_votable);
 		}
 		break;
 #ifdef CONFIG_QC_COMPAT
@@ -1953,8 +1964,10 @@ static int p9221_set_hpp_dc_icl(struct p9221_charger_data *charger, bool enable)
 	if (!charger->dc_icl_votable)
 		return 0;
 
-	return vote(charger->dc_icl_votable, HPP_DC_ICL_VOTER, enable,
-			   enable ? P9221_DC_ICL_HPP_UA : 0);
+	return gvotable_cast_long_vote(charger->dc_icl_votable,
+				       HPP_DC_ICL_VOTER,
+				       enable ? P9221_DC_ICL_HPP_UA : 0,
+				       enable);
 }
 
 /* hold mutex_lock(&charger->auth_lock); */
@@ -1982,7 +1995,8 @@ int p9221_set_auth_dc_icl(struct p9221_charger_data *charger, bool enable)
 		alarm_try_to_cancel(&charger->auth_dc_icl_alarm);
 	}
 
-	ret = vote(charger->dc_icl_votable, AUTH_DC_ICL_VOTER, enable, icl_ua);
+	ret = gvotable_cast_int_vote(charger->dc_icl_votable,
+				     AUTH_DC_ICL_VOTER, icl_ua, enable);
 
 exit:
 	return ret;
@@ -2124,7 +2138,8 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 	dev_warn(&charger->client->dev, "Set enable %d, wlc_dc_enabled:%d->%d\n",
 		charger->enabled, wlc_dc_enabled, charger->wlc_dc_enabled);
 
-	vote(charger->wlc_disable_votable, P9221_WLC_VOTER, !charger->enabled, 0);
+	gvotable_cast_bool_vote(charger->wlc_disable_votable,
+				P9221_WLC_VOTER, !charger->enabled);
 
 	return 1;
 }
@@ -2178,7 +2193,8 @@ static void p9221_ll_bpp_cep(struct p9221_charger_data *charger, int capacity)
 	if (capacity > 99)
 		icl_ua = 200000;
 
-	vote(charger->dc_icl_votable, DD_VOTER, icl_ua > 0, icl_ua);
+	gvotable_cast_int_vote(charger->dc_icl_votable,
+			       DD_VOTER, icl_ua, icl_ua > 0);
 	if (icl_ua > 0)
 		dev_info(&charger->client->dev,
 			 "power_mitigate: set ICL to %duA\n", icl_ua);
@@ -2309,8 +2325,9 @@ static int p9221_set_property(struct power_supply *psy,
 			break;
 		}
 
-		ret = vote(charger->dc_icl_votable, P9221_USER_VOTER, true,
-			   val->intval);
+		ret = gvotable_cast_int_vote(charger->dc_icl_votable,
+					     P9221_USER_VOTER,
+					     val->intval, true);
 		changed = true;
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
@@ -2477,7 +2494,8 @@ static int p9221_set_dc_icl(struct p9221_charger_data *charger)
 	int icl, ret;
 
 	if (!charger->dc_icl_votable) {
-		charger->dc_icl_votable = find_votable("DC_ICL");
+		charger->dc_icl_votable =
+			gvotable_election_get_handle("DC_ICL");
 		if (!charger->dc_icl_votable) {
 			dev_err(&charger->client->dev,
 				"Could not get votable: DC_ICL\n");
@@ -2511,9 +2529,11 @@ static int p9221_set_dc_icl(struct p9221_charger_data *charger)
 		icl, charger->icl_ramp, charger->icl_ramp_alt_ua);
 
 	if (charger->icl_ramp)
-		vote(charger->dc_icl_votable, DCIN_AICL_VOTER, true, icl);
+		gvotable_cast_int_vote(charger->dc_icl_votable,
+				       DCIN_AICL_VOTER, icl, true);
 
-	ret = vote(charger->dc_icl_votable, P9221_WLC_VOTER, true, icl);
+	ret = gvotable_cast_int_vote(charger->dc_icl_votable,
+				     P9221_WLC_VOTER, icl, true);
 	if (ret)
 		dev_err(&charger->client->dev,
 			"Could not vote DC_ICL %d\n", ret);
@@ -3020,7 +3040,8 @@ static void p9221_notifier_work(struct work_struct *work)
 		 charger->check_dc, charger->check_np,
 		 charger->check_det);
 
-	charger->send_eop = get_client_vote(charger->dc_icl_votable, THERMAL_DAEMON_VOTER) == 0;
+	charger->send_eop = gvotable_get_int_vote(charger->dc_icl_votable,
+						  THERMAL_DAEMON_VOTER) == 0;
 	if (charger->send_eop && !charger->online) {
 		dev_info(&charger->client->dev, "WLC should be disabled!\n");
 		p9221_wlc_disable(charger, 1, P9221_EOP_UNKNOWN);
@@ -3686,10 +3707,9 @@ static ssize_t dc_icl_epp_store(struct device *dev,
 
 	charger->dc_icl_epp = ua;
 
-	if (charger->dc_icl_votable && p9221_is_epp(charger)) {
-		vote(charger->dc_icl_votable,
-		     P9221_WLC_VOTER, true, charger->dc_icl_epp);
-	}
+	if (charger->dc_icl_votable && p9221_is_epp(charger))
+		gvotable_cast_int_vote(charger->dc_icl_votable, P9221_WLC_VOTER,
+				       charger->dc_icl_epp, true);
 
 	return count;
 }
@@ -3722,8 +3742,8 @@ static ssize_t p9221_set_dc_icl_bpp(struct device *dev,
 	charger->dc_icl_bpp = ua;
 
 	if (charger->dc_icl_votable && !p9221_is_epp(charger))
-		vote(charger->dc_icl_votable,
-		     P9221_WLC_VOTER, true, charger->dc_icl_bpp);
+		gvotable_cast_int_vote(charger->dc_icl_votable, P9221_WLC_VOTER,
+				       charger->dc_icl_bpp, true);
 
 	return count;
 }
@@ -4207,10 +4227,12 @@ static int p9382_rtx_enable(struct p9221_charger_data *charger, bool enable)
 	 * to ignore the votable and use ben+switch
 	 */
 	if (!charger->chg_mode_votable)
-		charger->chg_mode_votable = find_votable(GBMS_MODE_VOTABLE);
+		charger->chg_mode_votable =
+			gvotable_election_get_handle(GBMS_MODE_VOTABLE);
 	if (charger->chg_mode_votable) {
-		ret = vote(charger->chg_mode_votable, P9221_WLC_VOTER, enable,
-			   GBMS_CHGR_MODE_WLC_TX);
+		ret = gvotable_cast_long_vote(charger->chg_mode_votable,
+					      P9221_WLC_VOTER,
+					      GBMS_CHGR_MODE_WLC_TX, enable);
 		return ret;
 	}
 
@@ -4344,11 +4366,13 @@ static int p9382_disable_dcin_en(struct p9221_charger_data *charger, bool enable
 	int ret;
 
 	if (!charger->disable_dcin_en_votable)
-		charger->disable_dcin_en_votable = find_votable("DC_SUSPEND");
+		charger->disable_dcin_en_votable =
+			gvotable_election_get_handle("DC_SUSPEND");
 	if (!charger->disable_dcin_en_votable)
 		return 0;
 
-	ret = vote(charger->disable_dcin_en_votable, P9221_WLC_VOTER, enable, 0);
+	ret = gvotable_cast_bool_vote(charger->disable_dcin_en_votable,
+				      P9221_WLC_VOTER, enable);
 	if (ret == 0)
 		return 0;
 
@@ -4382,7 +4406,8 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 		logbuffer_log(charger->rtx_log, "enable rtx");
 		/* Check if there is any one vote disabled */
 		if (charger->tx_icl_votable)
-			tx_icl = get_effective_result(charger->tx_icl_votable);
+			tx_icl = gvotable_get_current_int_vote(
+					charger->tx_icl_votable);
 		if (tx_icl == 0) {
 			dev_err(&charger->client->dev, "rtx be disabled\n");
 			logbuffer_log(charger->rtx_log, "rtx be disabled\n");
@@ -4445,7 +4470,9 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 
 		/* configure TX_ICL */
 		if (charger->tx_icl_votable)
-			tx_icl = get_effective_result(charger->tx_icl_votable);
+			tx_icl = gvotable_get_current_int_vote(
+					charger->tx_icl_votable);
+
 		if ((tx_icl > 0) &&
 		    (tx_icl != P9221_MA_TO_UA(P9382A_RTX_ICL_MAX_MA))) {
 			ret = charger->chip_set_tx_ilim(charger, tx_icl);
@@ -4744,16 +4771,16 @@ static void p9221_over_handle(struct p9221_charger_data *charger,
 	if (charger->dc_icl_votable) {
 		int icl;
 
-		icl = get_effective_result_locked(charger->dc_icl_votable);
+		icl = gvotable_get_current_int_vote(charger->dc_icl_votable);
 		if (icl < 0) {
 			dev_err(&charger->client->dev,
 				"Failed to read ICL (%d)\n", icl);
 		} else if (icl > OVC_BACKOFF_LIMIT) {
 			icl -= OVC_BACKOFF_AMOUNT;
 
-			ret = vote(charger->dc_icl_votable,
-				   P9221_OCP_VOTER, true,
-				   icl);
+			ret = gvotable_cast_int_vote(charger->dc_icl_votable,
+						     P9221_OCP_VOTER,
+						     icl, true);
 			dev_err(&charger->client->dev,
 				"Reduced ICL to %d (%d)\n", icl, ret);
 		}
@@ -5180,8 +5207,9 @@ static void p9221_handle_pp(struct p9221_charger_data *charger)
 	charger->chg_on_rtx = (tmp == ACCESSORY_TYPE_PHONE);
 	dev_info(&charger->client->dev, "chg_on_rtx=%d\n", charger->chg_on_rtx);
 	if (charger->chg_on_rtx) {
-		vote(charger->dc_icl_votable, P9382A_RTX_VOTER, true,
-		     P9221_DC_ICL_RTX_UA);
+		gvotable_cast_long_vote(charger->dc_icl_votable,
+					P9382A_RTX_VOTER,
+					P9221_DC_ICL_RTX_UA, true);
 		dev_info(&charger->client->dev, "set ICL to %dmA",
 			 P9221_DC_ICL_RTX_UA / 1000);
 	}
@@ -5379,8 +5407,8 @@ static void p9382_rtx_disable_work(struct work_struct *work)
 	int tx_icl, ret = 0;
 
 	/* Set error reason if THERMAL_DAEMON_VOTER want to disable rtx */
-	tx_icl = get_client_vote(charger->tx_icl_votable,
-				 THERMAL_DAEMON_VOTER);
+	tx_icl = gvotable_get_int_vote(charger->tx_icl_votable,
+				       THERMAL_DAEMON_VOTER);
 	if (tx_icl == 0) {
 		charger->rtx_err = RTX_OVER_TEMP;
 		logbuffer_log(charger->rtx_log,
@@ -5857,14 +5885,14 @@ static const struct power_supply_desc p9221_psy_desc = {
 	.no_thermal = true,
 };
 
-static int p9382a_tx_icl_vote_callback(struct votable *votable, void *data,
-				       int icl_ua, const char *client)
+static void p9382a_tx_icl_vote_callback(struct gvotable_election *el,
+					const char *reason, void *vote)
 {
-	struct p9221_charger_data *charger = data;
-	int ret = 0;
+	struct p9221_charger_data *charger = gvotable_get_data(el);
+	int icl_ua = (int)(uintptr_t)vote, ret = 0;
 
 	if (!charger->ben_state)
-		return ret;
+		return;
 
 	if (icl_ua == 0) {
 		schedule_work(&charger->rtx_disable_work);
@@ -5878,8 +5906,6 @@ static int p9382a_tx_icl_vote_callback(struct votable *votable, void *data,
 			dev_err(&charger->client->dev,
 				"Couldn't set Tx current limit rc=%d\n", ret);
 	}
-
-	return ret;
 }
 
 /* called from */
@@ -5919,24 +5945,26 @@ int p9221_wlc_disable(struct p9221_charger_data *charger, int disable, u8 reason
 	return ret;
 }
 
-static int p9221_wlc_disable_callback(struct votable *votable, void *data,
-				      int disable, const char *client)
+static void p9221_wlc_disable_callback(struct gvotable_election *el,
+				       const char *reason, void *vote)
 {
-	struct p9221_charger_data *charger = data;
+	struct p9221_charger_data *charger = gvotable_get_data(el);
+	int disable = (int)(uintptr_t)vote;
 	u8 val = P9221_EOP_UNKNOWN;
 
 	if (charger->pdata->wlc_en == charger->pdata->qien_gpio) {
 		int value;
 		value = (!disable) ^ charger->pdata->wlc_en_act_low;
 		gpio_direction_output(charger->pdata->wlc_en, value);
-		return 0;
+		return;
 	}
 
-	charger->send_eop = get_client_vote(charger->dc_icl_votable, THERMAL_DAEMON_VOTER) == 0;
-	if (!get_client_vote(votable, P9221_WLC_VOTER) && !charger->send_eop)
+	charger->send_eop = gvotable_get_int_vote(charger->dc_icl_votable,
+						  THERMAL_DAEMON_VOTER) == 0;
+	if (!gvotable_get_int_vote(el, P9221_WLC_VOTER) && !charger->send_eop)
 		val = P9221_EOP_RESTART_POWER; /* auto restart */
 
-	return p9221_wlc_disable(charger, disable, val);
+	p9221_wlc_disable(charger, disable, val);
 }
 
 /*
@@ -6140,14 +6168,19 @@ static int p9221_charger_probe(struct i2c_client *client,
 	 * Create the WLC_DISABLE votable, use for send EPT
 	 * NOTE: pulling QI_EN_L might not be OK, verify this with EE
 	 */
-	charger->wlc_disable_votable = create_votable("WLC_DISABLE", VOTE_SET_ANY,
-						      p9221_wlc_disable_callback,
-						      charger);
+	charger->wlc_disable_votable =
+		gvotable_create_bool_election(NULL, p9221_wlc_disable_callback,
+					      charger);
 	if (IS_ERR(charger->wlc_disable_votable)) {
 		ret = PTR_ERR(charger->wlc_disable_votable);
 		dev_err(&client->dev,
 			"Couldn't create WLC_DISABLE rc=%d\n", ret);
 		charger->wlc_disable_votable = NULL;
+	} else {
+		gvotable_set_vote2str(charger->wlc_disable_votable,
+				      gvotable_v2s_int);
+		gvotable_election_set_name(charger->wlc_disable_votable,
+					   "WLC_DISABLE");
 	}
 
 	/*
@@ -6155,25 +6188,32 @@ static int p9221_charger_probe(struct i2c_client *client,
 	 * is taken for RTx mode
 	 */
 	if (charger->pdata->has_rtx) {
-		charger->tx_icl_votable = create_votable("TX_ICL", VOTE_MIN,
-					p9382a_tx_icl_vote_callback, charger);
+		charger->tx_icl_votable =
+			gvotable_create_int_election(
+				NULL, gvotable_comparator_int_min,
+				p9382a_tx_icl_vote_callback, charger);
 		if (IS_ERR(charger->tx_icl_votable)) {
 			ret = PTR_ERR(charger->tx_icl_votable);
 			dev_err(&client->dev,
 				"Couldn't create TX_ICL rc=%d\n", ret);
 			charger->tx_icl_votable = NULL;
+		} else {
+			gvotable_set_vote2str(charger->tx_icl_votable,
+					      gvotable_v2s_int);
+			gvotable_election_set_name(charger->tx_icl_votable,
+						   "TX_ICL");
+			/* vote default TX_ICL for rtx mode */
+			gvotable_cast_long_vote(
+				charger->tx_icl_votable, P9382A_RTX_VOTER,
+				P9221_MA_TO_UA(P9382A_RTX_ICL_MAX_MA), true);
 		}
 	}
 
-	/* vote default TX_ICL for rtx mode */
-	if (charger->tx_icl_votable)
-		vote(charger->tx_icl_votable, P9382A_RTX_VOTER, true,
-		     P9221_MA_TO_UA(P9382A_RTX_ICL_MAX_MA));
 	/*
 	 * Find the DC_ICL votable, we use this to limit the current that
 	 * is taken from the wireless charger.
 	 */
-	charger->dc_icl_votable = find_votable("DC_ICL");
+	charger->dc_icl_votable = gvotable_election_get_handle("DC_ICL");
 	if (!charger->dc_icl_votable)
 		dev_warn(&charger->client->dev, "Could not find DC_ICL votable\n");
 
@@ -6181,11 +6221,13 @@ static int p9221_charger_probe(struct i2c_client *client,
 	 * Find the DC_SUSPEND, we use this to disable DCIN before
 	 * enter RTx mode
 	 */
-	charger->dc_suspend_votable = find_votable("DC_SUSPEND");
+	charger->dc_suspend_votable =
+		gvotable_election_get_handle("DC_SUSPEND");
 	if (!charger->dc_suspend_votable)
 		dev_warn(&charger->client->dev, "Could not find DC_SUSPEND votable\n");
 
-	charger->chg_mode_votable = find_votable(GBMS_MODE_VOTABLE);
+	charger->chg_mode_votable =
+		gvotable_election_get_handle(GBMS_MODE_VOTABLE);
 	if (!charger->chg_mode_votable)
 		dev_warn(&charger->client->dev, "Could not find %s votable\n", GBMS_MODE_VOTABLE);
 

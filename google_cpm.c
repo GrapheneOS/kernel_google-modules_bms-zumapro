@@ -420,9 +420,8 @@ static int gcpm_dc_enable(struct gcpm_drv *gcpm, bool enabled)
 		gcpm->gbms_mode = v;
 	}
 
-	return gvotable_cast_vote(gcpm->gbms_mode, "GCPM",
-				  (void*)GBMS_CHGR_MODE_CHGR_DC,
-				  enabled);
+	return gvotable_cast_long_vote(gcpm->gbms_mode, "GCPM",
+				       GBMS_CHGR_MODE_CHGR_DC, enabled);
 }
 
 /*
@@ -1266,9 +1265,8 @@ static int gcpm_dc_fcc_update(struct gcpm_drv *gcpm, int value)
 	 * The thermal voter for FCC wired must be disabled to allow higher
 	 * charger rates for DC_FCC than for the wired case.
 	 */
-	ret = gvotable_cast_vote(gcpm->fcc_votable, "DC_FCC",
-				 (void*)(uintptr_t)limit,
-				 limit >= 0);
+	ret = gvotable_cast_int_vote(gcpm->fcc_votable, "DC_FCC",
+				     limit, limit >= 0);
 	if (ret < 0)
 		pr_err("%s: vote %d on MSC_FCC failed (%d)\n",  __func__,
 		       limit, ret);

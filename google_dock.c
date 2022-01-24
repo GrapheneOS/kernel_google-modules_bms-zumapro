@@ -25,10 +25,10 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/interrupt.h>
+#include <misc/gvotable.h>
 #include "gbms_power_supply.h"
 #include "google_bms.h"
 #include "google_psy.h"
-#include "pmic-voter.h"
 
 #define DOCK_USER_VOTER			"DOCK_USER_VOTER"
 #define DOCK_AICL_VOTER			"DOCK_AICL_VOTER"
@@ -52,7 +52,7 @@ struct dock_drv {
 	struct delayed_work icl_ramp_work;
 	struct alarm icl_ramp_alarm;
 	struct notifier_block nb;
-	struct votable *dc_icl_votable;
+	struct gvotable_election *dc_icl_votable;
 
 	bool init_complete;
 	bool check_dc;
@@ -116,7 +116,7 @@ static int dock_has_dc_in(struct dock_drv *dock)
 static bool google_dock_find_votable(struct dock_drv *dock)
 {
 	if (!dock->dc_icl_votable) {
-		dock->dc_icl_votable = find_votable("DC_ICL");
+		dock->dc_icl_votable = gvotable_election_get_handle("DC_ICL");
 		if (!dock->dc_icl_votable) {
 			dev_err(dock->device, "Could not get votable: DC_ICL\n");
 			return false;
@@ -139,7 +139,8 @@ static void google_dock_set_icl(struct dock_drv *dock)
 	if (dock->icl_ramp)
 		icl = dock->icl_ramp_ua;
 
-	vote(dock->dc_icl_votable, DOCK_AICL_VOTER, true, icl);
+	gvotable_cast_int_vote(dock->dc_icl_votable,
+			       DOCK_AICL_VOTER, icl, true);
 
 	dev_info(dock->device, "Setting ICL %duA ramp=%d\n", icl, dock->icl_ramp);
 }
@@ -149,7 +150,7 @@ static void google_dock_vote_defaults(struct dock_drv *dock)
 	if (!google_dock_find_votable(dock))
 		return;
 
-	vote(dock->dc_icl_votable, DOCK_AICL_VOTER, false, 0);
+	gvotable_cast_int_vote(dock->dc_icl_votable, DOCK_AICL_VOTER, 0, false);
 }
 
 static enum alarmtimer_restart google_dock_icl_ramp_alarm_cb(struct alarm
@@ -186,7 +187,8 @@ static void google_dock_icl_ramp_work(struct work_struct *work)
 
 	google_dock_set_icl(dock);
 
-	pr_info("%s: online: %d->%d\n", __func__, dock->online, online);
+	dev_info(dock->device, "%s: online: %d->%d\n",
+		 __func__, dock->online, online);
 	dock->online = online;
 }
 
@@ -228,7 +230,8 @@ static void google_dock_notifier_check_dc(struct dock_drv *dock)
 		google_dock_vote_defaults(dock);
 		google_dock_icl_ramp_reset(dock);
 
-		pr_info("%s: online: %d->0\n", __func__, dock->online);
+		dev_info(dock->device, "%s: online: %d->0\n",
+			 __func__, dock->online);
 		dock->online = 0;
 	}
 
@@ -320,7 +323,7 @@ static int dock_get_property(struct power_supply *psy,
 		if (!dock->dc_icl_votable)
 			return -EAGAIN;
 
-		ret = get_effective_result(dock->dc_icl_votable);
+		ret = gvotable_get_current_int_vote(dock->dc_icl_votable);
 		if (ret < 0)
 			break;
 
@@ -365,8 +368,9 @@ static int dock_set_property(struct power_supply *psy,
 			break;
 		}
 
-		ret = vote(dock->dc_icl_votable, DOCK_USER_VOTER, true,
-			   val->intval);
+		ret = gvotable_cast_int_vote(dock->dc_icl_votable,
+					     DOCK_USER_VOTER,
+					     val->intval, true);
 		changed = true;
 		break;
 	default:
@@ -461,7 +465,7 @@ static int google_dock_probe(struct platform_device *pdev)
 	ret = of_property_read_string(pdev->dev.of_node, "google,dc-psy-name",
 				      &dc_psy_name);
 	if (ret == 0) {
-		pr_info("google,dc-psy-name=%s\n", dc_psy_name);
+		dev_info(dock->device, "google,dc-psy-name=%s\n", dc_psy_name);
 		dock->dc_psy_name = devm_kstrdup(&pdev->dev,
 						 dc_psy_name, GFP_KERNEL);
 		if (!dock->dc_psy_name) {
@@ -500,7 +504,7 @@ static int google_dock_probe(struct platform_device *pdev)
 	/*
 	 * Find the DC_ICL votable
 	 */
-	dock->dc_icl_votable = find_votable("DC_ICL");
+	dock->dc_icl_votable = gvotable_election_get_handle("DC_ICL");
 	if (!dock->dc_icl_votable)
 		dev_warn(dock->device, "Could not find DC_ICL votable\n");
 
@@ -522,7 +526,7 @@ static int google_dock_probe(struct platform_device *pdev)
 	schedule_delayed_work(&dock->init_work,
 			      msecs_to_jiffies(DOCK_DELAY_INIT_MS));
 
-	pr_info("google_dock_probe done\n");
+	dev_info(dock->device, "google_dock_probe done\n");
 
 	return 0;
 }

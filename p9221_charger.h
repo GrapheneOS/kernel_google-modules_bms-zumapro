@@ -18,7 +18,7 @@
 
 #include <linux/gpio.h>
 #include <linux/crc8.h>
-#include "pmic-voter.h" /* TODO(b/163679860): use gvotables */
+#include <misc/gvotable.h>
 #include "gbms_power_supply.h"
 
 #define P9221_WLC_VOTER				"WLC_VOTER"
@@ -639,12 +639,12 @@ struct p9221_charger_data {
 	struct power_supply		*wc_psy;
 	struct power_supply		*dc_psy;
 	struct power_supply		*fg_psy;
-	struct votable			*dc_icl_votable;
-	struct votable			*dc_suspend_votable;
-	struct votable			*tx_icl_votable;
-	struct votable			*disable_dcin_en_votable;
-	struct votable			*chg_mode_votable;
-	struct votable			*wlc_disable_votable;
+	struct gvotable_election	*dc_icl_votable;
+	struct gvotable_election	*dc_suspend_votable;
+	struct gvotable_election	*tx_icl_votable;
+	struct gvotable_election	*disable_dcin_en_votable;
+	struct gvotable_election	*chg_mode_votable;
+	struct gvotable_election	*wlc_disable_votable;
 	struct notifier_block		nb;
 	struct mutex			io_lock;
 	struct mutex			cmd_lock;

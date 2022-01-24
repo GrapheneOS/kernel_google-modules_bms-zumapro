@@ -32,8 +32,6 @@ google-bms-objs += gbms_storage.o
 # obj-$(CONFIG_GOOGLE_BEE)	+= google_eeprom.o
 google-bms-objs += google_eeprom.o
 google-bms-objs += google_eeprom_01.o
-# TODO(163679860) remove pmic-voter usage from bms
-google-bms-objs += pmic-voter-compat.o
 google-bms-objs += gs101_usecase.o
 
 # Battery

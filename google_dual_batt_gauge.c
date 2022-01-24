@@ -22,10 +22,10 @@
 #include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
+#include <misc/gvotable.h>
 #include "gbms_power_supply.h"
 #include "google_bms.h"
 #include "google_psy.h"
-#include "pmic-voter.h"
 
 #define MAX(x, y)	((x) < (y) ? (y) : (x))
 #define DUAL_FG_DELAY_INIT_MS	500
@@ -49,7 +49,7 @@ struct dual_fg_drv {
 
 	struct delayed_work init_work;
 	struct delayed_work gdbatt_work;
-	struct votable	*fcc_votable;
+	struct gvotable_election *fcc_votable;
 
 	struct gbms_chg_profile chg_profile;
 
@@ -167,13 +167,15 @@ static void gdbatt_select_cc_max(struct dual_fg_drv *dual_fg_drv)
 		goto check_done;
 
 	if (!dual_fg_drv->fcc_votable)
-		dual_fg_drv->fcc_votable = find_votable(VOTABLE_MSC_FCC);
+		dual_fg_drv->fcc_votable =
+			gvotable_election_get_handle(VOTABLE_MSC_FCC);
 	if (dual_fg_drv->fcc_votable) {
 		pr_info("temp:%d/%d(%d/%d), vbatt:%d/%d(%d/%d), cc_max:%d/%d(%d)\n",
 			base_temp, flip_temp, base_temp_idx, flip_temp_idx, base_vbatt,
 			flip_vbatt, base_vbatt_idx, flip_vbatt_idx, base_cc_max,
 			flip_cc_max, cc_max);
-		vote(dual_fg_drv->fcc_votable, DUAL_BATT_TEMP_VOTER, true, cc_max);
+		gvotable_cast_int_vote(dual_fg_drv->fcc_votable,
+				       DUAL_BATT_TEMP_VOTER, cc_max, true);
 		dual_fg_drv->cc_max = cc_max;
 	}
 

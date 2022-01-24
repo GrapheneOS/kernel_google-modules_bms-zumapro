@@ -1132,9 +1132,8 @@ static int max77759_set_charge_enabled(struct max77759_chgr_data *data,
 {
 	/* ->charge_done is reset in max77759_enable_sw_recharge() */
 
-	return gvotable_cast_vote(data->mode_votable, reason,
-				  (void*)GBMS_CHGR_MODE_CHGR_BUCK_ON,
-				  enabled);
+	return gvotable_cast_long_vote(data->mode_votable, reason,
+				       GBMS_CHGR_MODE_CHGR_BUCK_ON, enabled);
 }
 
 /* google_charger on disconnect */
@@ -1151,9 +1150,8 @@ static int max77759_set_charge_disable(struct max77759_chgr_data *data,
 				__func__, ret);
 	}
 
-	return gvotable_cast_vote(data->mode_votable, reason,
-				  (void*)GBMS_CHGR_MODE_STBY_ON,
-				  enabled);
+	return gvotable_cast_long_vote(data->mode_votable, reason,
+				       GBMS_CHGR_MODE_STBY_ON, enabled);
 }
 
 static int max77759_chgin_input_suspend(struct max77759_chgr_data *data,
@@ -1161,9 +1159,8 @@ static int max77759_chgin_input_suspend(struct max77759_chgr_data *data,
 {
 	int ret;
 
-	ret = gvotable_cast_vote(data->mode_votable, "CHGIN_SUSP",
-				 (void*)GBMS_CHGR_MODE_CHGIN_OFF,
-				 enabled);
+	ret = gvotable_cast_long_vote(data->mode_votable, "CHGIN_SUSP",
+				      GBMS_CHGR_MODE_CHGIN_OFF, enabled);
 	if (ret == 0)
 		data->chgin_input_suspend = enabled; /* cache */
 
@@ -1175,9 +1172,8 @@ static int max77759_wcin_input_suspend(struct max77759_chgr_data *data,
 {
 	int ret;
 
-	ret = gvotable_cast_vote(data->mode_votable, "WCIN_SUSP",
-				 (void*)GBMS_CHGR_MODE_WLCIN_OFF,
-				 enabled);
+	ret = gvotable_cast_long_vote(data->mode_votable, "WCIN_SUSP",
+				      GBMS_CHGR_MODE_WLCIN_OFF, enabled);
 	if (ret == 0)
 		data->wcin_input_suspend = enabled; /* cache */
 
@@ -1990,9 +1986,8 @@ static int max77759_set_online(struct max77759_chgr_data *data, bool online)
 	}
 
 	if (data->online != online) {
-		ret = gvotable_cast_vote(data->mode_votable, "OFFLINE",
-					 (void *)GBMS_CHGR_MODE_STBY_ON,
-					 !online);
+		ret = gvotable_cast_long_vote(data->mode_votable, "OFFLINE",
+					      GBMS_CHGR_MODE_STBY_ON, !online);
 		data->online = online;
 	}
 

@@ -155,17 +155,17 @@ struct votable *create_votable(const char *name,
 	vd->name = name;
 
 	switch (votable_type) {
-		case VOTE_MIN:
-			comp_fn = gvotable_comparator_int_min;
+	case VOTE_MIN:
+		comp_fn = gvotable_comparator_int_min;
 		break;
-		case VOTE_MAX:
-			comp_fn = gvotable_comparator_int_max;
+	case VOTE_MAX:
+		comp_fn = gvotable_comparator_int_max;
 		break;
-		case VOTE_SET_ANY:
+	case VOTE_SET_ANY:
 		break;
-		default:
-			kfree(vd);
-			return ERR_PTR(-EINVAL);
+	default:
+		kfree(vd);
+		return ERR_PTR(-EINVAL);
 		break;
 	}
 
