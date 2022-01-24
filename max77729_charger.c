@@ -749,6 +749,7 @@ static int max77729_get_charge_type(struct max77729_chgr_data *data, int *type)
 		break;
 	case CHGR_DTLS_DONE_MODE:
 		*type = POWER_SUPPLY_CHARGE_TYPE_NONE;
+		fallthrough;
 	case CHGR_DTLS_TIMER_FAULT_MODE:
 	case CHGR_DTLS_DETBAT_HIGH_SUSPEND_MODE:
 	case CHGR_DTLS_OFF_MODE:
