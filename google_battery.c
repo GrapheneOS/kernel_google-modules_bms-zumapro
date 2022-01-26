@@ -269,6 +269,22 @@ struct battery_health
 	enum bhi_status status;
 };
 
+#define POWER_METRICS_MAX_DATA	50
+
+struct power_metrics_data {
+	unsigned long charge_count;
+	unsigned long voltage;
+	ktime_t time;
+};
+
+struct power_metrics {
+	unsigned int polling_rate;
+	unsigned int interval;
+	unsigned int idx;
+	struct power_metrics_data data[POWER_METRICS_MAX_DATA];
+	struct delayed_work work;
+};
+
 /* battery driver state */
 struct batt_drv {
 	struct device *device;
@@ -419,6 +435,9 @@ struct batt_drv {
 	struct gvotable_election *csi_status_votable;
 	struct gvotable_election *csi_type_votable;
 	int charging_speed;
+
+	/* battery power metrics */
+	struct power_metrics power_metrics;
 };
 
 static int gbatt_get_temp(const struct batt_drv *batt_drv, int *temp);
@@ -4168,6 +4187,32 @@ static ssize_t debug_set_chg_raw_profile(struct file *filp,
 BATTERY_DEBUG_ATTRIBUTE(debug_chg_raw_profile_fops,
 			debug_get_chg_raw_profile,
 			debug_set_chg_raw_profile);
+
+static ssize_t debug_get_power_metrics(struct file *filp, char __user *buf,
+				       size_t count, loff_t *ppos)
+{
+	struct batt_drv *batt_drv = (struct batt_drv *)filp->private_data;
+	char *tmp;
+	int idx, len = 0;
+
+	tmp = kzalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!tmp)
+		return -ENOMEM;
+
+	for(idx = 0; idx < POWER_METRICS_MAX_DATA; idx++) {
+		len += scnprintf(&tmp[len], PAGE_SIZE - len, "%2d: %8ld/%8ld - %5lld\n", idx,
+				 batt_drv->power_metrics.data[idx].voltage,
+				 batt_drv->power_metrics.data[idx].charge_count,
+				 batt_drv->power_metrics.data[idx].time);
+	}
+
+	len = simple_read_from_buffer(buf, count, ppos, tmp, strlen(tmp));
+	kfree(tmp);
+
+	return len;
+}
+
+BATTERY_DEBUG_ATTRIBUTE(debug_power_metrics_fops, debug_get_power_metrics, NULL);
 #endif
 
 /* ------------------------------------------------------------------------- */
@@ -5362,6 +5407,202 @@ static ssize_t charging_speed_show(struct device *dev,
 
 static const DEVICE_ATTR_RO(charging_speed);
 
+static ssize_t power_metrics_polling_rate_store(struct device *dev,
+						struct device_attribute *attr,
+						const char *buf, size_t count)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	unsigned int value, ret = 0;
+
+	ret = kstrtouint(buf, 0, &value);
+	if (ret < 0)
+		return ret;
+	if (value <= 0)
+		return -EINVAL;
+
+	batt_drv->power_metrics.polling_rate = value;
+	return count;
+}
+
+static ssize_t power_metrics_polling_rate_show(struct device *dev,
+					       struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->power_metrics.polling_rate);
+}
+
+static const DEVICE_ATTR_RW(power_metrics_polling_rate);
+
+static ssize_t power_metrics_interval_store(struct device *dev,
+					    struct device_attribute *attr,
+					    const char *buf, size_t count)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	unsigned int value, ret = 0;
+	const int polling_rate = batt_drv->power_metrics.polling_rate;
+
+	ret = kstrtouint(buf, 0, &value);
+	if (ret < 0)
+		return ret;
+	if ((value >= polling_rate * POWER_METRICS_MAX_DATA) || value < polling_rate)
+		return -EINVAL;
+
+	batt_drv->power_metrics.interval = value;
+	return count;
+}
+
+static ssize_t power_metrics_interval_show(struct device *dev,
+					   struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->power_metrics.interval);
+}
+
+static const DEVICE_ATTR_RW(power_metrics_interval);
+
+static long power_metrics_delta_cc(struct batt_drv *batt_drv, int idx1, int idx2)
+{
+	return batt_drv->power_metrics.data[idx1].charge_count -
+	    batt_drv->power_metrics.data[idx2].charge_count;
+}
+
+static long power_metrics_avg_vbat(struct batt_drv *batt_drv, int idx1, int idx2)
+{
+	unsigned long v1 = batt_drv->power_metrics.data[idx1].voltage;
+	unsigned long v2 = batt_drv->power_metrics.data[idx2].voltage;
+
+	return (v1 + v2) / 2;
+}
+
+static long power_metrics_delta_time(struct batt_drv *batt_drv, int idx1, int idx2)
+{
+	return batt_drv->power_metrics.data[idx1].time -
+	    batt_drv->power_metrics.data[idx2].time;
+}
+
+static ssize_t power_metrics_power_show(struct device *dev,
+					struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	const unsigned int polling_rate = batt_drv->power_metrics.polling_rate;
+	const unsigned int interval = batt_drv->power_metrics.interval;
+	const unsigned int pm_idx = batt_drv->power_metrics.idx;
+	unsigned int step, idx, idx_prev, i;
+	long cc, vbat, time, time_prev;
+	long power_avg = 0;
+
+	step = interval / polling_rate;
+	if (step == 0)
+		return scnprintf(buf, PAGE_SIZE, "Error interval.\n");
+
+	idx_prev = pm_idx;
+	for (i = 1; i <= step; i++) {
+		if (i > pm_idx)
+			idx = pm_idx + POWER_METRICS_MAX_DATA - i;
+		else
+			idx = pm_idx - i;
+
+		if (batt_drv->power_metrics.data[idx].voltage == 0)
+			return scnprintf(buf, PAGE_SIZE, "Not enough data.\n");
+		if (power_metrics_delta_time(batt_drv, idx_prev, idx) <= 0)
+			return scnprintf(buf, PAGE_SIZE, "Time stamp error.\n");
+
+		time = power_metrics_delta_time(batt_drv, pm_idx, idx);
+		if (time < interval) {
+			/* P += (dCC * V / dT) * (dT / interval) */
+			cc = power_metrics_delta_cc(batt_drv, idx_prev, idx);
+			vbat = power_metrics_avg_vbat(batt_drv, idx_prev, idx);
+			power_avg += (cc * vbat) / interval;
+			idx_prev = idx;
+			continue;
+		}
+
+		if (i == 1) {
+			/* P = dCC * V / dT */
+			cc = power_metrics_delta_cc(batt_drv, pm_idx, idx);
+			vbat = power_metrics_avg_vbat(batt_drv, pm_idx, idx);
+			power_avg = cc * vbat / time;
+		} else {
+			/* P += (dCC * V / dT) * (the left time to interval / interval) */
+			cc = power_metrics_delta_cc(batt_drv, idx_prev, idx);
+			vbat = power_metrics_avg_vbat(batt_drv, idx_prev, idx);
+			time = power_metrics_delta_time(batt_drv, idx_prev, idx);
+			time_prev = power_metrics_delta_time(batt_drv, pm_idx, idx_prev);
+			power_avg += (cc * vbat * (interval - time_prev) / time ) / interval;
+		}
+
+		break;
+	}
+
+	return scnprintf(buf, PAGE_SIZE, "%ld\n", power_avg / 1000000);
+}
+
+static const DEVICE_ATTR_RO(power_metrics_power);
+
+static ssize_t power_metrics_current_show(struct device *dev,
+					  struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	const unsigned int polling_rate = batt_drv->power_metrics.polling_rate;
+	const unsigned int interval = batt_drv->power_metrics.interval;
+	const unsigned int pm_idx = batt_drv->power_metrics.idx;
+	unsigned int step, idx, idx_prev, i;
+	long cc, time, time_prev;
+	long current_avg = 0;
+
+	step = interval / polling_rate;
+	if (step == 0)
+		return scnprintf(buf, PAGE_SIZE, "Error interval.\n");
+
+	idx_prev = pm_idx;
+	for (i = 1; i <= step; i++) {
+		if (i > pm_idx)
+			idx = pm_idx + POWER_METRICS_MAX_DATA - i;
+		else
+			idx = pm_idx - i;
+
+		if (batt_drv->power_metrics.data[idx].voltage == 0)
+			return scnprintf(buf, PAGE_SIZE, "Not enough data.\n");
+		if (power_metrics_delta_time(batt_drv, idx_prev, idx) <= 0)
+			return scnprintf(buf, PAGE_SIZE, "Time stamp error.\n");
+
+		time = power_metrics_delta_time(batt_drv, pm_idx, idx);
+		if (time < interval) {
+			/* I += (dCC / dT) * (dT / interval) */
+			cc = power_metrics_delta_cc(batt_drv, idx_prev, idx);
+			current_avg += cc / interval;
+			idx_prev = idx;
+			continue;
+		}
+
+		if (i == 1) {
+			/* I = dCC / dT */
+			cc = power_metrics_delta_cc(batt_drv, pm_idx, idx);
+			current_avg = cc / time;
+		} else {
+			 /* I += (dCC / dT) * (the left time to interval / interval) */
+			cc = power_metrics_delta_cc(batt_drv, idx_prev, idx);
+			time = power_metrics_delta_time(batt_drv, idx_prev, idx);
+			time_prev = power_metrics_delta_time(batt_drv, pm_idx, idx_prev);
+			current_avg += (cc * (interval - time_prev) / time) / interval;
+		}
+
+		break;
+	}
+
+	return scnprintf(buf, PAGE_SIZE, "%ld\n", current_avg);
+}
+
+static const DEVICE_ATTR_RO(power_metrics_current);
+
 /* ------------------------------------------------------------------------- */
 
 static int batt_init_fs(struct batt_drv *batt_drv)
@@ -5515,6 +5756,18 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_charging_speed);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create charging speed\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_power_metrics_polling_rate);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create power_metrics_polling_rate\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_power_metrics_interval);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create power_metrics_interval\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_power_metrics_power);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create power_metrics_power\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_power_metrics_current);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create power_metrics_current\n");
 
 	de = debugfs_create_dir("google_battery", 0);
 	if (IS_ERR_OR_NULL(de))
@@ -5558,6 +5811,9 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 
 	/* battery virtual sensor*/
 	debugfs_create_u32("batt_vs_w", 0600, de, &batt_drv->batt_vs_w);
+
+	/* pwoer metrics */
+	debugfs_create_file("power_metrics", 0400, de, batt_drv, &debug_power_metrics_fops);
 
 	return 0;
 }
@@ -6105,6 +6361,42 @@ reschedule:
 	}
 
 	__pm_relax(batt_drv->batt_ws);
+}
+
+static void power_metrics_data_work(struct work_struct *work)
+{
+	struct batt_drv *batt_drv = container_of(work, struct batt_drv,
+						 power_metrics.work.work);
+	const unsigned int idx = batt_drv->power_metrics.idx;
+	unsigned long cc, vbat;
+	unsigned int next_work = batt_drv->power_metrics.polling_rate * 1000;
+	ktime_t now = get_boot_sec();
+
+	if (!batt_drv->fg_psy)
+		goto error;
+
+	cc = GPSY_GET_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_CHARGE_COUNTER);
+	vbat = GPSY_GET_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
+
+	if ((cc < 0) || (vbat < 0)) {
+		if ((cc == -EAGAIN) || (vbat == -EAGAIN))
+			next_work = 100;
+		goto error;
+	}
+
+	if ((idx == 0) && (batt_drv->power_metrics.data[idx].voltage == 0))
+		batt_drv->power_metrics.idx = 0;
+	else
+		batt_drv->power_metrics.idx++;
+	if (batt_drv->power_metrics.idx >= POWER_METRICS_MAX_DATA)
+		batt_drv->power_metrics.idx = 0;
+
+	batt_drv->power_metrics.data[batt_drv->power_metrics.idx].charge_count = cc;
+	batt_drv->power_metrics.data[batt_drv->power_metrics.idx].voltage = vbat;
+	batt_drv->power_metrics.data[batt_drv->power_metrics.idx].time = now;
+
+error:
+	schedule_delayed_work(&batt_drv->power_metrics.work, msecs_to_jiffies(next_work));
 }
 
 /* ------------------------------------------------------------------------- */
@@ -6962,6 +7254,10 @@ static void google_battery_init_work(struct work_struct *work)
 	/* debugfs */
 	(void)batt_init_fs(batt_drv);
 
+	/* power metrics */
+	schedule_delayed_work(&batt_drv->power_metrics.work,
+			      msecs_to_jiffies(batt_drv->power_metrics.polling_rate * 1000));
+
 	pr_info("google_battery init_work done\n");
 
 	batt_drv->init_complete = true;
@@ -7019,6 +7315,7 @@ static int google_battery_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&batt_drv->init_work, google_battery_init_work);
 	INIT_DELAYED_WORK(&batt_drv->batt_work, google_battery_work);
 	INIT_DELAYED_WORK(&batt_drv->init_hist_work, google_battery_init_hist_work);
+	INIT_DELAYED_WORK(&batt_drv->power_metrics.work, power_metrics_data_work);
 	platform_set_drvdata(pdev, batt_drv);
 
 	psy_cfg.drv_data = batt_drv;
@@ -7102,6 +7399,10 @@ static int google_battery_probe(struct platform_device *pdev)
 	/* give time to fg driver to start */
 	schedule_delayed_work(&batt_drv->init_work,
 					msecs_to_jiffies(BATT_DELAY_INIT_MS));
+
+	/* power metrics */
+	batt_drv->power_metrics.polling_rate = 30;
+	batt_drv->power_metrics.interval = 120;
 
 	return 0;
 }
