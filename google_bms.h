@@ -493,6 +493,9 @@ ssize_t ttf_dump_details(char *buf, int max_size,
 			 const struct batt_ttf_stats *ttf_stats,
 			 int last_soc);
 
+int gbms_read_aacr_limits(struct gbms_chg_profile *profile,
+			  struct device_node *node);
+
 /*
  * Charger modes
  *

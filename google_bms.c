@@ -201,10 +201,13 @@ static int gbms_read_cccm_limits(struct gbms_chg_profile *profile,
 	return 0;
 }
 
-static int gbms_read_aacr_limits(struct gbms_chg_profile *profile,
-				  struct device_node *node)
+int gbms_read_aacr_limits(struct gbms_chg_profile *profile,
+			  struct device_node *node)
 {
 	int ret = 0, cycle_nb_limits = 0, fade10_nb_limits = 0;
+
+	if (!profile || !node)
+		return -ENODEV;
 
 	ret = of_property_count_elems_of_size(node,
 					      "google,aacr-ref-cycles", sizeof(u32));
@@ -247,6 +250,7 @@ no_data:
 	profile->aacr_nb_limits = 0;
 	return ret;
 }
+EXPORT_SYMBOL_GPL(gbms_read_aacr_limits);
 
 /* return the pct amount of capacity fade at cycles or negative if not enabled */
 int gbms_aacr_fade10(const struct gbms_chg_profile *profile, int cycles)
@@ -285,11 +289,6 @@ int gbms_init_chg_profile_internal(struct gbms_chg_profile *profile,
 	ret = gbms_read_cccm_limits(profile, node);
 	if (ret < 0)
 		return ret;
-
-	/* TODO: dump the AACR table if supported */
-	ret = gbms_read_aacr_limits(profile, node);
-	if (ret == 0)
-		gbms_info(profile, "AACR: supported\n");
 
 	cccm_array_size = (profile->temp_nb_limits - 1)
 			  * profile->volt_nb_limits;

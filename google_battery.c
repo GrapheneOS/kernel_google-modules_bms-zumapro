@@ -3521,6 +3521,32 @@ msc_logic_exit:
 	return err;
 }
 
+static struct device_node *batt_id_node(struct batt_drv *batt_drv)
+{
+	struct device_node *config_node = batt_drv->device->of_node;
+	struct device_node *child_node;
+	int ret = 0;
+	u32 batt_id, gbatt_id;
+
+	ret = gbms_storage_read(GBMS_TAG_BRID, &batt_id, sizeof(batt_id));
+	if (ret < 0) {
+		pr_warn("Failed to get batt_id (%d)\n", ret);
+		return config_node;
+	}
+
+	for_each_child_of_node(config_node, child_node) {
+		ret = of_property_read_u32(child_node, "google,batt-id",
+					   &gbatt_id);
+		if (ret != 0)
+			continue;
+
+		if (batt_id == gbatt_id)
+			return child_node;
+	}
+
+	return config_node;
+}
+
 /* charge profile not in battery */
 static int batt_init_chg_profile(struct batt_drv *batt_drv)
 {
@@ -3574,6 +3600,11 @@ static int batt_init_chg_profile(struct batt_drv *batt_drv)
 				pr_warn("battery not present, using default capacity\n");
 		}
 	}
+
+	/* TODO: dump the AACR table if supported */
+	ret = gbms_read_aacr_limits(profile, batt_id_node(batt_drv));
+	if (ret == 0)
+		pr_info("AACR: supported\n");
 
 	/* aacr tables enable AACR by default UNLESS explicitly disabled */
 	ret = of_property_read_bool(node, "google,aacr-disable");
