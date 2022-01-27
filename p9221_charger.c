@@ -223,6 +223,8 @@ bool p9221_is_epp(struct p9221_charger_data *charger)
 	u32 vout_uv;
 	uint8_t reg;
 
+	if (!charger->online)
+		return false;
 	if (charger->fake_force_epp > 0)
 		return true;
 	if (charger->force_bpp)
