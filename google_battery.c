@@ -376,6 +376,10 @@ struct batt_drv {
 	/* thermal */
 	struct thermal_zone_device *tz_dev;
 
+	/* battery virtual sensor */
+	struct thermal_zone_device *batt_vs_tz;
+	int batt_vs_w;
+
 	/* Resistance */
 	struct batt_res res_state;
 
@@ -443,6 +447,35 @@ static int google_battery_tz_get_cycle_count(void *data, int *cycle_count)
 
 	return 0;
 }
+
+static int batt_vs_tz_get(struct thermal_zone_device *tzd, int *batt_vs)
+{
+	struct batt_drv *batt_drv = tzd->devdata;
+	int temp, rc;
+	unsigned int ibat;
+	unsigned long vs_tmp;
+
+	if (!batt_vs)
+		return -EINVAL;
+
+	temp = GPSY_GET_INT_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_TEMP, &rc) * 100;
+	if (rc)
+		return -EINVAL;
+
+	ibat = abs(GPSY_GET_INT_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_CURRENT_AVG, &rc));
+	if (rc)
+		return -EINVAL;
+
+	vs_tmp = mul_u32_u32(ibat, ibat) * batt_drv->batt_vs_w / 1000000000000;
+
+	*batt_vs = temp - vs_tmp;
+
+	return 0;
+}
+
+static struct thermal_zone_device_ops batt_vs_tz_ops = {
+	.get_temp = batt_vs_tz_get,
+};
 
 static int psy_changed(struct notifier_block *nb,
 		       unsigned long action, void *data)
@@ -5401,6 +5434,9 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	debugfs_create_file("chg_raw_profile", 0644, de, batt_drv,
 			    &debug_chg_raw_profile_fops);
 
+	/* battery virtual sensor*/
+	debugfs_create_u32("batt_vs_w", 0600, de, &batt_drv->batt_vs_w);
+
 	return 0;
 }
 
@@ -6480,6 +6516,7 @@ static void google_battery_init_work(struct work_struct *work)
 						 init_work.work);
 	struct device_node *node = batt_drv->device->of_node;
 	struct power_supply *fg_psy = batt_drv->fg_psy;
+	const char *batt_vs_tz_name = NULL;
 	int ret = 0;
 
 	batt_rl_reset(batt_drv);
@@ -6708,6 +6745,26 @@ static void google_battery_init_work(struct work_struct *work)
 						       GBMS_TAG_HIST);
 	if (!batt_drv->history)
 		pr_err("history not available\n");
+
+	/* battery virtual sensor */
+	ret = of_property_read_string(batt_drv->device->of_node,
+				      "google,batt-vs-tz-name",
+				      &batt_vs_tz_name);
+	if (ret == 0) {
+		batt_drv->batt_vs_tz =
+		    thermal_zone_device_register(batt_vs_tz_name, 0, 0,
+						 batt_drv, &batt_vs_tz_ops, NULL, 0, 0);
+		if (IS_ERR(batt_drv->batt_vs_tz)) {
+			pr_err("batt_vs tz register failed. err:%ld\n",
+			       PTR_ERR(batt_drv->batt_vs_tz));
+			batt_drv->batt_vs_tz = NULL;
+		} else {
+			thermal_zone_device_update(batt_drv->batt_vs_tz, THERMAL_DEVICE_UP);
+		}
+		batt_drv->batt_vs_w = 88;
+
+		pr_info("google,batt-vs-tz-name is %s\n", batt_vs_tz_name);
+	}
 
 	/* debugfs */
 	(void)batt_init_fs(batt_drv);
