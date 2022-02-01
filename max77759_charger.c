@@ -1510,11 +1510,14 @@ static int max77759_wcin_set_prop(struct power_supply *psy,
 	switch (psp) {
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
 		rc = max77759_wcin_set_ilim_max_ua(chgr, val->intval);
+		pr_debug("%s: DC_ICL=%d (%d)\n", __func__, val->intval, rc);
 		break;
 	/* called from google_cpm when switching chargers */
 	case GBMS_PROP_CHARGING_ENABLED:
 		rc = max77759_set_charge_enabled(chgr, val->intval > 0,
 						 "DC_PSP_ENABLED");
+		pr_debug("%s: charging_enabled=%d (%d)\n",
+			__func__, val->intval > 0, rc);
 		break;
 	default:
 		return -EINVAL;
