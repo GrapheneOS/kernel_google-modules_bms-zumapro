@@ -862,6 +862,9 @@ static int max77759_set_insel(struct max77759_chgr_data *data,
 	/* always disable USB when Dock is present */
 	if (uc_data->dcin_is_dock && max77759_wcin_is_valid(data) && !cb_data->wlcin_off) {
 		insel_value &= ~MAX77759_CHG_CNFG_12_CHGINSEL;
+		/* b/202767016: charge over pogo, set to high */
+		if (uc_data->pogo_ovp_en > 0)
+			gpio_set_value_cansleep(uc_data->pogo_ovp_en, 1);
 		insel_value |= MAX77759_CHG_CNFG_12_WCINSEL;
 	}
 
