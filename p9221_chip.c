@@ -1814,8 +1814,10 @@ static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 			ret = charger->chip_set_vout_max(charger, P9412_BPP_VOUT_DFLT);
 		break;
 	case P9XXX_GPIO_VBUS_EN:
-		if (charger->pdata->qi_vbus_en >= 0)
-			gpio_direction_output(charger->pdata->qi_vbus_en, !!value);
+		if (charger->pdata->qi_vbus_en < 0)
+			break;
+		value = (!!value) ^ charger->pdata->qi_vbus_en_act_low;
+		gpio_direction_output(charger->pdata->qi_vbus_en, value);
 		break;
 	case P9XXX_GPIO_BST_SEL:
 		logbuffer_log(charger->rtx_log, "Set p9412 gpio: %02x(%d)\n",

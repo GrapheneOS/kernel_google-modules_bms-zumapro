@@ -4064,11 +4064,14 @@ static ssize_t qi_vbus_en_store(struct device *dev,
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct p9221_charger_data *charger = i2c_get_clientdata(client);
+	int value;
 
 	if (charger->pdata->qi_vbus_en < 0)
 		return -ENODEV;
 
-	gpio_set_value_cansleep(charger->pdata->qi_vbus_en, buf[0] != '0');
+	value = (buf[0] != '0') ^ charger->pdata->qi_vbus_en_act_low;
+
+	gpio_set_value_cansleep(charger->pdata->qi_vbus_en, value);
 
 	return count;
 }
@@ -5397,6 +5400,7 @@ static int p9221_parse_dt(struct device *dev,
 	struct device_node *node = dev->of_node;
 	int vout_set_max_mv = P9221_VOUT_SET_MAX_MV;
 	int vout_set_min_mv = P9221_VOUT_SET_MIN_MV;
+	enum of_gpio_flags flags = 0;
 
 	pdata->max_vout_mv = P9221_VOUT_SET_MAX_MV;
 
@@ -5428,15 +5432,17 @@ static int p9221_parse_dt(struct device *dev,
 	/* support p9412 GPIO */
 	pdata->has_p9412_gpio = of_property_read_bool(node,
                                                       "idt,has_p9412_gpio");
-
 	/* QI_USB_VBUS_EN */
-	ret = of_get_named_gpio(node, "idt,gpio_qi_vbus_en", 0);
+	ret = of_get_named_gpio_flags(node, "idt,gpio_qi_vbus_en", 0, &flags);
 	pdata->qi_vbus_en = ret;
-	if (ret < 0)
+	if (ret < 0) {
 		dev_warn(dev, "unable to read idt,gpio_qi_vbus_en from dt: %d\n",
 			 ret);
-	else
-		dev_info(dev, "QI_USB_VBUS_EN gpio:%d", pdata->qi_vbus_en);
+	} else {
+		pdata->qi_vbus_en_act_low = (flags & OF_GPIO_ACTIVE_LOW) != 0;
+		dev_info(dev, "QI_USB_VBUS_EN gpio:%d(act_low=%d)",
+			 pdata->qi_vbus_en, pdata->qi_vbus_en_act_low);
+	}
 
 	/* WLC_BPP_EPP_SLCT */
 	ret = of_get_named_gpio(node, "idt,gpio_slct", 0);
@@ -6039,7 +6045,8 @@ static int p9221_charger_probe(struct i2c_client *client,
 		gpio_direction_output(charger->pdata->qien_gpio, 0);
 
 	if (charger->pdata->qi_vbus_en >= 0)
-		gpio_direction_output(charger->pdata->qi_vbus_en, 1);
+		gpio_direction_output(charger->pdata->qi_vbus_en,
+				      !charger->pdata->qi_vbus_en_act_low);
 
 	if (charger->pdata->slct_gpio >= 0)
 		gpio_direction_output(charger->pdata->slct_gpio,
