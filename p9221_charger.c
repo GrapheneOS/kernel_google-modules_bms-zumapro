@@ -6486,7 +6486,7 @@ static struct i2c_driver p9221_charger_driver = {
 	.id_table	= p9221_charger_id_table,
 };
 module_i2c_driver(p9221_charger_driver);
-
+MODULE_SOFTDEP("pre: max1720x_battery");
 MODULE_DESCRIPTION("IDT P9221 Wireless Power Receiver Driver");
 MODULE_AUTHOR("Patrick Tjin <pattjin@google.com>");
 MODULE_LICENSE("GPL");
