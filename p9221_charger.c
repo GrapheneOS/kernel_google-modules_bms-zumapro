@@ -1158,6 +1158,7 @@ static void p9221_align_work(struct work_struct *work)
 	/* b/159066422 Disable misaligned message in high power mode */
 	if (!charger->online || charger->prop_mode_en == true) {
 		charger->align = WLC_ALIGN_CENTERED;
+		schedule_work(&charger->uevent_work);
 		return;
 	}
 
