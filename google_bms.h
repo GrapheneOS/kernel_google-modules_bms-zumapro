@@ -283,6 +283,15 @@ enum gbms_stats_tier_idx_t {
 	GBMS_STATS_BD_TI_TRICKLE_CLEARED = 122,
 };
 
+enum natt_csi_type {
+	CSIType_None = 0,	// Disconnected
+	CSIType_Fault = 1,	// Internal Failures
+	CSIType_JEITA = 2,	// HW limits
+	CSIType_LongLife = 3,	// DefenderConditions
+	CSIType_Adaptive = 4,	// AdaptiveCharging
+	CSIType_Normal = 5,
+};
+
 /* health state */
 struct batt_chg_health {
 	int rest_soc;		/* entry criteria */

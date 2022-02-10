@@ -403,6 +403,8 @@ static int batt_chg_tier_stats_cstr(char *buff, int size,
 				    const struct gbms_ce_tier_stats *tier_stat,
 				    bool verbose);
 
+static bool chg_state_is_disconnected(union gbms_charger_state *chg_state);
+
 static inline void batt_update_cycle_count(struct batt_drv *batt_drv)
 {
 	batt_drv->cycle_count = GPSY_GET_PROP(batt_drv->fg_psy,
@@ -2145,6 +2147,40 @@ static void batt_res_work(struct batt_drv *batt_drv)
 
 /* ------------------------------------------------------------------------- */
 
+static void batt_set_csi_type(struct batt_drv *batt_drv)
+{
+	bool is_ac, is_longlife;
+
+	if (!batt_drv->csi_type_votable)
+		batt_drv->csi_type_votable = find_votable(VOTABLE_CSI_TYPE);
+
+	if (!batt_drv->csi_type_votable)
+		return;
+
+	/* ChargingType_NONE */
+	vote(batt_drv->csi_type_votable, "CSI_TYPE_NONE",
+	     chg_state_is_disconnected(&batt_drv->chg_state), CSIType_None);
+
+	/* ChargingType_JEITA */
+	vote(batt_drv->csi_type_votable, "CSI_TYPE_JEITA",
+	     batt_drv->jeita_stop_charging == 1, CSIType_JEITA);
+
+	/* ChargingType_LongLife */
+	is_longlife = batt_drv->ssoc_state.bd_trickle_cnt > 0 ||
+		      batt_drv->batt_health == POWER_SUPPLY_HEALTH_OVERHEAT;
+	vote(batt_drv->csi_type_votable, "CSI_TYPE_LONGLIFE", is_longlife,
+	     CSIType_LongLife);
+
+	/* ChargingType_Adaptive */
+	is_ac = batt_drv->msc_state == MSC_HEALTH ||
+		batt_drv->msc_state == MSC_HEALTH_PAUSE ||
+		batt_drv->msc_state == MSC_HEALTH_ALWAYS_ON;
+	vote(batt_drv->csi_type_votable, "CSI_TYPE_AC", is_ac, CSIType_Adaptive);
+}
+
+
+/* ------------------------------------------------------------------------- */
+
 /* NOTE: should not reset always_on_soc */
 static inline void batt_reset_rest_state(struct batt_chg_health *chg_health)
 {
@@ -3415,6 +3451,9 @@ msc_logic_done:
 		vote(batt_drv->msc_interval_votable, MSC_LOGIC_VOTER,
 			!disable_votes && (batt_drv->msc_update_interval != -1),
 			batt_drv->msc_update_interval);
+
+	/* Update CSI Type */
+	batt_set_csi_type(batt_drv);
 
 msc_logic_exit:
 
