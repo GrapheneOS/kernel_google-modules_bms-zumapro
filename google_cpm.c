@@ -2950,6 +2950,38 @@ static int google_cpm_remove(struct platform_device *pdev)
 	return 0;
 }
 
+static int __maybe_unused gcpm_pm_suspend(struct device *dev)
+{
+	struct platform_device *pdev = to_platform_device(dev);
+	struct gcpm_drv *gcpm = platform_get_drvdata(pdev);
+
+	if (gcpm->init_complete) {
+		pm_runtime_get_sync(gcpm->device);
+		gcpm->resume_complete = false;
+		pm_runtime_put_sync(gcpm->device);
+	}
+
+	return 0;
+}
+
+static int __maybe_unused gcpm_pm_resume(struct device *dev)
+{
+	struct platform_device *pdev = to_platform_device(dev);
+	struct gcpm_drv *gcpm = platform_get_drvdata(pdev);
+
+	if (gcpm->init_complete) {
+		pm_runtime_get_sync(gcpm->device);
+		gcpm->resume_complete = true;
+		pm_runtime_put_sync(gcpm->device);
+	}
+
+	return 0;
+}
+
+static SIMPLE_DEV_PM_OPS(gcpm_pm_ops,
+			 gcpm_pm_suspend,
+			 gcpm_pm_resume);
+
 static const struct of_device_id google_cpm_of_match[] = {
 	{.compatible = "google,cpm"},
 	{},
@@ -2963,9 +2995,7 @@ static struct platform_driver google_cpm_driver = {
 		   .owner = THIS_MODULE,
 		   .of_match_table = google_cpm_of_match,
 		   .probe_type = PROBE_PREFER_ASYNCHRONOUS,
-#ifdef SUPPORT_PM_SLEEP
-		   /* .pm = &gcpm_pm_ops, */
-#endif
+		   .pm = &gcpm_pm_ops,
 		   },
 	.probe = google_cpm_probe,
 	.remove = google_cpm_remove,
