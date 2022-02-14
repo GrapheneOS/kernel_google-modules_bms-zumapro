@@ -5920,12 +5920,12 @@ static int gbatt_get_property(struct power_supply *psy,
 		int max_ratio;
 
 		max_ratio = batt_ttf_estimate(&res, batt_drv);
-		if (max_ratio == 0) {
+		if (max_ratio >= TTF_REPORT_MAX_RATIO) {
+			val->intval = 0;
+		} else if (max_ratio >= 0) {
 			if (res < 0)
 				res = 0;
 			val->intval = res;
-		} else if (max_ratio >= TTF_REPORT_MAX_RATIO) {
-			val->intval = 0;
 		} else if (!batt_drv->fg_psy) {
 			val->intval = -1;
 		} else {
