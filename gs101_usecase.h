@@ -15,6 +15,8 @@ struct max77759_usecase_data {
 	int apbst_on;		/* AP boost ping */
 	int ext_bst_ctl;	/* MW VENDOR_EXTBST_CTRL */
 	int otg_enable;		/* enter/exit from OTG cases */
+	bool rx_otg_en;		/* enable WLC_RX -> WLC_RX + OTG case */
+	bool ext_otg_only;	/* use external OTG only */
 
 	int ls2_en;		/* OVP LS2, rtx case */
 	int sw_en;		/* OVP SW Enable, rtx+otg case */
