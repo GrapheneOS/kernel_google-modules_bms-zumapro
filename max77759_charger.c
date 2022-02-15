@@ -2140,8 +2140,9 @@ static int max77759_psy_get_property(struct power_supply *psy,
 		if (rc < 0)
 			pval->intval = rc;
 		break;
+
 	default:
-		dev_err(data->dev, "property (%d) unsupported.\n", psp);
+		pr_debug("property (%d) unsupported.\n", psp);
 		ret = -EINVAL;
 		break;
 	}
