@@ -28,6 +28,7 @@
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
 #include <misc/gvotable.h>
+#include <linux/platform_device.h>
 #include "gbms_power_supply.h"
 #include "google_bms.h"
 #include "max_m5.h"
@@ -104,6 +105,18 @@ static inline int max77759_reg_update(struct max77759_chgr_data *data,
 
 /* ----------------------------------------------------------------------- */
 
+static int max77759_resume_check(struct max77759_chgr_data *data)
+{
+	int ret = 0;
+
+	pm_runtime_get_sync(data->dev);
+	if (!data->init_complete || !data->resume_complete)
+		ret = -EAGAIN;
+	pm_runtime_put_sync(data->dev);
+
+	return ret;
+}
+
 static int max77759_get_vdroop_ok(struct i2c_client *client, bool *state)
 {
 	struct max77759_chgr_data *data;
@@ -116,6 +129,8 @@ static int max77759_get_vdroop_ok(struct i2c_client *client, bool *state)
 	if (!data || !data->regmap)
 		return -ENODEV;
 
+	if (max77759_resume_check(data))
+		return -EAGAIN;
 
 	if (max77759_reg_read(data->regmap, MAX77759_CHG_DETAILS_01, &val) < 0)
 		return -EINVAL;
@@ -136,6 +151,9 @@ static int max77759_get_batoilo_lvl(struct i2c_client *client, unsigned int *lvl
 	if (!data || !data->regmap)
 		return -ENODEV;
 
+	if (max77759_resume_check(data))
+		return -EAGAIN;
+
 	if (max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_14, &val) < 0)
 		return -EINVAL;
 	*lvl = (BO_STEP * ((val & MAX77759_CHG_CNFG_14_BAT_OILO_MASK)
@@ -154,6 +172,9 @@ static int max77759_set_batoilo_lvl(struct i2c_client *client, unsigned int lvl)
 	data = i2c_get_clientdata(client);
 	if (!data || !data->regmap)
 		return -ENODEV;
+
+	if (max77759_resume_check(data))
+		return -EAGAIN;
 
 	/* TODO: use rmw */
 	if (max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_14, &val) < 0)
@@ -178,6 +199,9 @@ static int max77759_get_uvlo_lvl(struct i2c_client *client, uint8_t mode, unsign
 	if (!data || !data->regmap)
 		return -ENODEV;
 
+	if (max77759_resume_check(data))
+		return -EAGAIN;
+
 	reg = (mode == 1) ? MAX77759_CHG_CNFG_15 : MAX77759_CHG_CNFG_16;
 
 	if (max77759_reg_read(data->regmap, reg, &val) < 0)
@@ -199,6 +223,9 @@ static int max77759_set_uvlo_lvl(struct i2c_client *client, uint8_t mode, unsign
 	data = i2c_get_clientdata(client);
 	if (!data || !data->regmap)
 		return -ENODEV;
+
+	if (max77759_resume_check(data))
+		return -EAGAIN;
 
 	reg = (mode == UVLO1) ? MAX77759_CHG_CNFG_15 : MAX77759_CHG_CNFG_16;
 
@@ -946,14 +973,20 @@ static void max77759_mode_callback(struct gvotable_election *el,
 	struct max77759_foreach_cb_data cb_data = { 0 };
 	const char *reason;
 	int use_case, ret;
-	bool nope;
-	u8 reg;
+	bool nope, rerun = false;
+	u8 reg = 0;
 
 	__pm_stay_awake(data->usecase_wake_lock);
 	mutex_lock(&data->io_lock);
 
 	reason = trigger;
 	use_case = data->uc_data.use_case;
+
+	if (max77759_resume_check(data)) {
+		schedule_delayed_work(&data->mode_rerun_work, msecs_to_jiffies(50));
+		rerun = true;
+		goto unlock_done;
+	}
 
 	/* no caching */
 	ret = max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_00, &reg);
@@ -1061,12 +1094,28 @@ static void max77759_mode_callback(struct gvotable_election *el,
 	data->uc_data.use_case = use_case;
 
 unlock_done:
-	dev_info(data->dev, "%s:%s use_case=%d->%d CHG_CNFG_00=%x->%x\n",
-		 __func__, trigger ? trigger : "<>",
-		 from_use_case, use_case,
-		 reg, cb_data.reg);
+	if (!rerun)
+		dev_info(data->dev, "%s:%s use_case=%d->%d CHG_CNFG_00=%x->%x\n",
+			 __func__, trigger ? trigger : "<>",
+			 from_use_case, use_case,
+			 reg, cb_data.reg);
+	else
+		dev_info(data->dev, "%s:%s vote before resume complete\n",
+			 __func__, trigger ? trigger : "<>");
 	mutex_unlock(&data->io_lock);
 	__pm_relax(data->usecase_wake_lock);
+}
+
+#define MODE_RERUN	"RERUN"
+static void max77759_mode_rerun_work(struct work_struct *work)
+{
+	struct max77759_chgr_data *data = container_of(work, struct max77759_chgr_data,
+						       mode_rerun_work.work);
+
+	/* TODO: add rerun election API for this b/223089247 */
+	max77759_mode_callback(data->mode_votable, MODE_RERUN, NULL);
+
+	return;
 }
 
 static int max77759_get_charge_enabled(struct max77759_chgr_data *data,
@@ -1102,6 +1151,9 @@ static int max77759_enable_sw_recharge(struct max77759_chgr_data *data,
 	bool needs_restart = force || data->charge_done;
 	uint8_t reg;
 	int ret;
+
+	if(max77759_resume_check(data))
+		return -EAGAIN;
 
 	if (!needs_restart) {
 		ret = max77759_reg_read(data->regmap, MAX77759_CHG_DETAILS_01, &reg);
@@ -1587,6 +1639,9 @@ static int max77759_wcin_get_prop(struct power_supply *psy,
 	struct max77759_chgr_data *chgr = power_supply_get_drvdata(psy);
 	int rc = 0;
 
+	if (max77759_resume_check(chgr))
+		return -EAGAIN;
+
 	switch (psp) {
 	case POWER_SUPPLY_PROP_PRESENT:
 		val->intval = max77759_wcin_is_valid(chgr);
@@ -1624,6 +1679,9 @@ static int max77759_wcin_set_prop(struct power_supply *psy,
 {
 	struct max77759_chgr_data *chgr = power_supply_get_drvdata(psy);
 	int rc = 0;
+
+	if (max77759_resume_check(chgr))
+		return -EAGAIN;
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
@@ -2001,12 +2059,8 @@ static int max77759_psy_set_property(struct power_supply *psy,
 	struct max77759_chgr_data *data = power_supply_get_drvdata(psy);
 	int ret = -EINVAL;
 
-	pm_runtime_get_sync(data->dev);
-	if (!data->init_complete || !data->resume_complete) {
-		pm_runtime_put_sync(data->dev);
+	if (max77759_resume_check(data))
 		return -EAGAIN;
-	}
-	pm_runtime_put_sync(data->dev);
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
@@ -2066,12 +2120,8 @@ static int max77759_psy_get_property(struct power_supply *psy,
 	union gbms_charger_state chg_state;
 	int rc, ret = 0;
 
-	pm_runtime_get_sync(data->dev);
-	if (!data->init_complete || !data->resume_complete) {
-		pm_runtime_put_sync(data->dev);
+	if (max77759_resume_check(data))
 		return -EAGAIN;
-	}
-	pm_runtime_put_sync(data->dev);
 
 	switch (psp) {
 	case GBMS_PROP_CHARGE_DISABLE:
@@ -2201,6 +2251,8 @@ static ssize_t show_fship_dtls(struct device *dev,
 	if (data->fship_dtls != -1)
 		goto exit_done;
 
+	if(max77759_resume_check(data))
+		return -EAGAIN;
 
 	ret = max77759_find_pmic(data);
 	if (ret < 0)
@@ -2249,6 +2301,9 @@ static int vdroop2_ok_get(void *d, u64 *val)
 	int ret = 0;
 	u8 chg_dtls1;
 
+	if(max77759_resume_check(data))
+		return -EAGAIN;
+
 	ret = max77759_reg_read(data->regmap, MAX77759_CHG_DETAILS_01, &chg_dtls1);
 	if (ret < 0)
 		return -ENODEV;
@@ -2266,6 +2321,9 @@ static int vdp1_stp_bst_get(void *d, u64 *val)
 	int ret = 0;
 	u8 chg_cnfg18;
 
+	if(max77759_resume_check(data))
+		return -EAGAIN;
+
 	ret = max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_18, &chg_cnfg18);
 	if (ret < 0)
 		return -ENODEV;
@@ -2280,6 +2338,9 @@ static int vdp1_stp_bst_set(void *d, u64 val)
 	int ret = 0;
 	u8 chg_cnfg18;
 	const u8 vdp1_stp_bst = (val > 0)? 0x1 : 0x0;
+
+	if(max77759_resume_check(data))
+		return -EAGAIN;
 
 	ret = max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_18, &chg_cnfg18);
 	if (ret < 0)
@@ -2299,6 +2360,9 @@ static int vdp2_stp_bst_get(void *d, u64 *val)
 	int ret = 0;
 	u8 chg_cnfg18;
 
+	if(max77759_resume_check(data))
+		return -EAGAIN;
+
 	ret = max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_18, &chg_cnfg18);
 	if (ret < 0)
 		return -ENODEV;
@@ -2313,6 +2377,9 @@ static int vdp2_stp_bst_set(void *d, u64 val)
 	int ret = 0;
 	u8 chg_cnfg18;
 	const u8 vdp2_stp_bst = (val > 0)? 0x1 : 0x0;
+
+	if(max77759_resume_check(data))
+		return -EAGAIN;
 
 	ret = max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_18, &chg_cnfg18);
 	if (ret < 0)
@@ -2333,6 +2400,9 @@ static int max77759_chgr_input_mask_clear(struct max77759_chgr_data *data)
 {
 	u8 value;
 	int ret;
+
+	if(max77759_resume_check(data))
+		return -EAGAIN;
 
 	ret = max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_10, &value);
 	if (ret < 0)
@@ -2384,6 +2454,9 @@ static int max77759_chg_debug_reg_read(void *d, u64 *val)
 	u8 reg = 0;
 	int ret;
 
+	if(max77759_resume_check(data))
+		return -EAGAIN;
+
 	ret = max77759_reg_read(data->regmap, data->debug_reg_address, &reg);
 	if (ret)
 		return ret;
@@ -2396,6 +2469,9 @@ static int max77759_chg_debug_reg_write(void *d, u64 val)
 {
 	struct max77759_chgr_data *data = d;
 	u8 reg = (u8) val;
+
+	if(max77759_resume_check(data))
+		return -EAGAIN;
 
 	pr_warn("debug write reg 0x%x, 0x%x", data->debug_reg_address, reg);
 	return max77759_reg_write(data->regmap, data->debug_reg_address, reg);
@@ -2501,6 +2577,14 @@ static irqreturn_t max77759_chgr_irq(int irq, void *client)
 	u8 chg_int[MAX77759_CHG_INT_COUNT];
 	bool broadcast;
 	int ret;
+
+	if (max77759_resume_check(data)) {
+		if (data->init_complete && !data->irq_disabled) {
+			data->irq_disabled = true;
+			disable_irq_nosync(data->irq_int);
+		}
+		return IRQ_HANDLED;
+	}
 
 	ret = max77759_readn(data->regmap, MAX77759_CHG_INT, chg_int,
 			     sizeof(chg_int));
@@ -2805,10 +2889,7 @@ static int max77759_charger_probe(struct i2c_client *client,
 	gs101_setup_usecases(&data->uc_data, NULL);
 	data->uc_data.client = client;
 
-	/* other drivers (ex tcpci) need this. */
-	ret = max77759_setup_votables(data);
-	if (ret < 0)
-		return ret;
+	INIT_DELAYED_WORK(&data->mode_rerun_work, max77759_mode_rerun_work);
 
 	data->irq_gpio = of_get_named_gpio(dev->of_node, "max77759,irq-gpio", 0);
 	if (data->irq_gpio < 0) {
@@ -2833,6 +2914,9 @@ static int max77759_charger_probe(struct i2c_client *client,
 					      sizeof(max77759_int_mask));
 			if (ret < 0)
 				dev_err(dev, "cannot set irq_mask (%d)\n", ret);
+
+			data->irq_disabled = false;
+			data->irq_int = client->irq;
 		}
 	}
 
@@ -2897,6 +2981,11 @@ static int max77759_charger_probe(struct i2c_client *client,
 	data->init_complete = 1;
 	data->resume_complete = 1;
 
+	/* other drivers (ex tcpci) need this. */
+	ret = max77759_setup_votables(data);
+	if (ret < 0)
+		return ret;
+
 	ret = max77759_init_wcin_psy(data);
 	if (ret < 0)
 		pr_err("Couldn't register dc power supply (%d)\n", ret);
@@ -2932,13 +3021,29 @@ MODULE_DEVICE_TABLE(i2c, max77759_id);
 #if defined CONFIG_PM
 static int max77759_charger_pm_suspend(struct device *dev)
 {
-	/* TODO: is there anything to do here? */
+	struct platform_device *pdev = to_platform_device(dev);
+	struct max77759_chgr_data *data = platform_get_drvdata(pdev);
+
+	pm_runtime_get_sync(data->dev);
+	data->resume_complete = false;
+	pm_runtime_put_sync(data->dev);
+
 	return 0;
 }
 
 static int max77759_charger_pm_resume(struct device *dev)
 {
-	/* TODO: is there anything to do here? */
+	struct platform_device *pdev = to_platform_device(dev);
+	struct max77759_chgr_data *data = platform_get_drvdata(pdev);
+
+	pm_runtime_get_sync(data->dev);
+	data->resume_complete = true;
+	if (data->irq_disabled) {
+		enable_irq(data->irq_int);
+		data->irq_disabled = false;
+	}
+	pm_runtime_put_sync(data->dev);
+
 	return 0;
 }
 #endif

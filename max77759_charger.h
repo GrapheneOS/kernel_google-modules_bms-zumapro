@@ -22,6 +22,7 @@ struct max77759_chgr_data {
 
 	struct gvotable_election *mode_votable;
 	struct max77759_usecase_data uc_data;
+	struct delayed_work mode_rerun_work;
 
 	struct gvotable_election *dc_icl_votable;
 	struct gvotable_election *dc_suspend_votable;
@@ -32,6 +33,8 @@ struct max77759_chgr_data {
 	bool thm2_sts;
 
 	int irq_gpio;
+	int irq_int;
+	bool irq_disabled;
 
 	struct i2c_client *fg_i2c_client;
 	struct i2c_client *pmic_i2c_client;
