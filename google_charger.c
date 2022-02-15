@@ -116,6 +116,14 @@ enum chg_thermal_devices {
 	CHG_TERMAL_DEVICES_COUNT,
 };
 
+enum dock_defend_state {
+       DOCK_DEFEND_USER_DISABLED = -3,
+       DOCK_DEFEND_DISABLED = -2,
+       DOCK_DEFEND_INACTIVE = 0,
+       DOCK_DEFEND_ENABLED,
+       DOCK_DEFEND_ACTIVE,
+};
+
 struct chg_thermal_device {
 	struct chg_drv *chg_drv;
 
@@ -169,6 +177,13 @@ struct bd_data {
 
 	bool lowerbd_reached;
 	bool bd_temp_dry_run;
+
+	/* dock_defend */
+	u32 dd_triggered;
+	u32 dd_enabled;
+	int dd_state;
+	int dd_charge_stop_level;
+	int dd_charge_start_level;
 };
 
 struct chg_drv {
@@ -727,11 +742,8 @@ static int chg_usb_online(struct power_supply *usb_psy)
 }
 
 
-static bool chg_is_custom_enabled(struct chg_drv *chg_drv)
+static bool chg_is_custom_enabled(int upperbd, int lowerbd)
 {
-	const int upperbd = chg_drv->charge_stop_level;
-	const int lowerbd = chg_drv->charge_start_level;
-
 	/* disabled */
 	if ((upperbd == DEFAULT_CHARGE_STOP_LEVEL) &&
 	    (lowerbd == DEFAULT_CHARGE_START_LEVEL))
@@ -755,7 +767,7 @@ static int chg_work_is_charging_disabled(struct chg_drv *chg_drv, int capacity)
 	const int lowerbd = chg_drv->charge_start_level;
 	int disable_charging = 0;
 
-	if (!chg_is_custom_enabled(chg_drv))
+	if (!chg_is_custom_enabled(upperbd, lowerbd))
 		return 0;
 
 	if (chg_drv->lowerdb_reached && upperbd <= capacity) {
@@ -993,6 +1005,8 @@ static int chg_work_roundtrip(struct chg_drv *chg_drv,
 	struct power_supply *chg_psy = chg_drv->chg_psy;
 	struct power_supply *wlc_psy = chg_drv->wlc_psy;
 	union gbms_charger_state batt_chg_state;
+	const int upperbd = chg_drv->charge_stop_level;
+	const int lowerbd = chg_drv->charge_start_level;
 	int fv_uv = -1, cc_max = -1;
 	int update_interval, rc;
 	bool wlc_on = 0;
@@ -1005,7 +1019,7 @@ static int chg_work_roundtrip(struct chg_drv *chg_drv,
 	if (chg_drv->chg_mode == CHG_DRV_MODE_NOIRDROP)
 		chg_state->f.vchrg = 0;
 
-	if (chg_is_custom_enabled(chg_drv))
+	if (chg_is_custom_enabled(upperbd, lowerbd))
 		chg_state->f.flags |= GBMS_CS_FLAG_CCLVL;
 
 	/*
@@ -1192,6 +1206,7 @@ static void bd_reset(struct bd_data *bd_state)
 	bd_state->last_voltage = 0;
 	bd_state->last_temp = 0;
 	bd_state->triggered = 0;
+	bd_state->dd_triggered = 0;
 
 	/* also disabled when externally triggered, resume_temp is optional */
 	bd_state->enabled = ((bd_state->bd_trigger_voltage &&
@@ -1393,6 +1408,12 @@ static int bd_recharge_logic(struct bd_data *bd_state, int val)
 	int lowerbd, upperbd;
 	int disable_charging = 0;
 
+	if (!bd_state->triggered && bd_state->dd_triggered) {
+		lowerbd = bd_state->dd_charge_start_level;
+		upperbd = bd_state->dd_charge_stop_level;
+		goto recharge_logic;
+	}
+
 	if (bd_state->bd_drainto_soc && bd_state->bd_recharge_soc) {
 		lowerbd = bd_state->bd_recharge_soc;
 		upperbd = bd_state->bd_drainto_soc;
@@ -1404,10 +1425,11 @@ static int bd_recharge_logic(struct bd_data *bd_state, int val)
 		return 0;
 	}
 
-	if (!bd_state->triggered)
+	if (bd_state->bd_temp_dry_run)
 		return 0;
 
-	if (bd_state->bd_temp_dry_run)
+recharge_logic:
+	if (!bd_state->triggered && !bd_state->dd_triggered)
 		return 0;
 
 	/* recharge logic between bd_recharge_voltage and bd_trigger_voltage */
@@ -1638,8 +1660,62 @@ static int chg_start_bd_work(struct chg_drv *chg_drv)
 	return 0;
 }
 
+/* dock_defend */
+static void bd_dd_init(struct chg_drv *chg_drv)
+{
+	struct bd_data *bd_state = &chg_drv->bd_state;
+	int ret;
+
+	ret = of_property_read_u32(chg_drv->device->of_node, "google,dd-charge-stop-level",
+				   &bd_state->dd_charge_stop_level);
+	if (ret < 0)
+		bd_state->dd_charge_stop_level = DEFAULT_CHARGE_STOP_LEVEL;
+
+	ret = of_property_read_u32(chg_drv->device->of_node, "google,dd-charge-start-level",
+				   &bd_state->dd_charge_start_level);
+	if (ret < 0)
+		bd_state->dd_charge_start_level = DEFAULT_CHARGE_START_LEVEL;
+
+	bd_state->dd_state = DOCK_DEFEND_DISABLED;
+
+	pr_info("MSC_BD: dock_defend stop_level=%d start_level=%d state=%d\n",
+		bd_state->dd_charge_stop_level, bd_state->dd_charge_start_level,
+		bd_state->dd_state);
+}
+
+static void bd_dd_run_defender(struct chg_drv *chg_drv, int soc, int *disable_charging, int *disable_pwrsrc)
+{
+	struct bd_data *bd_state = &chg_drv->bd_state;
+	const bool was_triggered = bd_state->dd_triggered;
+	const int upperbd = chg_drv->bd_state.dd_charge_stop_level;
+	const int lowerbd = chg_drv->bd_state.dd_charge_start_level;
+
+	bd_state->dd_triggered = (chg_drv->bd_state.dd_state == DOCK_DEFEND_ACTIVE) ?
+				 chg_is_custom_enabled(upperbd, lowerbd) : false;
+
+	if (bd_state->dd_triggered)
+		*disable_charging = bd_recharge_logic(bd_state, soc);
+	if (*disable_charging)
+		*disable_pwrsrc = soc > bd_state->dd_charge_stop_level;
+
+	/* need icl_ramp_work when disable_pwrsrc 1 -> 0 */
+	if (!*disable_pwrsrc && chg_drv->disable_pwrsrc) {
+		struct power_supply *dc_psy;
+
+		dc_psy = power_supply_get_by_name("dc");
+		if (dc_psy)
+			power_supply_changed(dc_psy);
+	}
+
+	if (bd_state->dd_triggered != was_triggered)
+		pr_info("MSC_BD dd_triggered %d->%d\n",
+			was_triggered, bd_state->dd_triggered);
+}
+
 static int chg_run_defender(struct chg_drv *chg_drv)
 {
+	const int upperbd = chg_drv->charge_stop_level;
+	const int lowerbd = chg_drv->charge_start_level;
 	int soc, disable_charging = 0, disable_pwrsrc = 0;
 	struct power_supply *bat_psy = chg_drv->bat_psy;
 	struct bd_data *bd_state = &chg_drv->bd_state;
@@ -1672,7 +1748,7 @@ static int chg_run_defender(struct chg_drv *chg_drv)
 	if (disable_charging && soc > chg_drv->charge_stop_level)
 		disable_pwrsrc = 1;
 
-	if (chg_is_custom_enabled(chg_drv)) {
+	if (chg_is_custom_enabled(upperbd, lowerbd)) {
 		/*
 		 * This mode can be enabled from DWELL-DEFEND when in "idle",
 		 * while TEMP-DEFEND is triggered or from Retail Mode.
@@ -1733,6 +1809,11 @@ static int chg_run_defender(struct chg_drv *chg_drv)
 					lock_soc);
 			}
 		}
+		/* run dock_defend */
+		if (!bd_state->triggered && bd_state->dd_enabled)
+			bd_dd_run_defender(chg_drv, soc, &disable_charging, &disable_pwrsrc);
+	} else if (chg_drv->bd_state.dd_enabled) {
+		bd_dd_run_defender(chg_drv, soc, &disable_charging, &disable_pwrsrc);
 	} else if (chg_drv->disable_charging) {
 		/*
 		 * chg_drv->disable_charging && !disable_charging
@@ -1895,6 +1976,7 @@ static void chg_work(struct work_struct *work)
 	if (ext_psy) {
 		ext_online = GPSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_ONLINE);
 		ext_present = GPSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_PRESENT);
+		chg_drv->bd_state.dd_enabled = ext_present;
 	}
 
 	/* ICL=0 on discharge will (might) cause usb online to go to 0 */
@@ -1909,6 +1991,8 @@ static void chg_work(struct work_struct *work)
 		goto rerun_error;
 	} else if (!online && !present) {
 		const bool stop_charging = chg_drv->stop_charging != 1;
+		const int upperbd = chg_drv->charge_stop_level;
+		const int lowerbd = chg_drv->charge_start_level;
 
 		rc = chg_start_bd_work(chg_drv);
 		if (rc < 0)
@@ -1942,7 +2026,7 @@ static void chg_work(struct work_struct *work)
 				chg_drv->stop_charging = 1;
 		}
 
-		if (chg_is_custom_enabled(chg_drv) && chg_drv->disable_pwrsrc)
+		if (chg_is_custom_enabled(upperbd, lowerbd) && chg_drv->disable_pwrsrc)
 			chg_run_defender(chg_drv);
 
 		/* allow sleep (if disconnected) while draining */
@@ -2210,7 +2294,7 @@ static ssize_t set_charge_stop_level(struct device *dev,
 	if ((val == chg_drv->charge_stop_level) ||
 	    (val <= chg_drv->charge_start_level) ||
 	    (val > DEFAULT_CHARGE_STOP_LEVEL))
-		return count;
+		return -EINVAL;
 
 	chg_drv->charge_stop_level = val;
 	if (chg_drv->bat_psy)
@@ -2250,7 +2334,7 @@ static ssize_t set_charge_start_level(struct device *dev,
 	if ((val == chg_drv->charge_start_level) ||
 	    (val >= chg_drv->charge_stop_level) ||
 	    (val < DEFAULT_CHARGE_START_LEVEL))
-		return count;
+		return -EINVAL;
 
 	chg_drv->charge_start_level = val;
 	if (chg_drv->bat_psy)
@@ -2332,8 +2416,7 @@ static DEVICE_ATTR(bd_trigger_voltage, 0660,
 		   show_bd_trigger_voltage, set_bd_trigger_voltage);
 
 static ssize_t
-show_bd_drainto_soc(struct device *dev,
-			struct device_attribute *attr, char *buf)
+show_bd_drainto_soc(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct chg_drv *chg_drv = dev_get_drvdata(dev);
 
@@ -2341,9 +2424,8 @@ show_bd_drainto_soc(struct device *dev,
 			 chg_drv->bd_state.bd_drainto_soc);
 }
 
-static ssize_t set_bd_drainto_soc(struct device *dev,
-				      struct device_attribute *attr,
-				      const char *buf, size_t count)
+static ssize_t set_bd_drainto_soc(struct device *dev, struct device_attribute *attr,
+				  const char *buf, size_t count)
 {
 	struct chg_drv *chg_drv = dev_get_drvdata(dev);
 	int ret = 0, val;
@@ -2364,8 +2446,7 @@ static DEVICE_ATTR(bd_drainto_soc, 0660,
 		   show_bd_drainto_soc, set_bd_drainto_soc);
 
 static ssize_t
-show_bd_trigger_temp(struct device *dev,
-			struct device_attribute *attr, char *buf)
+show_bd_trigger_temp(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct chg_drv *chg_drv = dev_get_drvdata(dev);
 
@@ -2373,9 +2454,8 @@ show_bd_trigger_temp(struct device *dev,
 			chg_drv->bd_state.bd_trigger_temp);
 }
 
-static ssize_t set_bd_trigger_temp(struct device *dev,
-				      struct device_attribute *attr,
-				      const char *buf, size_t count)
+static ssize_t set_bd_trigger_temp(struct device *dev, struct device_attribute *attr,
+				   const char *buf, size_t count)
 {
 	struct chg_drv *chg_drv = dev_get_drvdata(dev);
 	int ret = 0, val;
@@ -2396,8 +2476,7 @@ static DEVICE_ATTR(bd_trigger_temp, 0660,
 		   show_bd_trigger_temp, set_bd_trigger_temp);
 
 static ssize_t
-show_bd_trigger_time(struct device *dev,
-			struct device_attribute *attr, char *buf)
+show_bd_trigger_time(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct chg_drv *chg_drv = dev_get_drvdata(dev);
 
@@ -2405,9 +2484,8 @@ show_bd_trigger_time(struct device *dev,
 			chg_drv->bd_state.bd_trigger_time);
 }
 
-static ssize_t set_bd_trigger_time(struct device *dev,
-				      struct device_attribute *attr,
-				      const char *buf, size_t count)
+static ssize_t set_bd_trigger_time(struct device *dev, struct device_attribute *attr,
+				   const char *buf, size_t count)
 {
 	struct chg_drv *chg_drv = dev_get_drvdata(dev);
 	int ret = 0, val;
@@ -2428,8 +2506,7 @@ static DEVICE_ATTR(bd_trigger_time, 0660,
 		   show_bd_trigger_time, set_bd_trigger_time);
 
 static ssize_t
-show_bd_recharge_voltage(struct device *dev,
-			struct device_attribute *attr, char *buf)
+show_bd_recharge_voltage(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct chg_drv *chg_drv = dev_get_drvdata(dev);
 
@@ -2437,9 +2514,8 @@ show_bd_recharge_voltage(struct device *dev,
 			chg_drv->bd_state.bd_recharge_voltage);
 }
 
-static ssize_t set_bd_recharge_voltage(struct device *dev,
-				      struct device_attribute *attr,
-				      const char *buf, size_t count)
+static ssize_t set_bd_recharge_voltage(struct device *dev, struct device_attribute *attr,
+				       const char *buf, size_t count)
 {
 	struct chg_drv *chg_drv = dev_get_drvdata(dev);
 	int ret = 0, val;
@@ -2460,8 +2536,7 @@ static DEVICE_ATTR(bd_recharge_voltage, 0660,
 		   show_bd_recharge_voltage, set_bd_recharge_voltage);
 
 static ssize_t
-show_bd_recharge_soc(struct device *dev,
-			struct device_attribute *attr, char *buf)
+show_bd_recharge_soc(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct chg_drv *chg_drv = dev_get_drvdata(dev);
 
@@ -2469,9 +2544,8 @@ show_bd_recharge_soc(struct device *dev,
 			 chg_drv->bd_state.bd_recharge_soc);
 }
 
-static ssize_t set_bd_recharge_soc(struct device *dev,
-					struct device_attribute *attr,
-					const char *buf, size_t count)
+static ssize_t set_bd_recharge_soc(struct device *dev, struct device_attribute *attr,
+				   const char *buf, size_t count)
 {
 	struct chg_drv *chg_drv = dev_get_drvdata(dev);
 	int ret = 0, val;
@@ -2524,8 +2598,7 @@ static DEVICE_ATTR(bd_resume_abs_temp, 0660,
 		   show_bd_resume_abs_temp, set_bd_resume_abs_temp);
 
 static ssize_t
-show_bd_resume_time(struct device *dev,
-			struct device_attribute *attr, char *buf)
+show_bd_resume_time(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct chg_drv *chg_drv = dev_get_drvdata(dev);
 
@@ -2533,9 +2606,8 @@ show_bd_resume_time(struct device *dev,
 			chg_drv->bd_state.bd_resume_time);
 }
 
-static ssize_t set_bd_resume_time(struct device *dev,
-				      struct device_attribute *attr,
-				      const char *buf, size_t count)
+static ssize_t set_bd_resume_time(struct device *dev, struct device_attribute *attr,
+				  const char *buf, size_t count)
 {
 	struct chg_drv *chg_drv = dev_get_drvdata(dev);
 	int ret = 0, val;
@@ -2556,8 +2628,7 @@ static DEVICE_ATTR(bd_resume_time, 0660,
 		   show_bd_resume_time, set_bd_resume_time);
 
 static ssize_t
-show_bd_resume_temp(struct device *dev,
-			struct device_attribute *attr, char *buf)
+show_bd_resume_temp(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct chg_drv *chg_drv = dev_get_drvdata(dev);
 
@@ -2565,9 +2636,8 @@ show_bd_resume_temp(struct device *dev,
 			chg_drv->bd_state.bd_resume_temp);
 }
 
-static ssize_t set_bd_resume_temp(struct device *dev,
-				      struct device_attribute *attr,
-				      const char *buf, size_t count)
+static ssize_t set_bd_resume_temp(struct device *dev, struct device_attribute *attr,
+				  const char *buf, size_t count)
 {
 	struct chg_drv *chg_drv = dev_get_drvdata(dev);
 	int ret = 0, val;
@@ -2588,8 +2658,7 @@ static DEVICE_ATTR(bd_resume_temp, 0660,
 		   show_bd_resume_temp, set_bd_resume_temp);
 
 static ssize_t
-show_bd_resume_soc(struct device *dev,
-			struct device_attribute *attr, char *buf)
+show_bd_resume_soc(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct chg_drv *chg_drv = dev_get_drvdata(dev);
 
@@ -2597,9 +2666,8 @@ show_bd_resume_soc(struct device *dev,
 			chg_drv->bd_state.bd_resume_soc);
 }
 
-static ssize_t set_bd_resume_soc(struct device *dev,
-				      struct device_attribute *attr,
-				      const char *buf, size_t count)
+static ssize_t set_bd_resume_soc(struct device *dev, struct device_attribute *attr,
+				 const char *buf, size_t count)
 {
 	struct chg_drv *chg_drv = dev_get_drvdata(dev);
 	int ret = 0, val;
@@ -2620,8 +2688,7 @@ static DEVICE_ATTR(bd_resume_soc, 0660,
 		   show_bd_resume_soc, set_bd_resume_soc);
 
 static ssize_t
-show_bd_temp_dry_run(struct device *dev,
-			struct device_attribute *attr, char *buf)
+show_bd_temp_dry_run(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct chg_drv *chg_drv = dev_get_drvdata(dev);
 
@@ -2629,9 +2696,8 @@ show_bd_temp_dry_run(struct device *dev,
 			chg_drv->bd_state.bd_temp_dry_run);
 }
 
-static ssize_t set_bd_temp_dry_run(struct device *dev,
-				      struct device_attribute *attr,
-				      const char *buf, size_t count)
+static ssize_t set_bd_temp_dry_run(struct device *dev, struct device_attribute *attr,
+				   const char *buf, size_t count)
 {
 	struct chg_drv *chg_drv = dev_get_drvdata(dev);
 	bool dry_run = chg_drv->bd_state.bd_temp_dry_run;
@@ -2716,6 +2782,113 @@ bd_state_show(struct device *dev, struct device_attribute *attr, char *buf)
 }
 
 static DEVICE_ATTR_RO(bd_state);
+
+static ssize_t show_dd_state(struct device *dev, struct device_attribute *attr,
+			     char *buf)
+{
+	struct chg_drv *chg_drv = dev_get_drvdata(dev);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", chg_drv->bd_state.dd_state);
+}
+
+static ssize_t set_dd_state(struct device *dev, struct device_attribute *attr,
+			    const char *buf, size_t count)
+{
+	struct chg_drv *chg_drv = dev_get_drvdata(dev);
+	int ret = 0, val;
+
+	ret = kstrtoint(buf, 0, &val);
+	if (ret < 0)
+		return ret;
+
+	if (val > DOCK_DEFEND_ACTIVE || val < DOCK_DEFEND_USER_DISABLED)
+		return -EINVAL;
+
+	chg_drv->bd_state.dd_state = val;
+	if (chg_drv->bat_psy)
+		power_supply_changed(chg_drv->bat_psy);
+
+	return count;
+}
+
+static DEVICE_ATTR(dd_state, 0660,
+		   show_dd_state, set_dd_state);
+
+static ssize_t show_dd_charge_stop_level(struct device *dev, struct device_attribute *attr,
+					 char *buf)
+{
+	struct chg_drv *chg_drv = dev_get_drvdata(dev);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", chg_drv->bd_state.dd_charge_stop_level);
+}
+
+static ssize_t set_dd_charge_stop_level(struct device *dev, struct device_attribute *attr,
+					const char *buf, size_t count)
+{
+	struct chg_drv *chg_drv = dev_get_drvdata(dev);
+	int ret = 0, val;
+
+	ret = kstrtoint(buf, 0, &val);
+	if (ret < 0)
+		return ret;
+
+	if (!chg_drv->bat_psy) {
+		pr_err("chg_drv->bat_psy is not ready");
+		return -ENODATA;
+	}
+
+	if ((val == chg_drv->bd_state.dd_charge_stop_level) ||
+	    (val <= chg_drv->bd_state.dd_charge_start_level) ||
+	    (val > DEFAULT_CHARGE_STOP_LEVEL))
+		return -EINVAL;
+
+	chg_drv->bd_state.dd_charge_stop_level = val;
+	if (chg_drv->bat_psy)
+		power_supply_changed(chg_drv->bat_psy);
+
+	return count;
+}
+
+static DEVICE_ATTR(dd_charge_stop_level, 0660,
+		   show_dd_charge_stop_level, set_dd_charge_stop_level);
+
+static ssize_t show_dd_charge_start_level(struct device *dev, struct device_attribute *attr,
+					  char *buf)
+{
+	struct chg_drv *chg_drv = dev_get_drvdata(dev);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", chg_drv->bd_state.dd_charge_start_level);
+}
+
+static ssize_t set_dd_charge_start_level(struct device *dev, struct device_attribute *attr,
+					 const char *buf, size_t count)
+{
+	struct chg_drv *chg_drv = dev_get_drvdata(dev);
+	int ret = 0, val;
+
+	ret = kstrtoint(buf, 0, &val);
+	if (ret < 0)
+		return ret;
+
+	if (!chg_drv->bat_psy) {
+		pr_err("chg_drv->bat_psy is not ready");
+		return -ENODATA;
+	}
+
+	if ((val == chg_drv->bd_state.dd_charge_start_level) ||
+	    (val >= chg_drv->bd_state.dd_charge_stop_level) ||
+	    (val < DEFAULT_CHARGE_START_LEVEL))
+		return -EINVAL;
+
+	chg_drv->bd_state.dd_charge_start_level = val;
+	if (chg_drv->bat_psy)
+		power_supply_changed(chg_drv->bat_psy);
+
+	return count;
+}
+
+static DEVICE_ATTR(dd_charge_start_level, 0660,
+		   show_dd_charge_start_level, set_dd_charge_start_level);
 
 /* TODO: now created in qcom code, create in chg_create_votables() */
 static int chg_find_votables(struct chg_drv *chg_drv)
@@ -3205,6 +3378,26 @@ static int chg_init_fs(struct chg_drv *chg_drv)
 		return ret;
 	}
 
+	/* dock_defend */
+	if (chg_drv->ext_psy_name) {
+		ret = device_create_file(chg_drv->device, &dev_attr_dd_state);
+		if (ret != 0) {
+			pr_err("Failed to create dd_state files, ret=%d\n", ret);
+			return ret;
+		}
+
+		ret = device_create_file(chg_drv->device, &dev_attr_dd_charge_stop_level);
+		if (ret != 0) {
+			pr_err("Failed to create dd_charge_stop_level files, ret=%d\n", ret);
+			return ret;
+		}
+
+		ret = device_create_file(chg_drv->device, &dev_attr_dd_charge_start_level);
+		if (ret != 0) {
+			pr_err("Failed to create dd_charge_start_level files, ret=%d\n", ret);
+			return ret;
+		}
+	}
 
 
 	chg_drv->debug_entry = debugfs_create_dir("google_charger", 0);
@@ -4349,6 +4542,10 @@ static void google_charger_init_work(struct work_struct *work)
 	/* reset override charging parameters */
 	chg_drv->user_fv_uv = -1;
 	chg_drv->user_cc_max = -1;
+
+	/* dock_defend */
+	if (chg_drv->ext_psy)
+		bd_dd_init(chg_drv);
 
 	chg_drv->psy_nb.notifier_call = chg_psy_changed;
 	ret = power_supply_reg_notifier(&chg_drv->psy_nb);
