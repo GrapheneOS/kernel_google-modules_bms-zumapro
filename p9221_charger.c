@@ -2124,8 +2124,7 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 	dev_warn(&charger->client->dev, "Set enable %d, wlc_dc_enabled:%d->%d\n",
 		charger->enabled, wlc_dc_enabled, charger->wlc_dc_enabled);
 
-	if (charger->pdata->qien_gpio >= 0)
-		vote(charger->wlc_disable_votable, P9221_WLC_VOTER, !charger->enabled, 0);
+	vote(charger->wlc_disable_votable, P9221_WLC_VOTER, !charger->enabled, 0);
 
 	return 1;
 }
@@ -5417,7 +5416,7 @@ static int p9221_parse_dt(struct device *dev,
 		pdata->chip_id = P9222_CHIP_ID;
 	}
 
-	/* Enable */
+	/* QI_EN_L: enable/disable WLC chip */
 	ret = of_get_named_gpio(node, "idt,gpio_qien", 0);
 	pdata->qien_gpio = ret;
 	if (ret < 0)
@@ -5429,7 +5428,11 @@ static int p9221_parse_dt(struct device *dev,
 	/* support p9412 GPIO */
 	pdata->has_p9412_gpio = of_property_read_bool(node,
                                                       "idt,has_p9412_gpio");
-	/* QI_USB_VBUS_EN */
+
+	/*
+	 * QI_USB_VBUS_EN: control the priority of USB and WLC,
+	 *                 set to high after boot
+	 */
 	ret = of_get_named_gpio_flags(node, "idt,gpio_qi_vbus_en", 0, &flags);
 	pdata->qi_vbus_en = ret;
 	if (ret < 0) {
@@ -5439,6 +5442,17 @@ static int p9221_parse_dt(struct device *dev,
 		pdata->qi_vbus_en_act_low = (flags & OF_GPIO_ACTIVE_LOW) != 0;
 		dev_info(dev, "QI_USB_VBUS_EN gpio:%d(act_low=%d)",
 			 pdata->qi_vbus_en, pdata->qi_vbus_en_act_low);
+	}
+
+	/* Enable/Disable WLC chip(for P9XXX_GPIO_VBUS_EN) */
+	ret = of_get_named_gpio_flags(node, "idt,gpio_wlc_en", 0, &flags);
+	pdata->wlc_en = ret;
+	if (ret < 0) {
+		dev_warn(dev, "unable to read idt,gpio_wlc_en from dt: %d\n",
+			 ret);
+	} else {
+		pdata->wlc_en_act_low = (flags & OF_GPIO_ACTIVE_LOW) != 0;
+		dev_info(dev, "WLC enable/disable pin:%d", pdata->wlc_en);
 	}
 
 	/* WLC_BPP_EPP_SLCT */
@@ -5870,6 +5884,13 @@ static int p9221_wlc_disable_callback(struct votable *votable, void *data,
 {
 	struct p9221_charger_data *charger = data;
 	u8 val = P9221_EOP_UNKNOWN;
+
+	if (charger->pdata->wlc_en == charger->pdata->qien_gpio) {
+		int value;
+		value = (!disable) ^ charger->pdata->wlc_en_act_low;
+		gpio_direction_output(charger->pdata->wlc_en, value);
+		return 0;
+	}
 
 	charger->send_eop = get_client_vote(charger->dc_icl_votable, THERMAL_DAEMON_VOTER) == 0;
 	if (!get_client_vote(votable, P9221_WLC_VOTER) && !charger->send_eop)

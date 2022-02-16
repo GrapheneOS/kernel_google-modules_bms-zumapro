@@ -566,6 +566,8 @@ struct p9221_charger_platform_data {
 	int				dc_switch_gpio;
 	int				qi_vbus_en;
 	int				qi_vbus_en_act_low;
+	int				wlc_en;
+	int				wlc_en_act_low;
 	int				max_vout_mv;
 	int				epp_vout_mv;
 	u8				fod[P9221R5_NUM_FOD];
