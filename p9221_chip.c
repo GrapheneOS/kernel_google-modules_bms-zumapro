@@ -1276,6 +1276,7 @@ static int p9412_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 {
 	int ret, loops;
 	u8 val8, cdmode, txpwr, pwr_stp, mode_sts, err_sts, prop_cur_pwr, prop_req_pwr;
+	u32 val = 0;
 
 	if (p9xxx_is_capdiv_en(chgr))
 		goto err_exit;
@@ -1306,6 +1307,19 @@ static int p9412_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 		dev_err(&chgr->client->dev,
 			"PROP_MODE: mfg code =%02x\n", chgr->mfg);
 		return 0;
+	}
+
+	/*
+	 * Step 0: clear data type buffer:
+	 * write 0 to 0x800 and 0x801
+	 */
+	ret = chgr->reg_write_n(chgr,
+				P9412_COM_PACKET_TYPE_ADDR,
+				&val, 4);
+	if (ret) {
+		dev_err(&chgr->client->dev,
+			"Failed to clear data type buffer: %d\n", ret);
+		goto err_exit;
 	}
 
 	/*
