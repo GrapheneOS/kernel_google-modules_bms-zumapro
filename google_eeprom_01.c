@@ -18,17 +18,11 @@
 /* battery health */
 #define BATT_EEPROM_TAG_BPST_OFFSET	0x5E
 #define BATT_EEPROM_TAG_BPST_LEN	1
-/* swelling data */
-#define BATT_EEPROM_TAG_STRD_OFFSET	0x1E
-#define BATT_EEPROM_TAG_STRD_LEN	12
-/* device information data */
-#define BATT_EEPROM_TAG_DINF_OFFSET	0x5F
-#define BATT_EEPROM_TAG_DINF_LEN	4
-/* */
+/* history data */
 #define BATT_EEPROM_TAG_HIST_OFFSET	0x64
 #define BATT_EEPROM_TAG_HIST_LEN	BATT_ONE_HIST_LEN
 
-/* Add GBMS_TAG_BPST and GBMS_TAG_STRD move down history */
+/* Add GBMS_TAG_BPST move down history */
 int gbee_storage01_info(gbms_tag_t tag, size_t *addr, size_t *count, void *ptr)
 {
 	int ret = 0;
@@ -37,14 +31,6 @@ int gbee_storage01_info(gbms_tag_t tag, size_t *addr, size_t *count, void *ptr)
 	case GBMS_TAG_BPST:
 		*addr = BATT_EEPROM_TAG_BPST_OFFSET;
 		*count = BATT_EEPROM_TAG_BPST_LEN;
-		break;
-	case GBMS_TAG_STRD:
-		*addr = BATT_EEPROM_TAG_STRD_OFFSET;
-		*count = BATT_EEPROM_TAG_STRD_LEN;
-		break;
-	case GBMS_TAG_DINF:
-		*addr = BATT_EEPROM_TAG_DINF_OFFSET;
-		*count = BATT_EEPROM_TAG_DINF_LEN;
 		break;
 	case GBMS_TAG_HIST:
 		*addr = BATT_EEPROM_TAG_HIST_OFFSET;

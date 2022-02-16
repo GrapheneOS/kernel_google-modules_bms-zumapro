@@ -43,10 +43,10 @@
 /* TODO: link to the structure used to save this*/
 #define BATT_ONE_HIST_LEN	12
 /* TODO: this depends on the EEPROM size */
-#define BATT_TOTAL_HIST_LEN	924
+#define BATT_TOTAL_HIST_LEN	900
 /* TODO: this depends on the EEPROM size */
 #define BATT_MAX_HIST_CNT	\
-		(BATT_TOTAL_HIST_LEN / BATT_ONE_HIST_LEN) // 77
+		(BATT_TOTAL_HIST_LEN / BATT_ONE_HIST_LEN) // 75
 
 
 #define GBMS_CCBIN_BUCKET_COUNT	10
