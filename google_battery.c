@@ -98,12 +98,6 @@ enum batt_health_ui {
 	CHG_DEADLINE_CLEARED = 0,
 };
 
-#undef MODULE_PARAM_PREFIX
-#define MODULE_PARAM_PREFIX	"androidboot."
-#define DEV_SN_LENGTH		20
-static char dev_sn[DEV_SN_LENGTH];
-module_param_string(serialno, dev_sn, DEV_SN_LENGTH, 0000);
-
 #if (GBMS_CCBIN_BUCKET_COUNT < 1) || (GBMS_CCBIN_BUCKET_COUNT > 100)
 #error "GBMS_CCBIN_BUCKET_COUNT needs to be a value from 1-100"
 #endif
@@ -231,6 +225,7 @@ struct batt_bpst {
 	u8 bpst_count;
 };
 
+#define DEV_SN_LENGTH 20
 enum batt_paired_state {
 	BATT_PAIRING_WRITE_ERROR = -4,
 	BATT_PAIRING_READ_ERROR = -3,
@@ -456,6 +451,7 @@ struct batt_drv {
 
 	/* used to detect battery replacements and reset statistics */
 	enum batt_paired_state pairing_state;
+	char dev_sn[DEV_SN_LENGTH];
 
 	/* collect battery history/lifetime data (history) */
 	enum batt_lfcollect_status blf_state;
@@ -6315,6 +6311,29 @@ static ssize_t power_metrics_current_show(struct device *dev,
 
 static const DEVICE_ATTR_RO(power_metrics_current);
 
+static ssize_t dev_sn_store(struct device *dev,
+			    struct device_attribute *attr,
+			    const char *buf, size_t count)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+
+	memcpy(batt_drv->dev_sn, buf, strlen(buf));
+
+	return count;
+}
+
+static ssize_t dev_sn_show(struct device *dev,
+			   struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+
+	return scnprintf(buf, PAGE_SIZE, "%s\n", batt_drv->dev_sn);
+}
+
+static const DEVICE_ATTR_RW(dev_sn);
+
 /* ------------------------------------------------------------------------- */
 
 static int batt_init_fs(struct batt_drv *batt_drv)
@@ -6488,6 +6507,9 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_power_metrics_current);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create power_metrics_current\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_dev_sn);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create dev sn\n");
 
 	de = debugfs_create_dir("google_battery", 0);
 	if (IS_ERR_OR_NULL(de))
@@ -6661,15 +6683,15 @@ static void bat_log_ttf_estimate(const char *label, int ssoc,
 		      res, err);
 }
 
-static int batt_do_sha256(const u8 *data, unsigned int len, u8 *result)
+static int batt_do_md5(const u8 *data, unsigned int len, u8 *result)
 {
 	struct crypto_shash *tfm;
 	struct shash_desc *shash;
 	int size, ret = 0;
 
-	tfm = crypto_alloc_shash("sha256", 0, 0);
+	tfm = crypto_alloc_shash("md5", 0, 0);
 	if (IS_ERR(tfm)) {
-		pr_err("Error SHA-256 transform: %ld\n", PTR_ERR(tfm));
+		pr_err("Error MD5 transform: %ld\n", PTR_ERR(tfm));
 		return PTR_ERR(tfm);
 	}
 
@@ -6690,11 +6712,16 @@ static int batt_do_sha256(const u8 *data, unsigned int len, u8 *result)
 /* called with a lock on ->chg_lock */
 static enum batt_paired_state batt_check_pairing_state(struct batt_drv *batt_drv)
 {
-	const int len = strlen(dev_sn);
 	char dev_info[GBMS_DINF_LEN];
 	char mfg_info[GBMS_MINF_LEN];
 	u8 *dev_info_check = batt_drv->dev_info_check;
-	int ret;
+	int ret, len;
+
+	len = strlen(batt_drv->dev_sn);
+
+	/* No dev_sn, return current state */
+	if (len == 0)
+		return batt_drv->pairing_state;
 
 	ret = gbms_storage_read(GBMS_TAG_DINF, dev_info, GBMS_DINF_LEN);
 	if (ret < 0) {
@@ -6711,23 +6738,20 @@ static enum batt_paired_state batt_check_pairing_state(struct batt_drv *batt_drv
 			return BATT_PAIRING_READ_ERROR;
 		}
 
-		memcpy(data, dev_sn, len);
+		memcpy(data, batt_drv->dev_sn, len);
 		memcpy(&data[len], mfg_info, GBMS_MINF_LEN);
 
-		ret = batt_do_sha256(data, len + GBMS_MINF_LEN, dev_info_check);
+		ret = batt_do_md5(data, len + GBMS_MINF_LEN, dev_info_check);
 		if (ret < 0) {
-			pr_err("execute batt_do_sha256 fail, ret=%d\n", ret);
+			pr_err("execute batt_do_md5 fail, ret=%d\n", ret);
 			return BATT_PAIRING_MISMATCH;
 		}
-
-		pr_info("dev_info_check: %*ph\n", (int)sizeof(dev_info_check), dev_info_check);
 	}
 
 	/* new battery: pair the battery to this device */
 	if (dev_info[0] == 0xFF) {
 
-		ret = gbms_storage_write(GBMS_TAG_DINF, dev_info_check,
-					 strlen(dev_info_check));
+		ret = gbms_storage_write(GBMS_TAG_DINF, dev_info_check, GBMS_DINF_LEN);
 		if (ret < 0) {
 			pr_err("Pairing to this device failed, ret=%d\n", ret);
 			return BATT_PAIRING_WRITE_ERROR;
@@ -6735,8 +6759,6 @@ static enum batt_paired_state batt_check_pairing_state(struct batt_drv *batt_drv
 
 	/* recycled battery */
 	} else if (strncmp(dev_info, dev_info_check, strlen(dev_info_check))) {
-		pr_warn("dev_sn=%*ph\n", (int)sizeof(dev_sn), dev_sn);
-		pr_warn("dev_info=%*ph\n", (int)sizeof(dev_info), dev_info);
 		pr_warn("Battery paired to a different device\n");
 
 		return BATT_PAIRING_MISMATCH;
