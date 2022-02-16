@@ -2987,7 +2987,9 @@ static void p9221_notifier_work(struct work_struct *work)
 		goto done_relax;
 	}
 
-	if (charger->pdata->q_value != -1) {
+	if (charger->pdata->q_value != -1 || charger->de_q_value != 0) {
+		if (charger->de_q_value)
+			charger->pdata->q_value = charger->de_q_value;
 
 		ret = p9221_reg_write_8(charger,
 					P9221R5_EPP_Q_FACTOR_REG,
@@ -6210,6 +6212,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 		dev_err(&client->dev, "Failed to create debug_entry\n");
 	} else {
 		debugfs_create_bool("no_fod", 0644, charger->debug_entry, &charger->no_fod);
+		debugfs_create_u32("de_q_value", 0644, charger->debug_entry, &charger->de_q_value);
 	}
 
 	/* can independently read battery capacity */
