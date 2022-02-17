@@ -1376,8 +1376,6 @@ static bool feature_cache_lookup_entry(struct p9221_charger_feature *chg_fts,
 	struct p9221_charger_feature_entry *entry = &chg_fts->entries[0];
 	int index;
 
-	pr_debug("%s: tx_id=%llx, mask=%llx ft=%llx\n", __func__, id, mask, ft);
-
 	/* lookup id, true if found and feature&mask matches. */
 	index = feature_cache_lookup_by_id(chg_fts, id);
 	if (index >= 0) {
@@ -1742,7 +1740,7 @@ static int p9221_get_property(struct power_supply *psy,
 			      union power_supply_propval *val)
 {
 	struct p9221_charger_data *charger = power_supply_get_drvdata(psy);
-	int ret = 0;
+	int rc, ret = 0;
 	u32 temp;
 
 	switch (prop) {
@@ -1779,23 +1777,15 @@ static int p9221_get_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
 		if (charger->wlc_dc_enabled) {
-			ret = charger->chip_get_rx_ilim(charger, &temp);
-			if (ret == 0)
+			rc = charger->chip_get_rx_ilim(charger, &temp);
+			if (rc == 0)
 				charger->wlc_dc_current_now = temp * 1000; /* mA to uA */
 
-			val->intval = ret ? : charger->wlc_dc_current_now;
+			val->intval = rc ? : charger->wlc_dc_current_now;
 		} else {
 			if (!charger->dc_icl_votable)
 				return -EAGAIN;
-
-			ret = get_effective_result(charger->dc_icl_votable);
-			if (ret < 0)
-				break;
-
-			val->intval = ret;
-
-			/* success */
-			ret = 0;
+			val->intval = get_effective_result(charger->dc_icl_votable);
 		}
 		break;
 #ifdef CONFIG_QC_COMPAT
@@ -1807,43 +1797,45 @@ static int p9221_get_property(struct power_supply *psy,
 		break;
 #endif
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
-		ret = p9221_ready_to_read(charger);
-		if (ret < 0)
-			break;
+		rc = p9221_ready_to_read(charger);
+		if (rc < 0) {
+			val->intval = 0;
+		} else {
+			rc = charger->chip_get_iout(charger, &temp);
+			if (charger->wlc_dc_enabled && (rc == 0))
+				charger->wlc_dc_current_now = temp * 1000; /* mA to uA */
 
-		ret = charger->chip_get_iout(charger, &temp);
-		if (charger->wlc_dc_enabled && (ret == 0))
-			charger->wlc_dc_current_now = temp * 1000; /* mA to uA */
-
-		val->intval = ret ? : temp * 1000; /* mA to uA */
+			val->intval = rc ? : temp * 1000; /* mA to uA */
+		}
 		break;
 
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
-		ret = p9221_ready_to_read(charger);
-		if (ret < 0)
-			break;
-
-		if (charger->wlc_dc_enabled) {
-			ret = charger->chip_get_vout(charger, &temp);
-			if (ret == 0)
+		rc = p9221_ready_to_read(charger);
+		if (rc < 0) {
+			val->intval = 0;
+		} else if (charger->wlc_dc_enabled) {
+			rc = charger->chip_get_vout(charger, &temp);
+			if (rc == 0)
 				charger->wlc_dc_voltage_now = temp * 1000; /* mV to uV */
 		} else {
-			ret = charger->chip_get_vout(charger, &temp);
+			rc = charger->chip_get_vout(charger, &temp);
 		}
 
-		val->intval = ret ? : temp * 1000; /* mV to uV */
+		val->intval = rc ? : temp * 1000; /* mV to uV */
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
 		if (charger->wlc_dc_enabled) {
 			val->intval = charger->pdata->max_vout_mv * 1000; /* mV to uV */
 		} else {
-			ret = p9221_ready_to_read(charger);
-			if (!ret) {
+			rc = p9221_ready_to_read(charger);
+			if (rc < 0) {
+				val->intval = 0;
+			} else {
 				u32 mv;
 
-				ret = charger->chip_get_vout_max(charger, &mv);
-				if (ret)
-					val->intval = ret;
+				rc = charger->chip_get_vout_max(charger, &mv);
+				if (rc)
+					val->intval = rc;
 				else
 					val->intval = mv * 1000; /* mv to uV */
 			}
@@ -1854,15 +1846,15 @@ static int p9221_get_property(struct power_supply *psy,
 		val->intval = 5000000; // TODO: fix it
 		break;
 	case POWER_SUPPLY_PROP_TEMP:
-		ret = p9221_ready_to_read(charger);
-		if (!ret) {
-			ret = charger->chip_get_die_temp(charger, &val->intval);
-			if (!ret)
+		rc = p9221_ready_to_read(charger);
+		if (!rc) {
+			rc = charger->chip_get_die_temp(charger, &val->intval);
+			if (!rc)
 				val->intval = P9221_MILLIC_TO_DECIC(val->intval);
 		}
 
-		if (ret)
-			val->intval = ret;
+		if (rc)
+			val->intval = rc;
 		break;
 
 	default:
