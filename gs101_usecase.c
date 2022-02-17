@@ -232,7 +232,8 @@ static int gs101_ext_mode(struct max77759_usecase_data *uc_data, int mode)
 		gpio_set_value_cansleep(uc_data->bst_on, 0);
 		break;
 	case EXT_MODE_OTG_5_0V:
-		gpio_set_value_cansleep(uc_data->bst_sel, 0);
+		if (uc_data->bst_sel > 0)
+			gpio_set_value_cansleep(uc_data->bst_sel, 0);
 		msleep(100);
 		gpio_set_value_cansleep(uc_data->bst_on, 1);
 		break;
