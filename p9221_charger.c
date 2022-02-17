@@ -2288,10 +2288,12 @@ static int p9221_set_property(struct power_supply *psy,
 
 			rc = power_supply_get_property(charger->fg_psy,
 					POWER_SUPPLY_PROP_CAPACITY, &prop);
-			if (rc == 0)
+			if (rc == 0 && capacity != prop.intval) {
+				pr_debug("%s: orig=%d new=%d\n", __func__,
+					 val->intval, prop.intval);
 				capacity = prop.intval;
+			}
 
-			pr_info("%s: orig=%d new=%d\n", __func__, val->intval, capacity);
 		}
 
 		p9221_set_capacity(charger, capacity);
