@@ -104,6 +104,7 @@ enum gbms_tags {
 	GBMS_TAG_SNUM = 0x534e554d,
 
 	GBMS_TAG_STRD = 0x53545244, /* LOTRV1: Swelling data */
+	GBMS_TAG_RSOC = 0x52534F43,
 };
 
 /*
