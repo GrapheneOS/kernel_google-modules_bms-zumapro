@@ -1905,6 +1905,46 @@ int chg_switch_profile(struct pd_pps_data *pps, struct power_supply *tcpm_psy,
 	return ret;
 }
 
+static void chg_update_csi_status(struct chg_drv *chg_drv)
+{
+	union gbms_charger_state *chg_state = &chg_drv->chg_state;
+	char reason[GVOTABLE_MAX_REASON_LEN] = { 0 };
+	bool is_discharging, is_thermal = false;
+	int ret;
+
+	if (!chg_drv->csi_status_votable)
+		return;
+
+	/* google_battery clear CSI status when disconnected */
+	if (chg_state_is_disconnected(chg_state))
+		return;
+
+	/* Charging Status Discharging */
+	is_discharging = chg_state->f.chg_status == POWER_SUPPLY_STATUS_DISCHARGING;
+	gvotable_cast_long_vote(chg_drv->csi_status_votable, "CSI_STATUS_DISCHARGING",
+				CSI_STATUS_Discharging, is_discharging);
+
+	/* Charging Status System_Thermals */
+	ret = gvotable_get_current_reason(chg_drv->msc_fcc_votable, reason, sizeof(reason));
+	if (ret > 0 && !strncmp(reason, THERMAL_DAEMON_VOTER, strlen(THERMAL_DAEMON_VOTER)))
+		is_thermal = true;
+	gvotable_cast_long_vote(chg_drv->csi_status_votable, "CSI_STATUS_SYS_THERM",
+				CSI_STATUS_System_Thermals, is_thermal);
+
+	/* TODO: Charging Status System_Load */
+	/* TODO: Charging Status Adapter_Power */
+	/* TODO: Charging Status Adapter_Quality */
+	/* TODO: Charging Status Adapter_Auth */
+	/* Charging Status Defender_Temp */
+	gvotable_cast_long_vote(chg_drv->csi_status_votable, "CSI_STATUS_DEFEND_TEMP",
+				CSI_STATUS_Defender_Temp, chg_drv->bd_state.triggered);
+	/* Charging Status Defender_Dwell */
+	gvotable_cast_long_vote(chg_drv->csi_status_votable, "CSI_STATUS_DEFEND_DWELL",
+				CSI_STATUS_Defender_Dwell, chg_is_custom_enabled(chg_drv));
+	/* TODO: Charging Status Defender_Dock */
+	/* Charging Status Normal */
+}
+
 /* ------------------------------------------------------------------------ */
 
 /* No op on battery not present */
@@ -2147,6 +2187,8 @@ update_charger:
 		pr_debug("MSC_BD reschedule in %d ms\n", CHG_WORK_BD_TRIGGERED_MS);
 		schedule_delayed_work(&chg_drv->chg_work, jif);
 	}
+
+	chg_update_csi_status(chg_drv);
 
 	goto exit_chg_work;
 

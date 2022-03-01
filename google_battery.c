@@ -415,7 +415,7 @@ struct batt_drv {
 	struct battery_health health;
 	struct swelling_data sd;
 
-	/* CSI: charging speeed */
+	/* CSI: charging speed */
 	struct gvotable_election *csi_status_votable;
 	struct gvotable_election *csi_type_votable;
 	int charging_speed;
@@ -427,8 +427,6 @@ static int batt_chg_tier_stats_cstr(char *buff, int size,
 				    const struct gbms_ce_tier_stats *tier_stat,
 				    bool verbose);
 static int gbatt_get_capacity(struct batt_drv *batt_drv);
-
-static bool chg_state_is_disconnected(union gbms_charger_state *chg_state);
 
 static inline void batt_update_cycle_count(struct batt_drv *batt_drv)
 {
@@ -2201,40 +2199,125 @@ static void batt_res_work(struct batt_drv *batt_drv)
 
 /* ------------------------------------------------------------------------- */
 
+
+static void batt_clear_csi_type(struct gvotable_election *type_votable)
+{
+	if (!type_votable)
+		return;
+
+	gvotable_cast_long_vote(type_votable, "CSI_TYPE_FAULT", CSI_TYPE_Fault, false);
+	gvotable_cast_long_vote(type_votable, "CSI_TYPE_JEITA", CSI_TYPE_JEITA, false);
+	gvotable_cast_long_vote(type_votable, "CSI_TYPE_LONGLIFE", CSI_TYPE_LongLife, false);
+	gvotable_cast_long_vote(type_votable, "CSI_TYPE_AC", CSI_TYPE_Adaptive, false);
+	gvotable_cast_long_vote(type_votable, "CSI_TYPE_NORMAL", CSI_TYPE_Normal, false);
+}
+
 static void batt_set_csi_type(struct batt_drv *batt_drv)
 {
-	bool is_ac, is_longlife;
+	bool is_ac, is_longlife, is_disconnected;
 
 	if (!batt_drv->csi_type_votable) {
 		batt_drv->csi_type_votable =
 			gvotable_election_get_handle(VOTABLE_CSI_TYPE);
-
 		if (!batt_drv->csi_type_votable)
 			return;
 	}
 
+	is_disconnected = chg_state_is_disconnected(&batt_drv->chg_state);
 	/* ChargingType_NONE */
 	gvotable_cast_long_vote(batt_drv->csi_type_votable, "CSI_TYPE_NONE",
-		CSIType_None, chg_state_is_disconnected(&batt_drv->chg_state));
+				CSI_TYPE_None, is_disconnected);
+
+	if (is_disconnected) {
+		batt_clear_csi_type(batt_drv->csi_type_votable);
+		return;
+	}
 
 	/* ChargingType_JEITA */
 	gvotable_cast_long_vote(batt_drv->csi_type_votable, "CSI_TYPE_JEITA",
-		CSIType_JEITA, batt_drv->jeita_stop_charging == 1);
+				CSI_TYPE_JEITA, batt_drv->jeita_stop_charging == 1);
 
 	/* ChargingType_LongLife */
 	is_longlife = batt_drv->ssoc_state.bd_trickle_cnt > 0 ||
 		      batt_drv->batt_health == POWER_SUPPLY_HEALTH_OVERHEAT;
 	gvotable_cast_long_vote(batt_drv->csi_type_votable, "CSI_TYPE_LONGLIFE",
-				CSIType_LongLife, is_longlife);
+				CSI_TYPE_LongLife, is_longlife);
 
 	/* ChargingType_Adaptive */
 	is_ac = batt_drv->msc_state == MSC_HEALTH ||
 		batt_drv->msc_state == MSC_HEALTH_PAUSE ||
 		batt_drv->msc_state == MSC_HEALTH_ALWAYS_ON;
 	gvotable_cast_long_vote(batt_drv->csi_type_votable, "CSI_TYPE_AC",
-				CSIType_Adaptive, is_ac);
+				CSI_TYPE_Adaptive, is_ac);
 }
 
+static void batt_clear_csi_status(struct gvotable_election *status_votable)
+{
+	if (!status_votable)
+		return;
+
+	gvotable_cast_long_vote(status_votable, "CSI_STATUS_DISCHARGING",
+				CSI_STATUS_Discharging, false);
+	gvotable_cast_long_vote(status_votable, "CSI_STATUS_COLD",
+				CSI_STATUS_Health_Cold, false);
+	gvotable_cast_long_vote(status_votable, "CSI_STATUS_HOT",
+				CSI_STATUS_Health_Hot, false);
+	gvotable_cast_long_vote(status_votable, "CSI_STATUS_SYS_THERM",
+				CSI_STATUS_System_Thermals, false);
+	gvotable_cast_long_vote(status_votable, "CSI_STATUS_SYS_LOAD",
+				CSI_STATUS_System_Load, false);
+	gvotable_cast_long_vote(status_votable, "CSI_STATUS_ADA_POWR",
+				CSI_STATUS_Adapter_Power, false);
+	gvotable_cast_long_vote(status_votable, "CSI_STATUS_ADA_QUAL",
+				CSI_STATUS_Adapter_Quality, false);
+	gvotable_cast_long_vote(status_votable, "CSI_STATUS_ADA_AUTH",
+				CSI_STATUS_Adapter_Auth, false);
+	gvotable_cast_long_vote(status_votable, "CSI_STATUS_DEFEND_TEMP",
+				CSI_STATUS_Defender_Temp, false);
+	gvotable_cast_long_vote(status_votable, "CSI_STATUS_DEFEND_DWELL",
+				CSI_STATUS_Defender_Dwell, false);
+	gvotable_cast_long_vote(status_votable, "CSI_STATUS_DEFEND_TRICKLE",
+				CSI_STATUS_Defender_Trickle, false);
+	gvotable_cast_long_vote(status_votable, "CSI_STATUS_DEFEND_Dock",
+				CSI_STATUS_Defender_Dock, false);
+	gvotable_cast_long_vote(status_votable, "CSI_STATUS_NORMAL",
+				CSI_STATUS_Normal, false);
+}
+
+static void batt_set_csi_status(struct batt_drv *batt_drv)
+{
+	const struct gbms_chg_profile *profile = &batt_drv->chg_profile;
+	const int temp_hot_idx = profile->temp_nb_limits - 1;
+	bool is_cold = batt_drv->batt_temp < profile->temp_limits[0];
+	bool is_hot = batt_drv->batt_temp >= profile->temp_limits[temp_hot_idx];
+	bool is_trickle = batt_drv->ssoc_state.bd_trickle_cnt > 0;
+	bool is_disconnected = chg_state_is_disconnected(&batt_drv->chg_state);
+
+	if (!batt_drv->csi_status_votable) {
+		batt_drv->csi_status_votable =
+			gvotable_election_get_handle(VOTABLE_CSI_STATUS);
+		if (!batt_drv->csi_status_votable)
+			return;
+	}
+
+	if (is_disconnected) {
+		batt_clear_csi_status(batt_drv->csi_status_votable);
+		return;
+	}
+
+	/* Charging Status Health_Cold */
+	gvotable_cast_long_vote(batt_drv->csi_status_votable, "CSI_STATUS_COLD",
+				CSI_STATUS_Health_Cold, is_cold);
+
+	/* Charging Status Health_Hot */
+	gvotable_cast_long_vote(batt_drv->csi_status_votable, "CSI_STATUS_HOT",
+				CSI_STATUS_Health_Hot, is_hot);
+
+	/* Charging Status Defender_Trickle */
+	gvotable_cast_long_vote(batt_drv->csi_status_votable,
+				"CSI_STATUS_DEFEND_TRICKLE",
+				CSI_STATUS_Defender_Trickle, is_trickle);
+}
 
 /* ------------------------------------------------------------------------- */
 
@@ -3250,13 +3333,6 @@ static void batt_prlog_din(union gbms_charger_state *chg_state, int log_level)
 		   chg_state->f.icl);
 }
 
-static bool chg_state_is_disconnected(union gbms_charger_state *chg_state)
-{
-	return ((chg_state->f.flags & GBMS_CS_FLAG_BUCK_EN) == 0) &&
-	       (chg_state->f.chg_status == POWER_SUPPLY_STATUS_DISCHARGING ||
-	       chg_state->f.chg_status == POWER_SUPPLY_STATUS_UNKNOWN);
-}
-
 static void google_battery_dump_profile(const struct gbms_chg_profile *profile)
 {
 	char *buff;
@@ -3514,6 +3590,9 @@ msc_logic_done:
 
 	/* Update CSI Type */
 	batt_set_csi_type(batt_drv);
+
+	/* Update CSI Status */
+	batt_set_csi_status(batt_drv);
 
 msc_logic_exit:
 

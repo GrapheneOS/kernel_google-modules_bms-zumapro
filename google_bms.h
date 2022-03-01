@@ -284,15 +284,6 @@ enum gbms_stats_tier_idx_t {
 	GBMS_STATS_BD_TI_TRICKLE_CLEARED = 122,
 };
 
-enum natt_csi_type {
-	CSIType_None = 0,	// Disconnected
-	CSIType_Fault = 1,	// Internal Failures
-	CSIType_JEITA = 2,	// HW limits
-	CSIType_LongLife = 3,	// DefenderConditions
-	CSIType_Adaptive = 4,	// AdaptiveCharging
-	CSIType_Normal = 5,
-};
-
 /* health state */
 struct batt_chg_health {
 	int rest_soc;		/* entry criteria */
@@ -496,6 +487,8 @@ ssize_t ttf_dump_details(char *buf, int max_size,
 int gbms_read_aacr_limits(struct gbms_chg_profile *profile,
 			  struct device_node *node);
 
+bool chg_state_is_disconnected(union gbms_charger_state *chg_state);
+
 /*
  * Charger modes
  *
@@ -541,6 +534,10 @@ enum csi_status {
 	CSI_STATUS_Adapter_Power = 30,	//
 	CSI_STATUS_Adapter_Quality = 31,// Adapter or cable (low voltage)
 	CSI_STATUS_Adapter_Auth = 32,	// Missing authentication (if supported)
+	CSI_STATUS_Defender_Temp = 40,	// TEMP Defend
+	CSI_STATUS_Defender_Dwell = 41,	// DWELL Defend
+	CSI_STATUS_Defender_Trickle = 42,
+	CSI_STATUS_Defender_Dock = 43,	// Dock Defend
 	CSI_STATUS_Normal = 100,	//
 };
 
