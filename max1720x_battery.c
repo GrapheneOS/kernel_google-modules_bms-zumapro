@@ -193,6 +193,7 @@ struct max1720x_chip {
 
 	bool init_complete;
 	bool resume_complete;
+	bool irq_disabled;
 	u16 health_status;
 	int fake_capacity;
 	int previous_qh;
@@ -2425,6 +2426,10 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 
 	pm_runtime_get_sync(chip->dev);
 	if (!chip->init_complete || !chip->resume_complete) {
+		if (chip->init_complete && !chip->irq_disabled) {
+			chip->irq_disabled = true;
+			disable_irq_nosync(chip->primary->irq);
+		}
 		pm_runtime_put_sync(chip->dev);
 		return IRQ_HANDLED;
 	}
@@ -5475,6 +5480,10 @@ static int max1720x_pm_resume(struct device *dev)
 
 	pm_runtime_get_sync(chip->dev);
 	chip->resume_complete = true;
+	if (chip->irq_disabled) {
+		enable_irq(chip->primary->irq);
+		chip->irq_disabled = false;
+	}
 	pm_runtime_put_sync(chip->dev);
 
 	return 0;
