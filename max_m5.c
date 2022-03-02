@@ -690,7 +690,16 @@ int max_m5_save_state_data(struct max_m5_data *m5_data)
 {
 	struct max_m5_custom_parameters *cp = &m5_data->parameters;
 	struct model_state_save rb;
+	u16 learncfg;
 	int ret = 0;
+
+	/* Do not save when in RC1 stage b/213425610 */
+	ret = REGMAP_READ(m5_data->regmap, MAX_M5_LEARNCFG, &learncfg);
+	if (ret < 0)
+		return ret;
+
+	if ((learncfg & MAX_M5_LEARNCFG_RC_VER) == MAX_M5_LEARNCFG_RC1)
+		return -ENOSYS;
 
 	m5_data->model_save.rcomp0 = cp->rcomp0;
 	m5_data->model_save.tempco = cp->tempco;
