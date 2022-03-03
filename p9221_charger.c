@@ -1031,7 +1031,7 @@ static void p9221_init_align(struct p9221_charger_data *charger)
 	charger->current_sample_cnt = 0;
 	charger->mfg_check_count = 0;
 	/* Disable misaligned message in high power mode, b/159066422 */
-	if (charger->prop_mode_en == true) {
+	if (!charger->online || charger->prop_mode_en == true) {
 		charger->align = WLC_ALIGN_CENTERED;
 		return;
 	}
