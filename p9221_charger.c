@@ -2966,6 +2966,47 @@ done:
 	return relax;
 }
 
+static void p9xxx_write_q_factor(struct p9221_charger_data *charger)
+{
+	int ret, q_factor;
+
+	if (charger->pdata->q_value == -1 && charger->de_q_value == 0)
+		return;
+
+	q_factor = (charger->de_q_value > 0) ?
+		   charger->de_q_value : charger->pdata->q_value;
+
+	ret = p9221_reg_write_8(charger,
+				P9221R5_EPP_Q_FACTOR_REG,
+				q_factor);
+	if (ret < 0)
+		dev_err(&charger->client->dev,
+			"cannot write Q=%d (%d)\n",
+			q_factor, ret);
+}
+
+static void p9xxx_update_q_factor(struct p9221_charger_data *charger)
+{
+	int ret, i;
+
+	for (i = 0; i < 5; i += 1) {
+		ret = p9xxx_chip_get_tx_mfg_code(charger, &charger->mfg);
+		if (ret == 0 && charger->mfg != 0)
+			break;
+		usleep_range(100 * USEC_PER_MSEC, 120 * USEC_PER_MSEC);
+	}
+
+	if (charger->mfg == P9221_PTMC_EPP_TX_4191) {
+		ret = p9221_reg_write_8(charger,
+					P9221R5_EPP_Q_FACTOR_REG,
+					charger->pdata->tx_4191q);
+		if (ret == 0)
+			dev_info(&charger->client->dev,
+				 "update Q factor=%d(mfg=%x)\n",
+				 charger->pdata->tx_4191q, charger->mfg);
+	};
+}
+
 static void p9221_notifier_work(struct work_struct *work)
 {
 	struct p9221_charger_data *charger = container_of(work,
@@ -2986,22 +3027,13 @@ static void p9221_notifier_work(struct work_struct *work)
 		goto done_relax;
 	}
 
-	if (charger->pdata->q_value != -1 || charger->de_q_value != 0) {
-		if (charger->de_q_value)
-			charger->pdata->q_value = charger->de_q_value;
-
-		ret = p9221_reg_write_8(charger,
-					P9221R5_EPP_Q_FACTOR_REG,
-					charger->pdata->q_value);
-		if (ret < 0)
-			dev_err(&charger->client->dev,
-				"cannot write Q=%d (%d)\n",
-				 charger->pdata->q_value, ret);
-	}
+	p9xxx_write_q_factor(charger);
+	if (charger->pdata->tx_4191q > 0)
+		p9xxx_update_q_factor(charger);
 
 	if (charger->pdata->epp_rp_value != -1) {
 
-		charger->chip_renegotiate_pwr(charger);
+		ret = charger->chip_renegotiate_pwr(charger);
 		if (ret < 0)
 			dev_err(&charger->client->dev,
 				"cannot renegotiate power=%d (%d)\n",
@@ -5640,6 +5672,14 @@ static int p9221_parse_dt(struct device *dev,
 	} else {
 		pdata->q_value = data;
 		dev_info(dev, "dt q_value:%d\n", pdata->q_value);
+	}
+
+	ret = of_property_read_u32(node, "google,tx4191_q", &data);
+	if (ret < 0) {
+		pdata->tx_4191q = -1;
+	} else {
+		pdata->tx_4191q = data;
+		dev_info(dev, "dt tx4191_q:%d\n", pdata->tx_4191q);
 	}
 
 	ret = of_property_read_u32(node, "google,epp_rp_value", &data);

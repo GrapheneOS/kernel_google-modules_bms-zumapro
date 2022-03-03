@@ -69,6 +69,7 @@
 #define P9221_NEG_POWER_5W		(5 / 0.5)
 #define P9221_NEG_POWER_10W		(10 / 0.5)
 #define P9221_PTMC_EPP_TX_1912		0x32
+#define P9221_PTMC_EPP_TX_4191		0x50
 
 #define P9XXX_DC_ICL_EPP_1000		1000000
 #define P9XXX_DC_ICL_EPP_750		750000
@@ -576,7 +577,8 @@ struct p9221_charger_platform_data {
 	int				fod_num;
 	int				fod_epp_num;
 	int				fod_hpp_num;
-	int 				q_value;
+	int				q_value;
+	int				tx_4191q;
 	int				epp_rp_value;
 	int				needs_dcin_reset;
 	int				nb_alignment_freq;
