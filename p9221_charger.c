@@ -2002,6 +2002,19 @@ exit:
 	return ret;
 }
 
+static void p9221_notify_csi_auth(struct gvotable_election *status_votable, bool auth)
+{
+	if (!status_votable) {
+		status_votable = gvotable_election_get_handle(VOTABLE_CSI_STATUS);
+		if (!status_votable)
+			return;
+	}
+
+	/* Notify when Authentication failed */
+	gvotable_cast_long_vote(status_votable, "CSI_STATUS_ADA_AUTH",
+				CSI_STATUS_Adapter_Auth, !auth);
+}
+
 /* < 0 error, 0 = no changes, > 1 changed */
 static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 {
@@ -2063,6 +2076,7 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 		} else {
 			dev_warn(&charger->client->dev, "Feature check failed\n");
 			p9221_set_auth_dc_icl(charger, false);
+			p9221_notify_csi_auth(charger->csi_status_votable, false);
 			mutex_unlock(&charger->auth_lock);
 			return -EOPNOTSUPP;
 		}
