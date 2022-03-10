@@ -122,6 +122,10 @@ static int adc_gain[16] = { 0,  1,  2,  3,  4,  5,  6,  7,
 #define PCA9468_IRDROP_LIMIT_TIER2	75000	/* uV */
 #define PCA9468_IRDROP_LIMIT_TIER3	0	/* uV */
 
+/* Spread Spectrum default settings */
+#define PCA9468_SC_CLK_DITHER_RATE_DEF	0	/* 25kHz */
+#define PCA9468_SC_CLK_DITHER_LIMIT_DEF	0xF	/* 10% */
+
 /* INT1 Register Buffer */
 enum {
 	REG_INT1,
@@ -3972,6 +3976,18 @@ static int pca9468_hw_init(struct pca9468_charger *pca9468)
 	if (ret < 0)
 		return ret;
 
+	/* Spread Spectrum settings */
+	ret = regmap_update_bits(pca9468->regmap, PCA9468_REG_ADC_CTRL,
+				 PCA9468_BIT_SC_CLK_DITHER_RATE,
+				 pca9468->pdata->sc_clk_dither_rate);
+	if (ret < 0)
+		return ret;
+	ret = regmap_update_bits(pca9468->regmap, PCA9468_REG_NTC_TH_2,
+				 PCA9468_SC_CLK_DITHER_LIMIT,
+				 pca9468->pdata->sc_clk_dither_limit << 4);
+	if (ret < 0)
+		return ret;
+
 	return ret;
 }
 
@@ -4618,6 +4634,22 @@ static int of_pca9468_dt(struct device *dev,
 		pdata->irdrop_limits[1] = PCA9468_IRDROP_LIMIT_TIER2;
 		pdata->irdrop_limits[2] = PCA9468_IRDROP_LIMIT_TIER3;
 	}
+
+	/* Spread Spectrum settings */
+	ret = of_property_read_u32(np_pca9468, "pca9468,sc-clk-dither-rate",
+				   &pdata->sc_clk_dither_rate);
+	if (ret)
+		pdata->sc_clk_dither_rate = PCA9468_SC_CLK_DITHER_RATE_DEF;
+	else
+		pr_info("%s: pca9468,sc-clk-dither-rate is %u\n", __func__,
+			pdata->sc_clk_dither_rate);
+	ret = of_property_read_u32(np_pca9468, "pca9468,sc-clk-dither-limit",
+				   &pdata->sc_clk_dither_limit);
+	if (ret)
+		pdata->sc_clk_dither_limit = PCA9468_SC_CLK_DITHER_LIMIT_DEF;
+	else
+		pr_info("%s: pca9468,sc-clk-dither-limit is %u\n", __func__,
+			pdata->sc_clk_dither_limit);
 
 #ifdef CONFIG_THERMAL
 	/* USBC thermal zone */

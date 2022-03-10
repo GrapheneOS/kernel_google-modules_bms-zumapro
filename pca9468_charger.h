@@ -41,6 +41,10 @@ struct pca9468_platform_data {
 	unsigned int	irdrop_limits[3];
 	int		irdrop_limit_cnt;
 
+	/* Spread Spectrum settings */
+	unsigned int	sc_clk_dither_rate;
+	unsigned int	sc_clk_dither_limit;
+
 #ifdef CONFIG_THERMAL
 	const char *usb_tz_name;
 #endif
