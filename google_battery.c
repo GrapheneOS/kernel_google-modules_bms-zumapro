@@ -2297,7 +2297,7 @@ static void batt_clear_csi_status(struct gvotable_election *status_votable)
 				CSI_STATUS_Defender_Dwell, false);
 	gvotable_cast_long_vote(status_votable, "CSI_STATUS_DEFEND_TRICKLE",
 				CSI_STATUS_Defender_Trickle, false);
-	gvotable_cast_long_vote(status_votable, "CSI_STATUS_DEFEND_Dock",
+	gvotable_cast_long_vote(status_votable, "CSI_STATUS_DEFEND_DOCK",
 				CSI_STATUS_Defender_Dock, false);
 	gvotable_cast_long_vote(status_votable, "CSI_STATUS_NORMAL",
 				CSI_STATUS_Normal, false);

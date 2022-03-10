@@ -1926,6 +1926,7 @@ static void chg_update_csi_status(struct chg_drv *chg_drv)
 	const int upperbd = chg_drv->charge_stop_level;
 	const int lowerbd = chg_drv->charge_start_level;
 	union gbms_charger_state *chg_state = &chg_drv->chg_state;
+	struct bd_data *bd_state = &chg_drv->bd_state;
 	char reason[GVOTABLE_MAX_REASON_LEN] = { 0 };
 	bool is_discharging, is_thermal = false;
 	int ret;
@@ -1952,7 +1953,6 @@ static void chg_update_csi_status(struct chg_drv *chg_drv)
 	/* TODO: Charging Status System_Load */
 	/* TODO: Charging Status Adapter_Power */
 	/* TODO: Charging Status Adapter_Quality */
-	/* TODO: Charging Status Adapter_Auth */
 	/* Charging Status Defender_Temp */
 	gvotable_cast_long_vote(chg_drv->csi_status_votable, "CSI_STATUS_DEFEND_TEMP",
 				CSI_STATUS_Defender_Temp, chg_drv->bd_state.triggered);
@@ -1960,7 +1960,9 @@ static void chg_update_csi_status(struct chg_drv *chg_drv)
 	gvotable_cast_long_vote(chg_drv->csi_status_votable, "CSI_STATUS_DEFEND_DWELL",
 				CSI_STATUS_Defender_Dwell,
 				chg_is_custom_enabled(upperbd, lowerbd));
-	/* TODO: Charging Status Defender_Dock */
+	/* Charging Status Defender_Dock */
+	gvotable_cast_long_vote(chg_drv->csi_status_votable, "CSI_STATUS_DEFEND_DOCK",
+				CSI_STATUS_Defender_Dock, bd_state->dd_triggered);
 	/* Charging Status Normal */
 }
 
