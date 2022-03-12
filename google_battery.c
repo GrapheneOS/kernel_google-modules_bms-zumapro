@@ -79,6 +79,12 @@
 #define HCC_DEFAULT_DELTA_CYCLE_CNT	10
 #define HCC_DELAY_INIT_MS	30000
 
+#define BHI_ALGO_MAX1720X		1
+#define BHI_CAP_FCN_COUNT		3
+#define BHI_HEALTH_INDEX_DEFAULT	100
+#define BHI_MARGINAL_THRESHOLD_DEFAULT	80
+#define BHI_NEED_REP_THRESHOLD_DEFAULT	70
+
 enum batt_health_ui {
 	/* Internal value used when health is cleared via dialog */
 	CHG_DEADLINE_DIALOG = -3,
@@ -280,6 +286,9 @@ struct battery_health
 	int algo_ver;
 	int index;
 	int perf_index;
+	int fcn_count;
+	int marginal_threshold;
+	int need_rep_threshold;
 	enum bhi_status status;
 };
 
@@ -3235,6 +3244,71 @@ static int batt_bhi_perf_index_update(struct batt_drv *batt_drv)
 	return 0;
 }
 
+static int batt_bhi_max1720x_cap_percent(struct batt_drv *batt_drv)
+{
+	struct max17x0x_eeprom_history hist = { 0 };
+	const int cycle_cnt = batt_drv->hist_data_saved_cnt;
+	const int delta = batt_drv->hist_delta_cycle_cnt;
+	const int hist_idx = cycle_cnt / delta;
+	const int fcn_count = batt_drv->health.fcn_count;
+	int idx, i, fcn_sum = 0;
+
+	/* wait for batt_history_data_work */
+	if (cycle_cnt <= 0)
+		return -EAGAIN;
+
+	/* set to the first entry of the last "fcn_count" history data */
+	idx = hist_idx - fcn_count + 1;
+	if (idx < 0)
+		return -ENODATA;
+
+	for (i = 0; i < fcn_count; i++, idx++) {
+		const int cnt = gbms_storage_read_data(GBMS_TAG_HIST, &hist, sizeof(hist), idx);
+
+		if (cnt <= 0 || hist.fullcapnom == 0x3FF)
+			return -EINVAL;
+
+		fcn_sum += hist.fullcapnom;
+	}
+
+	/* convert hist.fullcapnom from max17x0x_eeprom_history format to cap_percent */
+	return min(fcn_sum / (fcn_count * 8), BHI_HEALTH_INDEX_DEFAULT);
+}
+
+static int batt_bhi_index_update(struct batt_drv *batt_drv)
+{
+	switch (batt_drv->health.algo_ver) {
+	case BHI_ALGO_MAX1720X:
+		batt_drv->health.index = batt_bhi_max1720x_cap_percent(batt_drv);
+		break;
+	default:
+		return -ENODEV;
+	}
+
+	return (batt_drv->health.index < 0) ? -EINVAL : 0;
+}
+
+static int batt_bhi_status_update(struct batt_drv *batt_drv)
+{
+	int ret;
+
+	ret = batt_bhi_index_update(batt_drv);
+	if (ret < 0) {
+		batt_drv->health.status = BH_UNKNOWN;
+		return ret;
+	}
+
+	//TODO: for the swell probability
+	if (batt_drv->health.index > batt_drv->health.marginal_threshold)
+		batt_drv->health.status = BH_NOMINAL;
+	else if (batt_drv->health.index > batt_drv->health.need_rep_threshold)
+		batt_drv->health.status = BH_MARGINAL;
+	else
+		batt_drv->health.status = BH_NEEDS_REPLACEMENT;
+
+	return 0;
+}
+
 /* TODO: factor msc_logic_irdop from the logic about tier switch */
 static int msc_logic(struct batt_drv *batt_drv)
 {
@@ -5743,6 +5817,7 @@ static ssize_t health_index_show(struct device *dev,
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
 
+	(void)batt_bhi_index_update(batt_drv);
 	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health.index);
 }
 
@@ -5754,6 +5829,7 @@ static ssize_t health_status_show(struct device *dev,
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
 
+	(void)batt_bhi_status_update(batt_drv);
 	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health.status);
 }
 
@@ -6233,6 +6309,9 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 
 	/* pwoer metrics */
 	debugfs_create_file("power_metrics", 0400, de, batt_drv, &debug_power_metrics_fops);
+
+	/* bhi fullcapnom count */
+	debugfs_create_u32("fcn_count", 0644, de, &batt_drv->health.fcn_count);
 
 	return 0;
 }
@@ -7434,6 +7513,33 @@ static int batt_init_sd(struct swelling_data *sd)
 	return ret;
 }
 
+/* bhi_init */
+static void batt_bhi_init(struct batt_drv *batt_drv)
+{
+	struct battery_health *health = &batt_drv->health;
+	int ret;
+
+	ret = of_property_read_u32(batt_drv->device->of_node, "google,bhi-algo-ver",
+				   &health->algo_ver);
+	if (ret < 0)
+		health->algo_ver = BHI_ALGO_MAX1720X;
+
+	ret = of_property_read_u32(batt_drv->device->of_node, "google,bhi-fcn-count",
+				   &health->fcn_count);
+	if (ret < 0)
+		health->fcn_count = BHI_CAP_FCN_COUNT;
+
+	ret = of_property_read_u32(batt_drv->device->of_node, "google,bhi-status-marginal",
+				   &health->marginal_threshold);
+	if (ret < 0)
+		health->marginal_threshold = BHI_MARGINAL_THRESHOLD_DEFAULT;
+
+	ret = of_property_read_u32(batt_drv->device->of_node, "google,bhi-status-need-rep",
+				   &health->need_rep_threshold);
+	if (ret < 0)
+		health->need_rep_threshold = BHI_NEED_REP_THRESHOLD_DEFAULT;
+}
+
 static void google_battery_init_work(struct work_struct *work)
 {
 	struct batt_drv *batt_drv = container_of(work, struct batt_drv,
@@ -7707,6 +7813,9 @@ static void google_battery_init_work(struct work_struct *work)
 
 	/* bpst */
 	(void)batt_bpst_init_fs(batt_drv);
+
+	/* bhi init */
+	batt_bhi_init(batt_drv);
 
 	/* power metrics */
 	schedule_delayed_work(&batt_drv->power_metrics.work,

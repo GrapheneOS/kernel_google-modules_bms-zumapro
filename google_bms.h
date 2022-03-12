@@ -224,6 +224,24 @@ struct batt_ttf_stats {
 	struct logbuffer *ttf_log;
 };
 
+#pragma pack(1)
+struct max17x0x_eeprom_history {
+	u16 tempco;
+	u16 rcomp0;
+	u8 timerh;
+	unsigned fullcapnom:10;
+	unsigned fullcaprep:10;
+	unsigned mixsoc:6;
+	unsigned vfsoc:6;
+	unsigned maxvolt:4;
+	unsigned minvolt:4;
+	unsigned maxtemp:4;
+	unsigned mintemp:4;
+	unsigned maxchgcurr:4;
+	unsigned maxdischgcurr:4;
+};
+#pragma pack()
+
 /*
  * health based charging can be enabled from userspace with a deadline
  *
