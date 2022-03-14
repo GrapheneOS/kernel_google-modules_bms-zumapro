@@ -2600,6 +2600,9 @@ static void p9221_auth_dc_icl_work(struct work_struct *work)
 
 	mutex_lock(&charger->auth_lock);
 
+	if (elap >= WLCDC_DEBOUNCE_TIME_S)
+		p9221_set_auth_dc_icl(charger, false);
+
 	/* done already */
 	if (!charger->auth_delay || !p9221_is_online(charger))
 		goto exit_done;
