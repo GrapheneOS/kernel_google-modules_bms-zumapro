@@ -1907,6 +1907,8 @@ int chg_switch_profile(struct pd_pps_data *pps, struct power_supply *tcpm_psy,
 
 static void chg_update_csi_status(struct chg_drv *chg_drv)
 {
+	const int upperbd = chg_drv->charge_stop_level;
+	const int lowerbd = chg_drv->charge_start_level;
 	union gbms_charger_state *chg_state = &chg_drv->chg_state;
 	char reason[GVOTABLE_MAX_REASON_LEN] = { 0 };
 	bool is_discharging, is_thermal = false;
@@ -1940,7 +1942,8 @@ static void chg_update_csi_status(struct chg_drv *chg_drv)
 				CSI_STATUS_Defender_Temp, chg_drv->bd_state.triggered);
 	/* Charging Status Defender_Dwell */
 	gvotable_cast_long_vote(chg_drv->csi_status_votable, "CSI_STATUS_DEFEND_DWELL",
-				CSI_STATUS_Defender_Dwell, chg_is_custom_enabled(chg_drv));
+				CSI_STATUS_Defender_Dwell,
+				chg_is_custom_enabled(upperbd, lowerbd));
 	/* TODO: Charging Status Defender_Dock */
 	/* Charging Status Normal */
 }
