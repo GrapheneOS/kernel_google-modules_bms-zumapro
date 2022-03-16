@@ -62,6 +62,7 @@
 typedef uint32_t gbms_tag_t;
 
 enum gbms_tags {
+	GBMS_TAG_ACIM = 0x4143494d, /* Activation Impedance */
 	GBMS_TAG_BCNT = 0x42434e54,
 	GBMS_TAG_BGCE = 0x42474345,
 	GBMS_TAG_BGPN = 0x4247504e,
