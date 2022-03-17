@@ -699,6 +699,12 @@ static int max77759_get_usecase(struct max77759_foreach_cb_data *cb_data,
 			/* TODO: GSU_MODE_USB_DC_WLC_TX */
 			wlc_tx = 0;
 		}
+
+		if (uc_data->ext_otg_only && cb_data->otg_on) {
+			pr_warn("%s: no wlc_tx with otg_on for now\n", __func__);
+			wlc_tx = 0;
+			cb_data->wlc_tx = 0;
+		}
 	}
 
 	/* TODO: GSU_MODE_USB_OTG_WLC_DC */
