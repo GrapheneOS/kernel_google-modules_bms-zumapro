@@ -80,6 +80,7 @@ enum gbms_property {
 	GBMS_PROP_DEAD_BATTERY,		/* GBMS boot */
 	GBMS_PROP_INPUT_CURRENT_LIMITED, /* can be device prop */
 	GBMS_PROP_TAPER_CONTROL,	/* GBMS DC, needs for last tier */
+	GBMS_PROP_HEALTH_ACT_IMPEDANCE,	/* GBMS activation impedance, only if qualified */
 };
 
 union gbms_propval {

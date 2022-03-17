@@ -3041,6 +3041,27 @@ exit_done:
 	return (u32)capacity;
 }
 
+static int batt_bhi_perf_index_update(struct batt_drv *batt_drv)
+{
+	int act_impedance, resistance, ret;
+	u32 data;
+
+	/* will return error when/if the value is not qualified. */
+	ret = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_HEALTH_ACT_IMPEDANCE);
+	if (ret < 0)
+		return ret;
+	act_impedance = ret;
+
+	ret = gbms_storage_read(GBMS_TAG_BRES, &data, sizeof(data));
+	if (ret < 0)
+		return ret;
+	resistance = data;
+
+	batt_drv->health.perf_index = (resistance * 100) / act_impedance;
+
+	return 0;
+}
+
 /* TODO: factor msc_logic_irdop from the logic about tier switch */
 static int msc_logic(struct batt_drv *batt_drv)
 {
@@ -3381,6 +3402,10 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 	__pm_stay_awake(batt_drv->msc_ws);
 
 	batt_prlog_din(chg_state, BATT_PRLOG_ALWAYS);
+
+	err = batt_bhi_perf_index_update(batt_drv);
+	if (!err)
+		pr_info("BHI: update perf_index\n");
 
 	/* disconnect! */
 	if (chg_state_is_disconnected(chg_state)) {
