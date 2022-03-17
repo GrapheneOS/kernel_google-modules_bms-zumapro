@@ -4039,6 +4039,7 @@ static ssize_t rtx_status_show(struct device *dev,
 	struct p9221_charger_data *charger = i2c_get_clientdata(client);
 	static const char * const rtx_state_text[] = {
 		"not support", "available", "active", "disabled" };
+	int ext_bst_on = 0;
 
 	if (!charger->pdata->has_rtx)
 		charger->rtx_state = RTX_NOTSUPPORTED;
@@ -4049,7 +4050,12 @@ static ssize_t rtx_status_show(struct device *dev,
 		else
 			charger->rtx_state = RTX_DISABLED;
 	} else {
-		charger->rtx_state = RTX_AVAILABLE;
+		if (charger->pdata->ben_gpio > 0)
+			ext_bst_on = gpio_get_value_cansleep(charger->pdata->ben_gpio);
+		if (ext_bst_on)
+			charger->rtx_state = RTX_DISABLED;
+		else
+			charger->rtx_state = RTX_AVAILABLE;
 	}
 
 	return scnprintf(buf, PAGE_SIZE, "%s\n",
@@ -4927,11 +4933,17 @@ static void p9382_txid_work(struct work_struct *work)
 
 static void p9xxx_reset_rtx_for_ocp(struct p9221_charger_data *charger)
 {
+	int ext_bst_on = 0;
+
+	if (charger->pdata->ben_gpio > 0)
+		ext_bst_on = gpio_get_value_cansleep(charger->pdata->ben_gpio);
+
 	charger->rtx_reset_cnt += 1;
 
-	if (charger->rtx_reset_cnt == RTX_RESET_COUNT_MAX) {
-		  charger->rtx_err = RTX_HARD_OCP;
-		  charger->rtx_reset_cnt = 0;
+	if ((charger->rtx_reset_cnt >= RTX_RESET_COUNT_MAX) || ext_bst_on) {
+		if (charger->rtx_reset_cnt == RTX_RESET_COUNT_MAX)
+			charger->rtx_err = RTX_HARD_OCP;
+		charger->rtx_reset_cnt = 0;
 	}
 
 	charger->is_rtx_mode = false;
