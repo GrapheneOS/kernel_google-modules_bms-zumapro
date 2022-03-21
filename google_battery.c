@@ -435,6 +435,7 @@ struct batt_drv {
 	struct gvotable_election *csi_status_votable;
 	struct gvotable_election *csi_type_votable;
 	int charging_speed;
+	int nominal_demand;
 
 	/* battery power metrics */
 	struct power_metrics power_metrics;
@@ -2338,6 +2339,67 @@ static void batt_set_csi_status(struct batt_drv *batt_drv)
 				CSI_STATUS_Defender_Trickle, is_trickle);
 }
 
+#define CSI_CHG_SPEED_MAX 100
+#define CSI_CHG_SPEED_MIN 0
+static int batt_calc_charging_speed(struct batt_drv *batt_drv)
+{
+	const bool is_disconnected = chg_state_is_disconnected(&batt_drv->chg_state);
+	const struct gbms_chg_profile *profile = &batt_drv->chg_profile;
+	const int cc_max = GBMS_CCCM_LIMITS(profile, batt_drv->temp_idx, batt_drv->vbatt_idx);
+	const int soc = ssoc_get_capacity(&batt_drv->ssoc_state);
+	int vbatt_idx, ibatt, chg_speed;
+
+	if (is_disconnected)
+		return -1;
+
+	/* Get average current via tiers. */
+	vbatt_idx = ttf_pwr_vtier_idx(&batt_drv->ttf_stats, soc);
+	ibatt = ttf_pwr_ibatt(&batt_drv->ce_data.tier_stats[vbatt_idx]);
+
+	/* Wait 1 min to get avg_ibat */
+	if (ibatt == 0)
+		return -1;
+
+	/* Get nominal demand current via ttf table */
+	batt_drv->nominal_demand = ttf_ref_cc(&batt_drv->ttf_stats, soc);
+
+	/* No ttf nominal demand data */
+	if (batt_drv->nominal_demand <= 0)
+		return -1;
+
+	/* slowing down due to batt_drv->temp_idx != from reference */
+	if (cc_max && cc_max < batt_drv->nominal_demand)
+		batt_drv->nominal_demand = cc_max;
+
+	chg_speed = ibatt * 100 / batt_drv->nominal_demand;
+
+	/* bound in [0,100] */
+	if (chg_speed > CSI_CHG_SPEED_MAX)
+		chg_speed = CSI_CHG_SPEED_MAX;
+	else if (chg_speed < CSI_CHG_SPEED_MIN)
+		chg_speed = CSI_CHG_SPEED_MIN;
+
+	return chg_speed;
+}
+
+static void batt_update_csi_info(struct batt_drv *batt_drv)
+{
+	int charging_speed = batt_calc_charging_speed(batt_drv);
+
+	if (batt_drv->charging_speed != charging_speed) {
+		gbms_logbuffer_prlog(batt_drv->ttf_stats.ttf_log, LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG,
+				     "google_battery: charging_speed=%d nominal_demand=%d",
+				     charging_speed, batt_drv->nominal_demand);
+		batt_drv->charging_speed = charging_speed;
+	}
+
+	/* Update CSI Type */
+	batt_set_csi_type(batt_drv);
+
+	/* Update CSI Status */
+	batt_set_csi_status(batt_drv);
+}
+
 /* ------------------------------------------------------------------------- */
 
 /* NOTE: should not reset always_on_soc */
@@ -3631,11 +3693,7 @@ msc_logic_done:
 				       !disable_votes &&
 				       (batt_drv->msc_update_interval != -1));
 
-	/* Update CSI Type */
-	batt_set_csi_type(batt_drv);
-
-	/* Update CSI Status */
-	batt_set_csi_status(batt_drv);
+	batt_update_csi_info(batt_drv);
 
 msc_logic_exit:
 

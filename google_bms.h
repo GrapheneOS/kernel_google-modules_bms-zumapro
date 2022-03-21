@@ -484,6 +484,12 @@ ssize_t ttf_dump_details(char *buf, int max_size,
 			 const struct batt_ttf_stats *ttf_stats,
 			 int last_soc);
 
+int ttf_pwr_vtier_idx(const struct batt_ttf_stats *stats, int soc);
+
+int ttf_ref_cc(const struct batt_ttf_stats *stats, int soc);
+
+int ttf_pwr_ibatt(const struct gbms_ce_tier_stats *ts);
+
 int gbms_read_aacr_limits(struct gbms_chg_profile *profile,
 			  struct device_node *node);
 

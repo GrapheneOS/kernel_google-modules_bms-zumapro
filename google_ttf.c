@@ -54,7 +54,7 @@ static int ttf_pwr_icl(const struct gbms_ce_tier_stats *ts,
 }
 
 /* NOTE: the current in taper might need to be accounted in a different way */
-static int ttf_pwr_ibatt(const struct gbms_ce_tier_stats *ts)
+int ttf_pwr_ibatt(const struct gbms_ce_tier_stats *ts)
 {
 	int avg_ibatt, elap, sign = 1;
 
@@ -80,7 +80,7 @@ static int ttf_pwr_ibatt(const struct gbms_ce_tier_stats *ts)
 }
 
 /* nominal voltage tier index for this soc */
-static int ttf_pwr_vtier_idx(const struct batt_ttf_stats *stats, int soc)
+int ttf_pwr_vtier_idx(const struct batt_ttf_stats *stats, int soc)
 {
 	int i;
 
@@ -95,10 +95,14 @@ static int ttf_pwr_vtier_idx(const struct batt_ttf_stats *stats, int soc)
  * reference or current average current demand for a soc at max rate.
  * NOTE: always <= cc_max for reference temperature
  */
-static int ttf_ref_cc(const struct batt_ttf_stats *stats, int soc)
+int ttf_ref_cc(const struct batt_ttf_stats *stats, int soc)
 {
 	const struct ttf_soc_stats *sstat = NULL;
 	int delta_cc;
+
+	/* out of range */
+	if (soc + 1 >= GBMS_SOC_STATS_LEN)
+		return 0;
 
 	/* soc average current demand */
 	if (stats->soc_stats.cc[soc + 1] && stats->soc_stats.cc[soc] &&
