@@ -1719,7 +1719,8 @@ static int gcpm_psy_set_property(struct power_supply *psy,
 		}
 
 		 /* TODO: do not route CURRENT_MAX when changing selection */
-		if (ret < 0 || dc_index != gcpm->dc_index)
+		if ((dc_index != GCPM_DEFAULT_CHARGER && gcpm->dc_index == GCPM_DEFAULT_CHARGER) ||
+		    ret < 0)
 			route = false;
 	}
 
