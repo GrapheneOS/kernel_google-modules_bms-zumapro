@@ -12,7 +12,6 @@ struct max77759_usecase_data {
 
 	int bst_on;		/* ext boost */
 	int bst_sel;		/* 5V or 7.5V */
-	int apbst_on;		/* AP boost ping */
 	int ext_bst_ctl;	/* MW VENDOR_EXTBST_CTRL */
 	int otg_enable;		/* enter/exit from OTG cases */
 	bool rx_otg_en;		/* enable WLC_RX -> WLC_RX + OTG case */
@@ -45,6 +44,7 @@ struct max77759_usecase_data {
 	int use_case;
 
 	bool dcin_is_dock;
+	bool bst_lsw_en;
 };
 
 enum gsu_usecases {

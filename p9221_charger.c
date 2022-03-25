@@ -5532,10 +5532,6 @@ static int p9221_parse_dt(struct device *dev,
 	else
 		dev_info(dev, "enable gpio:%d", pdata->qien_gpio);
 
-	/* support p9412 GPIO */
-	pdata->has_p9412_gpio = of_property_read_bool(node,
-                                                      "idt,has_p9412_gpio");
-
 	/*
 	 * QI_USB_VBUS_EN: control the priority of USB and WLC,
 	 *                 set to high after boot
@@ -5609,6 +5605,11 @@ static int p9221_parse_dt(struct device *dev,
 	pdata->boost_gpio = ret;
 	if (ret >= 0)
 		dev_info(dev, "boost gpio:%d\n", pdata->boost_gpio);
+
+	/* configure boost to 7V through wlc chip */
+	ret = of_property_read_bool(node, "idt,apbst_en");
+	if (ret)
+		pdata->apbst_en = true;
 
 	ret = of_get_named_gpio(node, "idt,gpio_extben", 0);
 	if (ret == -EPROBE_DEFER)
