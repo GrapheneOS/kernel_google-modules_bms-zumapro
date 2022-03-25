@@ -5866,16 +5866,16 @@ static bool gbatt_check_dead_battery(const struct batt_drv *batt_drv)
 static int gbatt_get_capacity_level(struct batt_ssoc_state *ssoc_state,
 				    int fg_status)
 {
-	const int ssoc = ssoc_get_capacity(ssoc_state);
+	const int soc = ssoc_get_real(ssoc_state);
 	int capacity_level;
 
-	if (ssoc >= SSOC_LEVEL_FULL) {
+	if (soc >= SSOC_LEVEL_FULL) {
 		capacity_level = POWER_SUPPLY_CAPACITY_LEVEL_FULL;
-	} else if (ssoc > SSOC_LEVEL_HIGH) {
+	} else if (soc > SSOC_LEVEL_HIGH) {
 		capacity_level = POWER_SUPPLY_CAPACITY_LEVEL_HIGH;
-	} else if (ssoc > SSOC_LEVEL_NORMAL) {
+	} else if (soc > SSOC_LEVEL_NORMAL) {
 		capacity_level = POWER_SUPPLY_CAPACITY_LEVEL_NORMAL;
-	} else if (ssoc > SSOC_LEVEL_LOW) {
+	} else if (soc > SSOC_LEVEL_LOW) {
 		capacity_level = POWER_SUPPLY_CAPACITY_LEVEL_LOW;
 	} else if (ssoc_state->buck_enabled == 0) {
 		capacity_level = POWER_SUPPLY_CAPACITY_LEVEL_CRITICAL;
