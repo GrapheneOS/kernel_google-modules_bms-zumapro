@@ -266,10 +266,9 @@ int gs101_wlc_en(struct max77759_usecase_data *uc_data, bool wlc_on)
 		 * could use uc_data->wlc_en with:
 		 *   gpio_set_value_cansleep(uc_data->wlc_en, !!wlc_on);
 		 *
-		 * BUT need to resolve tjhe race on start since toggling
+		 * BUT need to resolve the race on start since toggling
 		 * ->wlc_en might not be undone by using ->cpout_en
 		 */
-		pr_debug("%s: no toggle for WLC on\n", __func__);
 	}
 
 	/* b/202526678 */
