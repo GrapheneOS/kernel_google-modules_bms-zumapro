@@ -249,10 +249,9 @@ struct gcpm_drv  {
 #define gcpm_psy_name(psy) \
 	((psy) && (psy)->desc && (psy)->desc->name ? (psy)->desc->name : "???")
 
-/* TODO: handle capabilities based on index number */
+/* TODO: rename to "can_dc" and handle capabilities based on index number */
 #define gcpm_is_dc(gcpm, index) \
 	((index) >= GCPM_INDEX_DC_ENABLE)
-
 
 /* Logging ----------------------------------------------------------------- */
 
@@ -348,12 +347,17 @@ static struct power_supply *gcpm_chg_get_active(const struct gcpm_drv *gcpm)
 	return gcpm_chg_get_charger(gcpm, gcpm->chg_psy_active);
 }
 
+static bool gcpm_chg_is_cp_active(const struct gcpm_drv *gcpm)
+{
+	return gcpm_is_dc(gcpm, gcpm->chg_psy_active);
+}
+
 /* !=NULL if the adapter is not CP */
 static struct power_supply *gcpm_chg_get_active_cp(const struct gcpm_drv *gcpm)
 {
 	struct power_supply *psy = NULL;
 
-	if (gcpm_is_dc(gcpm, gcpm->chg_psy_active))
+	if (gcpm_chg_is_cp_active(gcpm))
 		psy = gcpm_chg_get_charger(gcpm, gcpm->chg_psy_active);
 
 	return psy;
@@ -1012,14 +1016,16 @@ static int gcpm_pps_wait_for_ready(struct gcpm_drv *gcpm)
 	return pwr_ok ? pps_ui : -EAGAIN;
 }
 
-/* return 0< */
-static int gcpm_pps_check_source(struct pd_pps_data *pps_data)
+/* return true when  pd_online=PROG_ONLINE and stage=ACTIVE */
+static int gcpm_pps_check_active(struct pd_pps_data *pps_data)
 {
 	int pps_ui;
 
+	/* not supported for this stage */
 	if (pps_data->stage == PPS_NOTSUPP)
 		return 0;
 
+	/* <0 for error, 0 for done, or the next polling interval */
 	pps_ui = pps_work(pps_data, pps_data->pps_psy);
 	if (pps_data->pd_online < PPS_PSY_PROG_ONLINE)
 		pr_debug("PPS_Work: TCPM Wait %s pps_ui=%d online=%d, stage=%d\n",
@@ -1039,17 +1045,19 @@ static int gcpm_pps_check_source(struct pd_pps_data *pps_data)
  *		 -> NOTSUPP
  *
  * return -EAGAIN if none of the sources is online, -ENODEV none of the sources
- * supports pps, 0 to continue polling.
+ * supports PPS, 0 if one of the sources is ONLINE an
  */
-
-
 static int gcpm_pps_work(struct gcpm_drv *gcpm)
 {
 	int rc, ret = 0, online = 0, pps_index = 0;
 
-	rc =  gcpm_pps_check_source(&gcpm->tcpm_pps_data);
+	/*
+	 * rc>0 when source has .pd_online==PROG_ONLINE and .stage==ACTIVE
+	 * ,stage is active when the source has provided the source caps.
+	 */
+	rc =  gcpm_pps_check_active(&gcpm->tcpm_pps_data);
 	if (rc <= 0) {
-		rc =  gcpm_pps_check_source(&gcpm->wlc_pps_data);
+		rc =  gcpm_pps_check_active(&gcpm->wlc_pps_data);
 		if (rc > 0)
 			pps_index = PPS_INDEX_WLC;
 		else
@@ -1060,11 +1068,11 @@ static int gcpm_pps_work(struct gcpm_drv *gcpm)
 		pps_index = PPS_INDEX_TCPM;
 	}
 
-	/* index==0 means keep detecting */
 	if (gcpm->pps_index != pps_index)
 		logbuffer_log(gcpm->log, "PPS_Work: pps_index %d->%d\n",
 			      gcpm->pps_index, pps_index);
 
+	/* handles PPS source offline or NOT active anymore */
 	if (pps_index == 0 && gcpm->pps_index)
 		ret = -ENODEV;
 	else if (pps_index == 0 && !online)
@@ -1228,6 +1236,7 @@ static int gcpm_chg_select_logic(struct gcpm_drv *gcpm)
 
 	/* will not try to enable if the source cannot do PPS */
 	dc_ena = gcpm_chg_dc_check_source(gcpm, index);
+	/* will not enable if there is a hold */
 	if (dc_ena && gcpm->dc_fcc_hold) {
 		pr_debug("%s: CPM_THERM_DC_FCC hold from limit\n", __func__);
 		dc_ena = false;
@@ -1557,23 +1566,22 @@ static void gcpm_pps_wlc_dc_work(struct work_struct *work)
 	/*
 	 * Wait until one of the sources becomes online AND switch to prog
 	 * mode. gcpm_pps_work will return <0 when PPS is not supported from
-	 * ANY source and when there is no online source.
-	 * Deadline to  PPS_PROG_TIMEOUT_S.
+	 * ANY source. Deadline to PPS_PROG_TIMEOUT_S.
 	 */
 	ret = gcpm_pps_work(gcpm);
 	if (ret < 0) {
 		if (elap < PPS_PROG_TIMEOUT_S) {
-			pr_debug("PPS_Work: elap=%lld retry\n", elap);
+			pr_debug("PPS_Work: PROG elap=%lld ret=%d retry\n", elap, ret);
 
 			/* retry for the session  */
 			pps_ui = PPS_PROG_RETRY_MS;
 			gcpm_pps_online(gcpm);
 		} else {
-			/* TODO: abort for the session  */
 			pr_err("PPS_Work: PROG timeout, elap=%lld dc_state=%d (%d)\n",
 			       elap, gcpm->dc_state, ret);
 
-			gcpm->dc_index = GCPM_DEFAULT_CHARGER;
+			/* abort for the session  */
+			gcpm->dc_index = GCPM_INDEX_DC_DISABLE;
 			pps_ui = PPS_ERROR_RETRY_MS;
 		}
 
@@ -1581,26 +1589,26 @@ static void gcpm_pps_wlc_dc_work(struct work_struct *work)
 	}
 
 	/*
-	 * DC runs only when PPS is active: abort for the session if a source
-	 * went PROG_ONLINE but !active within PPS_ACTIVE_TIMEOUT_S.
+	 * DC runs only when PPS is active (ie. online=PROG_ONLINE and
+	 * ->stage=PPS_ACTIVE). Abort for the session if a source
+	 * went PROG_ONLINE but is not active.
 	 */
 	pps_data = gcpm_pps_data(gcpm);
 	if (!pps_data) {
 		int timeout_s = gcpm_pps_timeout(gcpm);
 
 		if (elap < timeout_s) {
-			/*
-			 * WLC + Auth might require a very long time to become
-			 * active.
-			 */
+			pr_debug("PPS_Work: ACTIVE elap=%lld ret=%d retry\n", elap, ret);
+
+			/* WLC + Auth might require a very long time */
 			pps_ui = PPS_ACTIVE_RETRY_MS;
 		} else {
 			pr_err("PPS_Work: ACTIVE timeout=%d, elap=%lld dc_state=%d (%d)\n",
 			       timeout_s, elap, gcpm->dc_state, ret);
 
-			/* TODO: abort for the session  */
+			/* abort for the session (until disconnect) */
+			gcpm->dc_index = GCPM_INDEX_DC_DISABLE;
 			pps_ui = PPS_ERROR_RETRY_MS;
-			gcpm->dc_index = 0;
 		}
 
 		goto pps_dc_reschedule;
@@ -1772,7 +1780,7 @@ static int gcpm_psy_set_property(struct power_supply *psy,
 		route = false;
 	} break;
 
-	/* also route to the active charger */
+	/* route to the active charger in most cases */
 	case GBMS_PROP_CHARGE_DISABLE:
 
 		/* google_charger send this on disconnect and input_suspend. */
@@ -1861,10 +1869,11 @@ static int gcpm_psy_set_property(struct power_supply *psy,
 	/*
 	 * from google_charger (usually) with demand adjusted by classic
 	 * thermal engine and/or special charging profiles.
-	 * NOTE: Used by the select logic to deterrmine the best strategy.
+	 * NOTE: Used by the select logic to determine the best charging
+	 * strategy.
 	 */
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
-		route = gcpm->dc_index == GCPM_DEFAULT_CHARGER;
+		route = !gcpm_chg_is_cp_active(gcpm);
 		ta_check = gcpm->cc_max != pval->intval;
 		pr_debug("%s: route=%d ta_check=%d cc_max=%d, intval=%d dc_index=%d\n",
 			 __func__, route, ta_check, gcpm->cc_max, pval->intval,
@@ -1890,11 +1899,12 @@ static int gcpm_psy_set_property(struct power_supply *psy,
 	 * or that causes charging to switch back the main charger.
 	 */
 	if (gcpm->dc_init_complete && ta_check) {
-		const int dc_index = gcpm->dc_index;
+		const bool was_dc = gcpm_is_dc(gcpm, gcpm->dc_index);
 
 		/*
 		 * Synchronous! might kick off gcpm_pps_wlc_dc_work to
 		 * negotiate DC charging.
+		 * NOTE: gcpm_chg_select_logic() might change gcpm->dc_index
 		 */
 		ret = gcpm_chg_select_logic(gcpm);
 		if (ret == -EAGAIN) {
@@ -1906,12 +1916,12 @@ static int gcpm_psy_set_property(struct power_supply *psy,
 		}
 
 		 /*
-		  * Do not route CURRENT_MAX while switching from DC to non
-		  * DC because the DC charger might get the wrong limit.
+		  * Do not route while switching from DC to non DC because
+		  * the DC charger might get the wrong limits.
 		  * NOTE: gcpm_pps_wlc_dc_work() will configure the charger
 		  * correctly on start (or on stop/timeout)
 		  */
-		if (dc_index != GCPM_DEFAULT_CHARGER && gcpm->dc_index == GCPM_DEFAULT_CHARGER)
+		if (was_dc && !gcpm_is_dc(gcpm, gcpm->dc_index))
 			route = false;
 	}
 
