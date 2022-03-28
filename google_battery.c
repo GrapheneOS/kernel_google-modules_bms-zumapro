@@ -3388,7 +3388,7 @@ static void google_battery_dump_profile(const struct gbms_chg_profile *profile)
 /* called holding chg_lock */
 static int batt_chg_logic(struct batt_drv *batt_drv)
 {
-	int err = 0;
+	int rc, err = 0;
 	bool jeita_stop;
 	bool changed = false;
 	const bool disable_votes = batt_drv->disable_votes;
@@ -3403,9 +3403,8 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 
 	batt_prlog_din(chg_state, BATT_PRLOG_ALWAYS);
 
-	err = batt_bhi_perf_index_update(batt_drv);
-	if (!err)
-		pr_info("BHI: update perf_index\n");
+	rc = batt_bhi_perf_index_update(batt_drv);
+	pr_debug("BHI: perf_index=%d rc=%d\n", batt_drv->health.perf_index, rc);
 
 	/* disconnect! */
 	if (chg_state_is_disconnected(chg_state)) {
