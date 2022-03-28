@@ -487,6 +487,7 @@ int gs101_to_standby(struct max77759_usecase_data *uc_data, int use_case)
 	case GSU_MODE_USB_OTG_WLC_RX:
 		from_otg = true;
 		need_stby = use_case != GSU_MODE_WLC_RX &&
+			    use_case != GSU_MODE_DOCK &&
 			    use_case != GSU_MODE_USB_OTG;
 		break;
 	case GSU_MODE_USB_DC:
@@ -974,6 +975,7 @@ static int gs101_to_otg_usecase(struct max77759_usecase_data *uc_data, int use_c
 	break;
 
 	case GSU_MODE_WLC_RX:
+	case GSU_MODE_DOCK:
 		if (use_case == GSU_MODE_USB_OTG_WLC_RX) {
 			if (uc_data->rx_otg_en)
 				ret = gs101_standby_to_otg(uc_data, use_case);
@@ -1064,6 +1066,7 @@ int gs101_to_usecase(struct max77759_usecase_data *uc_data, int use_case)
 
 		break;
 	case GSU_MODE_WLC_RX:
+	case GSU_MODE_DOCK:
 		if (from_uc == GSU_MODE_USB_OTG_WLC_RX) {
 			/* to_stby brought to stby */
 			ret = gs101_ext_bst_mode(uc_data, 0);
