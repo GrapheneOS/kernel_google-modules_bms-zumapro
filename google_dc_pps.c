@@ -275,7 +275,10 @@ not_supp:
 }
 // EXPORT_SYMBOL_GPL(pps_prog_check_online);
 
-/* enable PPS prog mode (Internal), also start the negotiation */
+/*
+ * enable PPS prog mode (Internal), also start the negotiation.
+ * <0 when not supported, 0 if supported (and update state)
+ */
 static int pps_prog_online(struct pd_pps_data *pps,
 			   struct power_supply *tcpm_psy)
 {
@@ -554,14 +557,13 @@ void pps_free(struct pd_pps_data *pps_data)
 /*
  * This is the first part of the DC/PPS charging state machine.
  * Detect and configure the PPS adapter for the PPS profile.
- *
  * pps->stage is updated to PPS_NONE, PPS_AVAILABLE, PPS_ACTIVE or
- * PPS_NOTSUPP. Returns:
+ * PPS_NOTSUPP.
+ *
+ * Returns:
  * . 0 to disable the PPS update interval voter
  * . <0 for error
  * . the max update interval pps should request
- *
- * The power suppy POWER_SUPPLY_PROP_PRESENT property
  */
 int pps_work(struct pd_pps_data *pps, struct power_supply *pps_psy)
 {
@@ -661,6 +663,7 @@ int pps_work(struct pd_pps_data *pps, struct power_supply *pps_psy)
 	if (type_ok && pd_online == PPS_PSY_FIXED_ONLINE) {
 		int rc;
 
+		/* 0 = when in PROG */
 		rc = pps_prog_online(pps, pps_psy);
 		switch (rc) {
 		case 0:

@@ -132,10 +132,11 @@ struct gcpm_drv  {
 	struct power_supply *psy;
 	struct delayed_work init_work;
 
-	/* charge limit for wireless DC */
+	/* charge limit for wireless DC (legacy) */
 	struct gvotable_election *dc_fcc_votable;
-	bool dc_fcc_hold;
-	int dc_fcc_limit;
+
+	bool cp_fcc_hold;	/* debounces CP */
+	int cp_fcc_hold_limit;	/* limit to re-enter CP */
 
 	/* MDIS: wired and wireless via main charger */
 	struct gvotable_election *fcc_votable;
@@ -639,7 +640,7 @@ static int gcpm_dc_start(struct gcpm_drv *gcpm, int index)
 	 * (enable/disable) is solved in gcpm_chg_select_work().
 	 * NOTE: old limit
 	 */
-	ret = gcpm_dc_fcc_update(gcpm, gcpm->dc_fcc_limit);
+	ret = gcpm_dc_fcc_update(gcpm, gcpm->cp_fcc_hold_limit);
 	if (ret < 0)
 		pr_err("PPS_Work: cannot update DC_FCC limit (%d)\n", ret);
 
@@ -703,7 +704,7 @@ static int gcpm_mdis_match_cp_source(struct gcpm_drv *gcpm, int *online)
 		ret = power_supply_get_property(gcpm->mdis_in[i],
 						POWER_SUPPLY_PROP_ONLINE,
 						&pval);
-		if (ret || !pval.intval || pval.intval != PPS_PSY_PROG_ONLINE)
+		if (ret || !pval.intval)
 			continue;
 
 		*online = pval.intval;
@@ -716,47 +717,38 @@ static int gcpm_mdis_match_cp_source(struct gcpm_drv *gcpm, int *online)
 /* call holding mutex_lock(&gcpm->chg_psy_lock) */
 static int gcpm_chg_select_by_demand(struct gcpm_drv *gcpm)
 {
-	bool use_dc_limits = gcpm->pps_index == PPS_INDEX_WLC;
-	int cc_min = gcpm->dc_limit_cc_min;
 	int cc_max = gcpm->cc_max; /* from google_charger */
+	int cp_min = gcpm->dc_limit_cc_min;
 	int index = GCPM_DEFAULT_CHARGER;
 	int batt_demand = -1;
 
-	 /*
-	  * ->dc_fcc_hold is cleared in gcpm_dc_fcc_callback() when the
-	  * dc_fcc_limit changes and is nonzero. The hold keeps the default
-	  * charger enabled when charging from an HPP-capable stand.
-	  */
-	if (gcpm->dc_fcc_hold) {
-		pr_debug("%s: CPM_THERM_DC_FCC hold, use_dc_limits:%d->%d\n",
-			 __func__, use_dc_limits, gcpm->wlc_pps_data.pd_online);
-
-		use_dc_limits = gcpm->wlc_pps_data.pd_online;
-	}
+	/* wlc might use a different CP limit than wired */
+	if (gcpm->wlc_pps_data.pd_online && gcpm->dc_limit_cc_min_wlc >= 0)
+		cp_min = gcpm->dc_limit_cc_min_wlc;
 
 	/*
-	 * Prevents enable/disable CP loops in modifying limit AND demand.
-	 * Here when using WLC_DC to adjust limit and max demand to the
-	 * WLC_DC limit. When demand from thermal limit (cc_max) is under
-	 * the ->dc_limit_cc_min_wlc (or the dc_limit_cc_min) limit cc_min
-	 * will disable DC and switch to main in (a).
+	 * ->cp_fcc_hold keeps the current (default) charger until the thermal
+	 * limit changes. Adjust the demand to the CP thermal limit to be able
+	 * to go back to CP as soon as possible. ->cp_fcc_hold_limit is changed
+	 * when the DC_FCC changes AND when MDIS changes (it always gets the
+	 * alternate DC limit).
 	 *
 	 * NOTE: Need to check the value directly because source selection is
 	 * done holding a lock on &gcpm->chg_psy_lock (cc_max will become the
-	 * same as gcpm->dc_fcc_limit on exit).
+	 * same as gcpm->cp_fcc_hold_limit on exit).
 	 */
-	if (use_dc_limits) {
-		pr_debug("%s: CPM_THERM_DC_FCC use_dc_limits cc_max=%d->%d cc_min=%d->%d\n",
-			 __func__, cc_max, gcpm->dc_fcc_limit,
-			 cc_min, gcpm->dc_limit_cc_min_wlc);
+	if (gcpm->cp_fcc_hold && gcpm->cp_fcc_hold_limit >= 0) {
 
-		/* set dc_limit_cc_min_wlc to 0 in DT to disable WLC_DC */
-		if (gcpm->dc_limit_cc_min_wlc >= 0)
-			cc_min = gcpm->dc_limit_cc_min_wlc;
+		/*
+		 * NOTE: ->cc_max might be from battery demand, thermal limit
+		 * or is a special charging profile. The hold here has caused
+		 * to revert to the default charger at (likely) low current.
+		 */
+		cc_max = gcpm->cp_fcc_hold_limit;
 
-		/* using 0 dc_fcc limit forces the default charger */
-		if (gcpm->dc_fcc_limit >= 0)
-			cc_max = gcpm->dc_fcc_limit;
+		pr_debug("%s: use_dc_limits cc_max=%d->%d cp_min=%d->%d\n",
+			 __func__, gcpm->cc_max, cc_max,
+			 gcpm->dc_limit_cc_min, cp_min);
 	}
 
 	/* keeps on default charger until we have valid charging parameters */
@@ -765,7 +757,7 @@ static int gcpm_chg_select_by_demand(struct gcpm_drv *gcpm)
 
 	/*
 	 * power demand comes from charging tier or thermal limit: leave
-	 * dc_limit_demand to 0 to use only cc_min.
+	 * dc_limit_demand to 0 to switch only on cp_min.
 	 * TODO: handle capabilities based on index number
 	 */
 	batt_demand = (cc_max / 1000) * (gcpm->fv_uv / 1000);
@@ -776,27 +768,29 @@ static int gcpm_chg_select_by_demand(struct gcpm_drv *gcpm)
 		 index, cc_max / 1000, gcpm->fv_uv / 1000,
 		 batt_demand, gcpm->dc_limit_demand);
 
-	/* (a) thermals might have reduced demand, use the cc_min limit */
-	if (cc_max <= cc_min) {
-		pr_debug("%s: cc_max=%d under cc_min=%d, ->hold=%d:%d index:%d->%d\n",
-			 __func__, cc_max, cc_min, gcpm->dc_fcc_hold,
-			 use_dc_limits, index, GCPM_DEFAULT_CHARGER);
+	/* current demand less than min demand for CP */
+	if (cc_max <= cp_min) {
+		const bool cp_active = gcpm_chg_is_cp_active(gcpm);
+
+		pr_debug("%s: cc_max=%d under cp_min=%d, ->hold=%d:%d index:%d->%d\n",
+			 __func__, cc_max, cp_min, gcpm->cp_fcc_hold, cp_active,
+			 index, GCPM_DEFAULT_CHARGER);
 
 		/*
-		 * Switch to the default charger and hold it there if this is
-		 * transitioning from CP to non CP. ->dc_fcc_hold is reset
-		 * in gcpm_dc_fcc_callback() when the thermal limit changes.
+		 * Switch to the default charger and hold it.
+		 * NOTE: ->cp_fcc_hold is reset in gcpm_dc_fcc_callback()
+		 * when the thermal limit changes.
 		 */
-		gcpm->dc_fcc_hold = use_dc_limits;
-		if (!gcpm_is_dc(gcpm, index))
-			index = GCPM_DEFAULT_CHARGER;
+		if (!gcpm->cp_fcc_hold)
+			gcpm->cp_fcc_hold = cp_active;
+		index = GCPM_DEFAULT_CHARGER;
 	}
 
 exit_done:
 	if (index != gcpm->dc_index)
-		logbuffer_log(gcpm->log, "by_d: index:%d->%d demand=%d,limit=%d cc_max=%d,cc_min=%d, hold=%d",
+		logbuffer_log(gcpm->log, "by_d: index:%d->%d demand=%d,limit=%d cc_max=%d,cp_min=%d, hold=%d",
 			      gcpm->dc_index, index, batt_demand, gcpm->dc_limit_demand,
-			      cc_max, cc_min, gcpm->dc_fcc_hold);
+			      cc_max, cp_min, gcpm->cp_fcc_hold);
 	return index;
 }
 
@@ -893,7 +887,7 @@ static int gcpm_chg_select(struct gcpm_drv *gcpm)
 	if (!gcpm->dc_init_complete)
 		goto exit_done; /* index == GCPM_DEFAULT_CHARGER; */
 
-	/* overrides dc_fcc_hold, might trigger taper_control */
+	/* overrides cp_fcc_hold, might trigger taper_control */
 	if (gcpm->force_active >= 0)
 		return gcpm->force_active;
 
@@ -1236,11 +1230,6 @@ static int gcpm_chg_select_logic(struct gcpm_drv *gcpm)
 
 	/* will not try to enable if the source cannot do PPS */
 	dc_ena = gcpm_chg_dc_check_source(gcpm, index);
-	/* will not enable if there is a hold */
-	if (dc_ena && gcpm->dc_fcc_hold) {
-		pr_debug("%s: CPM_THERM_DC_FCC hold from limit\n", __func__);
-		dc_ena = false;
-	}
 
 	/*
 	 * taper control reduces cc_max every gcpm->taper_step_interval seconds
@@ -1636,7 +1625,7 @@ static void gcpm_pps_wlc_dc_work(struct work_struct *work)
 		/*
 		 * source selection might have changed demand and disabled DC
 		 * (WLC_DC has a different mincurrent). Revert the input
-		 * selection, retry when ->dc_fcc_limit changes.
+		 * selection, retry when ->cp_fcc_hold_limit changes.
 		 */
 		index = gcpm_chg_select(gcpm);
 		if (!gcpm_is_dc(gcpm, index)) {
@@ -1702,7 +1691,7 @@ static void gcpm_dc_fcc_callback(struct gvotable_election *el,
 {
 	struct gcpm_drv *gcpm = gvotable_get_data(el);
 	const int limit = (long)value;
-	int changed = gcpm->dc_fcc_limit != limit;
+	int changed = gcpm->cp_fcc_hold_limit != limit;
 	int applied;
 
 	mutex_lock(&gcpm->chg_psy_lock);
@@ -1715,28 +1704,29 @@ static void gcpm_dc_fcc_callback(struct gvotable_election *el,
 	if (applied < 0)
 		pr_err("%s: cannot enforce DC_FCC limit applied=%d\n",
 			__func__, applied);
-	gcpm->dc_fcc_limit = limit;
+	/* TODO: fix coex with MDIS? */
+	gcpm->cp_fcc_hold_limit = limit;
 
 	/*
-	 * ->dc_fcc_hold will be set in gcpm_chg_select_by_demand() for WLC_DC
+	 * ->cp_fcc_hold will be set in gcpm_chg_select_by_demand() for WLC_DC
 	 * sessions when cc_max has fallen under the limit for WLC_DC charging
 	 * (->dc_limit_cc_min_wlc). The hold keeps the device charging with
 	 * the default charger (ie. non CP ie WLC) until released.
 	 *
-	 * Clearing the ->dc_fcc_hold when the thermal limit changes and is
+	 * Clearing the ->cp_fcc_hold when the thermal limit changes and is
 	 * NON zero allows gcpm_chg_select_by_demand() to re-evaluate
 	 * returning to CP charging.
 	 */
-	if (limit != 0 && gcpm->dc_fcc_hold) {
-		gcpm->dc_fcc_hold = false;
+	if (limit != 0 && gcpm->cp_fcc_hold) {
+		gcpm->cp_fcc_hold = false;
 		changed += 1;
 	}
 
 	pr_debug("%s: CPM_THERM_DC_FCC limit=%d hold=%d applied=%d changed=%d\n",
-		 __func__, limit, gcpm->dc_fcc_hold, applied, changed);
+		 __func__, limit, gcpm->cp_fcc_hold, applied, changed);
 
 	/*
-	 * ->dc_fcc_hold force the selection of GCPM_DEFAULT_CHARGER in
+	 * ->cp_fcc_hold force the selection of GCPM_DEFAULT_CHARGER in
 	 * gcpm_chg_select_by_demand().
 	 */
 	if (applied || changed)
@@ -2284,7 +2274,7 @@ static int gcpm_set_mdis_charge_cntl_limit(struct thermal_cooling_device *tcd,
 	struct mdis_thermal_device *tdev = tcd->devdata;
 	struct gcpm_drv *gcpm = tdev->gcpm;
 	int msc_fcc, dc_icl, cp_fcc, ret;
-	int budget = -1;
+	int online = 0, budget = -1;
 
 	if (lvl < 0 || tdev->thermal_levels <= 0 || lvl > tdev->thermal_levels)
 		return -EINVAL;
@@ -2298,7 +2288,7 @@ static int gcpm_set_mdis_charge_cntl_limit(struct thermal_cooling_device *tcd,
 		budget = tdev->thermal_mitigation[0];
 		msc_fcc = dc_icl = cp_fcc = -1;
 	} else {
-		int in_idx, online;
+		int in_idx;
 
 		budget = tdev->thermal_mitigation[lvl];
 
@@ -2313,33 +2303,41 @@ static int gcpm_set_mdis_charge_cntl_limit(struct thermal_cooling_device *tcd,
 		 */
 		in_idx = gcpm_mdis_match_cp_source(gcpm, &online);
 		if (in_idx < 0) {
-			/* source not in PPS: needs to record the limit */
+			/* source not online */
 			cp_fcc = -1;
 		} else if (gcpm_mdis_in_is_wireless(gcpm, in_idx)) {
-			/* WLC_CP, use the charge pump with wireless charging */
+			/* WLC_CP? use the charge pump with wireless charging */
 			cp_fcc = gcpm->mdis_out_limits[1][lvl + tdev->thermal_levels];
 		} else {
-			/* PPS_CP, use the charge pump with TCPM */
+			/* PPS_CP? use the charge pump with TCPM */
 			cp_fcc = gcpm->mdis_out_limits[1][lvl];
 		}
 
-		pr_info("MSC_MDIS in_idx=%d online=%d\n", in_idx, online);
+		pr_info("MSC_MDIS in_idx=%d online=%d cp_fcc=%d hold=%d, hold_limit=%d->%d\n",
+			in_idx, online, cp_fcc, gcpm->cp_fcc_hold,
+			gcpm->cp_fcc_hold_limit, cp_fcc);
+
 	}
 
 	/*
 	 * . cp_fcc <= 0 must cause the transition to MW (use msc_fcc or dc_icl)
 	 * . msc_fcc = -1 when charging from dc_icl (wlc-overrides-fcc)
 	 */
-	ret = gcpm_mdis_update_limits(gcpm, msc_fcc, dc_icl, cp_fcc);
-	if (ret == 0)
-		gcpm_chg_select(gcpm);
+	ret = gcpm_mdis_update_limits(gcpm, msc_fcc, dc_icl,
+				      online == PPS_PSY_PROG_ONLINE ? cp_fcc : -1);
+	/*
+	 * ->cp_fcc_holdused is set when select forced the default charger
+	 * because CP current fell UNDER the dc_limit_cc_mim_* limit.
+	 */
+	if (ret == 0 && gcpm->cp_fcc_hold)
+		gcpm->cp_fcc_hold_limit = cp_fcc;
 
 	mutex_unlock(&gcpm->chg_psy_lock);
 
 	if (!tdev->gcpm->mdis_votable)
 		goto done;
 
-	/*  fix the disable */
+	/*  fix the disable, run another charging loop */
 	ret = gvotable_cast_int_vote(tdev->gcpm->mdis_votable, "MDIS",
 				     budget, budget >= 0);
 done:
@@ -2464,6 +2462,7 @@ static void gcpm_mdis_callback(struct gvotable_election *el, const char *reason,
 	const int budget = (long)value;
 
 	pr_info("MSC_MDIS lvl=%d budget=%d\n", tdev->current_level, budget);
+	power_supply_changed(gcpm->psy);
 }
 
 /*
@@ -3279,7 +3278,7 @@ static int google_cpm_probe(struct platform_device *pdev)
 	gcpm->chg_psy_retries = 10; /* chg_psy_retries *  INIT_RETRY_DELAY_MS */
 	gcpm->out_uv = -1;
 	gcpm->out_ua = -1;
-	gcpm->dc_fcc_limit = -1;
+	gcpm->cp_fcc_hold_limit = -1;
 
 	INIT_DELAYED_WORK(&gcpm->pps_work, gcpm_pps_wlc_dc_work);
 	INIT_DELAYED_WORK(&gcpm->select_work, gcpm_chg_select_work);
