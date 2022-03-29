@@ -83,6 +83,7 @@ enum gbms_tags {
 	GBMS_TAG_MINF = 0x4d494e46,
 	GBMS_TAG_MXSN = 0x4d58534e,
 	GBMS_TAG_MXCN = 0x4d58434e,
+	GBMS_TAG_THAS = 0x54484153,
 
 	/* User Space Read/Write scratch */
 	GBMS_TAG_RS32 = 0x52533332,
