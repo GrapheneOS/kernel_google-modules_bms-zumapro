@@ -244,6 +244,7 @@ struct max1720x_chip {
 
 	int bhi_cycle_count;
 	int bhi_last_timerh;
+	int bhi_acim;
 };
 
 #define MAX1720_EMPTY_VOLTAGE(profile, temp, cycle) \
@@ -1896,7 +1897,7 @@ static int batt_res_registers(struct max1720x_chip *chip, bool bread,
 }
 
 /* call holding chip->model_lock */
-static int max1720x_check_impedance(struct max1720x_chip *chip)
+static int max1720x_check_impedance(struct max1720x_chip *chip, u16 *th)
 {
 	struct max17x0x_regmap *map = &chip->regmap;
 	int soc, temp, cycle_count, delta, ret;
@@ -1935,6 +1936,7 @@ static int max1720x_check_impedance(struct max1720x_chip *chip)
 		return -ENODATA;
 
 	chip->bhi_last_timerh = timerh;
+	*th = timerh;
 
 	return 0;
 }
@@ -1942,19 +1944,26 @@ static int max1720x_check_impedance(struct max1720x_chip *chip)
 /* will return error if the value is not qualified */
 static int max1720x_get_health_impedance(struct max1720x_chip *chip)
 {
-	u16 data, act_impedance;
+	u16 data, act_impedance, act_timerh, timerh;
 	int ret;
 
-	ret = max1720x_check_impedance(chip);
+	ret = max1720x_check_impedance(chip, &timerh);
 	if (ret < 0)
 		return ret;
 
-	ret = gbms_storage_read(GBMS_TAG_ACIM, &data, sizeof(data));
+	/* return bhi_acim when it is valid */
+	if (chip->bhi_acim != 0)
+		return chip->bhi_acim;
+
+	ret = gbms_storage_read(GBMS_TAG_ACIM, &act_impedance, sizeof(act_impedance));
 	if (ret < 0)
 		return -EINVAL;
 
-	act_impedance = data;
-	if (act_impedance == 0xffff) {
+	ret = gbms_storage_read(GBMS_TAG_THAS, &act_timerh, sizeof(act_timerh));
+	if (ret < 0)
+		return -EINVAL;
+
+	if (act_impedance == 0xffff || act_timerh == 0xffff) {
 		u16 resistance;
 
 		ret = REGMAP_READ(&chip->regmap, MAX1720X_RCELL, &data);
@@ -1962,11 +1971,21 @@ static int max1720x_get_health_impedance(struct max1720x_chip *chip)
 			return -EINVAL;
 
 		resistance = reg_to_resistance_micro_ohms(data, chip->RSense);
+
+		ret = gbms_storage_write(GBMS_TAG_THAS, &timerh, sizeof(timerh));
+		if (ret < 0)
+			return -EINVAL;
+
 		ret = gbms_storage_write(GBMS_TAG_ACIM, &resistance, sizeof(resistance));
-		return (ret < 0) ? -EINVAL : resistance;
+		if (ret < 0)
+			return -EINVAL;
+
+		act_impedance = resistance;
 	}
 
-	return act_impedance;
+	/* return bhi_acim when it is valid */
+	chip->bhi_acim = act_impedance;
+	return chip->bhi_acim;
 }
 
 static int max1720x_get_property(struct power_supply *psy,
@@ -5123,6 +5142,7 @@ static void max1720x_init_work(struct work_struct *work)
 	chip->init_complete = true;
 	chip->bhi_cycle_count = 0;
 	chip->bhi_last_timerh = 0;
+	chip->bhi_acim = 0;
 	max17x0x_init_debugfs(chip);
 
 	/*
