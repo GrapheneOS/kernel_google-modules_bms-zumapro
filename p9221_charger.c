@@ -633,6 +633,7 @@ static int p9221_reset_wlc_dc(struct p9221_charger_data *charger)
 #define CHARGE_15W_VOUT_UV	12000000
 #define CHARGE_15W_ILIM_UA	1270000
 
+/* call holding mutex_lock(&charger->auth_lock); */
 static int feature_set_dc_icl(struct p9221_charger_data *charger, u32 ilim_ua)
 {
 	/*
@@ -674,6 +675,7 @@ static int feature_15w_enable(struct p9221_charger_data *charger, bool enable)
 		if (charger->pdata->chip_id != P9412_CHIP_ID)
 			return -ENOTSUPP;
 
+		/* TODO: feature_set_dc_icl() needs mutex_lock(&charger->auth_lock); */
 		ret = charger->chip_set_vout_max(charger, vout_mv);
 		if (ret == 0)
 			ret = feature_set_dc_icl(charger, CHARGE_15W_ILIM_UA);
@@ -682,6 +684,7 @@ static int feature_15w_enable(struct p9221_charger_data *charger, bool enable)
 						      P9221_OCP_VOTER,
 						      CHARGE_15W_ILIM_UA,
 						      true);
+		/* TODO: feature_set_dc_icl() needs mutex_unlock(&charger->auth_lock); */
 	} else if (!enable && (chg_fts->session_features & WLCF_CHARGE_15W)) {
 		int ocp_icl;
 
@@ -1972,7 +1975,12 @@ static int p9221_set_hpp_dc_icl(struct p9221_charger_data *charger, bool enable)
 				       enable);
 }
 
-/* hold mutex_lock(&charger->auth_lock); */
+/*
+ * Auth delay must be there for EPP until the timeout since we don't know
+ * if the TX supports WPC1.3 Auth until the timeout expires (or until
+ * set features tell us the auth limit is not needed anymore)
+ * hold mutex_lock(&charger->auth_lock);
+ */
 int p9221_set_auth_dc_icl(struct p9221_charger_data *charger, bool enable)
 {
 	int ret = 0, icl_ua;
@@ -1997,24 +2005,22 @@ int p9221_set_auth_dc_icl(struct p9221_charger_data *charger, bool enable)
 		alarm_try_to_cancel(&charger->auth_dc_icl_alarm);
 	}
 
-	ret = gvotable_cast_int_vote(charger->dc_icl_votable,
-				     AUTH_DC_ICL_VOTER, icl_ua, enable);
+	ret = gvotable_cast_int_vote(charger->dc_icl_votable, AUTH_DC_ICL_VOTER,
+				     icl_ua, enable);
+	if (ret < 0)
+		goto exit;
+
+	if (!charger->csi_status_votable)
+		charger->csi_status_votable =
+				gvotable_election_get_handle(VOTABLE_CSI_STATUS);
+	if (charger->csi_status_votable)
+		gvotable_cast_long_vote(charger->csi_status_votable,
+					"CSI_STATUS_ADA_AUTH",
+					CSI_STATUS_Adapter_Auth,
+					charger->auth_delay);
 
 exit:
 	return ret;
-}
-
-static void p9221_notify_csi_auth(struct gvotable_election *status_votable, bool auth)
-{
-	if (!status_votable) {
-		status_votable = gvotable_election_get_handle(VOTABLE_CSI_STATUS);
-		if (!status_votable)
-			return;
-	}
-
-	/* Notify when Authentication failed */
-	gvotable_cast_long_vote(status_votable, "CSI_STATUS_ADA_AUTH",
-				CSI_STATUS_Adapter_Auth, !auth);
 }
 
 /* < 0 error, 0 = no changes, > 1 changed */
@@ -2078,7 +2084,6 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 		} else {
 			dev_warn(&charger->client->dev, "Feature check failed\n");
 			p9221_set_auth_dc_icl(charger, false);
-			p9221_notify_csi_auth(charger->csi_status_votable, false);
 			mutex_unlock(&charger->auth_lock);
 			return -EOPNOTSUPP;
 		}
@@ -2801,6 +2806,8 @@ static void p9221_set_online(struct p9221_charger_data *charger)
 	if (charger->pdata->has_wlc_dc) {
 		const ktime_t timeout = ms_to_ktime(WLCDC_DEBOUNCE_TIME_S * 1000);
 
+		mutex_lock(&charger->auth_lock);
+
 		ret = p9221_set_auth_dc_icl(charger, true);
 		if (ret < 0)
 			dev_err(&charger->client->dev, "cannot set Auth ICL: %d\n", ret);
@@ -2809,6 +2816,8 @@ static void p9221_set_online(struct p9221_charger_data *charger)
 		alarm_start_relative(&charger->auth_dc_icl_alarm, timeout);
 		schedule_delayed_work(&charger->auth_dc_icl_work,
 				      msecs_to_jiffies(WLCDC_AUTH_CHECK_INIT_DELAY_MS));
+
+		mutex_unlock(&charger->auth_lock);
 	}
 
 }
