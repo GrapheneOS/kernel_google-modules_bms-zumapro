@@ -221,10 +221,10 @@ static int gs101_ext_mode(struct max77759_usecase_data *uc_data, int mode)
 {
 	int ret = 0;
 
-	pr_debug("%s: mode=%d on=%d sel=%d\n", __func__, mode,
-		 uc_data->bst_on, uc_data->bst_sel);
+	pr_debug("%s: mode=%d on=%d sel=%d apbst=%d\n", __func__, mode,
+		 uc_data->bst_on, uc_data->bst_sel, uc_data->apbst_on);
 
-	if (uc_data->bst_on < 0 || uc_data->bst_sel < 0)
+	if (uc_data->bst_on < 0 || (uc_data->bst_sel < 0 && uc_data->apbst_on < 0))
 		return 0;
 
 	switch (mode) {
@@ -242,6 +242,9 @@ static int gs101_ext_mode(struct max77759_usecase_data *uc_data, int mode)
 			gpio_set_value_cansleep(uc_data->bst_sel, 1);
 		msleep(100);
 		gpio_set_value_cansleep(uc_data->bst_on, 1);
+		msleep(100);
+		if (uc_data->apbst_on > 0)
+			gpio_set_value_cansleep(uc_data->apbst_on, 1);
 		break;
 	default:
 		return -EINVAL;
@@ -283,16 +286,13 @@ EXPORT_SYMBOL_GPL(gs101_wlc_en);
 static int gs101_wlc_tx_enable(struct max77759_usecase_data *uc_data,
 			       bool enable)
 {
-	int ret = 0;
+	int ret;
 
 	if (enable) {
 
-		if (!uc_data->bst_lsw_en)
-			ret = gs101_ls2_mode(uc_data, OVP_LS2_MODE_ON);
+		ret = gs101_ls2_mode(uc_data, OVP_LS2_MODE_ON);
 		if (ret == 0)
 			ret = gs101_ext_mode(uc_data, EXT_MODE_OTG_7_5V);
-		if (ret == 0 && uc_data->bst_lsw_en)
-			ret = gs101_ls2_mode(uc_data, OVP_LS2_MODE_ON);
 		if (ret < 0)
 			return ret;
 
@@ -312,12 +312,9 @@ static int gs101_wlc_tx_enable(struct max77759_usecase_data *uc_data,
 			return ret;
 
 		/* NOTE: turn off WLC, no need to reset cpout */
-		if (!uc_data->bst_lsw_en)
-			ret = gs101_ext_mode(uc_data, EXT_MODE_OFF);
+		ret = gs101_ext_mode(uc_data, EXT_MODE_OFF);
 		if (ret == 0)
 			ret = gs101_ls2_mode(uc_data, OVP_LS2_MODE_OFF);
-		if (ret == 0 && uc_data->bst_lsw_en)
-			ret = gs101_ext_mode(uc_data, EXT_MODE_OFF);
 
 		/* STBY will re-enable WLC */
 	}
@@ -1156,7 +1153,7 @@ static bool gs101_setup_usecases_done(struct max77759_usecase_data *uc_data)
 	return (uc_data->cpout_en != -EPROBE_DEFER) &&
 	       (uc_data->cpout_ctl != -EPROBE_DEFER) &&
 	       (uc_data->wlc_vbus_en != -EPROBE_DEFER) &&
-	       (uc_data->bst_sel != -EPROBE_DEFER);
+	       (uc_data->apbst_on != -EPROBE_DEFER || uc_data->bst_sel != -EPROBE_DEFER);
 
 	/* TODO: handle platform specific differences..
 	       uc_data->ls2_en != -EPROBE_DEFER &&
@@ -1180,6 +1177,7 @@ static void gs101_setup_default_usecase(struct max77759_usecase_data *uc_data)
 
 	uc_data->bst_on = -EPROBE_DEFER;
 	uc_data->bst_sel = -EPROBE_DEFER;
+	uc_data->apbst_on = -EPROBE_DEFER;
 	uc_data->ext_bst_ctl = -EPROBE_DEFER;
 	uc_data->pogo_ovp_en = -EPROBE_DEFER;
 
@@ -1234,6 +1232,8 @@ bool gs101_setup_usecases(struct max77759_usecase_data *uc_data,
 		uc_data->bst_on = of_get_named_gpio(node, "max77759,bst-on", 0);
 	if (uc_data->bst_sel == -EPROBE_DEFER)
 		uc_data->bst_sel = of_get_named_gpio(node, "max77759,bst-sel", 0);
+	if (uc_data->apbst_on == -EPROBE_DEFER)
+		uc_data->apbst_on = of_get_named_gpio(node, "max77759,apbst-on", 0);
 	if (uc_data->ext_bst_ctl == -EPROBE_DEFER)
 		uc_data->ext_bst_ctl = of_get_named_gpio(node, "max77759,extbst-ctl", 0);
 
@@ -1279,12 +1279,8 @@ bool gs101_setup_usecases(struct max77759_usecase_data *uc_data,
 	if (uc_data->ext_bst_mode == -EPROBE_DEFER)
 		uc_data->ext_bst_mode = of_get_named_gpio(node, "max77759,extbst-mode", 0);
 
-	/* OPTIONAL: support wlc_rx -> wlc_rx+otg */
 	uc_data->rx_otg_en = of_property_read_bool(node, "max77759,rx-to-rx-otg-en");
-	/* OPTIONAL: support external boost OTG only */
 	uc_data->ext_otg_only = of_property_read_bool(node, "max77759,ext-otg-only");
-	/* OPTIONAL: use bst_on first on/off sequence */
-	uc_data->bst_lsw_en = of_property_read_bool(node, "max77759,bst-lsw-sequence");
 
 	return gs101_setup_usecases_done(uc_data);
 }
@@ -1292,8 +1288,8 @@ EXPORT_SYMBOL_GPL(gs101_setup_usecases);
 
 void gs101_dump_usecasase_config(struct max77759_usecase_data *uc_data)
 {
-	pr_info("bst_on:%d, bst_sel:%d, ext_bst_ctl:%d\n",
-		 uc_data->bst_on, uc_data->bst_sel, uc_data->ext_bst_ctl);
+	pr_info("bst_on:%d, bst_sel:%d, apbst_on:%d, ext_bst_ctl:%d\n",
+		 uc_data->bst_on, uc_data->bst_sel, uc_data->apbst_on, uc_data->ext_bst_ctl);
 	pr_info("vin_valid:%d lsw1_o:%d lsw1_c:%d\n", uc_data->vin_is_valid,
 		 uc_data->lsw1_is_open, uc_data->lsw1_is_closed);
 	pr_info("wlc_en:%d wlc_vbus_en:%d cpout_en:%d cpout_ctl:%d cpout21_en=%d\n",

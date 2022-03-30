@@ -19,14 +19,6 @@
 #include <misc/logbuffer.h>
 #include "p9221_charger.h"
 
-#define P9XXX_NUM_GPIOS                 16
-#define P9XXX_MIN_GPIO                  0
-#define P9XXX_MAX_GPIO                  15
-#define P9XXX_GPIO_CPOUT_EN             1
-#define P9412_GPIO_CPOUT21_EN           2
-#define P9XXX_GPIO_CPOUT_CTL_EN         3
-#define P9XXX_GPIO_VBUS_EN              15
-
 /* Simple Chip Specific Accessors */
 /*
  * chip_get_rx_ilim
@@ -710,27 +702,12 @@ static int p9382_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 	return ret;
 }
 
-static void p9412_chip_bst_sel(struct p9221_charger_data *chgr, bool enable)
-{
-	if (!chgr->pdata->apbst_en)
-		return;
-
-	logbuffer_log(chgr->rtx_log, "configure Ext-Boost Vout to 7V: %d\n", enable);
-	if (enable)
-		chgr->reg_write_8(chgr, P9412_APBSTPING_REG,
-				  P9412_APBSTPING_7V);
-	else
-		chgr->reg_write_8(chgr, P9412_APBSTPING_REG, 0);
-}
-
 static int p9412_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 {
 	int ret;
 
 	logbuffer_log(chgr->rtx_log, "%s(%d)", __func__, enable);
-
 	if (enable) {
-		p9412_chip_bst_sel(chgr, true);
 		ret = chgr->reg_write_8(chgr, P9412_TX_CMD_REG,
 					P9412_TX_CMD_TX_MODE_EN);
 		if (ret) {
@@ -743,13 +720,12 @@ static int p9412_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 			logbuffer_log(chgr->rtx_log,
 				      "error waiting for tx_mode (%d)", ret);
 	} else {
-		ret = chgr->chip_set_cmd(chgr, P9412_CMD_TXMODE_EXIT);
+		ret = chgr->chip_set_cmd(chgr, P9221R5_COM_RENEGOTIATE);
 		if (ret == 0) {
 			ret = p9382_wait_for_mode(chgr, 0);
 			if (ret < 0)
 				pr_err("cannot exit rTX mode (%d)\n", ret);
 		}
-		p9412_chip_bst_sel(chgr, false);
 	}
 
 	return ret;
@@ -1785,6 +1761,16 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 	return 0;
 }
 
+
+#define P9XXX_NUM_GPIOS			16
+#define P9XXX_MIN_GPIO			0
+#define P9XXX_MAX_GPIO			15
+#define P9XXX_GPIO_CPOUT_EN		1
+#define P9412_GPIO_CPOUT21_EN		2
+#define P9XXX_GPIO_CPOUT_CTL_EN		3
+#define P9XXX_GPIO_BST_SEL		4
+#define P9XXX_GPIO_VBUS_EN		15
+
 #if IS_ENABLED(CONFIG_GPIOLIB)
 static int p9xxx_gpio_get_direction(struct gpio_chip *chip,
 				    unsigned int offset)
@@ -1804,6 +1790,8 @@ static int p9xxx_gpio_get(struct gpio_chip *chip, unsigned int offset)
 		// read cap divider
 		break;
 	case P9XXX_GPIO_CPOUT_CTL_EN:
+		break;
+	case P9XXX_GPIO_BST_SEL:
 		break;
 	default:
 		break;
@@ -1845,6 +1833,14 @@ static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 			break;
 		value = (!!value) ^ charger->pdata->wlc_en_act_low;
 		gpio_direction_output(charger->pdata->wlc_en, value);
+		break;
+	case P9XXX_GPIO_BST_SEL:
+		logbuffer_log(charger->rtx_log, "Set p9412 gpio: %02x(%d)\n",
+			      P9412_APBSTPING_REG, value);
+		if (value)
+			charger->reg_write_8(charger, P9412_APBSTPING_REG, P9412_APBSTPING_7V);
+		else
+			charger->reg_write_8(charger, P9412_APBSTPING_REG, 0);
 		break;
 	default:
 		ret = -EINVAL;
