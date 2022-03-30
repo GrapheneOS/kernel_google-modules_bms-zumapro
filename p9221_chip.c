@@ -18,6 +18,7 @@
 #include <linux/alarmtimer.h>
 #include <misc/logbuffer.h>
 #include "p9221_charger.h"
+#include "google_bms.h"
 
 #define P9XXX_NUM_GPIOS                 16
 #define P9XXX_MIN_GPIO                  0
@@ -1261,43 +1262,31 @@ static int p9221_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 	return -ENOTSUPP;
 }
 
+#define MAX77759_CHGR_MODE_ALL_OFF		0
 /* b/202795383 remove load current before enable P9412 CD mode */
 static int p9412_prop_mode_capdiv_enable(struct p9221_charger_data *chgr)
 {
-	union power_supply_propval dc_icl = { .intval = 0 };
-	int ret, rc;
+	int ret;
 
-	if (chgr->dc_psy) {
-		rc = power_supply_get_property(chgr->dc_psy,
-					       POWER_SUPPLY_PROP_CURRENT_MAX,
-					       &dc_icl);
-		if (rc == 0 && dc_icl.intval) {
-			union power_supply_propval prop = { .intval = 0 };
+	/* TODO: need to become a fake GPIO in the max77759 charger */
+	if (!chgr->chg_mode_votable)
+		chgr->chg_mode_votable =
+			gvotable_election_get_handle(GBMS_MODE_VOTABLE);
+	if (chgr->chg_mode_votable)
+		gvotable_cast_long_vote(chgr->chg_mode_votable,
+					P9221_WLC_VOTER,
+					MAX77759_CHGR_MODE_ALL_OFF, true);
 
-			rc = power_supply_set_property(chgr->dc_psy,
-						       POWER_SUPPLY_PROP_CURRENT_MAX,
-						       &prop);
-			if (rc != 0) {
-				dev_err(&chgr->client->dev,
-					"CAP_DIV: cannot reduce load %d->0 (%d)\n",
-					dc_icl.intval, rc);
-			}
-		}
-
-	}
+	usleep_range(300 * USEC_PER_MSEC, 320 * USEC_PER_MSEC);
 
 	ret = p9412_capdiv_en(chgr, CDMODE_CAP_DIV_MODE);
 
-	if (chgr->dc_psy && dc_icl.intval) {
-		rc = power_supply_set_property(chgr->dc_psy,
-					       POWER_SUPPLY_PROP_CURRENT_MAX,
-					       &dc_icl);
-		if (rc != 0) {
-			dev_err(&chgr->client->dev,
-				"CAP_DIV: cannot restore load 0->%d (%d)\n",
-				dc_icl.intval, rc);
-		}
-	}
+	usleep_range(300 * USEC_PER_MSEC, 320 * USEC_PER_MSEC);
+
+	if (chgr->chg_mode_votable)
+		gvotable_cast_long_vote(chgr->chg_mode_votable,
+					P9221_WLC_VOTER,
+					MAX77759_CHGR_MODE_ALL_OFF, false);
 
 	return ret;
 }
