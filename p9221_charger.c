@@ -5949,7 +5949,8 @@ static void p9382a_tx_icl_vote_callback(struct gvotable_election *el,
 					const char *reason, void *vote)
 {
 	struct p9221_charger_data *charger = gvotable_get_data(el);
-	int icl_ua = (int)(uintptr_t)vote, ret = 0;
+	int icl_ua = GVOTABLE_PTR_TO_INT(vote);
+	int ret = 0;
 
 	if (!charger->ben_state)
 		return;
@@ -6009,7 +6010,7 @@ static void p9221_wlc_disable_callback(struct gvotable_election *el,
 				       const char *reason, void *vote)
 {
 	struct p9221_charger_data *charger = gvotable_get_data(el);
-	int disable = (int)(uintptr_t)vote;
+	int disable = GVOTABLE_PTR_TO_INT(vote);
 	u8 val = P9221_EOP_UNKNOWN;
 
 	if (charger->pdata->wlc_en == charger->pdata->qien_gpio) {

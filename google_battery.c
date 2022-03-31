@@ -1020,7 +1020,7 @@ static void fan_level_cb(struct gvotable_election *el,
 			 const char *reason, void *vote)
 {
 	struct batt_drv *batt_drv = gvotable_get_data(el);
-	int lvl = (int)(uintptr_t)vote;
+	int lvl = GVOTABLE_PTR_TO_INT(vote);
 
 	if (!batt_drv)
 		return;

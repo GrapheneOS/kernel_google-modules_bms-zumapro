@@ -1470,7 +1470,7 @@ static void msc_temp_defend_dryrun_cb(struct gvotable_election *el,
 				      const char *reason, void *vote)
 {
 	struct chg_drv *chg_drv = gvotable_get_data(el);
-	int is_dry_run = (int)(uintptr_t)vote;
+	int is_dry_run = GVOTABLE_PTR_TO_INT(vote);
 
 	chg_drv->bd_state.bd_temp_dry_run = !!is_dry_run;
 }
@@ -3473,11 +3473,10 @@ DEFINE_SIMPLE_ATTRIBUTE(debug_pps_cc_tolerance_fops,
 
 
 static void csi_status_cb(struct gvotable_election *el,
-				 const char *reason,
-				 void *value)
+			  const char *reason, void *vote)
 {
 	struct chg_drv *chg_drv = gvotable_get_data(el);
-	int status = (int)(uintptr_t)value;
+	int status = GVOTABLE_PTR_TO_INT(vote);
 
 	if (!chg_drv)
 		return;
@@ -3491,11 +3490,10 @@ static void csi_status_cb(struct gvotable_election *el,
 }
 
 static void csi_type_cb(struct gvotable_election *el,
-				 const char *reason,
-				 void *value)
+			const char *reason, void *vote)
 {
 	struct chg_drv *chg_drv = gvotable_get_data(el);
-	int type = (int)(uintptr_t)value;
+	int type = GVOTABLE_PTR_TO_INT(vote);
 
 	if (!chg_drv)
 		return;
@@ -3988,7 +3986,8 @@ static void msc_chg_disable_cb(struct gvotable_election *el,
 			       const char *reason, void *vote)
 {
 	struct chg_drv *chg_drv = gvotable_get_data(el);
-	int chg_disable = (int)(uintptr_t)vote, rc;
+	int chg_disable = GVOTABLE_PTR_TO_INT(vote);
+	int rc;
 
 	if (!chg_drv->chg_psy)
 		return;
@@ -4003,7 +4002,7 @@ static void msc_pwr_disable_cb(struct gvotable_election *el,
 			       const char *reason, void *vote)
 {
 	struct chg_drv *chg_drv = gvotable_get_data(el);
-	int pwr_disable = (int)(uintptr_t)vote;
+	int pwr_disable = GVOTABLE_PTR_TO_INT(vote);
 
 	if (!chg_drv->chg_psy)
 		return;
