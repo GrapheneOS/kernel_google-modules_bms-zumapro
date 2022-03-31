@@ -440,6 +440,8 @@
 #define PROP_MODE_EN_CMD			BIT(8)
 #define PROP_REQ_PWR_CMD			BIT(9)
 #define P9412_COM_CCACTIVATE			BIT(10)
+/* For tx cmd register */
+#define P9412_CMD_TXMODE_EXIT			BIT(9)
 /* For INT status register */
 #define P9412_STAT_PPRCVD			BIT(15)
 #define P9412_CDMODE_ERROR_INT			BIT(14)
@@ -598,8 +600,7 @@ struct p9221_charger_platform_data {
 	u32				alignment_offset_high_current;
 	u32				alignment_current_threshold;
 	bool				feat_compat_mode;
-	/* Support P9412 GPIO */
-	bool				has_p9412_gpio;
+	bool				apbst_en;
 };
 
 struct p9221_charger_ints_bit {
