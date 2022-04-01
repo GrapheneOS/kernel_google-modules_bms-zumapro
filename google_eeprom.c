@@ -349,6 +349,10 @@ static int gbms_hist_move(struct nvmem_device *nvmem, int from, int to, int len)
 		p += BATT_ONE_HIST_LEN;
 	}
 
+	/* when the history data is empty */
+	if (index == 0)
+		goto exit;
+
 	ret = nvmem_device_write(nvmem, to, (BATT_ONE_HIST_LEN * index), buff);
 	if (ret < 0)
 		pr_err("%s: cannot write history data (%d)\n", __func__, ret);
