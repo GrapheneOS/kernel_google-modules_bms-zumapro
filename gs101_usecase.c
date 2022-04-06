@@ -933,7 +933,7 @@ static int gs101_standby_to_otg(struct max77759_usecase_data *uc_data, int use_c
 static int gs101_wlcrx_to_wlcrx_otg(struct max77759_usecase_data *uc_data)
 {
 	pr_warn("%s: disabled\n", __func__);
-	return -ENOTSUPP;
+	return 0;
 }
 
 static int gs101_to_otg_usecase(struct max77759_usecase_data *uc_data, int use_case)
