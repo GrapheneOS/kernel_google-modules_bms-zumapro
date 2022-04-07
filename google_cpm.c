@@ -618,6 +618,43 @@ error_exit:
 	return ret;
 }
 
+/*
+ * route the dc_limit to MSC_FCC for wireless charing.
+ * @return <0 on error, 0 on limit not applied, 1 on limit applied (and positive)
+ * call holding a lock on mutex_lock(&gcpm->chg_psy_lock);
+ */
+static int gcpm_update_votes(struct gcpm_drv *gcpm, int cp_limit)
+{
+	struct gvotable_election *el;
+	int ret;
+
+	/* update limit before disabling the others */
+	if (cp_limit > 0)
+		ret = gcpm_dc_fcc_update(gcpm, cp_limit);
+
+	el = gcpm_get_dc_icl_votable(gcpm);
+	if (el) {
+		ret = gvotable_recast_ballot(el, "MDIS", cp_limit <= 0);
+		if (ret < 0)
+			dev_err(gcpm->device, "recast on DC_ICL failed (%d)\n", ret);
+	}
+
+	/* applied only when CP is not enabled */
+	el = gcpm_get_fcc_votable(gcpm);
+	if (el) {
+		ret = gvotable_recast_ballot(el, "MDIS", cp_limit <= 0);
+		if (ret < 0)
+			dev_err(gcpm->device, "recast on MSC_FCC failed (%d)\n", ret);
+	}
+
+	/* update limit after enabling the others */
+	if (cp_limit <= 0)
+		ret = gcpm_dc_fcc_update(gcpm, cp_limit);
+
+	return ret;
+}
+
+
 /* NOTE: call with a lock around gcpm->chg_psy_lock */
 static int gcpm_dc_start(struct gcpm_drv *gcpm, int index)
 {
@@ -640,7 +677,7 @@ static int gcpm_dc_start(struct gcpm_drv *gcpm, int index)
 	 * (enable/disable) is solved in gcpm_chg_select_work().
 	 * NOTE: old limit
 	 */
-	ret = gcpm_dc_fcc_update(gcpm, gcpm->cp_fcc_hold_limit);
+	ret = gcpm_update_votes(gcpm, gcpm->cp_fcc_hold_limit);
 	if (ret < 0)
 		pr_err("PPS_Work: cannot update DC_FCC limit (%d)\n", ret);
 
@@ -1377,7 +1414,7 @@ static int gcpm_pps_wlc_dc_restart_default(struct gcpm_drv *gcpm)
 	int pps_done, ret;
 
 	/* DC_FCC limit might be enabled as soon as we enter WLC_DC */
-	ret = gcpm_dc_fcc_update(gcpm, -1);
+	ret = gcpm_update_votes(gcpm, -1);
 	if (ret < 0)
 		pr_err("PPS_Work: cannot update DC_FCC limit (%d)\n", ret);
 
@@ -1704,7 +1741,11 @@ static void gcpm_dc_fcc_callback(struct gvotable_election *el,
 	if (applied < 0)
 		pr_err("%s: cannot enforce DC_FCC limit applied=%d\n",
 			__func__, applied);
-	/* TODO: fix coex with MDIS? */
+	/*
+	 * ->cp_fcc_hold_limit is updated from MDIS and from the DC_FCC code.
+	 * NOTE: the thermal engine needs to vote on mdis_chg OR on dc_fcc,
+	 * dc_icl and msc_fcc.
+	 */
 	gcpm->cp_fcc_hold_limit = limit;
 
 	/*
