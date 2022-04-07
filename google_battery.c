@@ -3822,13 +3822,17 @@ static int batt_cycle_count_store(struct gbatt_ccbin_data *ccd)
 /* call holding mutex_unlock(&ccd->lock); */
 static int batt_cycle_count_load(struct gbatt_ccbin_data *ccd)
 {
-	int ret;
+	int ret, i;
 
 	ret = gbms_storage_read(GBMS_TAG_BCNT, ccd->count, sizeof(ccd->count));
 	if (ret < 0 && ret != -ENOENT) {
 		pr_err("failed to get bin_counts ret=%d\n", ret);
 		return ret;
 	}
+
+	for (i = 0; i < GBMS_CCBIN_BUCKET_COUNT; i++)
+		if (ccd->count[i] == 0xFFFF)
+			ccd->count[i] = 0;
 
 	ccd->prev_soc = -1;
 	return 0;
