@@ -132,7 +132,7 @@ KBUILD_OPTIONS += $(foreach m,$(GBMS_MODULES),CONFIG_$(m)=m )
 EXTRA_CFLAGS += -DDYNAMIC_DEBUG_MODULE
 EXTRA_CFLAGS += $(foreach m,$(GBMS_MODULES),-DCONFIG_$(m)_MODULE)
 
-include $(KERNEL_SRC)/../gs/google-modules/soc-modules/Makefile.include
+include $(KERNEL_SRC)/../private/google-modules/soc/gs/Makefile.include
 
 modules modules_install clean:
 	$(MAKE) -C $(KERNEL_SRC) M=$(M) W=1 \
