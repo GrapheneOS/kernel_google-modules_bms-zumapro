@@ -3105,7 +3105,7 @@ exit_done:
 
 static int batt_bhi_perf_index_update(struct batt_drv *batt_drv)
 {
-	int act_impedance, resistance, ret;
+	int act_impedance, delta, ret;
 	u32 data;
 
 	/* will return error when/if the value is not qualified. */
@@ -3117,9 +3117,9 @@ static int batt_bhi_perf_index_update(struct batt_drv *batt_drv)
 	ret = gbms_storage_read(GBMS_TAG_BRES, &data, sizeof(data));
 	if (ret < 0)
 		return ret;
-	resistance = data;
+	delta = (int)data - act_impedance;
 
-	batt_drv->health.perf_index = (resistance * 100) / act_impedance;
+	batt_drv->health.perf_index = (delta > 0) ? (delta * 100) / act_impedance : 0;
 
 	return 0;
 }
