@@ -2345,9 +2345,8 @@ static int batt_calc_charging_speed(struct batt_drv *batt_drv)
 {
 	const bool is_disconnected = chg_state_is_disconnected(&batt_drv->chg_state);
 	const struct gbms_chg_profile *profile = &batt_drv->chg_profile;
-	const int cc_max = GBMS_CCCM_LIMITS(profile, batt_drv->temp_idx, batt_drv->vbatt_idx);
 	const int soc = ssoc_get_capacity(&batt_drv->ssoc_state);
-	int vbatt_idx, ibatt, chg_speed;
+	int cc_max, vbatt_idx, ibatt, chg_speed;
 
 	if (is_disconnected)
 		return -1;
@@ -2368,6 +2367,7 @@ static int batt_calc_charging_speed(struct batt_drv *batt_drv)
 		return -1;
 
 	/* slowing down due to batt_drv->temp_idx != from reference */
+	cc_max = GBMS_CCCM_LIMITS(profile, batt_drv->temp_idx, batt_drv->vbatt_idx);
 	if (cc_max && cc_max < batt_drv->nominal_demand)
 		batt_drv->nominal_demand = cc_max;
 
