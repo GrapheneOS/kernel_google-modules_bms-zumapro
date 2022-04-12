@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Copyright 2018 Google, LLC
+ * Copyright 2018-2022 Google LLC
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1054,14 +1054,14 @@ static void fan_level_reset(const struct batt_drv *batt_drv)
 				       "MSC_BATT", 0, false);
 }
 
-static void fan_level_cb(struct gvotable_election *el,
-			 const char *reason, void *vote)
+static int fan_level_cb(struct gvotable_election *el,
+			const char *reason, void *vote)
 {
 	struct batt_drv *batt_drv = gvotable_get_data(el);
 	int lvl = GVOTABLE_PTR_TO_INT(vote);
 
 	if (!batt_drv)
-		return;
+		return 0;
 
 	if (batt_drv->fan_last_level != lvl) {
 		pr_debug("FAN_LEVEL %d->%d reason=%s\n",
@@ -1077,6 +1077,8 @@ static void fan_level_cb(struct gvotable_election *el,
 		if (batt_drv->psy)
 			power_supply_changed(batt_drv->psy);
 	}
+
+	return 0;
 }
 /* ------------------------------------------------------------------------- */
 
@@ -2289,36 +2291,40 @@ static void batt_log_csi_info(const struct batt_drv *batt_drv)
 			     batt_drv->csi_current_status);
 }
 
-static void csi_status_cb(struct gvotable_election *el, const char *reason,
-			  void *value)
+static int csi_status_cb(struct gvotable_election *el, const char *reason,
+			 void *value)
 {
 	struct batt_drv *batt_drv = gvotable_get_data(el);
 	int status = GVOTABLE_PTR_TO_INT(value);
 
 	if (!batt_drv || batt_drv->csi_current_status == status)
-		return;
+		return 0;
 
 	batt_drv->csi_current_status = status;
 	batt_log_csi_info(batt_drv);
 
 	if (batt_drv->psy)
 		power_supply_changed(batt_drv->psy);
+
+	return 0;
 }
 
-static void csi_type_cb(struct gvotable_election *el, const char *reason,
-			void *value)
+static int csi_type_cb(struct gvotable_election *el, const char *reason,
+		       void *value)
 {
 	struct batt_drv *batt_drv = gvotable_get_data(el);
 	int type = GVOTABLE_PTR_TO_INT(value);
 
 	if (!batt_drv || batt_drv->csi_current_type == type)
-		return;
+		return 0;
 
 	batt_drv->csi_current_type = type;
 	batt_log_csi_info(batt_drv);
 
 	if (batt_drv->psy)
 		power_supply_changed(batt_drv->psy);
+
+	return 0;
 }
 
 /* all reset on disconnect */

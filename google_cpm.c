@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Copyright 2020 Google, LLC
+ * Copyright 2020-2022 Google LLC
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1720,9 +1720,9 @@ pps_dc_done:
  *
  * TODO: reimplement in terms of MDIS level remapping the limit
  */
-static void gcpm_dc_fcc_callback(struct gvotable_election *el,
-				 const char *reason,
-				 void *value)
+static int gcpm_dc_fcc_callback(struct gvotable_election *el,
+				const char *reason,
+				void *value)
 {
 	struct gcpm_drv *gcpm = gvotable_get_data(el);
 	const int limit = (long)value;
@@ -1773,6 +1773,7 @@ static void gcpm_dc_fcc_callback(struct gvotable_election *el,
 				 msecs_to_jiffies(DC_ENABLE_DELAY_MS));
 
 	mutex_unlock(&gcpm->chg_psy_lock);
+	return 0;
 }
 
 /* --------------------------------------------------------------------- */
@@ -2663,8 +2664,8 @@ static int mdis_tdev_register(const char *of_name, const char *tcd_name,
 }
 
 /* pick the adapter with the highest current under the budget */
-static void gcpm_mdis_callback(struct gvotable_election *el, const char *reason,
-			       void *value)
+static int gcpm_mdis_callback(struct gvotable_election *el, const char *reason,
+			      void *value)
 {
 	struct gcpm_drv *gcpm = gvotable_get_data(el);
 	struct mdis_thermal_device *tdev = &gcpm->thermal_device;
@@ -2676,21 +2677,23 @@ static void gcpm_mdis_callback(struct gvotable_election *el, const char *reason,
 	if (!gcpm->csi_status_votable) {
 		gcpm->csi_status_votable = gvotable_election_get_handle(VOTABLE_CSI_STATUS);
 		if (!gcpm->csi_status_votable)
-			return;
+			return 0;
 	}
 
 	/* this is a problem only when speed is affected */
 	gvotable_cast_long_vote(gcpm->csi_status_votable, "CSI_STATUS_THERM_MDIS",
 				CSI_STATUS_System_Thermals,
 				tdev->current_level != 0);
+
+	return 0;
 }
 
 /*
  * apply the CP limit to the DC charger (only). Used with DC_FCC.
  * caller needs to hold	mutex_lock(&gcpm->chg_psy_lock);
  */
-static void gcpm_fcc_callback(struct gvotable_election *el, const char *reason,
-			      void *value)
+static int gcpm_fcc_callback(struct gvotable_election *el, const char *reason,
+			     void *value)
 {
 	struct gcpm_drv *gcpm = gvotable_get_data(el);
 	const int limit = (long)value;
@@ -2700,7 +2703,7 @@ static void gcpm_fcc_callback(struct gvotable_election *el, const char *reason,
 	/* apply the vote to the DC charger */
 	cp_psy = gcpm_chg_get_active_cp(gcpm);
 	if (!cp_psy)
-		return;
+		return 0;
 
 	ret = GPSY_SET_PROP(cp_psy, POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
 			    limit);
@@ -2709,6 +2712,8 @@ static void gcpm_fcc_callback(struct gvotable_election *el, const char *reason,
 		       limit, ret);
 	else
 		pr_debug("MSC_MDIS: new cp_limit=%d\n", limit);
+
+	return 0;
 }
 
 #define INIT_DELAY_MS 100

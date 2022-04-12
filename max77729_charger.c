@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Copyright 2019 Google, LLC
+ * Copyright 2019-2022 Google LLC
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -421,8 +421,8 @@ unlock_done:
 	return ret;
 }
 
-static void max77729_mode_callback(struct gvotable_election *el,
-				   const char *reason, void *value)
+static int max77729_mode_callback(struct gvotable_election *el,
+				  const char *reason, void *value)
 {
 	struct max77729_chgr_data *data = gvotable_get_data(el);
 	int mode = (long)value;
@@ -443,7 +443,7 @@ static void max77729_mode_callback(struct gvotable_election *el,
 		break;
 	default:
 		dev_err(data->dev, "mode %d not supported\n", mode);
-		return;
+		return 0;
 	}
 
 	dev_info(data->dev, "Vote CHARGER_MODE %d reason=%s\n", mode,
@@ -469,11 +469,12 @@ static void max77729_mode_callback(struct gvotable_election *el,
 
 unlock_done:
 	mutex_unlock(&data->io_lock);
+	return 0;
 }
 
 
-static void max77729_dc_suspend_vote_callback(struct gvotable_election *el,
-					      const char *reason, void *value)
+static int max77729_dc_suspend_vote_callback(struct gvotable_election *el,
+					     const char *reason, void *value)
 {
 	struct max77729_chgr_data *data = gvotable_get_data(el);
 	int result = (long)value;
@@ -482,10 +483,12 @@ static void max77729_dc_suspend_vote_callback(struct gvotable_election *el,
 
 	dev_info(data->dev, "DC_SUSPEND reason=%s, value=%d suspend=%d\n",
 		reason ? reason : "", result, result >= 0);
+
+	return 0;
 }
 
-static void max77729_dcicl_callback(struct gvotable_election *el,
-				    const char *reason, void *value)
+static int max77729_dcicl_callback(struct gvotable_election *el,
+				   const char *reason, void *value)
 {
 	struct max77729_chgr_data *data = gvotable_get_data(el);
 	int dc_icl = (long)value;
@@ -497,6 +500,8 @@ static void max77729_dcicl_callback(struct gvotable_election *el,
 	if (ret < 0)
 		dev_err(data->dev, "cannot set DC_SUSPEND=%d (%d)\n",
 			suspend, ret);
+
+	return 0;
 }
 
 static int max77729_set_charge_enabled(struct max77729_chgr_data *data,

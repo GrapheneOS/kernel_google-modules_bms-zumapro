@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Copyright 2020 Google, LLC
+ * Copyright 2020-2022 Google LLC
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -974,8 +974,8 @@ static int max77759_wcin_is_online(struct max77759_chgr_data *data);
  * I am using a the comparator_none, need scan all the votes to determine
  * the actual.
  */
-static void max77759_mode_callback(struct gvotable_election *el,
-				   const char *trigger, void *value)
+static int max77759_mode_callback(struct gvotable_election *el,
+				  const char *trigger, void *value)
 {
 	struct max77759_chgr_data *data = gvotable_get_data(el);
 	const int from_use_case = data->uc_data.use_case;
@@ -1113,6 +1113,7 @@ unlock_done:
 			 __func__, trigger ? trigger : "<>");
 	mutex_unlock(&data->io_lock);
 	__pm_relax(data->usecase_wake_lock);
+	return 0;
 }
 
 #define MODE_RERUN	"RERUN"
@@ -1481,8 +1482,8 @@ static int max77759_wcin_get_ilim_max_ua(struct max77759_chgr_data *data,
 }
 
 /* default is no suspend, any valid vote will suspend  */
-static void max77759_dc_suspend_vote_callback(struct gvotable_election *el,
-					      const char *reason, void *value)
+static int max77759_dc_suspend_vote_callback(struct gvotable_election *el,
+					     const char *reason, void *value)
 {
 	struct max77759_chgr_data *data = gvotable_get_data(el);
 	int ret, suspend = (long)value > 0;
@@ -1490,15 +1491,17 @@ static void max77759_dc_suspend_vote_callback(struct gvotable_election *el,
 	/* will trigger a CHARGER_MODE callback */
 	ret = max77759_wcin_input_suspend(data, suspend, "DC_SUSPEND");
 	if (ret < 0)
-		return;
+		return 0;
 
 	pr_debug("%s: DC_SUSPEND reason=%s, value=%ld suspend=%d (%d)\n",
 		 __func__, reason ? reason : "", (long)value, suspend, ret);
+
+	return 0;
 }
 
-static void max77759_dcicl_callback(struct gvotable_election *el,
-				    const char *reason,
-				    void *value)
+static int max77759_dcicl_callback(struct gvotable_election *el,
+				   const char *reason,
+				   void *value)
 {
 	struct max77759_chgr_data *data = gvotable_get_data(el);
 	int dc_icl = (long)value;
@@ -1519,6 +1522,7 @@ static void max77759_dcicl_callback(struct gvotable_election *el,
 		dev_err(data->dev, "cannot set suspend=%d (%d)\n",
 			suspend, ret);
 
+	return 0;
 }
 
 /*************************

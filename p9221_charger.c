@@ -1,7 +1,7 @@
 /*
  * P9221 Wireless Charger Driver
  *
- * Copyright (C) 2017 Google, LLC
+ * Copyright 2017-2022 Google LLC
  *
  */
 
@@ -5946,15 +5946,15 @@ static const struct power_supply_desc p9221_psy_desc = {
 	.no_thermal = true,
 };
 
-static void p9382a_tx_icl_vote_callback(struct gvotable_election *el,
-					const char *reason, void *vote)
+static int p9382a_tx_icl_vote_callback(struct gvotable_election *el,
+				       const char *reason, void *vote)
 {
 	struct p9221_charger_data *charger = gvotable_get_data(el);
 	int icl_ua = GVOTABLE_PTR_TO_INT(vote);
 	int ret = 0;
 
 	if (!charger->ben_state)
-		return;
+		return 0;
 
 	if (icl_ua == 0) {
 		schedule_work(&charger->rtx_disable_work);
@@ -5968,6 +5968,8 @@ static void p9382a_tx_icl_vote_callback(struct gvotable_election *el,
 			dev_err(&charger->client->dev,
 				"Couldn't set Tx current limit rc=%d\n", ret);
 	}
+
+	return 0;
 }
 
 /* called from */
@@ -6007,8 +6009,8 @@ int p9221_wlc_disable(struct p9221_charger_data *charger, int disable, u8 reason
 	return ret;
 }
 
-static void p9221_wlc_disable_callback(struct gvotable_election *el,
-				       const char *reason, void *vote)
+static int p9221_wlc_disable_callback(struct gvotable_election *el,
+				      const char *reason, void *vote)
 {
 	struct p9221_charger_data *charger = gvotable_get_data(el);
 	int disable = GVOTABLE_PTR_TO_INT(vote);
@@ -6018,7 +6020,7 @@ static void p9221_wlc_disable_callback(struct gvotable_election *el,
 		int value;
 		value = (!disable) ^ charger->pdata->wlc_en_act_low;
 		gpio_direction_output(charger->pdata->wlc_en, value);
-		return;
+		return 0;
 	}
 
 	charger->send_eop = gvotable_get_int_vote(charger->dc_icl_votable,
@@ -6027,6 +6029,8 @@ static void p9221_wlc_disable_callback(struct gvotable_election *el,
 		val = P9221_EOP_RESTART_POWER; /* auto restart */
 
 	p9221_wlc_disable(charger, disable, val);
+
+	return 0;
 }
 
 /*

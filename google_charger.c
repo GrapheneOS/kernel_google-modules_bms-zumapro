@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Copyright 2018 Google, LLC
+ * Copyright 2018-2022 Google LLC
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1465,13 +1465,15 @@ static int thermal_stats_lvl_to_vtier(int thermal_level) {
 	}
 }
 
-static void msc_temp_defend_dryrun_cb(struct gvotable_election *el,
-				      const char *reason, void *vote)
+static int msc_temp_defend_dryrun_cb(struct gvotable_election *el,
+				     const char *reason, void *vote)
 {
 	struct chg_drv *chg_drv = gvotable_get_data(el);
 	int is_dry_run = GVOTABLE_PTR_TO_INT(vote);
 
 	chg_drv->bd_state.bd_temp_dry_run = !!is_dry_run;
+
+	return 0;
 }
 
 /* bd_state->triggered = 1 when charging needs to be disabled */
@@ -3883,8 +3885,8 @@ static int msc_update_pps(struct chg_drv *chg_drv, int fv_uv, int cc_max)
  * NOTE: chg_work() vote 0 at the beginning of each loop to gate the updates
  * to the charger
  */
-static void msc_update_charger_cb(struct gvotable_election *el,
-				  const char *reason, void *vote)
+static int msc_update_charger_cb(struct gvotable_election *el,
+				 const char *reason, void *vote)
 {
 	int update_interval, rc = -EINVAL, fv_uv = -1, cc_max = -1, topoff = -1;
 	struct chg_drv *chg_drv = gvotable_get_data(el);
@@ -3947,38 +3949,43 @@ msc_reschedule:
 
 msc_done:
 	__pm_relax(chg_drv->chg_ws);
+	return 0;
 }
 
 /*
  * NOTE: we need a single source of truth. Charging can be disabled via the
  * votable and directy setting the property.
  */
-static void msc_chg_disable_cb(struct gvotable_election *el,
-			       const char *reason, void *vote)
+static int msc_chg_disable_cb(struct gvotable_election *el,
+			      const char *reason, void *vote)
 {
 	struct chg_drv *chg_drv = gvotable_get_data(el);
 	int chg_disable = GVOTABLE_PTR_TO_INT(vote);
 	int rc;
 
 	if (!chg_drv->chg_psy)
-		return;
+		return 0;
 
 	rc = GPSY_SET_PROP(chg_drv->chg_psy, GBMS_PROP_CHARGE_DISABLE, chg_disable);
 	if (rc < 0)
 		dev_err(chg_drv->device, "Couldn't %s charging rc=%d\n",
 				chg_disable ? "disable" : "enable", rc);
+
+	return 0;
 }
 
-static void msc_pwr_disable_cb(struct gvotable_election *el,
-			       const char *reason, void *vote)
+static int msc_pwr_disable_cb(struct gvotable_election *el,
+			      const char *reason, void *vote)
 {
 	struct chg_drv *chg_drv = gvotable_get_data(el);
 	int pwr_disable = GVOTABLE_PTR_TO_INT(vote);
 
 	if (!chg_drv->chg_psy)
-		return;
+		return 0;
 
 	chg_vote_input_suspend(chg_drv, MSC_CHG_VOTER, pwr_disable);
+
+	return 0;
 }
 
 static int chg_disable_std_votables(struct chg_drv *chg_drv)
