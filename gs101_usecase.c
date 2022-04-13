@@ -1156,6 +1156,7 @@ static bool gs101_setup_usecases_done(struct max77759_usecase_data *uc_data)
 	return (uc_data->cpout_en != -EPROBE_DEFER) &&
 	       (uc_data->cpout_ctl != -EPROBE_DEFER) &&
 	       (uc_data->wlc_vbus_en != -EPROBE_DEFER) &&
+	       (uc_data->ext_bst_ctl != -EPROBE_DEFER) &&
 	       (uc_data->apbst_on != -EPROBE_DEFER || uc_data->bst_sel != -EPROBE_DEFER);
 
 	/* TODO: handle platform specific differences..
