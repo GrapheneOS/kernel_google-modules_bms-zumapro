@@ -44,6 +44,7 @@ struct pca9468_platform_data {
 	/* Spread Spectrum settings */
 	unsigned int	sc_clk_dither_rate;
 	unsigned int	sc_clk_dither_limit;
+	bool		sc_clk_dither_en;
 
 #ifdef CONFIG_THERMAL
 	const char *usb_tz_name;

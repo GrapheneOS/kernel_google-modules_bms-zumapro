@@ -3987,6 +3987,11 @@ static int pca9468_hw_init(struct pca9468_charger *pca9468)
 				 pca9468->pdata->sc_clk_dither_limit << 4);
 	if (ret < 0)
 		return ret;
+	val = pca9468->pdata->sc_clk_dither_en ? PCA9468_BIT_SC_CLK_DITHER_EN : 0;
+	ret = regmap_update_bits(pca9468->regmap, PCA9468_REG_TEMP_CTRL,
+				 PCA9468_BIT_SC_CLK_DITHER_EN, val);
+	if (ret < 0)
+		return ret;
 
 	return ret;
 }
@@ -4650,6 +4655,8 @@ static int of_pca9468_dt(struct device *dev,
 	else
 		pr_info("%s: pca9468,sc-clk-dither-limit is %u\n", __func__,
 			pdata->sc_clk_dither_limit);
+	pdata->sc_clk_dither_en = of_property_read_bool(np_pca9468, "pca9468,spread-spectrum");
+	pr_info("%s: pca9468,spread-spectrum is %u\n", __func__, pdata->sc_clk_dither_en);
 
 #ifdef CONFIG_THERMAL
 	/* USBC thermal zone */
