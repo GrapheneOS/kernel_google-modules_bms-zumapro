@@ -215,7 +215,6 @@ extern int gbms_storage_read_data(gbms_tag_t tag, void *data, size_t count,
 				  int idx);
 extern int gbms_storage_write_data(gbms_tag_t tag, const void *data,
 				   size_t count, int idx);
-extern int gbms_storage_flush(gbms_tag_t tag);
 extern int gbms_storage_flush_all(void);
 
 /* standard device implementation that read data from an enumeration */

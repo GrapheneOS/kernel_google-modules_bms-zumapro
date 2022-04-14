@@ -2423,6 +2423,7 @@ static int p9221_prop_is_writeable(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
 		writeable = 1;
+		break;
 	default:
 		break;
 	}

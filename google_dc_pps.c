@@ -23,7 +23,7 @@
 #include "google_bms.h"
 #include "google_psy.h"
 #include "google_dc_pps.h"
-#include "../../drivers/usb/typec/tcpm/google/max77759_export.h"
+#include <linux/usb/max77759_export.h>
 
 #ifdef CONFIG_DEBUG_FS
 #include <linux/debugfs.h>
@@ -126,7 +126,6 @@ struct tcpm_port *chg_get_tcpm_port(struct power_supply *tcpm_psy)
 
 	return (struct tcpm_port *)port;
 }
-
 
 /* false when not present or error (either way don't run) */
 static enum pd_pps_stage pps_is_avail(struct pd_pps_data *pps,

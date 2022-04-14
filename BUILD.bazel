@@ -6,7 +6,7 @@
 # unless you have coordinated with the team managing the Soong to Bazel
 # migration.
 
-load("//build/kleaf:kernel.bzl", "kernel_module")
+load("//build/kernel/kleaf:kernel.bzl", "kernel_module")
 
 filegroup(
     name = "headers",
@@ -14,12 +14,19 @@ filegroup(
         "*.h",
     ]),
     visibility = [
-        "//private/google-modules/power/reset:__subpackages__",
+        "//gs/google-modules/power/reset:__subpackages__",
     ],
 )
 
 kernel_module(
-    name = "bms.cloudripper",
+    name = "bms.slider",
+    srcs = glob([
+        "**/*.c",
+        "**/*.h",
+        "Kbuild",
+    ]) + [
+        "//gs/google-modules/soc-modules:gs101_soc_headers",
+    ],
     outs = [
         "google-battery.ko",
         "google-bms.ko",
@@ -36,10 +43,17 @@ kernel_module(
         "overheat_mitigation.ko",
         "p9221.ko",
         "pca9468.ko",
+
+        # "max77729.ko",
+        # "max77759.ko",
+        # "pca9468-google.ko",
     ],
-    kernel_build = "//private/gs-google:cloudripper",
+    kernel_build = "//gs/google-modules/soc-modules:slider",
+    kernel_module_deps = [
+        "//gs/google-modules/soc-modules:gs101_soc",
+    ],
     visibility = [
-        "//private/google-modules/power/reset:__subpackages__",
-        "//private/gs-google:__pkg__",
+        "//gs/google-modules/power/reset:__subpackages__",
+        "//gs/google-modules/soc-modules:__pkg__",
     ],
 )

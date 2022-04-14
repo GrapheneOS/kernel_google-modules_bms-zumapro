@@ -564,7 +564,7 @@ static int gcpm_dc_stop(struct gcpm_drv *gcpm, int index)
 				index, ret);
 		else
 			gcpm->dc_state = DC_ENABLE;
-		/* Fall Through */
+		fallthrough;
 	case DC_ENABLE:
 	case DC_ENABLE_PASSTHROUGH:
 		ret = gcpm_dc_enable(gcpm, false);
@@ -572,7 +572,7 @@ static int gcpm_dc_stop(struct gcpm_drv *gcpm, int index)
 			pr_err("DC_PPS: Cannot disable DC (%d)", ret);
 			break;
 		}
-		/* Fall Through */
+		fallthrough;
 	default:
 		gcpm->dc_state = DC_DISABLED;
 		break;
@@ -1891,7 +1891,7 @@ static int gcpm_psy_set_property(struct power_supply *psy,
 
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
 		psp = POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX;
-		/* compat, fall through */
+		fallthrough;
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
 		ta_check = gcpm->fv_uv != pval->intval;
 		gcpm->fv_uv = pval->intval;
