@@ -14,8 +14,10 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/of_device.h>
+#include <linux/of_gpio.h>
+#include <linux/of_irq.h>
+#include <linux/interrupt.h>
 #include <linux/regmap.h>
-#include "max20339.h"
 
 #define MAX20339_STATUS1			0x1
 #define MAX20339_STATUS1_VINVALID		BIT(5)
@@ -30,7 +32,9 @@
 #define MAX20339_INT3				0x6
 #define MAX20339_INTMASK1			0x7
 #define MAX20339_OVLOSEL			0x11
+#define MAX20339_OVLOSEL_INOVLOSEL_5_85		0x0
 #define MAX20339_OVLOSEL_INOVLOSEL_14_5		0x2
+#define MAX20339_OVLOSEL_INOVLOSEL_MASK		0x3
 #define MAX20339_IN_CTR_REG			0x10
 #define MAX20339_IN_CTR_SWEN_SHIFT		0
 #define MAX20339_IN_CTR_SWEN_MASK		GENMASK(1, 0)
@@ -53,9 +57,10 @@
 #define MAX20338_SW_CNTL_LSW2_OV_EN_SHIFT	5
 #define MAX20338_SW_CNTL_LSW2_OV_EN_MASK	0x20
 
+
 #define MAX20339_MIN_GPIO			0
-#define MAX20339_MAX_GPIO			7
-#define MAX20339_NUM_GPIOS			7
+#define MAX20339_MAX_GPIO			8
+#define MAX20339_NUM_GPIOS			8
 #define MAX20339_LSW1_OFF			0
 #define MAX20339_LSW2_OFF			1
 #define MAX20339_LSW1_STATUS_OFF		2
@@ -63,8 +68,10 @@
 #define MAX20339_IN_CTR_SWEN_OFF		4
 #define MAX20339_LSW1_IS_OPEN_OFF		5
 #define MAX20339_LSW1_IS_CLOSED_OFF		6
+#define MAX20339_OTG_ENA_OFF			7
 
-#define MAX20339_GPIO_GET_TIMEOUT_MS		100
+#define MAX20339_LSW1_TIMEOUT_MS		100
+#define MAX20339_VIN_VALID_TIMEOUT_MS		100
 
 struct max20339_ovp {
 	struct i2c_client *client;
@@ -73,6 +80,7 @@ struct max20339_ovp {
 #if IS_ENABLED(CONFIG_GPIOLIB)
 	struct gpio_chip gpio;
 #endif
+	int irq_gpio;
 };
 
 static const struct regmap_range max20339_ovp_range[] = {
@@ -91,17 +99,20 @@ static const struct regmap_config max20339_regmap_config = {
 	.wr_table = &max20339_ovp_write_table,
 };
 
-void max20339_irq(void *data)
+static irqreturn_t max20339_irq(int irqno, void *data)
 {
 	struct max20339_ovp *ovp = data;
 	struct device *dev;
 	u8 buf[6];
 	int ret;
 
+	/* not really possible now */
 	if (!ovp)
-		return;
+		return IRQ_NONE;
 
 	wake_up_all(&ovp->gpio_get_wq);
+
+	/* TODO: check the actual status and return IRQ_NONE if none is set */
 
 	dev = &ovp->client->dev;
 	ret = regmap_bulk_read(ovp->regmap, MAX20339_STATUS1, buf, ARRAY_SIZE(buf));
@@ -111,8 +122,9 @@ void max20339_irq(void *data)
 			 buf[0], buf[1], buf[2], buf[3], buf[4], buf[5]);
 	else
 		dev_err(dev, "OVP TRIGGERED: Failed on reading status:%d\n", ret);
+
+	return IRQ_HANDLED;
 }
-EXPORT_SYMBOL_GPL(max20339_irq);
 
 static int max20339_init_regs(struct regmap *regmap, struct device *dev)
 {
@@ -176,7 +188,7 @@ static int max20339_gpio_get_direction(struct gpio_chip *chip,
 static bool max20339_is_lsw_closed(struct max20339_ovp *ovp, int offset)
 {
 	int ret;
-	unsigned int val;
+	unsigned int val = 0;
 
 	ret = regmap_read(ovp->regmap, offset ==  MAX20339_LSW1_OFF ?
 			  MAX20339_STATUS2 : MAX20339_STATUS3, &val);
@@ -189,9 +201,11 @@ static bool max20339_is_lsw_closed(struct max20339_ovp *ovp, int offset)
 /* 1 same as state, 0 not same */
 static int max20339_test_lsw1_state(struct max20339_ovp *ovp, int state)
 {
+	const int poll_interval_ms = 20;
+	int ret = -ETIMEDOUT;
 	unsigned int val;
 	bool closed;
-	int ret;
+	int i;
 
 	ret = regmap_read(ovp->regmap, MAX20339_STATUS2, &val);
 	if (ret < 0)
@@ -201,9 +215,16 @@ static int max20339_test_lsw1_state(struct max20339_ovp *ovp, int state)
 	if (closed == state)
 		return 1;
 
-	ret = wait_event_timeout(ovp->gpio_get_wq,
-			   max20339_is_lsw_closed(ovp, MAX20339_LSW1_OFF) == state,
-			   msecs_to_jiffies(MAX20339_GPIO_GET_TIMEOUT_MS));
+	/* wait_event_timeout() timeout is not reliable */
+	for (i = 0; i <= MAX20339_LSW1_TIMEOUT_MS; i += poll_interval_ms) {
+		if (max20339_is_lsw_closed(ovp, MAX20339_LSW1_OFF) == state) {
+			ret = 0;
+			break;
+		}
+
+		mdelay(poll_interval_ms);
+	}
+
 	if (!ret)
 		dev_warn(&ovp->client->dev, "Timeout for lsw1==%d\n", state);
 
@@ -269,7 +290,7 @@ static int max20339_gpio_get(struct gpio_chip *chip, unsigned int offset)
 			return 1;
 
 		wait_event_timeout(ovp->gpio_get_wq, max20339_is_vin_valid(ovp),
-				   msecs_to_jiffies(MAX20339_GPIO_GET_TIMEOUT_MS));
+				   msecs_to_jiffies(MAX20339_VIN_VALID_TIMEOUT_MS));
 		return max20339_is_vin_valid(ovp) ? 1 : 0;
 	}
 
@@ -288,7 +309,7 @@ static void max20339_gpio_set(struct gpio_chip *chip,
 	int i;
 	struct max20339_ovp *ovp = gpiochip_get_data(chip);
 
-	dev_dbg(&ovp->client->dev, "%s %d", __func__, value);
+	dev_dbg(&ovp->client->dev, "%s off=%u val=%d", __func__, offset, value);
 	switch (offset) {
 	case MAX20339_LSW1_OFF:
 		sw_cntl_reg = MAX20339_SW_CNTL_REG;
@@ -308,6 +329,17 @@ static void max20339_gpio_set(struct gpio_chip *chip,
 		status_reg = MAX20339_STATUS1;
 		tmp = value ? MAX20339_IN_CTR_SWEN_FORCE_ON : MAX20339_IN_CTR_SWEN_FORCE_OFF;
 		break;
+
+	/* b/178458456 clear/reset INOVLO on enter/exit from OTG cases */
+	case MAX20339_OTG_ENA_OFF:
+		tmp = value ? MAX20339_OVLOSEL_INOVLOSEL_5_85 :
+		      MAX20339_OVLOSEL_INOVLOSEL_14_5;
+		ret = regmap_update_bits(ovp->regmap, MAX20339_OVLOSEL,
+					 MAX20339_OVLOSEL_INOVLOSEL_MASK,
+					 tmp);
+		if (ret < 0)
+			dev_err(&ovp->client->dev, "OVLOSEL update error: ret %d\n", ret);
+		return;
 	default:
 		return;
 	}
@@ -328,19 +360,48 @@ static void max20339_gpio_set(struct gpio_chip *chip,
 }
 #endif
 
+/* HACK: will make max77729_pmic an interrupt controller and use the irq */
+static int max20339_setup_irq(struct max20339_ovp *ovp)
+{
+	struct device *dev = &ovp->client->dev;
+	int ret = -EINVAL;
+
+	ovp->irq_gpio = of_get_named_gpio(dev->of_node, "max20339,irq-gpio", 0);
+	if (ovp->irq_gpio < 0) {
+		dev_err(dev, "failed to get irq-gpio (%d)\n", ovp->irq_gpio);
+	} else {
+		const int irq = gpio_to_irq(ovp->irq_gpio);
+
+		ret = devm_request_threaded_irq(dev, irq, NULL,
+						max20339_irq,
+						IRQF_TRIGGER_FALLING |
+						IRQF_SHARED |
+						IRQF_ONESHOT,
+						"max2339_ovp",
+						ovp);
+
+		dev_err(dev, "ovp->irq_gpio=%d found irq=%d registered %d\n",
+			ovp->irq_gpio, irq, ret);
+	}
+
+	/* Read to clear interrupts */
+	max20339_irq(-1, ovp);
+
+	return ret;
+}
+
 static int max20339_probe(struct i2c_client *client,
 			  const struct i2c_device_id *i2c_id)
 {
 	struct max20339_ovp *ovp;
-	int ret = 0;
+	int rc, ret = 0;
 
 	ovp = devm_kzalloc(&client->dev, sizeof(*ovp), GFP_KERNEL);
 	if (!ovp)
 		return -ENOMEM;
 
 	ovp->client = client;
-	ovp->regmap = devm_regmap_init_i2c(client,
-					   &max20339_regmap_config);
+	ovp->regmap = devm_regmap_init_i2c(client, &max20339_regmap_config);
 	if (IS_ERR(ovp->regmap)) {
 		dev_err(&client->dev, "Regmap init failed\n");
 		return PTR_ERR(ovp->regmap);
@@ -349,9 +410,6 @@ static int max20339_probe(struct i2c_client *client,
 	max20339_init_regs(ovp->regmap, &client->dev);
 	i2c_set_clientdata(client, ovp);
 	init_waitqueue_head(&ovp->gpio_get_wq);
-
-	/* Read to clear interrupts */
-	max20339_irq(ovp);
 
 #if IS_ENABLED(CONFIG_GPIOLIB)
 	/* Setup GPIO controller */
@@ -374,6 +432,10 @@ static int max20339_probe(struct i2c_client *client,
 	if (ret)
 		dev_err(&client->dev, "Failed to initialize gpio chip\n");
 #endif
+
+	rc = max20339_setup_irq(ovp);
+	if (rc < 0)
+		dev_err(&client->dev, "Init IRQ failed (%d)\n", rc);
 
 	return ret;
 }

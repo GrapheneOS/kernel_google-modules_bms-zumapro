@@ -80,6 +80,7 @@ enum gbms_property {
 	GBMS_PROP_DEAD_BATTERY,		/* GBMS boot */
 	GBMS_PROP_INPUT_CURRENT_LIMITED, /* can be device prop */
 	GBMS_PROP_TAPER_CONTROL,	/* GBMS DC, needs for last tier */
+	GBMS_PROP_HEALTH_ACT_IMPEDANCE,	/* GBMS activation impedance, only if qualified */
 };
 
 union gbms_propval {
@@ -101,7 +102,7 @@ static inline int gpsy_set_int64_prop(struct power_supply *psy,
 		return -EINVAL;
 
 	pr_debug("set %s for '%s' to %lld\n", prop_name,
-		 psy->desc->name, val.int64val);
+		 psy->desc->name, (long long)val.int64val);
 
 	ret = power_supply_set_property(psy, (enum power_supply_property)psp,
 				        &val.prop);
@@ -137,7 +138,7 @@ static inline int64_t gpsy_get_int64_prop(struct power_supply *psy,
 	}
 
 	pr_debug("get %s for '%s' => %lld\n", prop_name,
-		 psy->desc->name, val.int64val);
+		 psy->desc->name, (long long)val.int64val);
 
 	return val.int64val;
 }

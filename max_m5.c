@@ -17,6 +17,7 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": %s " fmt, __func__
 
+#include <linux/crc8.h>
 #include <linux/err.h>
 #include <linux/module.h>
 #include <linux/of.h>
@@ -25,9 +26,7 @@
 #include <linux/regmap.h>
 #include "google_bms.h"
 #include "google_psy.h"
-#include <misc/logbuffer.h>
 
-#include "max_m5_reg.h"
 #include "max_m5.h"
 
 #ifdef CONFIG_DEBUG_FS
@@ -41,6 +40,9 @@
 
 #define MAX_M5_TASKPERIOD_175MS	0x1680
 #define MAX_M5_TASKPERIOD_351MS	0x2D00
+
+#define MAX_M5_CRC8_POLYNOMIAL		0x07	/* (x^8) + x^2 + x + 1 */
+DECLARE_CRC8_TABLE(m5_crc8_table);
 
 static void dump_model(struct device *dev, u16 *data, int count)
 {
@@ -83,6 +85,27 @@ int max_m5_read_actual_input_current_ua(struct i2c_client *client, int *iic_raw)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(max_m5_read_actual_input_current_ua);
+
+int max_m5_read_vbypass(struct i2c_client *client, int *volt)
+{
+	struct max_m5_data *m5_data = max1720x_get_model_data(client);
+	unsigned int tmp;
+	int ret;
+
+	if (!m5_data || !m5_data->regmap)
+		return -ENODEV;
+
+	ret = regmap_read(m5_data->regmap->regmap, MAX_M5_VBYP, &tmp);
+	if (ret) {
+		pr_err("Failed to read %x\n", MAX_M5_VBYP);
+		return ret;
+	}
+
+	/* LSB: 0.427246mV */
+	*volt = div_u64((u64) tmp * 427246, 1000);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(max_m5_read_vbypass);
 
 int max_m5_reg_read(struct i2c_client *client, unsigned int reg,
 		    unsigned int *val)
@@ -240,14 +263,7 @@ static int max_m5_update_custom_parameters(struct max_m5_data *m5_data)
 	int tmp, ret;
 	u16 vfsoc;
 
-	ret = REGMAP_WRITE(regmap, MAX_M5_TEMPNOM, 0x1403);
-	if (ret == 0)
-		ret = REGMAP_WRITE(regmap, MAX_M5_COFF, 0x1);
-	if (ret == 0)
-		ret = REGMAP_WRITE(regmap, MAX_M5_REPCAP, 0x0);
-	if (ret == 0)
-		ret = REGMAP_WRITE_VERIFY(regmap, MAX_M5_IAVGEMPTY,
-					  cp->iavg_empty);
+	ret = REGMAP_WRITE(regmap, MAX_M5_REPCAP, 0x0);
 	if (ret == 0)
 		ret = REGMAP_WRITE_VERIFY(regmap, MAX_M5_RELAXCFG,
 					  cp->relaxcfg);
@@ -307,6 +323,8 @@ static int max_m5_update_custom_parameters(struct max_m5_data *m5_data)
 		ret = REGMAP_WRITE_VERIFY(regmap, MAX_M5_RCOMP0, cp->rcomp0);
 	if (ret == 0)
 		ret = REGMAP_WRITE_VERIFY(regmap, MAX_M5_TEMPCO, cp->tempco);
+	if (ret == 0)
+		ret = REGMAP_WRITE(regmap, MAX_M5_TASKPERIOD, cp->taskperiod);
 	if (ret == 0)
 		ret = REGMAP_WRITE(regmap, MAX_M5_ICHGTERM, cp->ichgterm);
 	if (ret == 0)
@@ -378,6 +396,52 @@ static int max_m5_model_write_version(const struct max_m5_data *m5_data,
 	return ret;
 }
 
+static int max_m5_model_read_rc(const struct max_m5_data *m5_data)
+{
+	u16 learncfg;
+	int ret;
+
+	ret = REGMAP_READ(m5_data->regmap, MAX_M5_LEARNCFG, &learncfg);
+	if (ret < 0)
+		return ret;
+
+	return (learncfg & MAX_M5_LEARNCFG_RC_VER);
+}
+
+int max_m5_reset_state_data(struct max_m5_data *m5_data)
+{
+	struct model_state_save data;
+	int ret = 0;
+
+	memset(&data, 0xff, sizeof(data));
+
+	ret = gbms_storage_write(GBMS_TAG_GMSR, &data, sizeof(data));
+	if (ret < 0)
+		dev_warn(m5_data->dev, "Erase GMSR fail (%d)\n", ret);
+
+	return ret;
+}
+
+int max_m5_needs_reset_model_data(const struct max_m5_data *m5_data)
+{
+	int read_rc, para_rc;
+
+	if (m5_data->force_reset_model_data)
+		return 1;
+
+	read_rc = max_m5_model_read_rc(m5_data);
+	if (read_rc < 0)
+		return 0;
+
+	para_rc = m5_data->parameters.learncfg & MAX_M5_LEARNCFG_RC_VER;
+
+	/* RC2 -> RC1 */
+	if (read_rc == MAX_M5_LEARNCFG_RC2 && para_rc == MAX_M5_LEARNCFG_RC1)
+		return 1;
+
+	return 0;
+}
+
 /* convert taskperiod to the scaling factor for capacity */
 static int max_m5_period2caplsb(u16 taskperiod)
 {
@@ -403,6 +467,15 @@ int max_m5_load_gauge_model(struct max_m5_data *m5_data)
 
 	if (!m5_data || !m5_data->custom_model || !m5_data->custom_model_size)
 		return -ENODATA;
+
+	/* check FStat.DNR to wait it clear for data ready */
+	for (retries = 20; retries > 0; retries--) {
+		ret = REGMAP_READ(regmap, MAX_M5_FSTAT, &data);
+		if (ret == 0 && !(data & MAX_M5_FSTAT_DNR))
+			break;
+		msleep(50);
+	}
+	dev_info(m5_data->dev, "retries:%d, FSTAT:%#x\n", retries, data);
 
 	/* loading in progress, this is not good (tm) */
 	ret = REGMAP_READ(regmap, MAX_M5_CONFIG2, &data);
@@ -439,13 +512,10 @@ int max_m5_load_gauge_model(struct max_m5_data *m5_data)
 		return ret;
 	}
 
-	/*  b/177099997 cap_lsb gives the LSB for capacity conversions */
-	ret = REGMAP_WRITE(regmap, MAX_M5_TASKPERIOD,
-			   m5_data->parameters.taskperiod);
-	if (ret < 0) {
-		dev_err(m5_data->dev, "cannot update taskperiod (%d)\n", ret);
-		return ret;
-	}
+	ret = REGMAP_WRITE(regmap, MAX_M5_CGAIN,
+			   m5_data->parameters.cgain);
+	if (ret < 0)
+		dev_err(m5_data->dev, "cannot update cgain (%d)\n", ret);
 
 	m5_data->cap_lsb = max_m5_period2caplsb(m5_data->parameters.taskperiod);
 
@@ -532,6 +602,9 @@ static int max_m5_check_state_data(struct model_state_save *state)
 	if (state->rcomp0 == 0xFF)
 		return -ERANGE;
 
+	if (state->tempco == 0xFFFF)
+		return -ERANGE;
+
 	bad_residual = state->qresidual00 == 0xffff &&
 		       state->qresidual10 == 0xffff &&
 		       state->qresidual20 == 0xffff &&
@@ -543,6 +616,30 @@ static int max_m5_check_state_data(struct model_state_save *state)
 	return 0;
 }
 
+static u8 max_m5_crc(u8 *pdata, size_t nbytes, u8 crc)
+{
+	return crc8(m5_crc8_table, pdata, nbytes, crc);
+}
+
+static u8 max_m5_data_crc(char *reason, struct model_state_save *state)
+{
+	u8 crc;
+
+	/* Last byte is for saving CRC */
+	crc = max_m5_crc((u8 *)state, sizeof(struct model_state_save) - 1,
+			  CRC8_INIT_VALUE);
+
+	pr_info("%s gmsr: %X %X %X %X %X %X %X %X %X %X %X %X (%X)\n",
+		reason, state->rcomp0, state->tempco,
+		state->fullcaprep, state->fullcapnom,
+		state->qresidual00, state->qresidual10,
+		state->qresidual20, state->qresidual30,
+		state->cycles, state->cv_mixcap,
+		state->halftime, state->crc, crc);
+
+	return crc;
+}
+
 /*
  * Load parameters and model state from permanent storage.
  * Called on boot after POR
@@ -550,6 +647,7 @@ static int max_m5_check_state_data(struct model_state_save *state)
 int max_m5_load_state_data(struct max_m5_data *m5_data)
 {
 	struct max_m5_custom_parameters *cp = &m5_data->parameters;
+	u8 crc;
 	int ret;
 
 	if (!m5_data)
@@ -567,6 +665,10 @@ int max_m5_load_state_data(struct max_m5_data *m5_data)
 	if (ret < 0)
 		return ret;
 
+	crc = max_m5_data_crc("restore", &m5_data->model_save);
+	if (crc != m5_data->model_save.crc)
+		return -EINVAL;
+
 	cp->rcomp0 = m5_data->model_save.rcomp0;
 	cp->tempco = m5_data->model_save.tempco;
 	cp->fullcaprep = m5_data->model_save.fullcaprep;
@@ -577,7 +679,7 @@ int max_m5_load_state_data(struct max_m5_data *m5_data)
 	cp->qresidual30 = m5_data->model_save.qresidual30;
 
 	m5_data->cycles = m5_data->model_save.cycles;
-	m5_data->mixcap = m5_data->model_save.mixcap;
+	m5_data->cv_mixcap = m5_data->model_save.cv_mixcap;
 	m5_data->halftime = m5_data->model_save.halftime;
 
 	return 0;
@@ -587,6 +689,7 @@ int max_m5_load_state_data(struct max_m5_data *m5_data)
 int max_m5_save_state_data(struct max_m5_data *m5_data)
 {
 	struct max_m5_custom_parameters *cp = &m5_data->parameters;
+	struct model_state_save rb;
 	int ret = 0;
 
 	m5_data->model_save.rcomp0 = cp->rcomp0;
@@ -599,8 +702,11 @@ int max_m5_save_state_data(struct max_m5_data *m5_data)
 	m5_data->model_save.qresidual30 = cp->qresidual30;
 
 	m5_data->model_save.cycles = m5_data->cycles;
-	m5_data->model_save.mixcap = m5_data->mixcap;
+	m5_data->model_save.cv_mixcap = m5_data->cv_mixcap;
 	m5_data->model_save.halftime = m5_data->halftime;
+
+	m5_data->model_save.crc = max_m5_data_crc("save",
+				  &m5_data->model_save);
 
 	ret = gbms_storage_write(GBMS_TAG_GMSR,
 				 (const void *)&m5_data->model_save,
@@ -608,7 +714,31 @@ int max_m5_save_state_data(struct max_m5_data *m5_data)
 	if (ret < 0)
 		return ret;
 
-	return ret == sizeof(m5_data->model_save) ? 0 : -ERANGE;
+	if (ret != sizeof(m5_data->model_save))
+		return -ERANGE;
+
+	/* Read back to make sure data all good */
+	ret = gbms_storage_read(GBMS_TAG_GMSR, &rb, sizeof(rb));
+	if (ret < 0) {
+		dev_info(m5_data->dev, "Read Back Data Failed ret=%d\n", ret);
+		return ret;
+	}
+
+	if (rb.rcomp0 != m5_data->model_save.rcomp0 ||
+	    rb.tempco != m5_data->model_save.tempco ||
+	    rb.fullcaprep != m5_data->model_save.fullcaprep ||
+	    rb.fullcapnom != m5_data->model_save.fullcapnom ||
+	    rb.qresidual00 != m5_data->model_save.qresidual00 ||
+	    rb.qresidual10 != m5_data->model_save.qresidual10 ||
+	    rb.qresidual20 != m5_data->model_save.qresidual20 ||
+	    rb.qresidual30 != m5_data->model_save.qresidual30 ||
+	    rb.cycles != m5_data->model_save.cycles ||
+	    rb.cv_mixcap != m5_data->model_save.cv_mixcap ||
+	    rb.halftime != m5_data->model_save.halftime ||
+	    rb.crc != m5_data->model_save.crc)
+		return -EINVAL;
+
+	return 0;
 }
 
 /* 0 ok, < 0 error. Call after reading from the FG */
@@ -618,6 +748,9 @@ int max_m5_model_check_state(struct max_m5_data *m5_data)
 	bool bad_residual;
 
 	if (fg_param->rcomp0 == 0xFF)
+		return -ERANGE;
+
+	if (fg_param->tempco == 0xFFFF)
 		return -ERANGE;
 
 	bad_residual = fg_param->qresidual00 == 0xffff &&
@@ -664,10 +797,14 @@ int max_m5_model_read_state(struct max_m5_data *m5_data)
 		rc = REGMAP_READ(regmap, MAX_M5_QRTABLE30,
 				 &m5_data->parameters.qresidual30);
 	if (rc == 0)
-		rc = REGMAP_READ(regmap, MAX_M5_MIXCAP, &m5_data->mixcap);
+		rc = REGMAP_READ(regmap, MAX_M5_CV_MIXCAP,
+				 &m5_data->cv_mixcap);
 	if (rc == 0)
 		rc = REGMAP_READ(regmap, MAX_M5_CV_HALFTIME,
 				 &m5_data->halftime);
+	if (rc == 0)
+		rc = REGMAP_READ(regmap, MAX_M5_CGAIN,
+				 &m5_data->parameters.cgain);
 
 	return rc;
 }
@@ -695,10 +832,36 @@ ssize_t max_m5_model_state_cstr(char *buf, int max,
 			 m5_data->parameters.qresidual20);
 	len += scnprintf(&buf[len], max - len,"%02x:%02x\n", MAX_M5_QRTABLE30,
 			 m5_data->parameters.qresidual30);
-	len += scnprintf(&buf[len], max - len,"%02x:%02x\n", MAX_M5_MIXCAP,
-			 m5_data->mixcap);
+	len += scnprintf(&buf[len], max - len,"%02x:%02x\n", MAX_M5_CV_MIXCAP,
+			 m5_data->cv_mixcap);
 	len += scnprintf(&buf[len], max - len,"%02x:%02x\n", MAX_M5_CV_HALFTIME,
 			 m5_data->halftime);
+
+	return len;
+}
+
+ssize_t max_m5_gmsr_state_cstr(char *buf, int max)
+{
+	struct model_state_save saved_data;
+	int ret = 0, len = 0;
+
+	ret = gbms_storage_read(GBMS_TAG_GMSR, &saved_data, GBMS_GMSR_LEN);
+	if (ret < 0)
+		return ret;
+
+	len = scnprintf(&buf[len], max - len,
+			"rcomp0     :%04X\ntempco     :%04X\n"
+			"fullcaprep :%04X\ncycles     :%04X\n"
+			"fullcapnom :%04X\nqresidual00:%04X\n"
+			"qresidual10:%04X\nqresidual20:%04X\n"
+			"qresidual30:%04X\ncv_mixcap  :%04X\n"
+			"halftime   :%04X\n",
+			saved_data.rcomp0, saved_data.tempco,
+			saved_data.fullcaprep, saved_data.cycles,
+			saved_data.fullcapnom, saved_data.qresidual00,
+			saved_data.qresidual10, saved_data.qresidual20,
+			saved_data.qresidual30, saved_data.cv_mixcap,
+			saved_data.halftime);
 
 	return len;
 }
@@ -811,11 +974,14 @@ int max_m5_model_state_sscan(struct max_m5_data *m5_data, const char *buf,
 		case MAX_M5_QRTABLE30:
 			m5_data->parameters.qresidual30 = val;
 			break;
-		case MAX_M5_MIXCAP:
-			m5_data->mixcap = val;
+		case MAX_M5_CV_MIXCAP:
+			m5_data->cv_mixcap = val;
 			break;
 		case MAX_M5_CV_HALFTIME:
 			m5_data->halftime = val;
+			break;
+		case MAX_M5_CGAIN:
+			m5_data->parameters.cgain = val;
 			break;
 		default:
 			dev_err(m5_data->dev, "@%d: reg=%x out of range\n",
@@ -908,11 +1074,14 @@ int max_m5_fg_model_sscan(struct max_m5_data *m5_data, const char *buf, int max)
 }
 
 /* Initial values??? */
+#define CGAIN_RESET_VAL 0x0400
 static int m5_init_custom_parameters(struct device *dev,
 				     struct max_m5_custom_parameters *cp,
 				     struct device_node *node)
 {
 	const char *propname = "maxim,fg-params";
+	const int cnt_default = sizeof(*cp) / 2 - 1;
+	const int cnt_w_cgain = sizeof(*cp) / 2;
 	int ret, cnt;
 
 	memset(cp, 0, sizeof(*cp));
@@ -921,7 +1090,8 @@ static int m5_init_custom_parameters(struct device *dev,
 	if (cnt < 0)
 		return -ENODATA;
 
-	if (cnt != sizeof(*cp) / 2) {
+	cp->cgain = CGAIN_RESET_VAL;
+	if (cnt != cnt_default && cnt != cnt_w_cgain) {
 		dev_err(dev, "fg-params: %s has %d elements, need %ld\n",
 			propname, cnt, sizeof(*cp) / 2);
 		return -ERANGE;
@@ -981,6 +1151,9 @@ void *max_m5_init_data(struct device *dev, struct device_node *node,
 		temp = MAX_M5_INVALID_VERSION;
 	m5_data->model_version = temp;
 
+	m5_data->force_reset_model_data =
+		of_property_read_bool(node, "maxim,force-reset-model-data");
+
 	/*
 	 * Initial values: check max_m5_model_read_state() for the registers
 	 * updated from max1720x_model_work()
@@ -993,6 +1166,8 @@ void *max_m5_init_data(struct device *dev, struct device_node *node,
 	ret = max_m5_read_taskperiod(&m5_data->cap_lsb, regmap);
 	if (ret < 0)
 		dev_err(dev, "Cannot set TaskPeriod (%d)\n", ret);
+
+	crc8_populate_msb(m5_crc8_table, MAX_M5_CRC8_POLYNOMIAL);
 
 	m5_data->custom_model = model;
 	m5_data->regmap = regmap;

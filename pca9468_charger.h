@@ -25,20 +25,26 @@
 struct pca9468_platform_data {
 	int	irq_gpio;		/* GPIO pin that's connected to INT# */
 	unsigned int	iin_cfg;	/* Input Current Limit - uA unit */
-	unsigned int 	ichg_cfg;	/* Charging Current - uA unit */
+	unsigned int	iin_cfg_max;	/* from config/dt */
 	unsigned int	v_float;	/* V_Float Voltage - uV unit */
+	unsigned int	v_float_dt;	/* from config/dt */
 	unsigned int 	iin_topoff;	/* Input Topoff current -uV unit */
 	/* Switching frequency: 0 - 833kHz, ... , 3 - 980kHz */
 	unsigned int 	fsw_cfg;
 	/* NTC voltage threshold : 0~2.4V - uV unit */
 	unsigned int	ntc_th;
-	/*
-	 * Default charging mode:
-	 *	0 - No direct charging
-	 *	1 - 2:1 charging mode
-	 *	2 - 4:1 charging mode
-	 */
-	unsigned int	chg_mode;
+
+	int		iin_max_offset;
+	int		iin_cc_comp_offset;
+
+	/* irdrop */
+	unsigned int	irdrop_limits[3];
+	int		irdrop_limit_cnt;
+
+	/* Spread Spectrum settings */
+	unsigned int	sc_clk_dither_rate;
+	unsigned int	sc_clk_dither_limit;
+	bool		sc_clk_dither_en;
 
 #ifdef CONFIG_THERMAL
 	const char *usb_tz_name;
@@ -46,6 +52,81 @@ struct pca9468_platform_data {
 };
 
 /* - PPS Integration Shared definitions ---------------------------------- */
+
+/* AC[0] */
+#define P9468_CHGS_VER		1
+#define P9468_CHGS_VER_MASK	0xff
+/* AC[1] APDO */
+/* RS[0] */
+#define P9468_CHGS_FLAG_SHIFT	0
+#define P9468_CHGS_FLAG_MASK	0xff
+#define P9468_CHGS_F_STBY	(1 << 0)
+#define P9468_CHGS_F_SHDN	(1 << 1)
+#define P9468_CHGS_F_DONE	(1 << 2)
+#define P9468_CHGS_PRE_SHIFT	8
+#define P9468_CHGS_PRE_MASK	(0xff << P9468_CHGS_PRE_SHIFT)
+#define P9468_CHGS_RCPC_SHIFT	16
+#define P9468_CHGS_RCPC_MASK	(0xff << P9468_CHGS_RCPC_SHIFT)
+#define P9468_CHGS_NC_SHIFT	24
+#define P9468_CHGS_NC_MASK	(0xff << P9468_CHGS_NC_SHIFT)
+/* RS[1] */
+#define P9468_CHGS_OVCC_SHIFT	0
+#define P9468_CHGS_OVCC_MASK	(0xffff << P9468_CHGS_OVCC_SHIFT)
+#define P9468_CHGS_ADJ_SHIFT	16
+#define P9468_CHGS_ADJ_MASK	(0xffff << P9468_CHGS_ADJ_MASK)
+/* RS[2] */
+#define P9468_CHGS_CC_SHIFT	0
+#define P9468_CHGS_CC_MASK	(0xffff << P9468_CHGS_CC_SHIFT)
+#define P9468_CHGS_CV_SHIFT	16
+#define P9468_CHGS_CV_MASK	(0xffff << P9468_CHGS_CV_SHIFT)
+/* RS[3] */
+#define P9468_CHGS_CA_SHIFT	0
+#define P9468_CHGS_CA_MASK	(0xff << P9468_CHGS_CA_SHIFT)
+
+
+struct p9468_chg_stats {
+	u32 adapter_capabilities[2];
+	u32 receiver_state[5];
+
+	bool valid;
+	unsigned int ovc_count;
+	unsigned int ovc_max_ibatt;
+	unsigned int ovc_max_delta;
+
+	unsigned int rcp_count;
+	unsigned int nc_count;
+	unsigned int pre_count;
+	unsigned int ca_count;
+	unsigned int cc_count;
+	unsigned int cv_count;
+	unsigned int adj_count;
+	unsigned int stby_count;
+};
+
+#define p9468_chg_stats_valid(chg_data) ((chg_data)->valid)
+
+static inline void p9468_chg_stats_update_flags(struct p9468_chg_stats *chg_data, u8 flags)
+{
+	chg_data->receiver_state[0] |= flags << P9468_CHGS_FLAG_SHIFT;
+}
+
+static inline void p9468_chg_stats_set_flags(struct p9468_chg_stats *chg_data, u8 flags)
+{
+	chg_data->receiver_state[0] &= ~P9468_CHGS_FLAG_MASK;
+	p9468_chg_stats_update_flags(chg_data, flags);
+}
+
+static inline void p9468_chg_stats_inc_ovcf(struct p9468_chg_stats *chg_data,
+					    int ibatt, int cc_max)
+{
+	const int delta = ibatt - cc_max;
+
+	chg_data->ovc_count++;
+	if (delta > chg_data->ovc_max_delta) {
+		chg_data->ovc_max_ibatt = ibatt;
+		chg_data->ovc_max_delta = delta;
+	}
+}
 
 /**
  * struct pca9468_charger - pca9468 charger instance
@@ -64,6 +145,7 @@ struct pca9468_platform_data {
  * @tcpm_phandle: lookup for tcpm power supply
  * @pps_work: pps work for PPS periodic time
  * @pps_data: internal data for dc_pps
+ * @log: logbuffer
  * @pd: phandle for qualcomm PMI usbpd-phy
  * @wlc_psy_name: power supply for wlc DC
  * @wlc_psy: wlc DC ps
@@ -79,12 +161,10 @@ struct pca9468_platform_data {
  * @ta_max_pwr: TA maximum power, uW
  * @prev_iin: Previous IIN ADC of PCA9468, uA
  * @prev_inc: Previous TA voltage or current increment factor
- * @req_new_iin: Request for new input current limit, true or false
- * @req_new_vfloat: Request for new vfloat, true or false
  * @fv_uv: requested float voltage
  * @cc_max: requested charge current max
  * @new_iin: New request input current limit, uA
- * @new_vfloat: New request vfloat, uV
+ * @new_vfloat: Request for new vfloat
  * @adc_comp_gain: adc gain for compensation
  * @retry_cnt: retry counter for re-starting charging if charging stop happens
  * @ta_type: TA type for the direct charging, USBPD TA or Wireless Charger.
@@ -95,6 +175,8 @@ struct pca9468_platform_data {
  * @debug_address: debug register address
  * @debug_adc_channel: ADC channel to read
  * @init_done: true when initialization is complete
+ * @dc_start_time: start time (sec since boot) of the DC session
+ * @irdrop_comp_ok: when true clear GBMS_CS_FLAG_NOCOMP in flags
  */
 struct pca9468_charger {
 	struct wakeup_source	*monitor_wake_lock;
@@ -127,11 +209,8 @@ struct pca9468_charger {
 	unsigned int		prev_iin;
 	unsigned int		prev_inc;
 
-	bool			req_new_iin;
-	bool			req_new_vfloat;
-
 	unsigned int		new_iin;
-	unsigned int		new_vfloat;
+	int 			new_vfloat;
 
 	int			adc_comp_gain;
 
@@ -141,6 +220,7 @@ struct pca9468_charger {
 
 /* Google Integration Start */
 	int pps_index;		/* 0=disabled, 1=tcpm, 2=wireless */
+	bool			init_done;
 
 	/* PPS_wireless */
 	const char 		*wlc_psy_name;
@@ -151,15 +231,28 @@ struct pca9468_charger {
 	struct power_supply 	*pd;
 	struct delayed_work	pps_work;
 	struct pd_pps_data	pps_data;
+	struct logbuffer	*log;
 
 #ifdef CONFIG_THERMAL
 	struct thermal_zone_device *usb_tzd;
 #endif
-	int			ta_type;
-	unsigned int		chg_mode;
+
+	/* WIRELESS or WIRED */
+	int	ta_type;
+	/*
+	 *	0 - No direct charging
+	 *	1 - 2:1 charging mode
+	 *	2 - 4:1 charging mode
+	 */
+	int	chg_mode;
+
 	/* requested charging current and voltage */
-	int			fv_uv;
-	int			cc_max;
+	int	fv_uv;
+	int	cc_max;
+	ktime_t	dc_start_time;
+	bool	irdrop_comp_ok;
+
+	/* monitoring */
 	struct power_supply	*batt_psy;
 
 	/* debug */
@@ -167,8 +260,14 @@ struct pca9468_charger {
 	u32			debug_address;
 	int			debug_adc_channel;
 
-	bool			init_done;
+
+	bool wlc_ramp_out_iin;
+	u32 wlc_ramp_out_delay;
+	u32 wlc_ramp_out_vout_target;
+
+	struct p9468_chg_stats	chg_data;
 /* Google Integration END */
+
 };
 
 /* Direct Charging State */
@@ -190,7 +289,7 @@ enum {
 /* PD Message Type */
 enum {
 	PD_MSG_REQUEST_APDO,
-	PD_MSG_REQUEST_FIXED_PDO,
+	MSG_REQUEST_FIXED_PDO,
 	WCRX_REQUEST_VOLTAGE,
 };
 
@@ -209,9 +308,10 @@ enum {
 };
 
 /* PPS timers */
-#define PCA9468_PDMSG_WAIT_T	250	/* 250ms */
-#define PCA9468_PDMSG_RETRY_T	1000	/* 1000ms */
-#define PCA9468_PPS_PERIODIC_T	10000	/* 10000ms */
+#define PCA9468_PDMSG_WAIT_T		250	/* 250ms */
+#define PCA9468_PDMSG_RETRY_T		1000	/* 1000ms */
+#define PCA9468_PDMSG_WLC_WAIT_T	5000	/* 5000ms */
+#define PCA9468_PPS_PERIODIC_T		10000	/* 10000ms */
 
 /* - Core driver  ---------------------------- */
 
@@ -229,26 +329,36 @@ enum {
 };
 
 int pca9468_probe_pps(struct pca9468_charger *pca9468_chg);
-int pca9468_set_switching_charger(bool enable, unsigned int input_current,
-				  unsigned int charging_current,
-				  unsigned int vfloat);
-int pca9468_get_swc_property(enum power_supply_property prop,
-			     union power_supply_propval *val);
 
 int pca9468_request_pdo(struct pca9468_charger *pca9468);
 int pca9468_usbpd_setup(struct pca9468_charger *pca9468);
 int pca9468_send_pd_message(struct pca9468_charger *pca9468, unsigned int msg_type);
-int pca9468_get_apdo_max_power(struct pca9468_charger *pca9468);
-struct power_supply *pca9468_get_rx_psy(struct pca9468_charger *pca9468);
+int pca9468_get_apdo_max_power(struct pca9468_charger *pca9468,
+			       unsigned int ta_max_vol, unsigned int ta_max_cur);
 int pca9468_send_rx_voltage(struct pca9468_charger *pca9468, unsigned int msg_type);
 int pca9468_get_rx_max_power(struct pca9468_charger *pca9468);
-int pca9468_set_ta_type(struct pca9468_charger *pca9468);
+int pca9468_set_ta_type(struct pca9468_charger *pca9468, int pps_index);
 
 /* GBMS integration */
+struct power_supply *pca9468_get_rx_psy(struct pca9468_charger *pca9468);
 int pca9468_get_chg_chgr_state(struct pca9468_charger *pca9468,
 			       union gbms_charger_state *chg_state);
 int pca9468_is_present(struct pca9468_charger *pca9468);
 int pca9468_get_status(struct pca9468_charger *pca9468);
 int pca9468_get_charge_type(struct pca9468_charger *pca9468);
+
+extern int debug_printk_prlog;
+extern int debug_no_logbuffer;
+
+#define logbuffer_prlog(p, level, fmt, ...)	\
+	gbms_logbuffer_prlog(p->log, level, debug_no_logbuffer, debug_printk_prlog, fmt, ##__VA_ARGS__)
+
+/* charge stats */
+void p9468_chg_stats_init(struct p9468_chg_stats *chg_data);
+int p9468_chg_stats_update(struct p9468_chg_stats *chg_data,
+			   const struct pca9468_charger *pca9468);
+int p9468_chg_stats_done(struct p9468_chg_stats *chg_data,
+			 const struct pca9468_charger *pca9468);
+void p9468_chg_stats_dump(const struct pca9468_charger *pca9468);
 
 #endif

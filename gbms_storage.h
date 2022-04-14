@@ -34,14 +34,26 @@
 /* Battery Google Part Number */
 #define GBMS_BGPN_LEN	10
 /* Battery device info length */
-#define GBMS_DINF_LEN	32
+#define GBMS_DINF_LEN	16
 /* Battery manufacturer info length */
 #define GBMS_MINF_LEN	30
 /* Gauge Model State Restore */
-#define GBMS_GMSR_LEN	22
+#define GBMS_GMSR_LEN	23
+
+/* TODO: link to the structure used to save this*/
+#define BATT_ONE_HIST_LEN	12
+/* TODO: this depends on the EEPROM size */
+#define BATT_TOTAL_HIST_LEN	900
+/* TODO: this depends on the EEPROM size */
+#define BATT_MAX_HIST_CNT	\
+		(BATT_TOTAL_HIST_LEN / BATT_ONE_HIST_LEN) // 75
 
 
 #define GBMS_CCBIN_BUCKET_COUNT	10
+
+/* Adds BPST and STRD */
+#define GBMS_LOTR_DEFAULT 0xff
+#define GBMS_LOTR_V1 1
 
 /*
  * Tags are u32 constants: hardcoding as hex since characters constants of more
@@ -50,11 +62,15 @@
 typedef uint32_t gbms_tag_t;
 
 enum gbms_tags {
+	GBMS_TAG_ACIM = 0x4143494d, /* Activation Impedance */
 	GBMS_TAG_BCNT = 0x42434e54,
 	GBMS_TAG_BGCE = 0x42474345,
 	GBMS_TAG_BGPN = 0x4247504e,
+	GBMS_TAG_BPST = 0x42505354, /* LOTRV1: health or spare */
 	GBMS_TAG_BRES = 0x42524553,
 	GBMS_TAG_BRID = 0x42524944,
+	GBMS_TAG_CELC = 0x43454C43,
+	GBMS_TAG_CLHI = 0x424C4849,
 	GBMS_TAG_CMPC = 0x434d5043,
 	GBMS_TAG_CNHS = 0x434E4853,
 	GBMS_TAG_DINF = 0x44494e46,
@@ -63,7 +79,11 @@ enum gbms_tags {
 	GBMS_TAG_GCFE = 0x47434645,
 	GBMS_TAG_GMSR = 0x474d5352,
 	GBMS_TAG_HIST = 0x48495354,
+	GBMS_TAG_LOTR = 0x4C4F5452,
 	GBMS_TAG_MINF = 0x4d494e46,
+	GBMS_TAG_MXSN = 0x4d58534e,
+	GBMS_TAG_MXCN = 0x4d58434e,
+	GBMS_TAG_THAS = 0x54484153,
 
 	/* User Space Read/Write scratch */
 	GBMS_TAG_RS32 = 0x52533332,
@@ -82,7 +102,11 @@ enum gbms_tags {
 
 	GBMS_TAG_RAVG = 0x52415647,
 	GBMS_TAG_RFCN = 0x5246434e,
+	GBMS_TAG_SELC = 0x53454C43,
 	GBMS_TAG_SNUM = 0x534e554d,
+
+	GBMS_TAG_STRD = 0x53545244, /* LOTRV1: Swelling data */
+	GBMS_TAG_RSOC = 0x52534F43,
 };
 
 /*
@@ -150,15 +174,33 @@ struct nvmem_device;
 
 #if IS_ENABLED(CONFIG_GOOGLE_BEE)
 
-extern int gbee_register_device(const char *name, struct nvmem_device *nvram);
+/* defaults */
+extern int gbee_register_device(const char *name, int lotr, struct nvmem_device *nvram);
 extern void gbee_destroy_device(void);
 
+/* version 1 */
+extern int gbee_storage01_info(gbms_tag_t tag, size_t *addr, size_t *count, void *ptr);
+extern int gbee_storage01_iter(int index, gbms_tag_t *tag, void *ptr);
+
+/* defaults */
+extern int gbee_storage_info(gbms_tag_t tag, size_t *addr, size_t *count, void *ptr);
+
 #else
+
 static inline int gbee_register_device(const char *name,
 				       struct nvmem_device *nvram)
 { return -ENODEV; }
 
 static inline void gbee_destroy_device(void) { }
+
+static inline int gbee_storage01_info(gbms_tag_t tag, size_t *addr, size_t *count, void *ptr)
+{ return -ENODEV; }
+
+static inline int gbee_storage01_iter(int index, gbms_tag_t *tag, void *ptr)
+{ return -ENODEV; }
+
+static inline int gbee_storage_info(gbms_tag_t tag, size_t *addr, size_t *count, void *ptr)
+{ return -ENODEV; }
 
 #endif
 

@@ -15,19 +15,25 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-
 #include <linux/kernel.h>
 #include <linux/printk.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/pm_runtime.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
+#include <misc/gvotable.h>
 #include "gbms_power_supply.h"
 #include "google_bms.h"
 #include "google_psy.h"
 
 #define MAX(x, y)	((x) < (y) ? (y) : (x))
 #define DUAL_FG_DELAY_INIT_MS	500
+#define DUAL_FG_WORK_PERIOD_MS	10000
+#define DUAL_BATT_TEMP_VOTER	"daul_batt_temp"
+
+#define DUAL_BATT_VFLIP_OFFSET		50000
+#define DUAL_BATT_VFLIP_OFFSET_IDX	0
 
 struct dual_fg_drv {
 	struct device *device;
@@ -42,9 +48,34 @@ struct dual_fg_drv {
 	struct mutex fg_lock;
 
 	struct delayed_work init_work;
+	struct delayed_work gdbatt_work;
+	struct gvotable_election *fcc_votable;
+
+	struct gbms_chg_profile chg_profile;
+
+	u32 battery_capacity;
+	int cc_max;
+
+	int base_charge_full;
+	int flip_charge_full;
 
 	bool init_complete;
+	bool resume_complete;
+	bool cable_in;
+
+	u32 vflip_offset;
 };
+
+static int gdbatt_resume_check(struct dual_fg_drv *dual_fg_drv) {
+	int ret = 0;
+
+	pm_runtime_get_sync(dual_fg_drv->device);
+	if (!dual_fg_drv->init_complete || !dual_fg_drv->resume_complete)
+		ret = -EAGAIN;
+	pm_runtime_put_sync(dual_fg_drv->device);
+
+	return ret;
+}
 
 static enum power_supply_property gdbatt_fg_props[] = {
 	POWER_SUPPLY_PROP_STATUS,
@@ -65,6 +96,151 @@ static enum power_supply_property gdbatt_fg_props[] = {
 	POWER_SUPPLY_PROP_SERIAL_NUMBER,
 };
 
+static int gdbatt_get_temp(struct power_supply *fg_psy, int *temp)
+{
+	int err = 0;
+	union power_supply_propval val;
+
+	if (!fg_psy)
+		return -EINVAL;
+
+	err = power_supply_get_property(fg_psy,
+					POWER_SUPPLY_PROP_TEMP, &val);
+	if (err == 0)
+		*temp = val.intval;
+
+	return err;
+}
+
+static int gdbatt_select_temp_idx(struct gbms_chg_profile *profile, int temp)
+{
+	if (temp < profile->temp_limits[0] ||
+	    temp > profile->temp_limits[profile->temp_nb_limits - 1])
+		return -1;
+	else
+		return gbms_msc_temp_idx(profile, temp);
+}
+
+static int gdbatt_select_voltage_idx(struct gbms_chg_profile *profile, int vbatt)
+{
+	int vbatt_idx = 0;
+
+	while (vbatt_idx < profile->volt_nb_limits - 1 &&
+	       vbatt > profile->volt_limits[vbatt_idx])
+		vbatt_idx++;
+
+	return vbatt_idx;
+}
+
+static void gdbatt_select_cc_max(struct dual_fg_drv *dual_fg_drv)
+{
+	struct gbms_chg_profile *profile = &dual_fg_drv->chg_profile;
+	int base_temp, flip_temp, base_vbatt, flip_vbatt;
+	int base_temp_idx, flip_temp_idx, base_vbatt_idx, flip_vbatt_idx;
+	int base_cc_max, flip_cc_max, cc_max;
+	struct power_supply *base_psy = dual_fg_drv->first_fg_psy;
+	struct power_supply *flip_psy = dual_fg_drv->second_fg_psy;
+	int ret = 0;
+
+	if (!dual_fg_drv->cable_in)
+		goto check_done;
+
+	ret = gdbatt_get_temp(base_psy, &base_temp);
+	if (ret < 0)
+		goto check_done;
+
+	ret = gdbatt_get_temp(flip_psy, &flip_temp);
+	if (ret < 0)
+		goto check_done;
+
+	base_vbatt = GPSY_GET_PROP(base_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
+	if (base_vbatt < 0)
+		goto check_done;
+
+	flip_vbatt = GPSY_GET_PROP(flip_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
+	if (flip_vbatt < 0)
+		goto check_done;
+
+	base_temp_idx = gdbatt_select_temp_idx(profile, base_temp);
+	flip_temp_idx = gdbatt_select_temp_idx(profile, flip_temp);
+
+	base_vbatt_idx = gdbatt_select_voltage_idx(profile, base_vbatt);
+	flip_vbatt_idx = gdbatt_select_voltage_idx(profile,
+					  flip_vbatt - dual_fg_drv->vflip_offset);
+
+	/* only apply offset in allowed idx */
+	if (flip_vbatt_idx > DUAL_BATT_VFLIP_OFFSET_IDX)
+		flip_vbatt_idx = gdbatt_select_voltage_idx(profile, flip_vbatt);
+
+	base_cc_max = GBMS_CCCM_LIMITS(profile, base_temp_idx, base_vbatt_idx);
+	flip_cc_max = GBMS_CCCM_LIMITS(profile, flip_temp_idx, flip_vbatt_idx);
+	cc_max = (base_cc_max <= flip_cc_max) ? base_cc_max : flip_cc_max;
+	if (cc_max == dual_fg_drv->cc_max)
+		goto check_done;
+
+	if (!dual_fg_drv->fcc_votable)
+		dual_fg_drv->fcc_votable =
+			gvotable_election_get_handle(VOTABLE_MSC_FCC);
+	if (dual_fg_drv->fcc_votable) {
+		pr_info("temp:%d/%d(%d/%d), vbatt:%d/%d(%d/%d), cc_max:%d/%d(%d)\n",
+			base_temp, flip_temp, base_temp_idx, flip_temp_idx, base_vbatt,
+			flip_vbatt, base_vbatt_idx, flip_vbatt_idx, base_cc_max,
+			flip_cc_max, cc_max);
+		gvotable_cast_int_vote(dual_fg_drv->fcc_votable,
+				       DUAL_BATT_TEMP_VOTER, cc_max, true);
+		dual_fg_drv->cc_max = cc_max;
+	}
+
+check_done:
+	pr_debug("check done. cable_in=%d (%d)\n", dual_fg_drv->cable_in, ret);
+}
+
+static int gdbatt_get_capacity(struct dual_fg_drv *dual_fg_drv, int base_soc, int flip_soc)
+{
+	const int base_full = dual_fg_drv->base_charge_full / 1000;
+	const int flip_full = dual_fg_drv->flip_charge_full / 1000;
+	const int full_sum = base_full + flip_full;
+
+	if (!base_full || !flip_full)
+		return (base_soc + flip_soc) / 2;
+
+	return (base_soc * base_full + flip_soc * flip_full) / full_sum;
+}
+
+static void google_dual_batt_work(struct work_struct *work)
+{
+	struct dual_fg_drv *dual_fg_drv = container_of(work, struct dual_fg_drv,
+						 gdbatt_work.work);
+	struct power_supply *base_psy = dual_fg_drv->first_fg_psy;
+	struct power_supply *flip_psy = dual_fg_drv->second_fg_psy;
+	int base_data, flip_data;
+
+	mutex_lock(&dual_fg_drv->fg_lock);
+
+	if (!dual_fg_drv->init_complete)
+		goto error_done;
+
+	if (!base_psy || !flip_psy)
+		goto error_done;
+
+	gdbatt_select_cc_max(dual_fg_drv);
+
+	base_data = GPSY_GET_PROP(base_psy, POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN);
+	flip_data = GPSY_GET_PROP(flip_psy, POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN);
+
+	if (base_data <= 0 || flip_data <= 0)
+		goto error_done;
+
+	dual_fg_drv->base_charge_full = base_data;
+	dual_fg_drv->flip_charge_full = flip_data;
+
+error_done:
+	mod_delayed_work(system_wq, &dual_fg_drv->gdbatt_work,
+			 msecs_to_jiffies(DUAL_FG_WORK_PERIOD_MS));
+
+	mutex_unlock(&dual_fg_drv->fg_lock);
+}
+
 static int gdbatt_get_property(struct power_supply *psy,
 				 enum power_supply_property psp,
 				 union power_supply_propval *val)
@@ -75,8 +251,9 @@ static int gdbatt_get_property(struct power_supply *psy,
 	union power_supply_propval fg_1;
 	union power_supply_propval fg_2;
 
-	if (!dual_fg_drv->init_complete)
-		return -EAGAIN;
+	err = gdbatt_resume_check(dual_fg_drv);
+	if (err != 0)
+		return err;
 
 	if (!dual_fg_drv->first_fg_psy && !dual_fg_drv->second_fg_psy)
 		return -EAGAIN;
@@ -109,19 +286,24 @@ static int gdbatt_get_property(struct power_supply *psy,
 		val->intval = fg_1.intval + fg_2.intval;
 		break;
 	case POWER_SUPPLY_PROP_TEMP:
-	case POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG:
-	case POWER_SUPPLY_PROP_TIME_TO_FULL_AVG:
-		/* TODO: for low temp case need pick lower one */
 		val->intval = MAX(fg_1.intval, fg_2.intval);
 		break;
-	case GBMS_PROP_CAPACITY_RAW:
-	case POWER_SUPPLY_PROP_CAPACITY:
+	case POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG:
+	case POWER_SUPPLY_PROP_TIME_TO_FULL_AVG:
+		val->intval = MAX(fg_1.intval, fg_2.intval);
+		break;
+	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
+		val->intval = (fg_1.intval + fg_2.intval)/2;
+		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_AVG:
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN:
 	case POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN:
-	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
 	case POWER_SUPPLY_PROP_VOLTAGE_OCV:
 		val->intval = (fg_1.intval + fg_2.intval)/2;
+		break;
+	case GBMS_PROP_CAPACITY_RAW:
+	case POWER_SUPPLY_PROP_CAPACITY:
+		val->intval = gdbatt_get_capacity(dual_fg_drv, fg_1.intval, fg_2.intval);
 		break;
 	case POWER_SUPPLY_PROP_HEALTH:
 		/* larger one is bad. TODO: confirm its priority */
@@ -175,18 +357,23 @@ static int gdbatt_set_property(struct power_supply *psy,
 					power_supply_get_drvdata(psy);
 	int ret = 0;
 
+	ret = gdbatt_resume_check(dual_fg_drv);
+	if (ret != 0)
+		return ret;
+
 	switch (psp) {
 	case GBMS_PROP_BATT_CE_CTRL:
 		if (dual_fg_drv->first_fg_psy) {
-			ret = GPSY_SET_PROP(dual_fg_drv->first_fg_psy, psp, false);
+			ret = GPSY_SET_PROP(dual_fg_drv->first_fg_psy, psp, val->intval);
 			if (ret < 0)
 				pr_err("Cannot set the first BATT_CE_CTRL, ret=%d\n", ret);
 		}
 		if (dual_fg_drv->second_fg_psy) {
-			ret = GPSY_SET_PROP(dual_fg_drv->second_fg_psy, psp, false);
+			ret = GPSY_SET_PROP(dual_fg_drv->second_fg_psy, psp, val->intval);
 			if (ret < 0)
 				pr_err("Cannot set the second BATT_CE_CTRL, ret=%d\n", ret);
 		}
+		dual_fg_drv->cable_in = !!val->intval;
 		break;
 	default:
 		return -EINVAL;
@@ -224,6 +411,29 @@ static struct power_supply_desc gdbatt_psy_desc = {
 };
 
 /* ------------------------------------------------------------------------ */
+
+static int gdbatt_init_chg_profile(struct dual_fg_drv *dual_fg_drv)
+{
+	struct device_node *node = of_find_node_by_name(NULL, "google,battery");
+	struct gbms_chg_profile *profile = &dual_fg_drv->chg_profile;
+	int ret = 0;
+
+	if (profile->cccm_limits)
+		return 0;
+
+	ret = gbms_init_chg_profile(profile, node);
+	if (ret < 0)
+		return -EINVAL;
+
+	ret = of_property_read_u32(node, "google,chg-battery-capacity",
+				   &dual_fg_drv->battery_capacity);
+	if (ret < 0)
+		pr_warn("battery not present, no default capacity, zero charge table\n");
+
+	gbms_init_chg_table(profile, node, dual_fg_drv->battery_capacity);
+
+	return ret;
+}
 
 static void google_dual_batt_gauge_init_work(struct work_struct *work)
 {
@@ -279,8 +489,14 @@ static void google_dual_batt_gauge_init_work(struct work_struct *work)
 		}
 	}
 
-	mutex_init(&dual_fg_drv->fg_lock);
+	dual_fg_drv->cc_max = -1;
+	err = gdbatt_init_chg_profile(dual_fg_drv);
+	if (err < 0)
+		dev_info(dual_fg_drv->device,"fail to init chg profile (%d)\n", err);
+
 	dual_fg_drv->init_complete = true;
+	dual_fg_drv->resume_complete = true;
+	mod_delayed_work(system_wq, &dual_fg_drv->gdbatt_work, 0);
 	dev_info(dual_fg_drv->device, "google_dual_batt_gauge_init_work done\n");
 
 	return;
@@ -295,8 +511,8 @@ static int google_dual_batt_gauge_probe(struct platform_device *pdev)
 	const char *first_fg_psy_name;
 	const char *second_fg_psy_name;
 	struct dual_fg_drv *dual_fg_drv;
-	int ret;
 	struct power_supply_config psy_cfg = {};
+	int ret;
 
 	dual_fg_drv = devm_kzalloc(&pdev->dev, sizeof(*dual_fg_drv), GFP_KERNEL);
 	if (!dual_fg_drv)
@@ -329,11 +545,23 @@ static int google_dual_batt_gauge_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
+	ret = of_property_read_u32(pdev->dev.of_node, "google,vflip-offset",
+				   &dual_fg_drv->vflip_offset);
+	if (ret < 0) {
+		pr_debug("Couldn't set vflip_offset (%d)\n", ret);
+		dual_fg_drv->vflip_offset = DUAL_BATT_VFLIP_OFFSET;
+	}
+
 	INIT_DELAYED_WORK(&dual_fg_drv->init_work, google_dual_batt_gauge_init_work);
+	INIT_DELAYED_WORK(&dual_fg_drv->gdbatt_work, google_dual_batt_work);
+	mutex_init(&dual_fg_drv->fg_lock);
 	platform_set_drvdata(pdev, dual_fg_drv);
 
 	psy_cfg.drv_data = dual_fg_drv;
 	psy_cfg.of_node = pdev->dev.of_node;
+
+	if (of_property_read_bool(pdev->dev.of_node, "google,psy-type-unknown"))
+		gdbatt_psy_desc.type = POWER_SUPPLY_TYPE_UNKNOWN;
 
 	dual_fg_drv->psy = devm_power_supply_register(dual_fg_drv->device,
 						   &gdbatt_psy_desc, &psy_cfg);
@@ -357,8 +585,40 @@ static int google_dual_batt_gauge_probe(struct platform_device *pdev)
 
 static int google_dual_batt_gauge_remove(struct platform_device *pdev)
 {
+	struct dual_fg_drv *dual_fg_drv = platform_get_drvdata(pdev);
+
+	gbms_free_chg_profile(&dual_fg_drv->chg_profile);
+
 	return 0;
 }
+
+static int __maybe_unused google_dual_batt_pm_suspend(struct device *dev)
+{
+	struct platform_device *pdev = to_platform_device(dev);
+	struct dual_fg_drv *dual_fg_drv = platform_get_drvdata(pdev);
+
+	pm_runtime_get_sync(dual_fg_drv->device);
+	dual_fg_drv->resume_complete = false;
+	pm_runtime_put_sync(dual_fg_drv->device);
+
+	return 0;
+}
+
+static int __maybe_unused google_dual_batt_pm_resume(struct device *dev)
+{
+	struct platform_device *pdev = to_platform_device(dev);
+	struct dual_fg_drv *dual_fg_drv = platform_get_drvdata(pdev);
+
+	pm_runtime_get_sync(dual_fg_drv->device);
+	dual_fg_drv->resume_complete = true;
+	pm_runtime_put_sync(dual_fg_drv->device);
+
+	return 0;
+}
+
+static SIMPLE_DEV_PM_OPS(google_dual_batt_pm_ops,
+			 google_dual_batt_pm_suspend,
+			 google_dual_batt_pm_resume);
 
 static const struct of_device_id google_dual_batt_gauge_of_match[] = {
 	{.compatible = "google,dual_batt_gauge"},
@@ -372,6 +632,7 @@ static struct platform_driver google_dual_batt_gauge_driver = {
 		   .owner = THIS_MODULE,
 		   .of_match_table = google_dual_batt_gauge_of_match,
 		   .probe_type = PROBE_PREFER_ASYNCHRONOUS,
+		   .pm = &google_dual_batt_pm_ops,
 		   },
 	.probe = google_dual_batt_gauge_probe,
 	.remove = google_dual_batt_gauge_remove,

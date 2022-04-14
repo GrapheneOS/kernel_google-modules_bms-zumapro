@@ -8,6 +8,7 @@ GBMS_MODULES =	GOOGLE_BMS \
 		GOOGLE_CPM \
 		GOOGLE_BEE \
 		GOOGLE_DUAL_BATT_GAUGE \
+		GOOGLE_DOCK \
 		USB_OVERHEAT_MITIGATION \
 		PMIC_MAX77729 \
 		UIC_MAX77729 \
@@ -30,8 +31,8 @@ google-bms-objs += gbms_storage.o
 # KBUILD_OPTIONS += CONFIG_GOOGLE_BEE=m \
 # obj-$(CONFIG_GOOGLE_BEE)	+= google_eeprom.o
 google-bms-objs += google_eeprom.o
-# TODO(163679860) remove pmic-voter usage from bms
-google-bms-objs += pmic-voter-compat.o
+google-bms-objs += google_eeprom_01.o
+google-bms-objs += gs101_usecase.o
 
 # Battery
 obj-$(CONFIG_GOOGLE_BATTERY) += google-battery.o
@@ -51,6 +52,9 @@ obj-$(CONFIG_GOOGLE_DUAL_BATT_GAUGE)	+= google_dual_batt_gauge.o
 obj-$(CONFIG_GOOGLE_CPM)	+= google-cpm.o
 google-cpm-objs += google_cpm.o
 google-cpm-objs += google_dc_pps.o
+
+# google_dock
+obj-$(CONFIG_GOOGLE_DOCK)	+= google_dock.o
 
 # Overheat mitigation driver
 obj-$(CONFIG_USB_OVERHEAT_MITIGATION)	+= overheat_mitigation.o
@@ -75,6 +79,11 @@ obj-$(CONFIG_PCA9468)		+= pca9468.o
 pca9468-objs += pca9468_charger.o
 pca9468-objs += pca9468_gbms_pps.o
 pca9468-objs += google_dc_pps.o
+
+obj-$(CONFIG_PCA9468_GOOGLE)  += pca9468-google.o
+pca9468-google-objs += pca_charger.o
+pca9468-google-objs += pca9468_gbms_pps.o
+pca9468-google-objs += google_dc_pps.o
 
 # Alternate (untested) standalone for max77729f sans FG
 obj-$(CONFIG_MAX77729)		+= max77729.o
@@ -105,12 +114,14 @@ CFLAGS_max77729_charger.o += -Wno-unused-function $(WENUMS)
 CFLAGS_max1720x_battery.o += $(WENUMS)
 CFLAGS_pca9468_charger.o += $(WENUMS)
 CFLAGS_pca9468_gbms_pps.o += $(WENUMS)
+CFLAGS_pca_charger.o += $(WENUMS)
 CFLAGS_google_battery.o += $(WENUMS)
 CFLAGS_google_ttf.o += -Wno-format
 CFLAGS_google_charger.o += -Wno-enum-conversion
 CFLAGS_google_bms.o += -Wno-enum-conversion
 CFLAGS_google_cpm.o += $(WENUMS)
 CFLAGS_google_dual_batt_gauge.o += $(WENUMS)
+CFLAGS_google_dock.o += $(WENUMS)
 
 KERNEL_SRC ?= /lib/modules/$(shell uname -r)/build
 M ?= $(shell pwd)

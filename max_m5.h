@@ -17,6 +17,7 @@
 #define MAX_M5_H_
 
 #include "max1720x_battery.h"
+#include "max_m5_reg.h"
 
 #define MAX_M5_I2C_ADDR 0x6C
 
@@ -82,6 +83,7 @@ struct max_m5_custom_parameters {
 	u16 convgcfg;
 	u16 filtercfg; 	/* write to 0x0029 */
 	u16 taskperiod;
+	u16 cgain;
 } __attribute__((packed));
 
 /* this is what is saved and restored to/from GMSR */
@@ -95,8 +97,9 @@ struct model_state_save {
 	u16 qresidual10;
 	u16 qresidual20;
 	u16 qresidual30;
-	u16 mixcap;
+	u16 cv_mixcap;
 	u16 halftime;
+	u8 crc;
 } __attribute__((packed));
 
 struct max_m5_data {
@@ -107,12 +110,13 @@ struct max_m5_data {
 	/* initial parameters are in device tree they are also learned */
 	struct max_m5_custom_parameters parameters;
 	u16 cycles;
-	u16 mixcap;
+	u16 cv_mixcap;
 	u16 halftime;
 
 	int custom_model_size;
 	u16 *custom_model;
 	u32 model_version;
+	bool force_reset_model_data;
 
 	/* to/from GMSR */
 	struct model_state_save model_save;
@@ -122,6 +126,8 @@ struct max_m5_data {
 
 int max_m5_model_read_version(const struct max_m5_data *m5_data);
 int max_m5_model_get_cap_lsb(const struct max_m5_data *m5_data);
+int max_m5_reset_state_data(struct max_m5_data *m5_data);
+int max_m5_needs_reset_model_data(const struct max_m5_data *m5_data);
 
 /*
  * max_m5 might use the low 8 bits of devname to keep the model version number
@@ -129,7 +135,9 @@ int max_m5_model_get_cap_lsb(const struct max_m5_data *m5_data);
  */
 static inline int max_m5_check_devname(u16 devname)
 {
-	return (devname >> 8) == 0x62;
+	const u16 radix = devname >> 8;
+
+	return radix == 0x62 || radix == 0x63;
 }
 
 /* b/177099997, handle TaskConfig = 351 */
@@ -187,6 +195,9 @@ int max_m5_fg_model_sscan(struct max_m5_data *m5_data, const char *buf,
 			  int max);
 int max_m5_fg_model_cstr(char *buf, int max, const struct max_m5_data *m5_data);
 
+/* read saved value */
+ssize_t max_m5_gmsr_state_cstr(char *buf, int max);
+
 /** ------------------------------------------------------------------------ */
 
 /*
@@ -196,6 +207,8 @@ int max_m5_fg_model_cstr(char *buf, int max, const struct max_m5_data *m5_data);
 
 extern int max_m5_read_actual_input_current_ua(struct i2c_client *client,
 					       int *iic);
+extern int max_m5_read_vbypass(struct i2c_client *client,
+					       int *volt);
 
 extern int max_m5_reg_read(struct i2c_client *client, unsigned int reg,
 		    unsigned int *val);
@@ -204,6 +217,12 @@ extern int max_m5_reg_write(struct i2c_client *client, unsigned int reg,
 #else
 static inline int
 max_m5_read_actual_input_current_ua(struct i2c_client *client, int *iic)
+{
+	return -ENODEV;
+}
+
+static inline int
+max_m5_read_vbypass(struct i2c_client *client, int *volt)
 {
 	return -ENODEV;
 }

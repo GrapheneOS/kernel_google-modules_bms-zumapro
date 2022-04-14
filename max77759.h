@@ -17,36 +17,37 @@
 #define MAX77759_H_
 
 #include <linux/i2c.h>
+#include <linux/interrupt.h>
 
 #define SCNPRINTF(...) scnprintf(__VA_ARGS__)
 #include "max77759_regs.h"
 
 #define MAX77759_CHG_INT_COUNT 2
+
+#define MAX77759_PMIC_REV_A0		0x01
+#define MAX77759_PMIC_REV_A1		0x02
+
 #define MAX77759_PMIC_PMIC_ID_MW	0x3b
 
-/*
- * b/156527175: workaround for read only MAX77759_CHG_DETAILS_03
- * MAX77759_PMIC_TOPSYS_INT_MASK_SPR_7 is used to detect exit from fshipmode.
- * The register (MAX77759_PMIC_TOPSYS_INT_MASK) is type S and the bit is reset
- * to 1 on power loss. The reports MAX77759_CHG_DETAILS_03 when the bit
- * is 1 and report 0 when the bit is set to 0.
- */
-#define MAX77759_FSHIP_EXIT_DTLS	  MAX77759_PMIC_TOPSYS_INT_MASK
-#define MAX77759_FSHIP_EXIT_DTLS_RD \
-				MAX77759_PMIC_TOPSYS_INT_MASK_SPR_7
-#define MAX77759_FSHIP_EXIT_DTLS_RD_SHIFT \
-				MAX77759_PMIC_TOPSYS_INT_MASK_SPR_7_SHIFT
-#define MAX77759_FSHIP_EXIT_DTLS_RD_MASK \
-				MAX77759_PMIC_TOPSYS_INT_MASK_SPR_7_MASK
-#define MAX77759_FSHIP_EXIT_DTLS_RD_CLEAR \
-				MAX77759_PMIC_TOPSYS_INT_MASK_SPR_7_CLEAR
-
+int max777x9_pmic_get_id(struct i2c_client *client, u8 *id, u8 *rev);
 int max777x9_pmic_reg_read(struct i2c_client *client,
 			   u8 addr, u8 *val, int len);
 int max777x9_pmic_reg_write(struct i2c_client *client,
 			    u8 addr, const u8 *val, int len);
 int max777x9_pmic_reg_update(struct i2c_client *client,
 			     u8 reg, u8 mask, u8 value);
+/* write to a register */
+int max77759_chg_reg_write(struct i2c_client *client, u8 reg, u8 value);
+/* read a register */
+int max77759_chg_reg_read(struct i2c_client *client, u8 reg, u8 *value);
+/* update a register */
+int max77759_chg_reg_update(struct i2c_client *client, u8 reg, u8 mask, u8 value);
+/* change the mode register */
+int max77759_chg_mode_write(struct i2c_client *client, enum max77759_charger_modes mode);
+/* change the insel register */
+int max77759_chg_insel_write(struct i2c_client *client, u8 mask, u8 value);
+/* read the insel register */
+int max77759_chg_insel_read(struct i2c_client *client, u8 *value);
 
 #if IS_ENABLED(CONFIG_PMIC_MAX77729)
 extern int max77759_read_batt_conn(struct i2c_client *client, int *temp);
@@ -68,77 +69,10 @@ static inline int max77759_read_batt_id(struct i2c_client *client,
 }
 #endif
 
-/* mux configuration in MAX77759_PMIC_CONTROL_FG */
-#define THMIO_MUX_BATT_PACK	0
-#define THMIO_MUX_USB_TEMP	1
-#define THMIO_MUX_BATT_ID	2
-
-int max77759_read_batt_conn(struct i2c_client *client, int *temp);
-int max77759_read_usb_temp(struct i2c_client *client, int *temp);
-
-/* Hardware modes */
-enum max77759_charger_modes {
-	MAX77759_CHGR_MODE_ALL_OFF = 0x00,
-	MAX77759_CHGR_MODE_BUCK_ON = 0x04,
-	MAX77759_CHGR_MODE_CHGR_BUCK_ON = 0x05,
-	MAX77759_CHGR_MODE_BOOST_UNO_ON = 0x08,
-	MAX77759_CHGR_MODE_BOOST_ON = 0x09,
-	MAX77759_CHGR_MODE_OTG_BOOST_ON = 0x0a,
-	MAX77759_CHGR_MODE_BUCK_BOOST_UNO_ON = 0x0c,
-	MAX77759_CHGR_MODE_CHGR_BUCK_BOOST_UNO_ON = 0x0d,
-	MAX77759_CHGR_MODE_OTG_BUCK_BOOST_ON = 0x0e,
-	MAX77759_CHGR_MODE_CHGR_OTG_BUCK_BOOST_ON = 0x0f,
-};
-
-/*
+/* ----------------------------------------------------------------------------
  * GS101 usecases
- */
-
-struct max77759_foreach_cb_data {
-	struct gvotable_election *el;
-
-	const char *reason;
-
-	bool chgr_on;	/* CC_MAX != 0 */
-	bool stby_on;	/* on disconnect */
-	bool inflow_off;
-
-	bool buck_on;	/* wired power in (chgin_on) from TCPCI */
-
-	bool otg_on;	/* power out, usually external */
-	bool frs_on;	/* fast role swap */
-
-	bool wlc_on;	/* charging wireless */
-	bool wlc_tx;	/* battery share */
-
-	bool pps_dc;	/* PPS enabled - wired */
-	bool wlc_dc;	/* PPS enabled - wireless */
-
-	bool boost_on;	/* old for WLC program */
-	bool uno_on;	/* old for WLC program */
-
-	u8 raw_value;	/* hard override */
-	bool use_raw;
-
-	u8 reg;
-};
-
-struct max77759_usecase_data {
-	int bst_on;	/* */
-	int bst_sel;	/* */
-	int ext_bst_ctl;/* MW VENDOR_EXTBST_CTRL */
-
-	int ls2_en;	/* OVP LS2 */
-
-	int vin_is_valid;	/* MAX20339 STATUS1.vinvalid */
-	int lsw1_is_open;	/* MAX20339 STATUS2.lsw1open */
-	int lsw1_is_closed;	/* MAX20339 STATUS2.lsw1closed */
-
-	bool init_done;
-};
-
-/*
- *  Use cases, these are platform specific and need to be outside the driver.
+ * Platform specific, will need to be moved outside the driver.
+ *
  * Case	USB_chg USB_otg	WLC_chg	WLC_TX	PMIC_Charger	Ext_B	LSx	Name
  * ----------------------------------------------------------------------------
  * 1-1	1	0	x	0	IF-PMIC-VBUS	0	0/0	USB_CHG
@@ -160,33 +94,53 @@ struct max77759_usecase_data {
  * USB_chg = 0 off, 1 = on, 2 = PPS
  * WLC_chg = 0 off, 1 = on, 2 = PPS
  */
+struct max77759_foreach_cb_data {
+	struct gvotable_election *el;
 
-enum gsu_usecases {
-	GSU_RAW_MODE 		= -1,	/* raw mode, default, */
+	const char *reason;
 
-	GSU_MODE_STANDBY	= 0,	/* 8, PMIC mode 0 */
-	GSU_MODE_USB_CHG	= 1,	/* 1-1 wired mode 0x4, mode 0x5 */
-	GSU_MODE_USB_DC 	= 2,	/* 1-2 wired mode 0x0 */
-	GSU_MODE_USB_CHG_WLC_TX = 3,	/* 2-1, 1041, */
-	GSU_MODE_USB_DC_WLC_TX	= 4,	/* 2-2 1042, */
+	int chgr_on;	/* CC_MAX != 0 */
+	bool stby_on;	/* on disconnect, mode=0 */
+	bool charge_done;
 
-	GSU_MODE_WLC_RX		= 5,	/* 3-1, mode 0x4, mode 0x5 */
-	GSU_MODE_WLC_DC		= 6,	/* 3-2, mode 0x0 */
+	int chgin_off;	/* input_suspend, mode=0 */
+	int wlcin_off;	/* input_suspend, mode=0 */
+	int usb_wlc;	/* input_suspend, mode=0 */
 
-	GSU_MODE_USB_OTG_WLC_RX = 7,	/* 4-1, 524, */
-	GSU_MODE_USB_OTG_WLC_DC = 8,	/* 4-2, 532, */
-	GSU_MODE_USB_OTG 	= 9,	/* 5-1, 516,*/
-	GSU_MODE_USB_OTG_FRS	= 10,	/* 5-2, PMIC mode 0x0a */
+	/* wlc_on is the same as wlc_rx */
+	bool buck_on;	/* wired power in (chgin_on) from TCPCI */
 
-	GSU_MODE_WLC_TX 	= 11,	/* 6-2, 1056, */
-	GSU_MODE_USB_OTG_WLC_TX	= 12,	/* 7-2, 1060, */
+	bool otg_on;	/* power out, usually external */
+	bool frs_on;	/* power out, fast role swap (internal) */
+
+	bool wlc_rx;	/* charging wireless */
+	bool wlc_tx;	/* battery share */
+
+	bool dc_on;	/* DC requested - wired or wireless */
+
+	bool boost_on;	/* Compat: old for WLC program */
+	bool uno_on;	/* Compat: old for WLC program */
+
+	u8 raw_value;	/* hard override */
+	bool use_raw;
+
+	u8 reg;
 };
 
 /* internal system values */
 enum {
+	/* Charging disabled (go to mode 0) */
 	GBMS_CHGR_MODE_STBY_ON		= 0x10 + MAX77759_CHGR_MODE_ALL_OFF,
-	GBMS_CHGR_MODE_INFLOW_OFF	= 0x11 + MAX77759_CHGR_MODE_ALL_OFF,
+	/* USB inflow off */
+	GBMS_CHGR_MODE_CHGIN_OFF	= 0x11 + MAX77759_CHGR_MODE_ALL_OFF,
+	/* WCIN inflow off */
+	GBMS_CHGR_MODE_WLCIN_OFF	= 0x12 + MAX77759_CHGR_MODE_ALL_OFF,
+	/* USB + WLC_RX mode */
+	GBMS_CHGR_MODE_USB_WLC_RX	= 0x13 + MAX77759_CHGR_MODE_ALL_OFF,
+
+	/* charging enabled (charging current != 0) */
 	GBMS_CHGR_MODE_CHGR_BUCK_ON	= 0x10 + MAX77759_CHGR_MODE_CHGR_BUCK_ON,
+	/* Compat: old for programmging */
 	GBMS_CHGR_MODE_BOOST_UNO_ON	= 0x10 + MAX77759_CHGR_MODE_BOOST_UNO_ON,
 };
 

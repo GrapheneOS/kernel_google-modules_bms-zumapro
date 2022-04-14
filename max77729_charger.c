@@ -425,7 +425,7 @@ static void max77729_mode_callback(struct gvotable_election *el,
 				   const char *reason, void *value)
 {
 	struct max77729_chgr_data *data = gvotable_get_data(el);
-	int mode = (int)value;
+	int mode = (long)value;
 	uint8_t reg, reg_new;
 	int ret;
 
@@ -476,7 +476,7 @@ static void max77729_dc_suspend_vote_callback(struct gvotable_election *el,
 					      const char *reason, void *value)
 {
 	struct max77729_chgr_data *data = gvotable_get_data(el);
-	int result = (int)value;
+	int result = (long)value;
 
 	/* TODO: disable WCIN */
 
@@ -488,13 +488,12 @@ static void max77729_dcicl_callback(struct gvotable_election *el,
 				    const char *reason, void *value)
 {
 	struct max77729_chgr_data *data = gvotable_get_data(el);
-	int dc_icl = (int)value;
+	int dc_icl = (long)value;
 	const bool suspend = dc_icl == 0;
 	int ret;
 
-	ret = gvotable_cast_vote(data->dc_suspend_votable, "DC_ICL",
-				  (void *)1,
-				  suspend);
+	ret = gvotable_cast_long_vote(data->dc_suspend_votable,
+				      "DC_ICL", 1, suspend);
 	if (ret < 0)
 		dev_err(data->dev, "cannot set DC_SUSPEND=%d (%d)\n",
 			suspend, ret);
@@ -503,18 +502,16 @@ static void max77729_dcicl_callback(struct gvotable_election *el,
 static int max77729_set_charge_enabled(struct max77729_chgr_data *data,
 				       int enabled, const char *reason)
 {
-	return gvotable_cast_vote(data->mode_votable, reason,
-				  (void *)CHGR_MODE_CHGR_BUCK_ON,
-				  enabled);
+	return gvotable_cast_long_vote(data->mode_votable, reason,
+				       CHGR_MODE_CHGR_BUCK_ON, enabled);
 }
 
 static int max77729_input_suspend(struct max77729_chgr_data *data,
 				  bool enabled, const char *reason)
 {
 	data->input_suspend = enabled;
-	return gvotable_cast_vote(data->mode_votable, reason,
-				  (void *)CHGR_MODE_ALL_OFF,
-				  enabled);
+	return gvotable_cast_long_vote(data->mode_votable, reason,
+				       CHGR_MODE_ALL_OFF, enabled);
 }
 
 
@@ -741,11 +738,11 @@ static int max77729_get_charge_type(struct max77729_chgr_data *data, int *type)
 		*type = POWER_SUPPLY_CHARGE_TYPE_FAST;
 		break;
 	case CHGR_DTLS_FAST_CHARGE_CONST_VOLTAGE_MODE:
-		*type = POWER_SUPPLY_CHARGE_TYPE_TAPER_EXT;
+		*type = POWER_SUPPLY_CHARGE_TYPE_TAPER;
 		break;
 	/* This is really DONE, */
 	case CHGR_DTLS_TOP_OFF_MODE:
-		*type = POWER_SUPPLY_CHARGE_TYPE_TAPER_EXT;
+		*type = POWER_SUPPLY_CHARGE_TYPE_TAPER;
 		break;
 	case CHGR_DTLS_DONE_MODE:
 		*type = POWER_SUPPLY_CHARGE_TYPE_NONE;

@@ -17,8 +17,10 @@
 #ifndef __GOOGLE_BMS_H_
 #define __GOOGLE_BMS_H_
 
+#include <linux/minmax.h>
 #include <linux/types.h>
 #include <linux/usb/pd.h>
+#include <misc/logbuffer.h>
 #include "gbms_power_supply.h"
 #include "qmath.h"
 #include "gbms_storage.h"
@@ -27,6 +29,9 @@ struct device_node;
 
 #define GBMS_CHG_TEMP_NB_LIMITS_MAX 10
 #define GBMS_CHG_VOLT_NB_LIMITS_MAX 5
+#define GBMS_CHG_ALG_BUF 500
+#define GBMS_CHG_TOPOFF_NB_LIMITS_MAX 6
+#define GBMS_AACR_DATA_MAX 10
 
 struct gbms_chg_profile {
 	const char *owner_name;
@@ -35,8 +40,10 @@ struct gbms_chg_profile {
 	s32 temp_limits[GBMS_CHG_TEMP_NB_LIMITS_MAX];
 	int volt_nb_limits;
 	s32 volt_limits[GBMS_CHG_VOLT_NB_LIMITS_MAX];
+	int topoff_nb_limits;
+	s32 topoff_limits[GBMS_CHG_TOPOFF_NB_LIMITS_MAX];
 	/* Array of constant current limits */
-	s32 *cccm_limits;
+	u32 *cccm_limits;
 	/* used to fill table  */
 	u32 capacity_ma;
 
@@ -51,6 +58,11 @@ struct gbms_chg_profile {
 	u32 fv_uv_resolution;
 	/* experimental */
 	u32 cv_otv_margin;
+
+	/* AACR feature */
+	u32 reference_cycles[GBMS_AACR_DATA_MAX];
+	u32 reference_fade10[GBMS_AACR_DATA_MAX];
+	u32 aacr_nb_limits;
 };
 
 #define WLC_BPP_THRESHOLD_UV	700000
@@ -73,6 +85,7 @@ struct gbms_chg_profile {
 	S(WLC),		\
 	S(WLC_EPP),	\
 	S(WLC_SPP),	\
+	S(POGO),	\
 
 #define CHG_EV_ADAPTER_STRING(s)	#s
 #define _CHG_EV_ADAPTER_PRIMITIVE_CAT(a, ...) a ## __VA_ARGS__
@@ -103,6 +116,9 @@ enum gbms_msc_states_t {
 	MSC_RSTC,	/* in taper */
 	MSC_NEXT,	/* in taper */
 	MSC_NYET,	/* in taper */
+	MSC_HEALTH,
+	MSC_HEALTH_PAUSE,
+	MSC_HEALTH_ALWAYS_ON,
 	MSC_STATES_COUNT,
 };
 
@@ -134,15 +150,15 @@ struct ttf_tier_stat {
 
 struct gbms_ce_tier_stats {
 	int8_t		temp_idx;
-	uint8_t		vtier_idx;
+	int8_t		vtier_idx;
 
 	int16_t		soc_in;		/* 8.8 */
 	uint16_t	cc_in;
 	uint16_t	cc_total;
 
-	uint16_t	time_fast;
-	uint16_t	time_taper;
-	uint16_t	time_other;
+	uint32_t	time_fast;
+	uint32_t	time_taper;
+	uint32_t	time_other;
 
 	int16_t		temp_in;
 	int16_t		temp_min;
@@ -196,8 +212,109 @@ struct batt_ttf_stats {
 
 	struct ttf_soc_stats soc_stats; /* rolling */
 	struct ttf_tier_stat tier_stats[GBMS_STATS_TIER_COUNT];
+
+	struct logbuffer *ttf_log;
 };
 
+/*
+ * health based charging can be enabled from userspace with a deadline
+ *
+ * initial state:
+ * 	deadline = 0, rest_state = CHG_HEALTH_INACTIVE
+ *
+ * deadline = -1 from userspace
+ *	CHG_HEALTH_* -> CHG_HEALTH_USER_DISABLED (settings disabled)
+ * on deadline = 0 from userspace
+ *	CHG_HEALTH_* -> CHG_HEALTH_USER_DISABLED (alarm, plug or misc. disabled)
+ * on deadline > 0 from userspace
+ * 	CHG_HEALTH_* -> CHG_HEALTH_ENABLED
+ *
+ *  from CHG_HEALTH_ENABLED, msc_logic_health() can change the state to
+ * 	CHG_HEALTH_ENABLED  <-> CHG_HEALTH_ACTIVE
+ * 	CHG_HEALTH_ENABLED  -> CHG_HEALTH_DISABLED
+ *
+ * from CHG_HEALTH_ACTIVE, msc_logic_health() can change the state to
+ * 	CHG_HEALTH_ACTIVE   <-> CHG_HEALTH_ENABLED
+ * 	CHG_HEALTH_ACTIVE   -> CHG_HEALTH_DISABLED
+ * 	CHG_HEALTH_ACTIVE   -> CHG_HEALTH_DONE
+ */
+enum chg_health_state {
+	CHG_HEALTH_CCLVL_DISABLED = -6,
+	CHG_HEALTH_BD_DISABLED = -5,
+	CHG_HEALTH_USER_DISABLED = -3,
+	CHG_HEALTH_DISABLED = -2,
+	CHG_HEALTH_DONE = -1,
+	CHG_HEALTH_INACTIVE = 0,
+	CHG_HEALTH_ENABLED,
+	CHG_HEALTH_ACTIVE,
+	CHG_HEALTH_PAUSE,
+};
+
+/* tier index used to log the session */
+enum gbms_stats_tier_idx_t {
+	GBMS_STATS_AC_TI_DISABLE_DIALOG = -6,
+	GBMS_STATS_AC_TI_DEFENDER = -5,
+	GBMS_STATS_AC_TI_DISABLE_SETTING_STOP = -4,
+	GBMS_STATS_AC_TI_DISABLE_MISC = -3,
+	GBMS_STATS_AC_TI_DISABLE_SETTING = -2,
+	GBMS_STATS_AC_TI_INVALID = -1,
+
+	/* Regular charge tiers 0 -> 9 */
+	GBMS_STATS_AC_TI_VALID = 10,
+	GBMS_STATS_AC_TI_DISABLED = 11,
+	GBMS_STATS_AC_TI_ENABLED = 12,
+	GBMS_STATS_AC_TI_ACTIVE = 13,
+	GBMS_STATS_AC_TI_ENABLED_AON = 14,
+	GBMS_STATS_AC_TI_ACTIVE_AON = 15,
+	GBMS_STATS_AC_TI_PAUSE = 16,
+	GBMS_STATS_AC_TI_PAUSE_AON = 17,
+	GBMS_STATS_AC_TI_V2_PREDICT = 18,
+	GBMS_STATS_AC_TI_V2_PREDICT_SUCCESS = 19,
+	GBMS_STATS_AC_TI_DONE_AON = 20,
+
+	/* TODO: rename, these are not really related to AC */
+	GBMS_STATS_AC_TI_FULL_CHARGE = 100,
+	GBMS_STATS_AC_TI_HIGH_SOC = 101,
+
+	/* Defender TEMP or DWELL */
+	GBMS_STATS_BD_TI_OVERHEAT_TEMP = 110,
+	GBMS_STATS_BD_TI_CUSTOM_LEVELS = 111,
+	GBMS_STATS_BD_TI_TRICKLE = 112,
+
+	GBMS_STATS_BD_TI_TRICKLE_CLEARED = 122,
+};
+
+/* health state */
+struct batt_chg_health {
+	int rest_soc;		/* entry criteria */
+	int rest_voltage;	/* entry criteria */
+	int always_on_soc;	/* entry criteria */
+
+	ktime_t rest_deadline;	/* full by this in seconds */
+	ktime_t dry_run_deadline; /* full by this in seconds (prediction) */
+	int rest_rate;		/* centirate once enter */
+
+	enum chg_health_state rest_state;
+	int rest_cc_max;
+	int rest_fv_uv;
+	ktime_t active_time;
+};
+
+#define CHG_HEALTH_REST_IS_ACTIVE(rest) \
+	((rest)->rest_state == CHG_HEALTH_ACTIVE)
+
+#define CHG_HEALTH_REST_IS_PAUSE(rest) \
+	((rest)->rest_state == CHG_HEALTH_PAUSE)
+
+#define CHG_HEALTH_REST_IS_AON(rest, ssoc) \
+	(((rest)->rest_state == CHG_HEALTH_ACTIVE) ? \
+	(((rest)->always_on_soc != -1) ? \
+	(ssoc >= (rest)->always_on_soc) : 0) : 0)
+
+#define CHG_HEALTH_REST_SOC(rest) (((rest)->always_on_soc != -1) ? \
+			(rest)->always_on_soc : (rest)->rest_soc)
+
+/* reset on every charge session */
 struct gbms_charging_event {
 	union gbms_ce_adapter_details	adapter_details;
 
@@ -206,26 +323,42 @@ struct gbms_charging_event {
 	/* charge event and tier tracking */
 	struct gbms_ce_stats		charging_stats;
 	struct gbms_ce_tier_stats	tier_stats[GBMS_STATS_TIER_COUNT];
+
 	/* soc tracking for time to full */
 	struct ttf_soc_stats soc_stats;
 	int last_soc;
 
 	ktime_t first_update;
 	ktime_t last_update;
-	uint32_t chg_sts_qual_time;
-	uint32_t chg_sts_delta_soc;
+	bool bd_clear_trickle;
+
+	/* health based charging */
+	struct batt_chg_health		ce_health;	/* updated on close */
+	struct gbms_ce_tier_stats	health_stats;	/* updated in HC */
+	struct gbms_ce_tier_stats	health_pause_stats;	/* updated in HCP */
+	/* updated on sysfs write */
+	struct gbms_ce_tier_stats health_dryrun_stats;
+
+	/* other stats */
+	struct gbms_ce_tier_stats full_charge_stats;
+	struct gbms_ce_tier_stats high_soc_stats;
+
+	struct gbms_ce_tier_stats overheat_stats;
+	struct gbms_ce_tier_stats cc_lvl_stats;
+	struct gbms_ce_tier_stats trickle_stats;
 };
 
 #define GBMS_CCCM_LIMITS(profile, ti, vi) \
 	profile->cccm_limits[(ti * profile->volt_nb_limits) + vi]
 
 /* newgen charging */
-#define GBMS_CS_FLAG_BUCK_EN    (1 << 0)
-#define GBMS_CS_FLAG_DONE       (1 << 1)
-#define GBMS_CS_FLAG_CC       	(1 << 2)
-#define GBMS_CS_FLAG_CV       	(1 << 3)
-#define GBMS_CS_FLAG_ILIM       (1 << 4)
-#define GBMS_CS_FLAG_NOCOMP     (1 << 5)
+#define GBMS_CS_FLAG_BUCK_EN	BIT(0)
+#define GBMS_CS_FLAG_DONE	BIT(1)
+#define GBMS_CS_FLAG_CC		BIT(2)
+#define GBMS_CS_FLAG_CV		BIT(3)
+#define GBMS_CS_FLAG_ILIM	BIT(4)
+#define GBMS_CS_FLAG_CCLVL	BIT(5)
+#define GBMS_CS_FLAG_NOCOMP     BIT(6)
 
 union gbms_charger_state {
 	uint64_t v;
@@ -244,12 +377,13 @@ int gbms_init_chg_profile_internal(struct gbms_chg_profile *profile,
 #define gbms_init_chg_profile(p, n) \
 	gbms_init_chg_profile_internal(p, n, KBUILD_MODNAME)
 
-void gbms_init_chg_table(struct gbms_chg_profile *profile, u32 capacity);
+void gbms_init_chg_table(struct gbms_chg_profile *profile,
+			 struct device_node *node, u32 capacity);
 
 void gbms_free_chg_profile(struct gbms_chg_profile *profile);
 
-void gbms_dump_raw_profile(const struct gbms_chg_profile *profile, int scale);
-#define gbms_dump_chg_profile(profile) gbms_dump_raw_profile(profile, 1000)
+void gbms_dump_raw_profile(char *buff, size_t len, const struct gbms_chg_profile *profile, int scale);
+#define gbms_dump_chg_profile(buff, len, profile) gbms_dump_raw_profile(buff, len, profile, 1000)
 
 /* newgen charging: charge profile */
 int gbms_msc_temp_idx(const struct gbms_chg_profile *profile, int temp);
@@ -262,6 +396,13 @@ uint8_t gbms_gen_chg_flags(int chg_status, int chg_type);
 /* newgen charging: read/gen charger state  */
 int gbms_read_charger_state(union gbms_charger_state *chg_state,
 			    struct power_supply *chg_psy);
+/* calculate aacr reference capacity */
+int gbms_aacr_fade10(const struct gbms_chg_profile *profile, int cycles);
+
+/* logbuffer and syslog */
+__printf(5,6)
+void gbms_logbuffer_prlog(struct logbuffer *log, int level, int debug_no_logbuffer,
+			  int debug_printk_prlog, const char *f, ...);
 
 /* debug/print */
 const char *gbms_chg_type_s(int chg_type);
@@ -274,6 +415,19 @@ const char *gbms_chg_ev_adapter_s(int adapter);
 #define VOTABLE_MSC_INTERVAL	"MSC_INTERVAL"
 #define VOTABLE_MSC_FCC		"MSC_FCC"
 #define VOTABLE_MSC_FV		"MSC_FV"
+#define VOTABLE_FAN_LEVEL	"FAN_LEVEL"
+#define VOTABLE_DEAD_BATTERY	"DEAD_BATTERY"
+#define VOTABLE_TEMP_DRYRUN	"MSC_TEMP_DRYRUN"
+
+#define VOTABLE_CSI_STATUS	"CSI_STATUS"
+#define VOTABLE_CSI_TYPE	"CSI_TYPE"
+
+#define FAN_LVL_UNKNOWN		-1
+#define FAN_LVL_NOT_CARE	0
+#define FAN_LVL_LOW		1
+#define FAN_LVL_MED		2
+#define FAN_LVL_HIGH		3
+#define FAN_LVL_ALARM		4
 
 /* Binned cycle count */
 #define GBMS_CCBIN_CSTR_SIZE	(GBMS_CCBIN_BUCKET_COUNT * 6 + 2)
@@ -300,7 +454,7 @@ int ttf_soc_estimate(ktime_t *res,
 
 void ttf_soc_init(struct ttf_soc_stats *dst);
 
-int ttf_tier_cstr(char *buff, int size, struct ttf_tier_stat *t_stat);
+int ttf_tier_cstr(char *buff, int size, const struct ttf_tier_stat *t_stat);
 
 int ttf_tier_estimate(ktime_t *res,
 		      const struct batt_ttf_stats *ttf_stats,
@@ -324,6 +478,23 @@ int ttf_stats_sscan(struct batt_ttf_stats *stats,
 struct batt_ttf_stats *ttf_stats_dup(struct batt_ttf_stats *dst,
 				     const struct batt_ttf_stats *src);
 
+void ttf_log(const struct batt_ttf_stats *stats, const char *fmt, ...);
+
+ssize_t ttf_dump_details(char *buf, int max_size,
+			 const struct batt_ttf_stats *ttf_stats,
+			 int last_soc);
+
+int ttf_pwr_vtier_idx(const struct batt_ttf_stats *stats, int soc);
+
+int ttf_ref_cc(const struct batt_ttf_stats *stats, int soc);
+
+int ttf_pwr_ibatt(const struct gbms_ce_tier_stats *ts);
+
+int gbms_read_aacr_limits(struct gbms_chg_profile *profile,
+			  struct device_node *node);
+
+bool chg_state_is_disconnected(union gbms_charger_state *chg_state);
+
 /*
  * Charger modes
  *
@@ -340,5 +511,40 @@ enum gbms_charger_modes {
 };
 
 #define GBMS_MODE_VOTABLE "CHARGER_MODE"
+
+enum bhi_status {
+	BH_UNKNOWN = -1,
+	BH_NOMINAL,
+	BH_MARGINAL,
+	BH_NEEDS_REPLACEMENT,
+	BH_FAILED,
+};
+
+enum csi_type {
+	CSI_TYPE_UNKNOWN = -1,
+	CSI_TYPE_None = 0,		// Disconnected
+	CSI_TYPE_Fault = 1,		// Internal Failures
+	CSI_TYPE_JEITA = 2,		// HW limits
+	CSI_TYPE_LongLife = 3, 		// DefenderConditions
+	CSI_TYPE_Adaptive = 4,		// AdaptiveCharging
+	CSI_TYPE_Normal = 5,
+};
+
+enum csi_status {
+	CSI_STATUS_UNKNOWN = -1,
+	CSI_STATUS_Discharging = 0,
+	CSI_STATUS_Health_Cold = 10,	// JEITA battery, mutex with Hot
+	CSI_STATUS_Health_Hot = 11,	// JEITA battery, mutex with Cold
+	CSI_STATUS_System_Thermals = 20,//
+	CSI_STATUS_System_Load = 21,	// Load will eventually become thermals
+	CSI_STATUS_Adapter_Power = 30,	//
+	CSI_STATUS_Adapter_Quality = 31,// Adapter or cable (low voltage)
+	CSI_STATUS_Adapter_Auth = 32,	// Missing authentication (if supported)
+	CSI_STATUS_Defender_Temp = 40,	// TEMP Defend
+	CSI_STATUS_Defender_Dwell = 41,	// DWELL Defend
+	CSI_STATUS_Defender_Trickle = 42,
+	CSI_STATUS_Defender_Dock = 43,	// Dock Defend
+	CSI_STATUS_Normal = 100,	//
+};
 
 #endif  /* __GOOGLE_BMS_H_ */

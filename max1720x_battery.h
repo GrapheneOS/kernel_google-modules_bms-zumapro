@@ -26,6 +26,9 @@
 #define MAX1730X_GAUGE_TYPE	1
 #define MAX_M5_GAUGE_TYPE	2
 
+#define EEPROM_SN	0
+#define MAX1720X_SN	1
+
 /* multiply by 2 when task period = 351 ms */
 static inline int reg_to_micro_amp_h(s16 val, u16 rsense, int lsb)
 {
@@ -135,6 +138,10 @@ struct max17x0x_regmap {
 	struct max17x0x_regtags regtags;
 	struct max17x0x_reglog *reglog;
 };
+
+int max1720x_get_capacity(struct i2c_client *client, int *iic_raw);
+int max1720x_get_voltage_now(struct i2c_client *client, int *iic_raw);
+int max17x0x_sw_reset(struct i2c_client *client);
 
 /* */
 #ifdef CONFIG_MAX1720X_REGLOG_LOG
@@ -267,6 +274,15 @@ struct max1720x_drift_data {
 	int ini_rcomp0;
 	int ini_tempco;
 	int ini_filtercfg;
+};
+
+struct max1720x_dyn_filtercfg {
+	s32 temp;
+	s32 hysteresis;
+	u16 curr_val;
+	u16 default_val;
+	u16 adjust_val;
+	struct mutex lock;
 };
 
 extern int max1720x_fixup_comp(struct max1720x_drift_data *ddata,
