@@ -2605,7 +2605,7 @@ static int msc_logic_irdrop(struct batt_drv *batt_drv,
 
 		batt_prlog(BATT_PRLOG_ALWAYS, "MSC_PRE vt=%d vb=%d fv_uv=%d chg_type=%d\n",
 			   vtier, vbatt, *fv_uv, chg_type);
-	} else if (chg_type != POWER_SUPPLY_CHARGE_TYPE_TAPER) {
+	} else if (chg_type != POWER_SUPPLY_CHARGE_TYPE_TAPER_EXT) {
 		const int type_margin = utv_margin;
 
 		/*
@@ -3227,7 +3227,7 @@ static int msc_logic(struct batt_drv *batt_drv)
 
 		if (chg_type == POWER_SUPPLY_CHARGE_TYPE_FAST) {
 			msc_state = MSC_FAST;
-		} else if (chg_type != POWER_SUPPLY_CHARGE_TYPE_TAPER) {
+		} else if (chg_type != POWER_SUPPLY_CHARGE_TYPE_TAPER_EXT) {
 			msc_state = MSC_TYPE;
 		} else {
 			msc_state = MSC_LAST;

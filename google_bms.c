@@ -51,7 +51,7 @@ static const char *psy_chgt_str[] = {
 	[POWER_SUPPLY_CHARGE_TYPE_ADAPTIVE]	= "Adaptive",
 	[POWER_SUPPLY_CHARGE_TYPE_CUSTOM]	= "Custom",
 	[POWER_SUPPLY_CHARGE_TYPE_LONGLIFE]	= "Long Life",
-	[POWER_SUPPLY_CHARGE_TYPE_TAPER]	= "Taper",
+	[POWER_SUPPLY_CHARGE_TYPE_TAPER_EXT]	= "Taper",
 };
 
 const char *gbms_chg_type_s(int cgh_type)
@@ -484,7 +484,7 @@ uint8_t gbms_gen_chg_flags(int chg_status, int chg_type)
 	}
 	if (chg_type == POWER_SUPPLY_CHARGE_TYPE_FAST)
 		flags |= GBMS_CS_FLAG_CC;
-	if (chg_type == POWER_SUPPLY_CHARGE_TYPE_TAPER)
+	if (chg_type == POWER_SUPPLY_CHARGE_TYPE_TAPER_EXT)
 		flags |= GBMS_CS_FLAG_CV;
 
 	return flags;
