@@ -272,6 +272,12 @@ enum gbms_stats_tier_idx_t {
 	GBMS_STATS_AC_TI_V2_PREDICT_SUCCESS = 19,
 	GBMS_STATS_AC_TI_DONE_AON = 20,
 
+	/* Thermal stats, reported from google_charger */
+	GBMS_STATS_TH_LVL0 = 50,
+	GBMS_STATS_TH_LVL1 = 51,
+	GBMS_STATS_TH_LVL2 = 52,
+	GBMS_STATS_TH_LVL3 = 53,
+
 	/* TODO: rename, these are not really related to AC */
 	GBMS_STATS_AC_TI_FULL_CHARGE = 100,
 	GBMS_STATS_AC_TI_HIGH_SOC = 101,
