@@ -287,6 +287,8 @@ struct chg_drv {
 
 	struct gvotable_election *csi_status_votable;
 	struct gvotable_election *csi_type_votable;
+	int csi_current_type;
+	int csi_current_status;
 
 	/* debug */
 	struct dentry *debug_entry;
@@ -2055,6 +2057,10 @@ static void chg_work(struct work_struct *work)
 		const int upperbd = chg_drv->charge_stop_level;
 		const int lowerbd = chg_drv->charge_start_level;
 
+		/* Clear CSI type/status when disconnect */
+		chg_drv->csi_current_type = CSI_TYPE_UNKNOWN;
+		chg_drv->csi_current_status = CSI_STATUS_UNKNOWN;
+
 		/* reset dock_defend */
 		if (chg_drv->bd_state.dd_triggered) {
 			chg_update_charging_state(chg_drv, false, false);
@@ -3331,14 +3337,36 @@ static void csi_status_cb(struct gvotable_election *el,
 				 const char *reason,
 				 void *value)
 {
-	/* TODO: log the change to chargign status */
+	struct chg_drv *chg_drv = gvotable_get_data(el);
+	int status = (int)(uintptr_t)value;
+
+	if (!chg_drv)
+		return;
+
+	if (chg_drv->csi_current_status != status) {
+		pr_info("CSI status:%d->%d\n", chg_drv->csi_current_status, status);
+		chg_drv->csi_current_status = status;
+		if (chg_drv->chg_psy)
+			power_supply_changed(chg_drv->chg_psy);
+	}
 }
 
 static void csi_type_cb(struct gvotable_election *el,
 				 const char *reason,
 				 void *value)
 {
-	/* TODO: log the change to charging type */
+	struct chg_drv *chg_drv = gvotable_get_data(el);
+	int type = (int)(uintptr_t)value;
+
+	if (!chg_drv)
+		return;
+
+	if (chg_drv->csi_current_type != type) {
+		pr_info("CSI type:%d->%d\n", chg_drv->csi_current_type, type);
+		chg_drv->csi_current_type = type;
+		if (chg_drv->chg_psy)
+			power_supply_changed(chg_drv->chg_psy);
+	}
 }
 
 static ssize_t
