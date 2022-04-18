@@ -1933,8 +1933,8 @@ static int gcpm_psy_set_property(struct power_supply *psy,
 		const bool was_dc = gcpm_is_dc(gcpm, gcpm->dc_index);
 
 		/*
-		 * Synchronous! might kick off gcpm_pps_wlc_dc_work to
-		 * negotiate DC charging.
+		 * Synchronous! might kick off gcpm_pps_wlc_dc_work to negotiate
+		 * DC charging. -EAGAIN will cause this code to be called again.
 		 * NOTE: gcpm_chg_select_logic() might change gcpm->dc_index
 		 */
 		ret = gcpm_chg_select_logic(gcpm);
@@ -1975,8 +1975,12 @@ static int gcpm_psy_set_property(struct power_supply *psy,
 	}
 
 done:
+	/*
+	 * route==false when using CP and when transitioning OUT of it.
+	 * disable CC_MAX vote on GCPM_FCC when the limit is not used
+	 */
 	if (psp == POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX)
-		ret = gcpm_update_gcpm_fcc(gcpm, "CC_MAX", gcpm->cc_max, !route);
+		gcpm_update_gcpm_fcc(gcpm, "CC_MAX", gcpm->cc_max, !route);
 
 	mutex_unlock(&gcpm->chg_psy_lock);
 
