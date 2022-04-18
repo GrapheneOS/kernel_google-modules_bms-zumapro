@@ -434,6 +434,7 @@ struct batt_drv {
 	/* CSI: charging speed */
 	struct gvotable_election *csi_status_votable;
 	struct gvotable_election *csi_type_votable;
+	int fake_charging_speed;
 	int charging_speed;
 	int nominal_demand;
 
@@ -2350,6 +2351,9 @@ static int batt_calc_charging_speed(struct batt_drv *batt_drv)
 
 	if (is_disconnected)
 		return -1;
+
+	if (batt_drv->fake_charging_speed)
+		return batt_drv->fake_charging_speed;
 
 	/* Get average current via tiers. */
 	vbatt_idx = ttf_pwr_vtier_idx(&batt_drv->ttf_stats, soc);
@@ -5482,6 +5486,24 @@ static ssize_t health_algo_show(struct device *dev,
 
 static const DEVICE_ATTR_RW(health_algo);
 
+static ssize_t charging_speed_store(struct device *dev,
+				 struct device_attribute *attr,
+				 const char *buf, size_t count)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	int value, ret;
+
+	ret = kstrtoint(buf, 0, &value);
+	if (ret < 0)
+		return ret;
+
+	pr_info("fake_charging_speed: %d -> %d\n", batt_drv->fake_charging_speed, value);
+	batt_drv->fake_charging_speed = value;
+
+	return count;
+}
+
 static ssize_t charging_speed_show(struct device *dev,
 				   struct device_attribute *attr, char *buf)
 {
@@ -5491,7 +5513,7 @@ static ssize_t charging_speed_show(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->charging_speed);
 }
 
-static const DEVICE_ATTR_RO(charging_speed);
+static const DEVICE_ATTR_RW(charging_speed);
 
 static ssize_t power_metrics_polling_rate_store(struct device *dev,
 						struct device_attribute *attr,
