@@ -2371,7 +2371,12 @@ static ssize_t set_charge_stop_level(struct device *dev,
 	    (val > DEFAULT_CHARGE_STOP_LEVEL))
 		return -EINVAL;
 
+	pr_info("%s: %d -> %d\n", __func__, chg_drv->charge_stop_level, val);
 	chg_drv->charge_stop_level = val;
+
+	/* Force update charging state vote */
+	chg_run_defender(chg_drv);
+
 	if (chg_drv->bat_psy)
 		power_supply_changed(chg_drv->bat_psy);
 
@@ -2411,7 +2416,12 @@ static ssize_t set_charge_start_level(struct device *dev,
 	    (val < DEFAULT_CHARGE_START_LEVEL))
 		return -EINVAL;
 
+	pr_info("%s: %d -> %d\n", __func__, chg_drv->charge_start_level, val);
 	chg_drv->charge_start_level = val;
+
+	/* Force update charging state vote */
+	chg_run_defender(chg_drv);
+
 	if (chg_drv->bat_psy)
 		power_supply_changed(chg_drv->bat_psy);
 
