@@ -828,9 +828,9 @@ static int gcpm_chg_select_by_demand(struct gcpm_drv *gcpm)
 
 exit_done:
 	if (index != gcpm->dc_index)
-		logbuffer_log(gcpm->log, "by_d: index:%d->%d demand=%d,limit=%d cc_max=%d,cp_min=%d, hold=%d",
-			      gcpm->dc_index, index, batt_demand, gcpm->dc_limit_demand,
-			      cc_max, cp_min, gcpm->cp_fcc_hold);
+		pr_debug("by_d: index:%d->%d demand=%d,limit=%d cc_max=%d,cp_min=%d, hold=%d",
+			 gcpm->dc_index, index, batt_demand, gcpm->dc_limit_demand,
+			 cc_max, cp_min, gcpm->cp_fcc_hold);
 	return index;
 }
 
