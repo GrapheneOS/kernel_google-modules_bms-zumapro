@@ -154,6 +154,9 @@ struct gcpm_drv  {
 	struct mdis_thermal_device thermal_device;
 	struct gvotable_election *mdis_votable;
 
+	/* CSI */
+	struct gvotable_election *csi_status_votable;
+
 	/* combine PPS, route to the active PPS source */
 	struct power_supply *pps_psy;
 
@@ -2382,13 +2385,11 @@ static int gcpm_set_mdis_charge_cntl_limit(struct thermal_cooling_device *tcd,
 
 	mutex_unlock(&gcpm->chg_psy_lock);
 
-	if (!tdev->gcpm->mdis_votable)
-		goto done;
-
 	/*  fix the disable, run another charging loop */
-	ret = gvotable_cast_int_vote(tdev->gcpm->mdis_votable, "MDIS",
-				     budget, budget >= 0);
-done:
+	if (gcpm->mdis_votable)
+		ret = gvotable_cast_int_vote(gcpm->mdis_votable, "MDIS",
+					     budget, budget >= 0);
+
 	return 0;
 }
 
@@ -2662,6 +2663,17 @@ static void gcpm_mdis_callback(struct gvotable_election *el, const char *reason,
 
 	pr_info("MSC_MDIS lvl=%d budget=%d\n", tdev->current_level, budget);
 	power_supply_changed(gcpm->psy);
+
+	if (!gcpm->csi_status_votable) {
+		gcpm->csi_status_votable = gvotable_election_get_handle(VOTABLE_CSI_STATUS);
+		if (!gcpm->csi_status_votable)
+			return;
+	}
+
+	/* this is a problem only when speed is affected */
+	gvotable_cast_long_vote(gcpm->csi_status_votable, "CSI_STATUS_THERM_MDIS",
+				CSI_STATUS_System_Thermals,
+				tdev->current_level != 0);
 }
 
 /*
