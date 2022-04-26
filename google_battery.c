@@ -2447,6 +2447,7 @@ static int batt_calc_charging_speed(struct batt_drv *batt_drv)
 {
 	const struct gbms_chg_profile *profile = &batt_drv->chg_profile;
 	const int soc = ssoc_get_capacity(&batt_drv->ssoc_state);
+	const int chg_type = batt_drv->chg_state.f.chg_type;
 	int cc_max, vbatt_idx, ibatt, nominal_demand;
 	int chg_speed = -1;
 
@@ -2455,6 +2456,10 @@ static int batt_calc_charging_speed(struct batt_drv *batt_drv)
 
 	if (batt_drv->fake_charging_speed)
 		return batt_drv->fake_charging_speed;
+
+	/* if the battery is the limit, speed is 100% */
+	if (chg_type == POWER_SUPPLY_CHARGE_TYPE_TAPER)
+		return 100;
 
 	/* Get average current via tiers. */
 	vbatt_idx = ttf_pwr_vtier_idx(&batt_drv->ttf_stats, soc);
