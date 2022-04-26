@@ -1028,10 +1028,12 @@ static void fan_level_cb(struct gvotable_election *el,
 	if (batt_drv->fan_last_level != lvl) {
 		pr_debug("FAN_LEVEL %d->%d reason=%s\n",
 			 batt_drv->fan_last_level, lvl, reason ? reason : "<>");
-		logbuffer_log(batt_drv->ttf_stats.ttf_log,
-			      "FAN_LEVEL %d->%d reason=%s",
-			      batt_drv->fan_last_level, lvl,
-			      reason ? reason : "<>");
+
+		if (!chg_state_is_disconnected(&batt_drv->chg_state))
+			logbuffer_log(batt_drv->ttf_stats.ttf_log,
+				      "FAN_LEVEL %d->%d reason=%s",
+				      batt_drv->fan_last_level, lvl,
+				      reason ? reason : "<>");
 
 		batt_drv->fan_last_level = lvl;
 		if (batt_drv->psy)
