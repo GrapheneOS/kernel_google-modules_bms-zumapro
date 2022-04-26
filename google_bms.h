@@ -531,28 +531,28 @@ enum csi_type {
 
 	CSI_TYPE_None = 0,		// Disconnected
 	CSI_TYPE_Fault = 1,		// Internal Failures
-	CSI_TYPE_JEITA = 2,		// HW limits
+	CSI_TYPE_JEITA = 2,		// HW limits (will have HOT or COLD)
 	CSI_TYPE_LongLife = 3, 		// DefenderConditions
 	CSI_TYPE_Adaptive = 4,		// AdaptiveCharging
-	CSI_TYPE_Normal = 5,
+	CSI_TYPE_Normal = 5,		// All Good
 };
 
 enum csi_status {
 	CSI_STATUS_UNKNOWN = -1,
 
-	CSI_STATUS_Health_Cold = 10,	// JEITA battery, mutex with Hot
-	CSI_STATUS_Health_Hot = 11,	// JEITA battery, mutex with Cold
-	CSI_STATUS_System_Thermals = 20,//
-	CSI_STATUS_System_Load = 21,	// Load will eventually become thermals
-	CSI_STATUS_Adapter_Power = 30,	//
-	CSI_STATUS_Adapter_Quality = 31,// Adapter or cable (low voltage)
-	CSI_STATUS_Adapter_Auth = 32,	// Missing authentication (if supported)
+	CSI_STATUS_Health_Cold = 10,	// battery temperature not nominal
+	CSI_STATUS_Health_Hot = 11,	// battery temperature not nominal
+	CSI_STATUS_System_Thermals = 20,// Thermal engine
+	CSI_STATUS_System_Load = 21,	// Load might eventually become thermals
+	CSI_STATUS_Adapter_Auth = 30,	// During authentication
+	CSI_STATUS_Adapter_Power = 31,	// Low power adapter
+	CSI_STATUS_Adapter_Quality = 32,// Adapter or cable (low input voltage)
 	CSI_STATUS_Defender_Temp = 40,	// TEMP Defend
 	CSI_STATUS_Defender_Dwell = 41,	// DWELL Defend
 	CSI_STATUS_Defender_Trickle = 42,
 	CSI_STATUS_Defender_Dock = 43,	// Dock Defend
-	CSI_STATUS_Discharging = 100,	// There will be a more specific reason
-	CSI_STATUS_Normal = 200,	//
+	CSI_STATUS_NotCharging = 100,	// There will be a more specific reason
+	CSI_STATUS_Charging = 200,	// All good
 };
 
 #endif  /* __GOOGLE_BMS_H_ */
