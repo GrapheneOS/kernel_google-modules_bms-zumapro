@@ -537,6 +537,7 @@ static void p9221_vote_defaults(struct p9221_charger_data *charger)
 		dev_err(&charger->client->dev,
 			"Could not reset OCP DC_ICL voter %d\n", ret);
 
+	/* TODO: convert all to gvotable_recast_ballot() */
 	gvotable_cast_int_vote(charger->dc_icl_votable,
 			       P9382A_RTX_VOTER, 0, false);
 	gvotable_cast_int_vote(charger->dc_icl_votable,
@@ -545,6 +546,9 @@ static void p9221_vote_defaults(struct p9221_charger_data *charger)
 			       HPP_DC_ICL_VOTER, 0, false);
 	gvotable_cast_int_vote(charger->dc_icl_votable,
 			       DD_VOTER, 0, false);
+	gvotable_recast_ballot(charger->dc_icl_votable,
+			       LL_BPP_CEP_VOTER, false);
+
 	p9221_set_auth_dc_icl(charger, false);
 }
 
@@ -6072,8 +6076,6 @@ static void p9221_fg_work(struct work_struct *work)
 					&prop);
 	if (err == 0)
 		p9221_set_capacity(charger, prop.intval);
-
-	pr_info("%s: err=%d capacity=%d\n", __func__, err, prop.intval);
 }
 
 static int p9221_charger_probe(struct i2c_client *client,
