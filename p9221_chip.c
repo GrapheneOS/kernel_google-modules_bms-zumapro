@@ -812,7 +812,11 @@ static int p9221_send_ccreset(struct p9221_charger_data *chgr)
 {
 	int ret;
 
-	dev_info(&chgr->client->dev, "Send CC reset\n");
+	dev_info(&chgr->client->dev, "%s CC reset\n",
+		 chgr->is_mfg_google? "Send" : "Ignore");
+
+	if (chgr->is_mfg_google == false)
+		return 0;
 
 	mutex_lock(&chgr->cmd_lock);
 
@@ -829,7 +833,11 @@ static int p9412_send_ccreset(struct p9221_charger_data *chgr)
 {
 	int ret = 0;
 
-	dev_info(&chgr->client->dev, "Send CC reset\n");
+	dev_info(&chgr->client->dev, "%s CC reset\n",
+		 chgr->is_mfg_google? "Send" : "Ignore");
+
+	if (chgr->is_mfg_google == false)
+		return 0;
 
 	mutex_lock(&chgr->cmd_lock);
 
