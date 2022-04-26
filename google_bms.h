@@ -499,7 +499,7 @@ int ttf_pwr_ibatt(const struct gbms_ce_tier_stats *ts);
 int gbms_read_aacr_limits(struct gbms_chg_profile *profile,
 			  struct device_node *node);
 
-bool chg_state_is_disconnected(union gbms_charger_state *chg_state);
+bool chg_state_is_disconnected(const union gbms_charger_state *chg_state);
 
 /*
  * Charger modes
@@ -528,6 +528,7 @@ enum bhi_status {
 
 enum csi_type {
 	CSI_TYPE_UNKNOWN = -1,
+
 	CSI_TYPE_None = 0,		// Disconnected
 	CSI_TYPE_Fault = 1,		// Internal Failures
 	CSI_TYPE_JEITA = 2,		// HW limits
@@ -538,7 +539,7 @@ enum csi_type {
 
 enum csi_status {
 	CSI_STATUS_UNKNOWN = -1,
-	CSI_STATUS_Discharging = 0,
+
 	CSI_STATUS_Health_Cold = 10,	// JEITA battery, mutex with Hot
 	CSI_STATUS_Health_Hot = 11,	// JEITA battery, mutex with Cold
 	CSI_STATUS_System_Thermals = 20,//
@@ -550,7 +551,8 @@ enum csi_status {
 	CSI_STATUS_Defender_Dwell = 41,	// DWELL Defend
 	CSI_STATUS_Defender_Trickle = 42,
 	CSI_STATUS_Defender_Dock = 43,	// Dock Defend
-	CSI_STATUS_Normal = 100,	//
+	CSI_STATUS_Discharging = 100,	// There will be a more specific reason
+	CSI_STATUS_Normal = 200,	//
 };
 
 #endif  /* __GOOGLE_BMS_H_ */
