@@ -6072,6 +6072,11 @@ static int p9221_parse_dt(struct device *dev,
 	if (ret)
 		pdata->has_sw_ramp = true;
 
+	ret = of_property_read_u8(node,"idt,tx_id_phone_type",
+				  &pdata->phone_type);
+	if (ret < 0)
+		pdata->phone_type = 0;
+
 	return 0;
 }
 

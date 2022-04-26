@@ -610,6 +610,8 @@ struct p9221_charger_platform_data {
 	bool				feat_compat_mode;
 	bool				apbst_en;
 	bool				has_sw_ramp;
+	/* phone type for tx_id*/
+	u8				phone_type;
 };
 
 struct p9221_charger_ints_bit {

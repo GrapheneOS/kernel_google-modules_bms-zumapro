@@ -971,6 +971,9 @@ static int p9xxx_send_txid(struct p9221_charger_data *chgr)
 	/* TODO: write txid to bit(23, 0) */
 	memset(&chgr->tx_buf[1], 0x12, FAST_SERIAL_ID_SIZE - 1);
 
+        /* write phone type to bit(23, 17) */
+        chgr->tx_buf[3] = chgr->pdata->phone_type << 1;
+
 	/* write accessory type to bit(31, 24) */
 	chgr->tx_buf[4] = TX_ACCESSORY_TYPE;
 
