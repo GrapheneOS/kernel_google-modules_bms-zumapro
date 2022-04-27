@@ -2392,13 +2392,16 @@ static void batt_update_csi_status(struct batt_drv *batt_drv)
 			return;
 	}
 
+	gvotable_cast_long_vote(batt_drv->csi_status_votable, "CSI_STATUS_CHG",
+				CSI_STATUS_Charging, !is_disconnected);
+
 	/*
 	 * discharging when the battery current is negative. There will likely
 	 * be a more specific reason (e.g System_* or Adapter_* or one of
 	 * Defender_*).
 	 */
 	gvotable_cast_long_vote(batt_drv->csi_status_votable, "CSI_STATUS_DSG",
-				CSI_STATUS_Discharging,
+				CSI_STATUS_NotCharging,
 				!is_disconnected && batt_drv->msc_state == MSC_DSG);
 
 	gvotable_cast_long_vote(batt_drv->csi_status_votable, "CSI_STATUS_100",
