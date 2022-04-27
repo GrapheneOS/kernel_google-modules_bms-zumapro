@@ -32,6 +32,8 @@
 #define AUTH_DC_ICL_VOTER			"AUTH_VOTER"
 #define CPOUT_EN_VOTER				"CPOUT_EN_VOTER"
 #define LL_BPP_CEP_VOTER			"LL_BPP_CEP_VOTER"
+#define P9221_RAMP_VOTER			"WLC_RAMP_VOTER"
+#define P9221_HPP_VOTER				"EPP_HPP_VOTER"
 #define WLC_MFG_GOOGLE				0x72
 #define P9221_DC_ICL_BPP_UA			700000
 #define P9221_DC_ICL_BPP_RAMP_DEFAULT_UA	900000
@@ -39,6 +41,9 @@
 #define P9221_DC_ICL_EPP_UA			1100000
 #define P9221_DC_ICL_HPP_UA			500000
 #define P9221_DC_ICL_RTX_UA			600000
+#define P9XXX_SW_RAMP_ICL_START_UA		125000
+#define P9XXX_SW_RAMP_ICL_STEP_UA		100000
+#define P9XXX_CDMODE_ENABLE_ICL_UA		200000
 #define P9221_AUTH_DC_ICL_UA_500		500000
 #define P9221_AUTH_DC_ICL_UA_100		100000
 #define P9221_LL_BPP_CHG_TERM_UA		200000
@@ -603,6 +608,7 @@ struct p9221_charger_platform_data {
 	u32				alignment_current_threshold;
 	bool				feat_compat_mode;
 	bool				apbst_en;
+	bool				has_sw_ramp;
 };
 
 struct p9221_charger_ints_bit {
@@ -765,7 +771,7 @@ struct p9221_charger_data {
 	wait_queue_head_t		ccreset_wq;
 	bool				cc_reset_pending;
 	int				send_txid_cnt;
-
+	bool				sw_ramp_done;
 #if IS_ENABLED(CONFIG_GPIOLIB)
 	struct gpio_chip gpio;
 #endif
@@ -837,6 +843,7 @@ bool p9221_is_epp(struct p9221_charger_data *charger);
 bool p9xxx_is_capdiv_en(struct p9221_charger_data *charger);
 int p9221_wlc_disable(struct p9221_charger_data *charger, int disable, u8 reason);
 int p9221_set_auth_dc_icl(struct p9221_charger_data *charger, bool enable);
+int p9xxx_sw_ramp_icl(struct p9221_charger_data *charger, const int icl_target);
 
 void p9xxx_gpio_init(struct p9221_charger_data *charger);
 extern int p9221_chip_init_funcs(struct p9221_charger_data *charger,

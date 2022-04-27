@@ -550,6 +550,8 @@ static void p9221_vote_defaults(struct p9221_charger_data *charger)
 			       LL_BPP_CEP_VOTER, false);
 
 	p9221_set_auth_dc_icl(charger, false);
+	gvotable_cast_int_vote(charger->dc_icl_votable,
+			       P9221_RAMP_VOTER, 0, false);
 }
 
 static int p9221_set_switch_reg(struct p9221_charger_data *charger, bool enable)
@@ -591,6 +593,8 @@ static int p9221_reset_wlc_dc(struct p9221_charger_data *charger)
 	ret = p9221_set_hpp_dc_icl(charger, false);
 	if (ret < 0)
 		dev_warn(&charger->client->dev, "Cannot disable HPP_ICL (%d)\n", ret);
+
+	gvotable_cast_int_vote(charger->dc_icl_votable, P9221_HPP_VOTER, 0, false);
 
 	/* Check it's in Cap Div mode */
 	ret = charger->reg_read_8(charger, P9412_CDMODE_STS_REG, &cdmode);
@@ -802,6 +806,7 @@ static void p9221_set_offline(struct p9221_charger_data *charger)
 	p9221_dump_charge_stats(charger);
 	mutex_unlock(&charger->stats_lock);
 
+	charger->sw_ramp_done = false;
 	charger->force_bpp = false;
 	charger->chg_on_rtx = false;
 	p9221_reset_wlc_dc(charger);
@@ -1970,8 +1975,25 @@ static bool feature_check_fast_charge(struct p9221_charger_data *charger)
 
 static int p9221_set_hpp_dc_icl(struct p9221_charger_data *charger, bool enable)
 {
+	int ret;
+
 	if (!charger->dc_icl_votable)
 		return 0;
+
+	if (charger->pdata->has_sw_ramp && enable) {
+		dev_dbg(&charger->client->dev, "%s: voter=%s, icl=%d\n",
+			__func__, HPP_DC_ICL_VOTER, P9221_DC_ICL_HPP_UA);
+		ret = p9xxx_sw_ramp_icl(charger, P9221_DC_ICL_HPP_UA);
+		if (ret == 0)
+			ret = gvotable_cast_long_vote(charger->dc_icl_votable,
+						      HPP_DC_ICL_VOTER,
+						      P9221_DC_ICL_HPP_UA,
+						      enable);
+		if (ret == 0)
+			ret = gvotable_cast_int_vote(charger->dc_icl_votable,
+						     P9221_RAMP_VOTER, 0, false);
+		return ret;
+	}
 
 	return gvotable_cast_long_vote(charger->dc_icl_votable,
 				       HPP_DC_ICL_VOTER,
@@ -2530,6 +2552,46 @@ static int p9221_enable_interrupts(struct p9221_charger_data *charger)
 	return ret;
 }
 
+int p9xxx_sw_ramp_icl(struct p9221_charger_data *charger, const int icl_target)
+{
+	int step, icl_now;
+
+	if (!charger->pdata->has_sw_ramp)
+		return 0;
+
+	icl_now = gvotable_get_current_int_vote(charger->dc_icl_votable);
+
+	dev_dbg(&charger->client->dev, "%s: Set ICL %d->%d ==========\n", __func__, icl_now, icl_target);
+
+	step = (icl_target > icl_now) ? P9XXX_SW_RAMP_ICL_STEP_UA : -P9XXX_SW_RAMP_ICL_STEP_UA;
+
+	while (icl_now != icl_target &&
+	       charger->online) {
+		dev_dbg(&charger->client->dev, "%s: step=%d, get_current_vote=%d\n",
+			 __func__,step, gvotable_get_current_int_vote(charger->dc_icl_votable));
+
+		if (abs(icl_target - icl_now) <= P9XXX_SW_RAMP_ICL_STEP_UA)
+			icl_now = icl_target;
+		else
+			icl_now += step;
+
+		dev_dbg(&charger->client->dev, "%s: Voting ICL %duA (t=%d)\n", __func__, icl_now, icl_target);
+
+		gvotable_cast_int_vote(charger->dc_icl_votable, P9221_RAMP_VOTER, icl_now, true);
+		usleep_range(100 * USEC_PER_MSEC, 120 * USEC_PER_MSEC);
+	}
+
+	if (!charger->online)
+		return -ENODEV;
+
+	dev_dbg(&charger->client->dev, "%s: P9221_RAMP_VOTER=%d, get_current_int_vote=%d ==========\n",
+                 __func__,
+		 gvotable_get_int_vote(charger->dc_icl_votable, P9221_RAMP_VOTER),
+		 gvotable_get_current_int_vote(charger->dc_icl_votable));
+
+	return 0;
+}
+
 static int p9221_set_dc_icl(struct p9221_charger_data *charger)
 {
 	int icl, ret;
@@ -2569,6 +2631,14 @@ static int p9221_set_dc_icl(struct p9221_charger_data *charger)
 	dev_info(&charger->client->dev, "Voting ICL %duA ramp=%d, alt_ramp=%d\n",
 		icl, charger->icl_ramp, charger->icl_ramp_alt_ua);
 
+	if (charger->pdata->has_sw_ramp && !charger->icl_ramp) {
+		dev_dbg(&charger->client->dev, "%s: voter=%s\n", __func__, P9221_WLC_VOTER);
+		ret = p9xxx_sw_ramp_icl(charger, icl);
+		if (ret < 0)
+			gvotable_cast_int_vote(charger->dc_icl_votable,
+					       P9221_RAMP_VOTER, 0, false);
+	}
+
 	if (charger->icl_ramp)
 		gvotable_cast_int_vote(charger->dc_icl_votable,
 				       DCIN_AICL_VOTER, icl, true);
@@ -2578,6 +2648,9 @@ static int p9221_set_dc_icl(struct p9221_charger_data *charger)
 	if (ret)
 		dev_err(&charger->client->dev,
 			"Could not vote DC_ICL %d\n", ret);
+
+	if (charger->pdata->has_sw_ramp && !charger->icl_ramp)
+		gvotable_cast_int_vote(charger->dc_icl_votable, P9221_RAMP_VOTER, 0, false);
 
 	/* Increase the IOUT limit */
 	charger->chip_set_rx_ilim(charger, P9221_UA_TO_MA(P9221R5_ILIM_MAX_UA));
@@ -2978,6 +3051,12 @@ static void p9221_notifier_check_dc(struct p9221_charger_data *charger)
 		if (p9221_is_epp(charger))
 			charger->chip_check_neg_power(charger);
 
+		if (charger->pdata->has_sw_ramp && !charger->sw_ramp_done) {
+			gvotable_cast_int_vote(charger->dc_icl_votable,
+					       P9221_RAMP_VOTER,
+					       P9XXX_SW_RAMP_ICL_START_UA, true);
+			charger->sw_ramp_done = true;
+		}
 		p9221_set_dc_icl(charger);
 		p9221_write_fod(charger);
 		if (!charger->dc_icl_bpp)
@@ -5914,6 +5993,10 @@ static int p9221_parse_dt(struct device *dev,
 	ret = of_property_read_bool(node, "google,feat-no-compat");
 	if (!ret)
 		pdata->feat_compat_mode = true; /* default is compat*/
+
+	ret = of_property_read_bool(node, "google,has-sw-ramp");
+	if (ret)
+		pdata->has_sw_ramp = true;
 
 	return 0;
 }

@@ -1266,7 +1266,22 @@ static int p9221_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 /* b/202795383 remove load current before enable P9412 CD mode */
 static int p9412_prop_mode_capdiv_enable(struct p9221_charger_data *chgr)
 {
-	int ret;
+	int ret, i;
+
+	if (chgr->pdata->has_sw_ramp) {
+		dev_dbg(&chgr->client->dev, "%s: voter=%s, icl=%d\n",
+			__func__, P9221_HPP_VOTER, P9XXX_CDMODE_ENABLE_ICL_UA);
+		ret = p9xxx_sw_ramp_icl(chgr, P9XXX_CDMODE_ENABLE_ICL_UA);
+		if (ret < 0)
+			return ret;
+
+		ret = gvotable_cast_int_vote(chgr->dc_icl_votable,
+					     P9221_HPP_VOTER,
+					     P9XXX_CDMODE_ENABLE_ICL_UA, true);
+		if (ret == 0)
+			gvotable_cast_int_vote(chgr->dc_icl_votable,
+					       P9221_RAMP_VOTER, 0, false);
+	}
 
 	/* TODO: need to become a fake GPIO in the max77759 charger */
 	if (!chgr->chg_mode_votable)
@@ -1277,12 +1292,27 @@ static int p9412_prop_mode_capdiv_enable(struct p9221_charger_data *chgr)
 					P9221_WLC_VOTER,
 					MAX77759_CHGR_MODE_ALL_OFF, true);
 
-	usleep_range(300 * USEC_PER_MSEC, 320 * USEC_PER_MSEC);
+	/* total 2 seconds wait and early exit when WLC offline */
+	for (i = 0; i < 20; i += 1) {
+		usleep_range(100 * USEC_PER_MSEC, 120 * USEC_PER_MSEC);
+		if (!chgr->online) {
+			ret = -ENODEV;
+			goto error_exit;
+		}
+	}
 
 	ret = p9412_capdiv_en(chgr, CDMODE_CAP_DIV_MODE);
 
-	usleep_range(300 * USEC_PER_MSEC, 320 * USEC_PER_MSEC);
+	/* total 1 seconds wait and early exit when WLC offline */
+	for (i = 0; i < 10; i += 1) {
+		usleep_range(100 * USEC_PER_MSEC, 120 * USEC_PER_MSEC);
+		if (!chgr->online) {
+			ret = -ENODEV;
+			goto error_exit;
+		}
+	}
 
+error_exit:
 	if (chgr->chg_mode_votable)
 		gvotable_cast_long_vote(chgr->chg_mode_votable,
 					P9221_WLC_VOTER,
@@ -1293,7 +1323,7 @@ static int p9412_prop_mode_capdiv_enable(struct p9221_charger_data *chgr)
 
 static int p9412_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 {
-	int ret, loops;
+	int ret, loops, i;
 	u8 val8, cdmode, txpwr, pwr_stp, mode_sts, err_sts, prop_cur_pwr, prop_req_pwr;
 	u32 val = 0;
 
@@ -1361,9 +1391,29 @@ static int p9412_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 
 	msleep(50);
 
+enable_capdiv:
 	/*
-	 * Step 2: Enable Proprietary Mode: write 0x01 to 0x4F (0x4E bit8)
+	 * Step 2: enable Cap Divider configuration:
+	 * write 0x02 to 0x101 then write 0x40 to 0x4E
 	 */
+	ret = p9412_prop_mode_capdiv_enable(chgr);
+	if (ret) {
+		dev_err(&chgr->client->dev, "PROP_MODE: fail to enable Cap Div mode\n");
+		goto err_exit;
+	}
+
+	for (i = 0; i < 30; i += 1) {
+		usleep_range(100 * USEC_PER_MSEC, 120 * USEC_PER_MSEC);
+		if (!chgr->online)
+			goto err_exit;
+	}
+
+	/*
+	 * Step 3: Enable Proprietary Mode: write 0x01 to 0x4F (0x4E bit8)
+	 */
+	if (val8 == P9XXX_SYS_OP_MODE_PROPRIETARY)
+		goto request_pwr;
+
 	ret = chgr->chip_set_cmd(chgr, PROP_MODE_EN_CMD);
 	if (ret) {
 		dev_err(&chgr->client->dev,
@@ -1374,7 +1424,7 @@ static int p9412_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 	msleep(50);
 
 	/*
-	 * Step 3: wait for PropModeStat interrupt, register 0x37[4]
+	 * Step 4: wait for PropModeStat interrupt, register 0x37[4]
 	 */
 	/* 60 * 50 = 3 secs */
 	for (loops = 60 ; loops ; loops--) {
@@ -1388,8 +1438,9 @@ static int p9412_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 	if (!chgr->prop_mode_en)
 		goto err_exit;
 
+request_pwr:
 	/*
-	 * Step 4: Read TX potential power register (0xC4)
+	 * Step 5: Read TX potential power register (0xC4)
 	 * [TX max power capability] in 0.5W units
 	 */
 	ret = chgr->reg_read_8(chgr, P9412_PROP_TX_POTEN_PWR_REG, &txpwr);
@@ -1401,19 +1452,6 @@ static int p9412_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 		chgr->prop_mode_en = false;
 		goto err_exit;
 	}
-
-enable_capdiv:
-	/*
-	 * Step 5: enable Cap Divider configuration:
-	 * write 0x02 to 0x101 then write 0x40 to 0x4E
-	 */
-	ret = p9412_prop_mode_capdiv_enable(chgr);
-	if (ret) {
-		dev_err(&chgr->client->dev, "PROP_MODE: fail to enable Cap Div mode\n");
-		chgr->prop_mode_en = false;
-		goto err_exit;
-	} else
-		chgr->prop_mode_en = true;
 
 	/*
 	 * Step 6: Request xx W Neg power by writing 0xC5,
@@ -1437,7 +1475,11 @@ enable_capdiv:
 		goto err_exit;
 	}
 
-	msleep(50);
+	for (i = 0; i < 30; i += 1) {
+		usleep_range(100 * USEC_PER_MSEC, 120 * USEC_PER_MSEC);
+		if (!chgr->online)
+			chgr->prop_mode_en = false;
+	}
 
 err_exit:
         /* check status */
