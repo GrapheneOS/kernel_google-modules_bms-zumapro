@@ -214,6 +214,7 @@ struct batt_bpst {
 	struct mutex lock;
 	bool bpst_enable;
 	bool bpst_detect_disable;
+	bool bpst_cell_fault;
 	/* single battery disconnect status */
 	int bpst_sbd_status;
 	int bpst_count_threshold;
@@ -3522,8 +3523,7 @@ static int batt_bpst_detect_update(struct batt_drv *batt_drv)
 	}
 	if (bpst_count_threshold > 0 && data >= (u8)bpst_count_threshold) {
 		pr_info("%s: MSC_BPST: single battery disconnect, shutdown.\n", __func__);
-		batt_drv->capacity_level = POWER_SUPPLY_CAPACITY_LEVEL_CRITICAL;
-		power_supply_changed(batt_drv->psy);
+		bpst_state->bpst_cell_fault = true;
 	}
 
 	pr_debug("%s: MSC_BPST: %d in disconnected\n", __func__, data);
@@ -3547,6 +3547,9 @@ static int batt_init_bpst_profile(struct batt_drv *batt_drv)
 	struct batt_bpst *bpst_state = &batt_drv->bpst_state;
 	struct device_node *node = batt_drv->device->of_node;
 	int ret;
+
+	/* set cell_fault initial status */
+	bpst_state->bpst_cell_fault = false;
 
 	bpst_state->bpst_enable = of_property_read_bool(node, "google,bpst-enable");
 	if (!bpst_state->bpst_enable)
@@ -6203,10 +6206,14 @@ static bool gbatt_check_dead_battery(const struct batt_drv *batt_drv)
  * CRITICAL.
  */
 static int gbatt_get_capacity_level(struct batt_ssoc_state *ssoc_state,
-				    int fg_status)
+				    int fg_status, bool bpst_cell_fault)
 {
 	const int soc = ssoc_get_real(ssoc_state);
 	int capacity_level;
+
+	/* shutdown device when cell fault detection counter exceeds threshold */
+	if (bpst_cell_fault)
+		return POWER_SUPPLY_CAPACITY_LEVEL_CRITICAL;
 
 	if (soc >= SSOC_LEVEL_FULL) {
 		capacity_level = POWER_SUPPLY_CAPACITY_LEVEL_FULL;
@@ -6515,6 +6522,7 @@ static void google_battery_work(struct work_struct *work)
 	    container_of(work, struct batt_drv, batt_work.work);
 	struct power_supply *fg_psy = batt_drv->fg_psy;
 	struct batt_ssoc_state *ssoc_state = &batt_drv->ssoc_state;
+	struct batt_bpst *bpst_state = &batt_drv->bpst_state;
 	int update_interval = batt_drv->batt_update_interval;
 	const int prev_ssoc = ssoc_get_capacity(ssoc_state);
 	int present, fg_status, batt_temp, ret;
@@ -6585,7 +6593,7 @@ static void google_battery_work(struct work_struct *work)
 		 */
 
 		level = gbatt_get_capacity_level(&batt_drv->ssoc_state,
-						 fg_status);
+						 fg_status, bpst_state->bpst_cell_fault);
 		if (level != batt_drv->capacity_level) {
 			pr_debug("%s: change of capacity level %d->%d\n",
 				 __func__, batt_drv->capacity_level,
