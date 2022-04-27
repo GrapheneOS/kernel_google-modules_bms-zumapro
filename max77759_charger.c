@@ -2488,6 +2488,43 @@ static int max77759_chg_debug_reg_write(void *d, u64 val)
 DEFINE_SIMPLE_ATTRIBUTE(debug_reg_rw_fops, max77759_chg_debug_reg_read,
 			max77759_chg_debug_reg_write, "%02llx\n");
 
+
+static ssize_t max77759_chg_show_reg_all(struct file *filp, char __user *buf,
+					size_t count, loff_t *ppos)
+{
+	struct max77759_chgr_data *data = (struct max77759_chgr_data *)filp->private_data;
+	u32 reg_address;
+	u8 reg = 0;
+	char *tmp;
+	int ret = 0, len = 0;
+
+	if (!data->regmap) {
+		pr_err("Failed to read, no regmap\n");
+		return -EIO;
+	}
+
+	tmp = kmalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!tmp)
+		return -ENOMEM;
+
+	for (reg_address = 0xB0; reg_address <= 0xCC; reg_address++) {
+		ret = max77759_reg_read(data->regmap, reg_address, &reg);
+		if (ret < 0)
+			continue;
+
+		len += scnprintf(tmp + len, PAGE_SIZE - len, "%02x: %02x\n", reg_address, reg);
+	}
+
+	if (len > 0)
+		len = simple_read_from_buffer(buf, count,  ppos, tmp, strlen(tmp));
+
+	kfree(tmp);
+
+	return len;
+}
+
+BATTERY_DEBUG_ATTRIBUTE(debug_all_reg_fops, max77759_chg_show_reg_all, NULL);
+
 static int dbg_init_fs(struct max77759_chgr_data *data)
 {
 	int ret;
@@ -2521,6 +2558,8 @@ static int dbg_init_fs(struct max77759_chgr_data *data)
 
 	debugfs_create_u32("address", 0600, data->de, &data->debug_reg_address);
 	debugfs_create_file("data", 0600, data->de, data, &debug_reg_rw_fops);
+	/* dump all registers */
+	debugfs_create_file("registers", 0444, data->de, data, &debug_all_reg_fops);
 	return 0;
 }
 

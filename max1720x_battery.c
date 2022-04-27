@@ -3351,15 +3351,6 @@ static int debug_batt_id_set(void *data, u64 val)
 
 DEFINE_SIMPLE_ATTRIBUTE(debug_batt_id_fops, NULL, debug_batt_id_set, "%llu\n");
 
-
-#define BATTERY_DEBUG_ATTRIBUTE(name, fn_read, fn_write) \
-static const struct file_operations name = {	\
-	.open	= simple_open,			\
-	.llseek	= no_llseek,			\
-	.read	= fn_read,			\
-	.write	= fn_write,			\
-}
-
 /*
  * dump with "cat /d/max1720x/nvram_por | xxd"
  * NOTE: for testing add a setter that initialize chip->nRAM_por (if not

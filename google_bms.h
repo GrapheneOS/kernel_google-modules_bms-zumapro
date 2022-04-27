@@ -90,6 +90,14 @@ struct gbms_chg_profile {
 #define CHG_EV_ADAPTER_STRING(s)	#s
 #define _CHG_EV_ADAPTER_PRIMITIVE_CAT(a, ...) a ## __VA_ARGS__
 
+#define BATTERY_DEBUG_ATTRIBUTE(name, fn_read, fn_write) \
+static const struct file_operations name = {	\
+	.open	= simple_open,			\
+	.llseek	= no_llseek,			\
+	.read	= fn_read,			\
+	.write	= fn_write,			\
+}
+
 /* Enums will start with CHG_EV_ADAPTER_TYPE_ */
 #define CHG_EV_ADAPTER_ENUM(e)	\
 			_CHG_EV_ADAPTER_PRIMITIVE_CAT(CHG_EV_ADAPTER_TYPE_,e)

@@ -4106,14 +4106,6 @@ static void batt_cycle_count_update(struct batt_drv *batt_drv, int soc)
 
 #ifdef CONFIG_DEBUG_FS
 
-#define BATTERY_DEBUG_ATTRIBUTE(name, fn_read, fn_write) \
-static const struct file_operations name = {	\
-	.open	= simple_open,			\
-	.llseek	= no_llseek,			\
-	.read	= fn_read,			\
-	.write	= fn_write,			\
-}
-
 static ssize_t cycle_counts_store(struct device *dev,
 				  struct device_attribute *attr,
 				  const char *buf, size_t count)
