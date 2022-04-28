@@ -3610,6 +3610,36 @@ static ssize_t max1720x_force_psy_update(struct file *filp,
 
 BATTERY_DEBUG_ATTRIBUTE(debug_force_psy_update_fops, NULL,
 			max1720x_force_psy_update);
+
+static int debug_cnhs_reset(void *data, u64 val)
+{
+	u16 reset_val;
+	int ret;
+
+	reset_val = (u16)val;
+
+	ret = gbms_storage_write(GBMS_TAG_CNHS, &reset_val,
+				sizeof(reset_val));
+	pr_info("reset CNHS to %d, (ret=%d)\n", reset_val, ret);
+
+	return ret;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(debug_reset_cnhs_fops, NULL, debug_cnhs_reset, "%llu\n");
+
+static int debug_gmsr_reset(void *data, u64 val)
+{
+	struct max1720x_chip *chip = data;
+	int ret;
+
+	ret = max_m5_reset_state_data(chip->model_data);
+	pr_info("reset GMSR (ret=%d)\n", ret);
+
+	return ret;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(debug_reset_gmsr_fops, NULL, debug_gmsr_reset, "%llu\n");
+
 /*
  * TODO: add the building blocks of google capacity
  *
@@ -3663,6 +3693,10 @@ static int max17x0x_init_debugfs(struct max1720x_chip *chip)
 
 	/* dump all registers */
 	debugfs_create_file("registers", 0444, de, chip, &debug_reg_all_fops);
+
+	/* reset fg eeprom data for debugging */
+	debugfs_create_file("cnhs_reset", 0400, de, chip, &debug_reset_cnhs_fops);
+	debugfs_create_file("gmsr_reset", 0400, de, chip, &debug_reset_gmsr_fops);
 
 	return 0;
 }
