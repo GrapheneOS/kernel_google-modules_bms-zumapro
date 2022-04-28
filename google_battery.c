@@ -85,6 +85,8 @@
 #define BHI_MARGINAL_THRESHOLD_DEFAULT	80
 #define BHI_NEED_REP_THRESHOLD_DEFAULT	70
 
+
+/* TODO: this is for Adaptive charging, rename */
 enum batt_health_ui {
 	/* Internal value used when health is cleared via dialog */
 	CHG_DEADLINE_DIALOG = -3,
@@ -197,6 +199,7 @@ struct gbatt_ccbin_data {
 #define DEFAULT_RES_SSOC_THR	75
 #define DEFAULT_RES_FILT_LEN	10
 
+/* TODO: move google_resistance to bhi_data  */
 struct batt_res {
 	bool estimate_requested;
 
@@ -215,7 +218,7 @@ struct batt_res {
 	int res_temp_high;
 };
 
-/* battery pack status */
+/* TODO: move single cell disconnect to bhi_data */
 struct batt_bpst {
 	struct mutex lock;
 	bool bpst_enable;
@@ -260,6 +263,8 @@ enum batt_aacr_state {
 #define SD_DISCHG_START BATT_TEMP_RECORD_THR
 #define BATT_SD_SAVE_SIZE (BATT_TEMP_RECORD_THR * 2)
 #define BATT_SD_MAX_HOURS 15120 /* 90 weeks */
+
+/* TODO: move swelling_data to bhi_data  */
 struct swelling_data {
 	/* Time in different temperature */
 	bool is_enable;
@@ -281,15 +286,38 @@ struct swelling_data {
 	ktime_t last_update;
 };
 
-struct battery_health
+struct bhi_data
 {
-	int algo_ver;
-	int index;
-	int perf_index;
+	u32 act_impedance;
+	u32 cur_impedance;
+	int battery_age;
+
+	int capacity_design;
+	int capacity_fade;
+	int cycle_count;
 	int fcn_count;
+
+	int swell_cumulative;
+};
+struct health_data
+{
+	struct bhi_data bhi_data;
+
+	/* default algo */
+	int bhi_algo;
+	int bhi_cap_index;
+	int bhi_perf_index;
+
+	/* calculation of health index */
+	int bhi_index;
+	int bhi_w_ci;
+	int bhi_w_pi;
+	int bhi_w_sd;
+
+	/* calculation of status */
+	enum bhi_status bhi_status;
 	int marginal_threshold;
 	int need_rep_threshold;
-	enum bhi_status status;
 };
 
 #define POWER_METRICS_MAX_DATA	50
@@ -451,7 +479,7 @@ struct batt_drv {
 	int aacr_cycle_max;
 
 	/* health related */
-	struct battery_health health;
+	struct health_data health_data;
 	struct swelling_data sd;
 
 	/* CSI: charging speed */
@@ -3223,91 +3251,229 @@ exit_done:
 	return (u32)capacity;
 }
 
-static int batt_bhi_perf_index_update(struct batt_drv *batt_drv)
+/* BHI -------------------------------------------------------------------- */
+
+/* batt_drv->hist_delta_cycle_cnt <= 0 is never 0 */
+static int hist_get_index(int cycle_count, const struct batt_drv *batt_drv)
 {
-	int act_impedance, delta, ret;
-	u32 data;
+	if (batt_drv->hist_data_saved_cnt <= 0)
+		return -ENODATA;
+	if (cycle_count < 0)
+		cycle_count = batt_drv->cycle_count;
 
-	/* will return error when/if the value is not qualified. */
-	ret = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_HEALTH_ACT_IMPEDANCE);
-	if (ret < 0)
-		return ret;
-	act_impedance = ret;
+	return cycle_count / batt_drv->hist_delta_cycle_cnt;
+}
 
-	ret = gbms_storage_read(GBMS_TAG_BRES, &data, sizeof(data));
-	if (ret < 0)
-		return ret;
-	delta = (int)data - act_impedance;
+/* will return -EAGAIN or -ENODATA until the value is valid */
+static int bhi_cap_data_update(int cap_algo, struct batt_drv *batt_drv)
+{
+	struct bhi_data *bhi_data = &batt_drv->health_data.bhi_data;
+	int cap_fade = 0;
 
-	batt_drv->health.perf_index = (delta > 0) ? (delta * 100) / act_impedance : 0;
+	switch (cap_algo) {
+	default:
+		cap_fade = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_CAPACITY_FADE_RATE);
+		if (cap_fade < 0)
+			cap_fade = 0;
 
+		bhi_data->cycle_count = batt_drv->cycle_count;
+		bhi_data->capacity_fade = cap_fade;
+		break;
+	}
+
+	pr_debug("%s: cap_fade=%d, cycle_count=%d\n", __func__,
+		bhi_data->capacity_fade, bhi_data->cycle_count);
 	return 0;
 }
 
-static int batt_bhi_max1720x_cap_percent(struct batt_drv *batt_drv)
+/* will return -ENODATA until the value is valid. Call during charging */
+static int bhi_perf_data_update(struct bhi_data *bhi_data, struct power_supply *fg_psy)
 {
-	struct max17x0x_eeprom_history hist = { 0 };
-	const int cycle_cnt = batt_drv->hist_data_saved_cnt;
-	const int delta = batt_drv->hist_delta_cycle_cnt;
-	const int hist_idx = cycle_cnt / delta;
-	const int fcn_count = batt_drv->health.fcn_count;
-	int idx, i, fcn_sum = 0;
+	int cur_impedance = -1, act_impedance = -1, age = -1;
+	int ret = -ENODATA;
 
-	/* wait for batt_history_data_work */
-	if (cycle_cnt <= 0)
-		return -EAGAIN;
+	if (!bhi_data->act_impedance) {
+		act_impedance = GPSY_GET_PROP(fg_psy, GBMS_PROP_HEALTH_ACT_IMPEDANCE);
+		if (act_impedance < 0)
+			goto exit_done;
+		bhi_data->act_impedance = act_impedance;
+	}
 
-	/* set to the first entry of the last "fcn_count" history data */
-	idx = hist_idx - fcn_count + 1;
-	if (idx < 0)
+	cur_impedance = GPSY_GET_PROP(fg_psy, GBMS_PROP_HEALTH_IMPEDANCE);
+	if (cur_impedance < 0)
+		goto exit_done;
+
+	age = GPSY_GET_PROP(fg_psy, GBMS_PROP_BATTERY_AGE);
+	if (age < 0)
+		goto exit_done;
+	bhi_data->battery_age = age;
+
+	if (cur_impedance > bhi_data->cur_impedance)
+		bhi_data->cur_impedance = cur_impedance;
+
+exit_done:
+	pr_debug("%s: cur_impedance=%d, act_impedance=%d, age=%d\n", __func__,
+		cur_impedance, act_impedance, age);
+	return ret;
+}
+
+/* The limit for capacity is 80% of design */
+static int bhi_calc_cap_index(int algo, const struct bhi_data *bhi_data)
+{
+	int capacity_health, index;
+
+	if (algo == BHI_ALGO_DISABLED)
+		return 100;
+
+	if (!bhi_data->capacity_design)
 		return -ENODATA;
 
-	for (i = 0; i < fcn_count; i++, idx++) {
-		const int cnt = gbms_storage_read_data(GBMS_TAG_HIST, &hist, sizeof(hist), idx);
+	capacity_health = bhi_data->capacity_design * (100 - bhi_data->capacity_fade);
 
-		if (cnt <= 0 || hist.fullcapnom == 0x3FF)
-			return -EINVAL;
+	/*
+	 * TODO: compare to aacr capacity
+	 * aacr_capacity = aacr_get_capacity_at_cycle(batt_drv, cycle_count);
+	 *
+	 * TODO: compare to google_capacity
+	 * ret = gbms_storage_read(GBMS_TAG_GCFE, &gcap sizeof(gcap));
+	 *
+	 * TODO: bounds check with fade10
+	 */
 
-		fcn_sum += hist.fullcapnom;
-	}
+	if (capacity_health > bhi_data->capacity_design)
+		capacity_health = bhi_data->capacity_design;
 
-	/* convert hist.fullcapnom from max17x0x_eeprom_history format to cap_percent */
-	return min(fcn_sum / (fcn_count * 8), BHI_HEALTH_INDEX_DEFAULT);
+	index = (capacity_health * 100) / bhi_data->capacity_design;
+	pr_debug("%s: index=%d ch=%d, cd=%d, cf=%d\n", __func__,
+		index, capacity_health, bhi_data->capacity_design,
+		bhi_data->capacity_fade);
+
+	return index;
 }
 
-static int batt_bhi_index_update(struct batt_drv *batt_drv)
+static int bhi_calc_perf_index(int algo, const struct bhi_data *bhi_data)
 {
-	switch (batt_drv->health.algo_ver) {
-	case BHI_ALGO_MAX1720X:
-		batt_drv->health.index = batt_bhi_max1720x_cap_percent(batt_drv);
-		break;
-	default:
-		return -ENODEV;
-	}
+	u32 cur_impedance;
+	int perf_index;
 
-	return (batt_drv->health.index < 0) ? -EINVAL : 0;
+	if (algo == BHI_ALGO_DISABLED)
+		return 100;
+
+	if (!bhi_data->act_impedance || !bhi_data->cur_impedance)
+		return 100;
+
+	cur_impedance = bhi_data->cur_impedance;
+	if (cur_impedance < bhi_data->act_impedance)
+		cur_impedance = bhi_data->act_impedance;
+
+	/*
+	 * TODO: bounds check cur_impedance with res10
+	 *
+	 * TODO: bounds check cur_impedance google_resistance
+	 * batt_drv->res_state->resistance_avg
+	 */
+
+	/* The limit is 2x of activation. */
+	perf_index = - (cur_impedance - 2 * bhi_data->act_impedance) * 100 /
+		     bhi_data->act_impedance;
+
+	pr_debug("%s: pi=%d ci=%d, ai=%d\n", __func__, perf_index,
+		 cur_impedance, bhi_data->act_impedance);
+
+	if (perf_index < 50)
+		perf_index = 50;
+
+	return perf_index;
 }
 
-static int batt_bhi_status_update(struct batt_drv *batt_drv)
+/* TODO: use swell comulative? */
+static int bhi_calc_sd_index(int algo, const struct bhi_data *bhi_data)
 {
-	int ret;
+	return -ENODATA;
+}
 
-	ret = batt_bhi_index_update(batt_drv);
-	if (ret < 0) {
-		batt_drv->health.status = BH_UNKNOWN;
-		return ret;
-	}
+static int bhi_calc_health_index(int algo, const struct health_data *health_data)
+{
+	int perf_index, cap_index, sd_index, ratio;
+	int w_ci = health_data->bhi_w_ci;
+	int w_pi = health_data->bhi_w_pi;
+	int w_sd = health_data->bhi_w_sd;
 
-	//TODO: for the swell probability
-	if (batt_drv->health.index > batt_drv->health.marginal_threshold)
-		batt_drv->health.status = BH_NOMINAL;
-	else if (batt_drv->health.index > batt_drv->health.need_rep_threshold)
-		batt_drv->health.status = BH_MARGINAL;
+	if (algo == BHI_ALGO_DISABLED)
+		return 100;
+
+	cap_index = bhi_calc_cap_index(algo, &health_data->bhi_data);
+	if (cap_index < 0)
+		w_ci = 0;
+
+	perf_index = bhi_calc_perf_index(algo, &health_data->bhi_data);
+	if (perf_index < 0)
+		w_pi = 0;
+
+	sd_index = bhi_calc_sd_index(algo, &health_data->bhi_data);;
+	if (sd_index < 0)
+		w_sd = 0;
+
+	pr_debug("%s: ci=%d/%d  pi=%d/%d si=%d/%d\n", __func__,
+		 cap_index, w_ci, perf_index, w_pi, sd_index, w_sd);
+
+	ratio = w_ci + w_pi + w_sd;
+	if (!ratio)
+		return 100;
+
+	return (cap_index * w_ci + perf_index * w_pi + sd_index * w_sd) / ratio;
+}
+
+static enum bhi_status bhi_calc_health_status(int algo, int health_index,
+					      const struct health_data *data)
+{
+	enum bhi_status health_status;
+
+	if (algo == BHI_ALGO_DISABLED)
+		return BH_NOMINAL;
+
+	if (health_index < 0)
+		health_status = BH_UNKNOWN;
+	else if (health_index > data->marginal_threshold)
+		health_status = BH_MARGINAL;
+	else if (health_index > data->need_rep_threshold)
+		health_status = BH_NEEDS_REPLACEMENT;
 	else
-		batt_drv->health.status = BH_NEEDS_REPLACEMENT;
+		health_status = BH_NOMINAL;
 
-	return 0;
+	return health_status;
 }
+
+static void bhi_update_stats(struct health_data *health_data)
+{
+	const int bhi_algo = health_data->bhi_algo;
+	int index;
+
+	index = bhi_calc_cap_index(bhi_algo, &health_data->bhi_data);
+	if (index < 0)
+		index = 100;
+	health_data->bhi_cap_index = index;
+
+	index = bhi_calc_perf_index(bhi_algo, &health_data->bhi_data);
+	if (index < 0)
+		index = 100;
+	health_data->bhi_perf_index = index;
+
+	index = bhi_calc_health_index(bhi_algo, health_data);
+	if (index < 0)
+		index = 100;
+	health_data->bhi_index = index;
+
+	health_data->bhi_status =
+		bhi_calc_health_status(bhi_algo, index, health_data);
+
+	pr_debug("%s: pi=%d ci=%d, bhi=%d s=%d\n", __func__,
+		 health_data->bhi_cap_index, health_data->bhi_perf_index,
+		 health_data->bhi_index, health_data->bhi_status);
+}
+
+/* ------------------------------------------------------------------------ */
+
 
 /* TODO: factor msc_logic_irdop from the logic about tier switch */
 static int msc_logic(struct batt_drv *batt_drv)
@@ -3725,6 +3891,8 @@ static int batt_init_bpst_profile(struct batt_drv *batt_drv)
 	return 0;
 }
 
+
+
 /* called holding chg_lock */
 static int batt_chg_logic(struct batt_drv *batt_drv)
 {
@@ -3742,9 +3910,6 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 	__pm_stay_awake(batt_drv->msc_ws);
 
 	batt_prlog_din(chg_state, BATT_PRLOG_ALWAYS);
-
-	rc = batt_bhi_perf_index_update(batt_drv);
-	pr_debug("BHI: perf_index=%d rc=%d\n", batt_drv->health.perf_index, rc);
 
 	/* disconnect! */
 	if (chg_state_is_disconnected(chg_state)) {
@@ -3766,7 +3931,7 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 		batt_update_cycle_count(batt_drv);
 		batt_rl_reset(batt_drv);
 
-		/* this will trigger another capacity learning. */
+		/* this will trigger another google_capacity learning. */
 		err = GPSY_SET_PROP(batt_drv->fg_psy,
 				    GBMS_PROP_BATT_CE_CTRL,
 				    false);
@@ -3788,6 +3953,11 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 			}
 		}
 		mutex_unlock(&batt_drv->bpst_state.lock);
+
+		/* bhi_capacity_index is updated on disconnect */
+		rc = bhi_cap_data_update(BHI_ALGO_MAX1720X, batt_drv);
+		if (rc == 0)
+			bhi_update_stats(&batt_drv->health_data);
 
 		goto msc_logic_done;
 	}
@@ -5817,8 +5987,8 @@ static ssize_t health_index_show(struct device *dev,
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
 
-	(void)batt_bhi_index_update(batt_drv);
-	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health.index);
+	bhi_update_stats(&batt_drv->health_data);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health_data.bhi_index);
 }
 
 static const DEVICE_ATTR_RO(health_index);
@@ -5829,8 +5999,8 @@ static ssize_t health_status_show(struct device *dev,
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
 
-	(void)batt_bhi_status_update(batt_drv);
-	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health.status);
+	bhi_update_stats(&batt_drv->health_data);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health_data.bhi_status);
 }
 
 static const DEVICE_ATTR_RO(health_status);
@@ -5841,10 +6011,57 @@ static ssize_t health_perf_index_show(struct device *dev,
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
 
-	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health.perf_index);
+	bhi_update_stats(&batt_drv->health_data);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health_data.bhi_perf_index);
 }
 
 static const DEVICE_ATTR_RO(health_perf_index);
+
+static ssize_t health_capacity_index_show(struct device *dev,
+				      struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+
+	bhi_update_stats(&batt_drv->health_data);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health_data.bhi_cap_index);
+}
+
+static const DEVICE_ATTR_RO(health_capacity_index);
+
+
+static ssize_t health_index_stats_show(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	struct bhi_data *bhi_data = &batt_drv->health_data.bhi_data;
+	struct health_data  *health_data = &batt_drv->health_data;
+	int len = 0, i;
+
+	bhi_update_stats(&batt_drv->health_data);
+
+	for (i = 0; i < BHI_ALGO_MAX; i++) {
+		const int health_index = bhi_calc_health_index(i, health_data);
+
+		len += scnprintf(&buf[len], PAGE_SIZE - len,
+				 "%d: %d, %d,%d,%d %d,%d,%d %d,%d\n", i,
+				 bhi_calc_health_status(i, health_index, health_data),
+				 health_index,
+				 bhi_calc_cap_index(i, bhi_data),
+				 bhi_calc_perf_index(i, bhi_data),
+				 bhi_data->swell_cumulative,
+				 (100 - bhi_data->capacity_fade) * bhi_data->capacity_design,
+				 bhi_data->cur_impedance,
+				 bhi_data->battery_age,
+				 bhi_data->cycle_count);
+	}
+
+	return len;
+}
+
+static const DEVICE_ATTR_RO(health_index_stats);
+
 
 static ssize_t health_algo_store(struct device *dev,
 				 struct device_attribute *attr,
@@ -5858,7 +6075,7 @@ static ssize_t health_algo_store(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	batt_drv->health.algo_ver = value;
+	batt_drv->health_data.bhi_algo = value;
 	return count;
 }
 
@@ -5868,7 +6085,7 @@ static ssize_t health_algo_show(struct device *dev,
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
 
-	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health.algo_ver);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health_data.bhi_algo);
 }
 
 static const DEVICE_ATTR_RW(health_algo);
@@ -6231,6 +6448,7 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_aacr_cycle_max);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create aacr cycle max\n");
+
 	/* health and health index */
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_swelling_data);
 	if (ret)
@@ -6241,12 +6459,19 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_health_status);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create health status\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_health_capacity_index);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create health capacity index\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_health_index_stats);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create health index stats\n");
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_health_perf_index);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create health perf index\n");
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_health_algo);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create health algo\n");
+
 	/* csi */
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_charging_speed);
 	if (ret)
@@ -6311,7 +6536,7 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	debugfs_create_file("power_metrics", 0400, de, batt_drv, &debug_power_metrics_fops);
 
 	/* bhi fullcapnom count */
-	debugfs_create_u32("fcn_count", 0644, de, &batt_drv->health.fcn_count);
+	debugfs_create_u32("fcn_count", 0644, de, &batt_drv->health_data.bhi_data.fcn_count);
 
 	return 0;
 }
@@ -6566,7 +6791,6 @@ static int batt_history_data_work(struct batt_drv *batt_drv)
 	batt_drv->hist_data_saved_cnt = cycle_cnt;
 	pr_debug("MSC_HIST Update data with cnt:%d\n", cycle_cnt);
 
-
 	return 0;
 }
 
@@ -6775,9 +6999,18 @@ static void google_battery_work(struct work_struct *work)
 		}
 		batt_drv->batt_full = full;
 
+		/* restore SSOC after reboot */
 		ret = gbatt_save_capacity(&batt_drv->ssoc_state);
 		if (ret < 0)
 			pr_warn("write save_soc fail, ret=%d\n", ret);
+
+		/* update resitance all the time and capacity on disconnect */
+		ret = bhi_perf_data_update(&batt_drv->health_data.bhi_data, fg_psy);
+		if (ret < 0 && ret != -ENODATA)
+			pr_warn("cannot update perf index ret=%d\n", ret);
+
+		/* TODO: update bhi_index */
+		/* TODO: update bhi_status */
 
 		/* debounce fg_status changes at 100% */
 		if (fg_status != batt_drv->fg_status) {
@@ -7514,31 +7747,101 @@ static int batt_init_sd(struct swelling_data *sd)
 }
 
 /* bhi_init */
-static void batt_bhi_init(struct batt_drv *batt_drv)
+static int batt_bhi_init(struct batt_drv *batt_drv)
 {
-	struct battery_health *health = &batt_drv->health;
+	struct health_data *health_data = &batt_drv->health_data;
 	int ret;
 
+	/* see enum bhi_algo */
 	ret = of_property_read_u32(batt_drv->device->of_node, "google,bhi-algo-ver",
-				   &health->algo_ver);
+				   &health_data->bhi_algo);
 	if (ret < 0)
-		health->algo_ver = BHI_ALGO_MAX1720X;
+		health_data->bhi_algo = BHI_ALGO_V1;
 
-	ret = of_property_read_u32(batt_drv->device->of_node, "google,bhi-fcn-count",
-				   &health->fcn_count);
+	/* weights */
+	ret = of_property_read_u32(batt_drv->device->of_node, "google,bhi-w_ci",
+				   &health_data->bhi_w_ci);
 	if (ret < 0)
-		health->fcn_count = BHI_CAP_FCN_COUNT;
+		health_data->bhi_w_ci = 50;
+	ret = of_property_read_u32(batt_drv->device->of_node, "google,bhi-w_pi",
+				   &health_data->bhi_w_pi);
+	if (ret < 0)
+		health_data->bhi_w_pi = 50;
+	ret = of_property_read_u32(batt_drv->device->of_node, "google,bhi-w_sd",
+				   &health_data->bhi_w_sd);
+	if (ret < 0)
+		health_data->bhi_w_sd = 0;
 
+	/* thresholds */
 	ret = of_property_read_u32(batt_drv->device->of_node, "google,bhi-status-marginal",
-				   &health->marginal_threshold);
+				   &health_data->marginal_threshold);
 	if (ret < 0)
-		health->marginal_threshold = BHI_MARGINAL_THRESHOLD_DEFAULT;
+		health_data->marginal_threshold = BHI_MARGINAL_THRESHOLD_DEFAULT;
 
 	ret = of_property_read_u32(batt_drv->device->of_node, "google,bhi-status-need-rep",
-				   &health->need_rep_threshold);
+				   &health_data->need_rep_threshold);
 	if (ret < 0)
-		health->need_rep_threshold = BHI_NEED_REP_THRESHOLD_DEFAULT;
+		health_data->need_rep_threshold = BHI_NEED_REP_THRESHOLD_DEFAULT;
+
+
+	ret = of_property_read_u32(batt_drv->device->of_node, "google,bhi-fcn-count",
+				   &health_data->bhi_data.fcn_count);
+	if (ret < 0)
+		health_data->bhi_data.fcn_count = BHI_CAP_FCN_COUNT;
+
+	/* design (in device tree) or from the device */
+	health_data->bhi_data.capacity_design = batt_drv->battery_capacity;
+
+	ret = bhi_perf_data_update(&health_data->bhi_data, batt_drv->fg_psy);
+	if (ret < 0)
+		pr_err("bhi perf data not available (%d)\n", ret);
+
+	ret = bhi_cap_data_update(BHI_ALGO_MAX1720X, batt_drv);
+	if (ret < 0)
+		pr_err("bhi cap data not available (%d)\n", ret);
+
+	bhi_update_stats(health_data);
+	return 0;
 }
+
+
+static int batt_prop_iter(int index, gbms_tag_t *tag, void *ptr)
+{
+	static gbms_tag_t keys[] = {GBMS_TAG_HCNT};
+	const int count = ARRAY_SIZE(keys);
+
+	if (index >= 0 && index < count) {
+		*tag = keys[index];
+		return 0;
+	}
+
+	return -ENOENT;
+}
+
+static int batt_prop_read(gbms_tag_t tag, void *buff, size_t size, void *ptr)
+{
+	struct batt_drv *batt_drv = ptr;
+	int ret = 0;
+
+	switch (tag) {
+	case GBMS_TAG_HCNT:
+		if (size != sizeof(u16))
+			return -ERANGE;
+		*(u16 *)buff = hist_get_index(-1, batt_drv);
+		break;
+	default:
+		ret = -ENOENT;
+		break;
+	}
+
+	return ret;
+}
+
+static struct gbms_storage_desc batt_prop_dsc = {
+	.iter = batt_prop_iter,
+	.read = batt_prop_read,
+};
+
 
 static void google_battery_init_work(struct work_struct *work)
 {
@@ -7815,7 +8118,15 @@ static void google_battery_init_work(struct work_struct *work)
 	(void)batt_bpst_init_fs(batt_drv);
 
 	/* bhi init */
-	batt_bhi_init(batt_drv);
+	ret = batt_bhi_init(batt_drv);
+	if (ret < 0)
+		pr_err("BHI: not available\n");
+
+
+	/* these don't require nvm storage */
+	ret = gbms_storage_register(&batt_prop_dsc, "battery", batt_drv);
+	if (ret == -EBUSY)
+		ret = 0;
 
 	/* power metrics */
 	schedule_delayed_work(&batt_drv->power_metrics.work,

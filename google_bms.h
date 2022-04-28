@@ -547,6 +547,14 @@ enum gbms_charger_modes {
 
 #define GBMS_MODE_VOTABLE "CHARGER_MODE"
 
+/* Battery Health */
+enum bhi_algo {
+	BHI_ALGO_DISABLED = 0,
+	BHI_ALGO_V1 = 1,
+
+	BHI_ALGO_MAX,
+};
+
 enum bhi_status {
 	BH_UNKNOWN = -1,
 	BH_NOMINAL,
@@ -555,6 +563,7 @@ enum bhi_status {
 	BH_FAILED,
 };
 
+/* Charging Speed */
 enum csi_type {
 	CSI_TYPE_UNKNOWN = -1,
 
@@ -583,5 +592,7 @@ enum csi_status {
 	CSI_STATUS_NotCharging = 100,	// There will be a more specific reason
 	CSI_STATUS_Charging = 200,	// All good
 };
+
+
 
 #endif  /* __GOOGLE_BMS_H_ */
