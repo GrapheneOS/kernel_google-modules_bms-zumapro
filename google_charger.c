@@ -2064,7 +2064,7 @@ static void chg_update_csi(struct chg_drv *chg_drv)
 			gvotable_election_get_handle(VOTABLE_CSI_TYPE);
 
 	if (!chg_drv->csi_status_votable || !chg_drv->csi_type_votable)
-			return;
+		return;
 
 	/* full is set only on charger */
 	gvotable_cast_long_vote(chg_drv->csi_status_votable, "CSI_STATUS_FULL",
