@@ -3575,6 +3575,7 @@ static bool batt_cell_fault_detect(struct batt_bpst *bpst_state)
 
 static int batt_bpst_detect_begin(struct batt_bpst *bpst_state)
 {
+	const int bpst_count_threshold = bpst_state->bpst_count_threshold;
 	u8 data;
 	int ret;
 
@@ -3592,6 +3593,11 @@ static int batt_bpst_detect_begin(struct batt_bpst *bpst_state)
 			return -EINVAL;
 	}
 	bpst_state->bpst_count = data;
+	if (bpst_count_threshold > 0) {
+		bpst_state->bpst_cell_fault = (data >= (u8)bpst_count_threshold);
+		pr_debug("%s: MSC_BPST: single battery disconnect %d\n",
+			 __func__, bpst_state->bpst_cell_fault);
+	}
 
 	pr_debug("%s: MSC_BPST: %d in connected\n", __func__, data);
 	return 0;
@@ -3601,17 +3607,12 @@ static int batt_bpst_detect_update(struct batt_drv *batt_drv)
 {
 	struct batt_bpst *bpst_state = &batt_drv->bpst_state;
 	const u8 data = bpst_state->bpst_count + 1;
-	const int bpst_count_threshold = bpst_state->bpst_count_threshold;
 	int ret;
 
 	if (data < 0xff) {
 		ret = gbms_storage_write(GBMS_TAG_BPST, &data, sizeof(data));
 		if (ret < 0)
 			return -EINVAL;
-	}
-	if (bpst_count_threshold > 0 && data >= (u8)bpst_count_threshold) {
-		pr_info("%s: MSC_BPST: single battery disconnect, shutdown.\n", __func__);
-		bpst_state->bpst_cell_fault = true;
 	}
 
 	pr_debug("%s: MSC_BPST: %d in disconnected\n", __func__, data);
@@ -3886,6 +3887,7 @@ msc_logic_done:
 	if (batt_drv->fcc_votable) {
 		enum batt_rl_status rl_status = batt_drv->ssoc_state.rl_status;
 		const int rest_cc_max = batt_drv->chg_health.rest_cc_max;
+		struct batt_bpst *bpst_state = &batt_drv->bpst_state;
 
 		/* while in RL => ->cc_max != -1 && ->fv_uv != -1 */
 		gvotable_cast_int_vote(batt_drv->fcc_votable, RL_STATE_VOTER, 0,
@@ -3907,7 +3909,7 @@ msc_logic_done:
 				       (batt_drv->cc_max != -1));
 
 		/* bpst detection */
-		if (batt_drv->bpst_state.bpst_detect_disable) {
+		if (bpst_state->bpst_detect_disable || bpst_state->bpst_cell_fault) {
 			const int chg_rate = batt_drv->bpst_state.bpst_chg_rate;
 			const int bpst_cc_max = (batt_drv->cc_max == -1) ? batt_drv->cc_max
 							: ((batt_drv->cc_max * chg_rate) / 100);
@@ -6286,14 +6288,10 @@ static bool gbatt_check_dead_battery(const struct batt_drv *batt_drv)
  * CRITICAL.
  */
 static int gbatt_get_capacity_level(struct batt_ssoc_state *ssoc_state,
-				    int fg_status, bool bpst_cell_fault)
+				    int fg_status)
 {
 	const int soc = ssoc_get_real(ssoc_state);
 	int capacity_level;
-
-	/* shutdown device when cell fault detection counter exceeds threshold */
-	if (bpst_cell_fault)
-		return POWER_SUPPLY_CAPACITY_LEVEL_CRITICAL;
 
 	if (soc >= SSOC_LEVEL_FULL) {
 		capacity_level = POWER_SUPPLY_CAPACITY_LEVEL_FULL;
@@ -6602,7 +6600,6 @@ static void google_battery_work(struct work_struct *work)
 	    container_of(work, struct batt_drv, batt_work.work);
 	struct power_supply *fg_psy = batt_drv->fg_psy;
 	struct batt_ssoc_state *ssoc_state = &batt_drv->ssoc_state;
-	struct batt_bpst *bpst_state = &batt_drv->bpst_state;
 	int update_interval = batt_drv->batt_update_interval;
 	const int prev_ssoc = ssoc_get_capacity(ssoc_state);
 	int present, fg_status, batt_temp, ret;
@@ -6673,7 +6670,7 @@ static void google_battery_work(struct work_struct *work)
 		 */
 
 		level = gbatt_get_capacity_level(&batt_drv->ssoc_state,
-						 fg_status, bpst_state->bpst_cell_fault);
+						 fg_status);
 		if (level != batt_drv->capacity_level) {
 			pr_debug("%s: change of capacity level %d->%d\n",
 				 __func__, batt_drv->capacity_level,
