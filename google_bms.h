@@ -90,6 +90,14 @@ struct gbms_chg_profile {
 #define CHG_EV_ADAPTER_STRING(s)	#s
 #define _CHG_EV_ADAPTER_PRIMITIVE_CAT(a, ...) a ## __VA_ARGS__
 
+#define BATTERY_DEBUG_ATTRIBUTE(name, fn_read, fn_write) \
+static const struct file_operations name = {	\
+	.open	= simple_open,			\
+	.llseek	= no_llseek,			\
+	.read	= fn_read,			\
+	.write	= fn_write,			\
+}
+
 /* Enums will start with CHG_EV_ADAPTER_TYPE_ */
 #define CHG_EV_ADAPTER_ENUM(e)	\
 			_CHG_EV_ADAPTER_PRIMITIVE_CAT(CHG_EV_ADAPTER_TYPE_,e)
@@ -271,6 +279,12 @@ enum gbms_stats_tier_idx_t {
 	GBMS_STATS_AC_TI_V2_PREDICT = 18,
 	GBMS_STATS_AC_TI_V2_PREDICT_SUCCESS = 19,
 	GBMS_STATS_AC_TI_DONE_AON = 20,
+
+	/* Thermal stats, reported from google_charger */
+	GBMS_STATS_TH_LVL0 = 50,
+	GBMS_STATS_TH_LVL1 = 51,
+	GBMS_STATS_TH_LVL2 = 52,
+	GBMS_STATS_TH_LVL3 = 53,
 
 	/* TODO: rename, these are not really related to AC */
 	GBMS_STATS_AC_TI_FULL_CHARGE = 100,
@@ -493,7 +507,7 @@ int ttf_pwr_ibatt(const struct gbms_ce_tier_stats *ts);
 int gbms_read_aacr_limits(struct gbms_chg_profile *profile,
 			  struct device_node *node);
 
-bool chg_state_is_disconnected(union gbms_charger_state *chg_state);
+bool chg_state_is_disconnected(const union gbms_charger_state *chg_state);
 
 /*
  * Charger modes
@@ -522,29 +536,31 @@ enum bhi_status {
 
 enum csi_type {
 	CSI_TYPE_UNKNOWN = -1,
+
 	CSI_TYPE_None = 0,		// Disconnected
 	CSI_TYPE_Fault = 1,		// Internal Failures
-	CSI_TYPE_JEITA = 2,		// HW limits
+	CSI_TYPE_JEITA = 2,		// HW limits (will have HOT or COLD)
 	CSI_TYPE_LongLife = 3, 		// DefenderConditions
 	CSI_TYPE_Adaptive = 4,		// AdaptiveCharging
-	CSI_TYPE_Normal = 5,
+	CSI_TYPE_Normal = 5,		// All Good
 };
 
 enum csi_status {
 	CSI_STATUS_UNKNOWN = -1,
-	CSI_STATUS_Discharging = 0,
-	CSI_STATUS_Health_Cold = 10,	// JEITA battery, mutex with Hot
-	CSI_STATUS_Health_Hot = 11,	// JEITA battery, mutex with Cold
-	CSI_STATUS_System_Thermals = 20,//
-	CSI_STATUS_System_Load = 21,	// Load will eventually become thermals
-	CSI_STATUS_Adapter_Power = 30,	//
-	CSI_STATUS_Adapter_Quality = 31,// Adapter or cable (low voltage)
-	CSI_STATUS_Adapter_Auth = 32,	// Missing authentication (if supported)
+
+	CSI_STATUS_Health_Cold = 10,	// battery temperature not nominal
+	CSI_STATUS_Health_Hot = 11,	// battery temperature not nominal
+	CSI_STATUS_System_Thermals = 20,// Thermal engine
+	CSI_STATUS_System_Load = 21,	// Load might eventually become thermals
+	CSI_STATUS_Adapter_Auth = 30,	// During authentication
+	CSI_STATUS_Adapter_Power = 31,	// Low power adapter
+	CSI_STATUS_Adapter_Quality = 32,// Adapter or cable (low input voltage)
 	CSI_STATUS_Defender_Temp = 40,	// TEMP Defend
 	CSI_STATUS_Defender_Dwell = 41,	// DWELL Defend
 	CSI_STATUS_Defender_Trickle = 42,
 	CSI_STATUS_Defender_Dock = 43,	// Dock Defend
-	CSI_STATUS_Normal = 100,	//
+	CSI_STATUS_NotCharging = 100,	// There will be a more specific reason
+	CSI_STATUS_Charging = 200,	// All good
 };
 
 /*

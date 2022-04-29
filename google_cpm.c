@@ -114,7 +114,7 @@ enum {
 #define MDIS_OF_CDEV_NAME "google,mdis_charger"
 #define MDIS_CDEV_NAME "chg_mdis"
 #define MDIS_IN_MAX	4
-#define MDIS_OUT_MAX	4
+#define MDIS_OUT_MAX	GCPM_MAX_CHARGERS
 
 struct mdis_thermal_device
 {
@@ -145,16 +145,22 @@ struct gcpm_drv  {
 	struct gvotable_election *cp_votable;
 	/* MDIS: configuration */
 	struct power_supply *mdis_in[MDIS_IN_MAX];
+	int mdis_in_count;
 	struct power_supply *mdis_out[MDIS_OUT_MAX];
+	int mdis_out_count;
 	u32 *mdis_out_limits[MDIS_OUT_MAX];
 	u32 mdis_out_sel[MDIS_OUT_MAX];
 	/* MDIS: device and current budget */
 	struct mdis_thermal_device thermal_device;
 	struct gvotable_election *mdis_votable;
 
+	/* CSI */
+	struct gvotable_election *csi_status_votable;
+
 	/* combine PPS, route to the active PPS source */
 	struct power_supply *pps_psy;
 
+	/* basically the same as mdis_out */
 	int chg_psy_retries;
 	struct power_supply *chg_psy_avail[GCPM_MAX_CHARGERS];
 	const char *chg_psy_names[GCPM_MAX_CHARGERS];
@@ -825,9 +831,9 @@ static int gcpm_chg_select_by_demand(struct gcpm_drv *gcpm)
 
 exit_done:
 	if (index != gcpm->dc_index)
-		logbuffer_log(gcpm->log, "by_d: index:%d->%d demand=%d,limit=%d cc_max=%d,cp_min=%d, hold=%d",
-			      gcpm->dc_index, index, batt_demand, gcpm->dc_limit_demand,
-			      cc_max, cp_min, gcpm->cp_fcc_hold);
+		pr_debug("by_d: index:%d->%d demand=%d,limit=%d cc_max=%d,cp_min=%d, hold=%d",
+			 gcpm->dc_index, index, batt_demand, gcpm->dc_limit_demand,
+			 cc_max, cp_min, gcpm->cp_fcc_hold);
 	return index;
 }
 
@@ -1933,8 +1939,8 @@ static int gcpm_psy_set_property(struct power_supply *psy,
 		const bool was_dc = gcpm_is_dc(gcpm, gcpm->dc_index);
 
 		/*
-		 * Synchronous! might kick off gcpm_pps_wlc_dc_work to
-		 * negotiate DC charging.
+		 * Synchronous! might kick off gcpm_pps_wlc_dc_work to negotiate
+		 * DC charging. -EAGAIN will cause this code to be called again.
 		 * NOTE: gcpm_chg_select_logic() might change gcpm->dc_index
 		 */
 		ret = gcpm_chg_select_logic(gcpm);
@@ -1975,8 +1981,12 @@ static int gcpm_psy_set_property(struct power_supply *psy,
 	}
 
 done:
+	/*
+	 * route==false when using CP and when transitioning OUT of it.
+	 * disable CC_MAX vote on GCPM_FCC when the limit is not used
+	 */
 	if (psp == POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX)
-		ret = gcpm_update_gcpm_fcc(gcpm, "CC_MAX", gcpm->cc_max, !route);
+		gcpm_update_gcpm_fcc(gcpm, "CC_MAX", gcpm->cc_max, !route);
 
 	mutex_unlock(&gcpm->chg_psy_lock);
 
@@ -2375,21 +2385,169 @@ static int gcpm_set_mdis_charge_cntl_limit(struct thermal_cooling_device *tcd,
 
 	mutex_unlock(&gcpm->chg_psy_lock);
 
-	if (!tdev->gcpm->mdis_votable)
-		goto done;
-
 	/*  fix the disable, run another charging loop */
-	ret = gvotable_cast_int_vote(tdev->gcpm->mdis_votable, "MDIS",
-				     budget, budget >= 0);
-done:
+	if (gcpm->mdis_votable)
+		ret = gvotable_cast_int_vote(gcpm->mdis_votable, "MDIS",
+					     budget, budget >= 0);
+
 	return 0;
 }
+
+#define to_cooling_device(_dev)	\
+	container_of(_dev, struct thermal_cooling_device, device)
+
+static ssize_t
+state2power_table_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct thermal_cooling_device *tdev = to_cooling_device(dev);
+	struct mdis_thermal_device *mdev = tdev->devdata;
+	ssize_t count = 0;
+	int i;
+
+	for (i = 0; i < mdev->thermal_levels; i++) {
+		const int budgetMw = mdev->thermal_mitigation[i] / 1000;
+
+		count += sysfs_emit_at(buf, count, "%u ", budgetMw);
+	}
+	count += sysfs_emit_at(buf, count, "\n");
+
+	return count;
+}
+
+static DEVICE_ATTR_RO(state2power_table);
+
+static ssize_t
+mdis_out_table_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct thermal_cooling_device *tdev = to_cooling_device(dev);
+	struct mdis_thermal_device *mdev = tdev->devdata;
+	struct gcpm_drv *gcpm = mdev->gcpm;
+	const int entries = mdev->thermal_levels * gcpm->mdis_out_count;
+	ssize_t count = 0;
+	int i, j;
+
+	for (i = 0; i < gcpm->mdis_out_count; i++) {
+
+		count += sysfs_emit_at(buf, count, "%d:", i);
+
+		for (j = 0; j < entries; j++) {
+			const int limit = gcpm->mdis_out_limits[i][j];
+
+			count += sysfs_emit_at(buf, count, "%u ", limit);
+		}
+
+		count += sysfs_emit_at(buf, count, "\n");
+	}
+
+	return count;
+}
+
+static DEVICE_ATTR_RO(mdis_out_table);
 
 static const struct thermal_cooling_device_ops chg_mdis_tcd_ops = {
 	.get_max_state = gcpm_get_max_charge_cntl_limit,
 	.get_cur_state = gcpm_get_cur_charge_cntl_limit,
 	.set_cur_state = gcpm_set_mdis_charge_cntl_limit,
 };
+
+#ifdef CONFIG_DEBUG_FS
+
+#define DEBUG_ATTRIBUTE_WO(name) \
+static const struct file_operations name ## _fops = {	\
+	.open	= simple_open,			\
+	.llseek	= no_llseek,			\
+	.write	= name ## _store,			\
+}
+
+static ssize_t mdis_tm_store(struct file *filp, const char __user *user_buf,
+			     size_t count, loff_t *ppos)
+{
+	struct gcpm_drv *gcpm = filp->private_data;
+	const int thermal_levels = gcpm->thermal_device.thermal_levels;
+	const int mem_size = count + 1;
+	char *str, *tmp, *saved_ptr;
+	unsigned long long value;
+	int ret, i;
+
+	tmp = kzalloc(mem_size, GFP_KERNEL);
+	if (!tmp)
+		return -ENOMEM;
+
+	ret = simple_write_to_buffer(tmp, mem_size, ppos, user_buf, count);
+	if (!ret)
+		goto error_done;
+
+	for (saved_ptr = tmp, i = 0; i < thermal_levels; i++) {
+		str = strsep(&saved_ptr, " ");
+		if (!str)
+			goto error_done;
+
+		ret = kstrtoull(str, 10, &value);
+		if (ret < 0)
+			goto error_done;
+
+		gcpm->thermal_device.thermal_mitigation[i] = value * 1000;
+	}
+
+error_done:
+	kfree(tmp);
+	return count;
+}
+
+DEBUG_ATTRIBUTE_WO(mdis_tm);
+
+static ssize_t mdis_out_store(struct file *filp, const char __user *user_buf,
+			     size_t count, loff_t *ppos)
+{
+	struct gcpm_drv *gcpm = filp->private_data;
+	const int levels = gcpm->thermal_device.thermal_levels;
+	const int mem_size = count + 1;
+	unsigned long long value, index;
+	char *str, *tmp, *saved_ptr;
+	int ret, i;
+
+	tmp = kzalloc(mem_size, GFP_KERNEL);
+	if (!tmp)
+		return -ENOMEM;
+
+	ret = simple_write_to_buffer(tmp, mem_size, ppos, user_buf, count);
+	if (!ret)
+		goto error_done;
+
+	for (saved_ptr = tmp; true; ) {
+
+		str = strsep(&saved_ptr, ":");
+		if (!str)
+			goto error_done;
+
+		ret = kstrtoull(str, 10, &index);
+		if (ret < 0)
+			goto error_done;
+
+		if (index < 0 || index >= levels)
+			break;
+
+		for (i = 0; i < levels * gcpm->mdis_out_count; i++) {
+			str = strsep(&saved_ptr, " ");
+			if (!str)
+				goto error_done;
+
+			ret = kstrtoull(str, 10, &value);
+			if (ret < 0)
+				goto error_done;
+
+			gcpm->mdis_out_limits[index][i] = value;
+		}
+	}
+
+error_done:
+	kfree(tmp);
+	return count;
+}
+
+DEBUG_ATTRIBUTE_WO(mdis_out);
+
+#endif // CONFIG_DEBUG_FS
 
 /* ------------------------------------------------------------------------- */
 
@@ -2486,9 +2644,10 @@ static int mdis_tdev_register(const char *of_name, const char *tcd_name,
 							ctdev,
 							ops);
 	if (IS_ERR_OR_NULL(ctdev->tcd)) {
-		pr_err("error registering %s cooling device (%ld)\n",
-		       tcd_name, PTR_ERR(ctdev->tcd));
-		return -EINVAL;
+		const long err = PTR_ERR(ctdev->tcd);
+
+		pr_err("error registering %s cooling device (%ld)\n", tcd_name, err);
+		return err;
 	}
 
 	return 0;
@@ -2504,6 +2663,17 @@ static void gcpm_mdis_callback(struct gvotable_election *el, const char *reason,
 
 	pr_info("MSC_MDIS lvl=%d budget=%d\n", tdev->current_level, budget);
 	power_supply_changed(gcpm->psy);
+
+	if (!gcpm->csi_status_votable) {
+		gcpm->csi_status_votable = gvotable_election_get_handle(VOTABLE_CSI_STATUS);
+		if (!gcpm->csi_status_votable)
+			return;
+	}
+
+	/* this is a problem only when speed is affected */
+	gvotable_cast_long_vote(gcpm->csi_status_votable, "CSI_STATUS_THERM_MDIS",
+				CSI_STATUS_System_Thermals,
+				tdev->current_level != 0);
 }
 
 /*
@@ -2549,11 +2719,13 @@ static int gcpm_init_mdis(struct gcpm_drv *gcpm)
 	}
 
 	/*
-	 * TODO: remove ->chg_psy_avail[] and rewrite to use ->mdis_out[].
+	 * TODO: remove ->chg_psy_avail[] and ->chg_psy_count and rewrite to
+	 * use ->mdis_out[].
 	 * NOTE: gcpm_init_work() needs to read into ->mdis_out[].
 	 */
 	gcpm->mdis_out[0] = gcpm->chg_psy_avail[0];
 	gcpm->mdis_out[1] = gcpm->chg_psy_avail[1];
+	gcpm->mdis_out_count = gcpm->chg_psy_count;
 
 	/* one for each out, call with #mdis out */
 	count = mdis_out_init_sel_online(gcpm->mdis_out_sel, gcpm->chg_psy_count, gcpm);
@@ -2565,18 +2737,18 @@ static int gcpm_init_mdis(struct gcpm_drv *gcpm)
 	/* TODO: rewrite to parse handles in the device tree */
 	gcpm->mdis_in[0] = gcpm->tcpm_psy;
 	gcpm->mdis_in[1] = gcpm->wlc_dc_psy;
+	gcpm->mdis_in_count = 2;
 
 	/*
 	 * max charging current for the each thermal level charger and
 	 * mdis_out_sel mode.
 	 */
-	for (i = 0; i < gcpm->chg_psy_count; i++) {
+	for (i = 0; i < gcpm->mdis_out_count; i++) {
+		int len = tdev->thermal_levels * gcpm->mdis_out_count;
 		char of_name[36];
 		u32 *limits;
-		int len;
 
 		scnprintf(of_name, sizeof(of_name), "google,mdis-out%d-limits", i);
-		len = tdev->thermal_levels * gcpm->chg_psy_count;
 
 		limits = gcpm_init_limits(of_name, &len, gcpm->device);
 		if (IS_ERR_OR_NULL(limits))
@@ -2624,6 +2796,23 @@ static int gcpm_init_mdis(struct gcpm_drv *gcpm)
 		chg_mdis_tdev_free(tdev, gcpm);
 		return -EINVAL;
 	}
+
+	/* state and debug */
+	ret = device_create_file(&tdev->tcd->device, &dev_attr_state2power_table);
+	if (ret)
+		dev_err(gcpm->device, "cound not create state table *(%d)\n", ret);
+
+	ret = device_create_file(&tdev->tcd->device, &dev_attr_mdis_out_table);
+	if (ret)
+		dev_err(gcpm->device, "cound not create out table *(%d)\n", ret);
+
+	if (!gcpm->debug_entry)
+		return 0;
+
+	debugfs_create_file("state2power_table", 0644,  gcpm->debug_entry,
+			    gcpm, &mdis_tm_fops);
+	debugfs_create_file("mdis_out_table", 0644,  gcpm->debug_entry,
+			    gcpm, &mdis_out_fops);
 
 	return 0;
 }
@@ -3460,7 +3649,6 @@ static int google_cpm_probe(struct platform_device *pdev)
 		 gcpm->taper_step_interval, gcpm->taper_step_count,
 		 gcpm->taper_step_grace, gcpm->taper_step_voltage,
 		 gcpm->taper_step_current);
-
 
 	/*
 	 * WirelessDC and Wireless charging use different thermal limit.

@@ -679,7 +679,7 @@ void gbms_logbuffer_prlog(struct logbuffer *log, int level, int debug_no_logbuff
 }
 EXPORT_SYMBOL_GPL(gbms_logbuffer_prlog);
 
-bool chg_state_is_disconnected(union gbms_charger_state *chg_state)
+bool chg_state_is_disconnected(const union gbms_charger_state *chg_state)
 {
 	return ((chg_state->f.flags & GBMS_CS_FLAG_BUCK_EN) == 0) &&
 	       (chg_state->f.chg_status == POWER_SUPPLY_STATUS_DISCHARGING ||

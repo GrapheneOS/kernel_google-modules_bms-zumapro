@@ -537,6 +537,7 @@ static void p9221_vote_defaults(struct p9221_charger_data *charger)
 		dev_err(&charger->client->dev,
 			"Could not reset OCP DC_ICL voter %d\n", ret);
 
+	/* TODO: convert all to gvotable_recast_ballot() */
 	gvotable_cast_int_vote(charger->dc_icl_votable,
 			       P9382A_RTX_VOTER, 0, false);
 	gvotable_cast_int_vote(charger->dc_icl_votable,
@@ -545,6 +546,9 @@ static void p9221_vote_defaults(struct p9221_charger_data *charger)
 			       HPP_DC_ICL_VOTER, 0, false);
 	gvotable_cast_int_vote(charger->dc_icl_votable,
 			       DD_VOTER, 0, false);
+	gvotable_recast_ballot(charger->dc_icl_votable,
+			       LL_BPP_CEP_VOTER, false);
+
 	p9221_set_auth_dc_icl(charger, false);
 }
 
@@ -5542,10 +5546,6 @@ static int p9221_parse_dt(struct device *dev,
 	else
 		dev_info(dev, "enable gpio:%d", pdata->qien_gpio);
 
-	/* support p9412 GPIO */
-	pdata->has_p9412_gpio = of_property_read_bool(node,
-                                                      "idt,has_p9412_gpio");
-
 	/*
 	 * QI_USB_VBUS_EN: control the priority of USB and WLC,
 	 *                 set to high after boot
@@ -5619,6 +5619,9 @@ static int p9221_parse_dt(struct device *dev,
 	pdata->boost_gpio = ret;
 	if (ret >= 0)
 		dev_info(dev, "boost gpio:%d\n", pdata->boost_gpio);
+
+	/* configure boost to 7V through wlc chip */
+	pdata->apbst_en = of_property_read_bool(node, "idt,apbst_en");
 
 	ret = of_get_named_gpio(node, "idt,gpio_extben", 0);
 	if (ret == -EPROBE_DEFER)
@@ -5946,7 +5949,8 @@ static void p9382a_tx_icl_vote_callback(struct gvotable_election *el,
 					const char *reason, void *vote)
 {
 	struct p9221_charger_data *charger = gvotable_get_data(el);
-	int icl_ua = (int)(uintptr_t)vote, ret = 0;
+	int icl_ua = GVOTABLE_PTR_TO_INT(vote);
+	int ret = 0;
 
 	if (!charger->ben_state)
 		return;
@@ -6006,7 +6010,7 @@ static void p9221_wlc_disable_callback(struct gvotable_election *el,
 				       const char *reason, void *vote)
 {
 	struct p9221_charger_data *charger = gvotable_get_data(el);
-	int disable = (int)(uintptr_t)vote;
+	int disable = GVOTABLE_PTR_TO_INT(vote);
 	u8 val = P9221_EOP_UNKNOWN;
 
 	if (charger->pdata->wlc_en == charger->pdata->qien_gpio) {
@@ -6073,8 +6077,6 @@ static void p9221_fg_work(struct work_struct *work)
 					&prop);
 	if (err == 0)
 		p9221_set_capacity(charger, prop.intval);
-
-	pr_info("%s: err=%d capacity=%d\n", __func__, err, prop.intval);
 }
 
 static int p9221_charger_probe(struct i2c_client *client,
