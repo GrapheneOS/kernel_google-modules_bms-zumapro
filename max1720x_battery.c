@@ -2005,6 +2005,37 @@ static int max1720x_get_age(struct max1720x_chip *chip)
 	return (timerh * 32) / 10;
 }
 
+static int max1720x_get_fade_rate(struct max1720x_chip *chip)
+{
+	const int fcn_count = 10;
+	struct max17x0x_eeprom_history hist = { 0 };
+	int idx, i, ret, fcn_sum = 0;
+	u16 hist_idx;
+
+	ret = gbms_storage_read(GBMS_TAG_HCNT, &hist_idx, sizeof(hist_idx));
+	if (ret < 0) {
+		pr_err("failed to get history index (%d)\n", ret);
+		return -EIO;
+	}
+
+	idx = hist_idx - fcn_count + 1;
+	if (hist_idx < 0 || idx < 0)
+		return -ENODATA;
+
+	for (i = 0; i < fcn_count; i++, idx++) {
+		const int cnt = gbms_storage_read_data(GBMS_TAG_HIST, &hist,
+						       sizeof(hist), idx);
+		if (cnt <= 0 || hist.fullcapnom == 0x3FF)
+			return -EINVAL;
+
+		fcn_sum += hist.fullcapnom;
+	}
+
+	/* convert hist.fullcapnom from max17x0x_eeprom_history to percent */
+	return fcn_sum / (fcn_count * 8);
+}
+
+
 static int max1720x_get_property(struct power_supply *psy,
 				 enum power_supply_property psp,
 				 union power_supply_propval *val)
@@ -2207,8 +2238,11 @@ static int max1720x_get_property(struct power_supply *psy,
 	case GBMS_PROP_BATTERY_AGE:
 		val->intval = max1720x_get_age(chip);
 		break;
-	case GBMS_PROP_CAPACITY_AVG:
+	case GBMS_PROP_CHARGE_FULL_ESTIMATE:
 		val->intval = batt_ce_full_estimate(&chip->cap_estimate);
+		break;
+	case GBMS_PROP_CAPACITY_FADE_RATE:
+		val->intval = max1720x_get_fade_rate(chip);
 		break;
 	default:
 		err = -EINVAL;
