@@ -121,7 +121,7 @@ void gbms_init_chg_table(struct gbms_chg_profile *profile,
 				ccm = DIV_ROUND_CLOSEST(ccm, fv_uv_step)
 					* fv_uv_step;
 
-			GBMS_CCCM_LIMITS(profile, ti, vi) = ccm;
+			GBMS_CCCM_LIMITS_SET(profile, ti, vi) = ccm;
 		}
 	}
 }

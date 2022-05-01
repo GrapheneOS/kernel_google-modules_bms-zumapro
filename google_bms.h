@@ -362,8 +362,11 @@ struct gbms_charging_event {
 	struct gbms_ce_tier_stats trickle_stats;
 };
 
-#define GBMS_CCCM_LIMITS(profile, ti, vi) \
+#define GBMS_CCCM_LIMITS_SET(profile, ti, vi) \
 	profile->cccm_limits[(ti * profile->volt_nb_limits) + vi]
+
+#define GBMS_CCCM_LIMITS(profile, ti, vi) \
+	(ti >= 0 && vi >= 0) ? profile->cccm_limits[(ti * profile->volt_nb_limits) + vi] : 0
 
 /* newgen charging */
 #define GBMS_CS_FLAG_BUCK_EN	BIT(0)
