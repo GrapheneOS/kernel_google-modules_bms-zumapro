@@ -1696,14 +1696,16 @@ static void p9221_check_adapter_type(struct p9221_charger_data *charger)
 static int p9221_chg_data_head_dump(char *buff, int max_size,
 				    const struct p9221_charge_stats *chg_data)
 {
-	int len = 0;
-
-	len = scnprintf(&buff[len], max_size - len, "A:%d,%d,%d,%d,%d\n",
+	return scnprintf(buff, max_size, "A:%d,%d,%d,%d,%d",
 			 chg_data->adapter_type, chg_data->cur_soc,
 			 chg_data->volt_conf, chg_data->cur_conf,
 			 chg_data->of_freq);
+}
 
-	len += scnprintf(&buff[len], max_size - len, "D:%x,%x,%x,%x,%x, %x,%x",
+static int p9221_adapter_capabilities_dump(char *buff, int max_size,
+					   const struct p9221_charge_stats *chg_data)
+{
+	return scnprintf(buff, max_size, "D:%x,%x,%x,%x,%x, %x,%x",
 			 chg_data->adapter_capabilities[0],
 			 chg_data->adapter_capabilities[1],
 			 chg_data->adapter_capabilities[2],
@@ -1711,8 +1713,6 @@ static int p9221_chg_data_head_dump(char *buff, int max_size,
 			 chg_data->adapter_capabilities[4],
 			 chg_data->receiver_state[0],
 			 chg_data->receiver_state[1]);
-
-	return len;
 }
 
 static int p9221_soc_data_dump(char *buff, int max_size,
@@ -1747,10 +1747,14 @@ static void p9221_dump_charge_stats(struct p9221_charger_data *charger)
 	p9221_chg_data_head_dump(buff, sizeof(buff), &charger->chg_data);
 	logbuffer_log(charger->log, "%s", buff);
 
+	/* Dump the adapter capabilities */
+	p9221_adapter_capabilities_dump(buff, sizeof(buff), &charger->chg_data);
+	logbuffer_log(charger->log, "%s", buff);
+
+
 	for (i = 0; i < WLC_SOC_STATS_LEN; i++) {
 		if (charger->chg_data.soc_data[i].elapsed_time == 0)
 			continue;
-		memset(buff, 0, sizeof(buff));
 		p9221_soc_data_dump(buff, sizeof(buff), &charger->chg_data, i);
 		logbuffer_log(charger->log, "%s", buff);
 	}
@@ -4449,6 +4453,10 @@ static ssize_t p9221_show_chg_stats(struct device *dev,
 		goto enodata_done;
 
 	len = p9221_chg_data_head_dump(buf, PAGE_SIZE, &charger->chg_data);
+	if (len < PAGE_SIZE)
+		buf[len++] = '\n';
+
+	len += p9221_adapter_capabilities_dump(&buf[len], PAGE_SIZE - len, &charger->chg_data);
 	if (len < PAGE_SIZE)
 		buf[len++] = '\n';
 
