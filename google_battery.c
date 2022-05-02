@@ -2461,7 +2461,7 @@ static int batt_calc_charging_speed(struct batt_drv *batt_drv)
 		return batt_drv->fake_charging_speed;
 
 	/* if the battery is the limit, speed is 100% */
-	if (chg_type == POWER_SUPPLY_CHARGE_TYPE_TAPER)
+	if (chg_type == POWER_SUPPLY_CHARGE_TYPE_TAPER_EXT)
 		return 100;
 
 	/* Get average current via tiers. */
