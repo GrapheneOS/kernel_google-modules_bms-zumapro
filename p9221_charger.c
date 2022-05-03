@@ -2923,15 +2923,13 @@ static void p9221_notifier_check_dc(struct p9221_charger_data *charger)
 {
 	int ret, dc_in;
 
-	charger->check_dc = false;
-
 	if ((charger->chip_id < P9382A_CHIP_ID) && charger->check_np) {
 
 		ret = p9221_notifier_check_neg_power(charger);
 		if (ret > 0) {
 			ret = schedule_delayed_work(&charger->notifier_work,
 				msecs_to_jiffies(P9221_CHECK_NP_DELAY_MS));
-			if (ret)
+			if (ret == 0)
 				return;
 
 			dev_err(&charger->client->dev,
@@ -2943,11 +2941,15 @@ static void p9221_notifier_check_dc(struct p9221_charger_data *charger)
 	}
 
 	dc_in = p9221_has_dc_in(charger);
-	if (dc_in < 0)
+	if (dc_in < 0) {
+          	dev_info(&charger->client->dev, "reschedule it(%d)\n", dc_in);
+		schedule_delayed_work(&charger->notifier_work,
+				    msecs_to_jiffies(P9221_DCIN_RETRY_DELAY_MS));
 		return;
+	}
 
 	dev_info(&charger->client->dev, "dc status is %d\n", dc_in);
-
+  	charger->check_dc = false;
 	/*
 	 * We now have confirmation from DC_IN, kill the timer, charger->online
 	 * will be set by this function.
