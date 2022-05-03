@@ -641,7 +641,7 @@ static int ttf_tier_sscan(struct batt_ttf_stats *stats,
 {
 	int j, len = 0;
 
-	memset(&stats->tier_stats, 0, sizeof(*stats));
+	memset(&stats->tier_stats, 0, sizeof(stats->tier_stats));
 
 	while (buff[len] != '[' && len < size)
 		len++;
