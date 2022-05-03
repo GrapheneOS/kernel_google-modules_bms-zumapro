@@ -530,6 +530,8 @@ int gbms_read_charger_state(union gbms_charger_state *chg_state,
 				  &ret);
 	if (ret == 0) {
 		chg_state->v = val;
+	} else if (ret == -EAGAIN) {
+		return ret;
 	} else {
 		int ichg;
 

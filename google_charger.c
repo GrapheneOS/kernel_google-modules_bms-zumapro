@@ -2263,7 +2263,11 @@ static void chg_work(struct work_struct *work)
 		chg_work_adapter_details(&ad, usb_online, wlc_online,
 					 ext_online, chg_drv);
 
-	update_interval = chg_work_roundtrip(chg_drv, &chg_drv->chg_state);
+	rc = chg_work_roundtrip(chg_drv, &chg_drv->chg_state);
+	if (rc == -EAGAIN)
+		goto rerun_error;
+
+	update_interval = rc;
 	if (update_interval >= 0)
 		chg_done = (chg_drv->chg_state.f.flags &
 			    GBMS_CS_FLAG_DONE) != 0;
