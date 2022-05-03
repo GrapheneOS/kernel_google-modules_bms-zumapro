@@ -64,7 +64,7 @@
 #define BHI_IMPEDANCE_SOC_HI		55
 #define BHI_IMPEDANCE_TEMP_LO		250
 #define BHI_IMPEDANCE_TEMP_HI		300
-#define BHI_IMPEDANCE_CYCLE_CNT		10
+#define BHI_IMPEDANCE_CYCLE_CNT		5
 #define BHI_IMPEDANCE_TIMERH		50 /* 7*24 / 3.2hr */
 
 #include "max1720x.h"
@@ -951,6 +951,49 @@ static ssize_t max1720x_model_set_state(struct device *dev,
 	return count;
 }
 
+
+
+
+/* resistance and impedance ------------------------------------------------ */
+
+static int max17x0x_read_resistance_avg(struct max1720x_chip *chip)
+{
+	u16 ravg;
+	int ret = 0;
+
+	ret = gbms_storage_read(GBMS_TAG_RAVG, &ravg, sizeof(ravg));
+	if (ret < 0)
+		return ret;
+
+	return reg_to_resistance_micro_ohms(ravg, chip->RSense);
+}
+
+static int max17x0x_read_resistance_raw(struct max1720x_chip *chip)
+{
+	u16 data;
+	int ret;
+
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_RCELL, &data);
+	if (ret < 0)
+		return ret;
+
+	return data;
+}
+
+static int max17x0x_read_resistance(struct max1720x_chip *chip)
+{
+	int rslow;
+
+	rslow = max17x0x_read_resistance_raw(chip);
+	if (rslow < 0)
+		return rslow;
+
+	return reg_to_resistance_micro_ohms(rslow, chip->RSense);
+}
+
+
+/* ----------------------------------------------------------------------- */
+
 static DEVICE_ATTR(m5_model_state, 0640, max1720x_model_show_state,
 		   max1720x_model_set_state);
 
@@ -994,16 +1037,8 @@ static ssize_t resistance_show(struct device *dev,
 {
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct max1720x_chip *chip = power_supply_get_drvdata(psy);
-	struct max17x0x_regmap *map = &chip->regmap;
-	u16 data = 0;
-	int err;
 
-	err = REGMAP_READ(map, MAX1720X_RCELL, &data);
-	if (err < 0)
-		return err;
-
-	return scnprintf(buff, PAGE_SIZE, "%d\n",
-			 reg_to_resistance_micro_ohms(data, chip->RSense));
+	return scnprintf(buff, PAGE_SIZE, "%d\n", max17x0x_read_resistance(chip));
 }
 
 static const DEVICE_ATTR_RO(resistance);
@@ -1235,12 +1270,12 @@ static void max1720x_restore_battery_qh_capacity(struct max1720x_chip *chip)
 	int current_qh, nvram_qh;
 	u16 data = 0, nvram_capacity;
 
+	/* not available without shadow */
 	if (!chip->regmap_nvram.regmap) {
 		max1720x_prime_battery_qh_capacity(chip,
 						   POWER_SUPPLY_STATUS_UNKNOWN);
 		return;
 	}
-
 
 	/* Capacity data is stored as complement so it will not be zero. Using
 	 * zero case to detect new un-primed pack
@@ -1829,7 +1864,46 @@ static int batt_ce_init(struct gbatt_capacity_estimation *cap_esti,
 	return 0;
 }
 
+/* call holding chip->model_lock */
+static int max1720x_check_impedance(struct max1720x_chip *chip, u16 *th)
+{
+	struct max17x0x_regmap *map = &chip->regmap;
+	int soc, temp, cycle_count, ret;
+	u16 data, timerh;
+
+	if (!chip->model_state_valid)
+		return -EAGAIN;
+
+	soc = max1720x_get_battery_soc(chip);
+	if (soc < BHI_IMPEDANCE_SOC_LO || soc > BHI_IMPEDANCE_SOC_HI)
+		return -EAGAIN;
+
+	ret = max17x0x_reg_read(map, MAX17X0X_TAG_temp, &data);
+	if (ret < 0)
+		return -EIO;
+
+	temp = reg_to_deci_deg_cel(data);
+	if (temp < BHI_IMPEDANCE_TEMP_LO || temp > BHI_IMPEDANCE_TEMP_HI)
+		return -EAGAIN;
+
+	cycle_count = max1720x_get_cycle_count(chip);
+	if (cycle_count < 0)
+		return -EINVAL;
+
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_TIMERH, &timerh);
+	if (ret < 0 || timerh == 0)
+		return -EINVAL;
+
+	/* wait for a few cyles and time in field before validating the value */
+	if (cycle_count < BHI_IMPEDANCE_CYCLE_CNT || timerh < BHI_IMPEDANCE_TIMERH)
+		return -ENODATA;
+
+	*th = timerh;
+	return 0;
+}
+
 /* ------------------------------------------------------------------------- */
+
 #define SEL_RES_AVG		0
 #define SEL_RES_FILTER_COUNT	1
 static int batt_res_registers(struct max1720x_chip *chip, bool bread,
@@ -1878,58 +1952,23 @@ static int batt_res_registers(struct max1720x_chip *chip, bool bread,
 	return err;
 }
 
-/* call holding chip->model_lock */
-static int max1720x_check_impedance(struct max1720x_chip *chip, u16 *th)
+static int max1720x_health_write_ai(u16 act_impedance, u16 act_timerh)
 {
-	struct max17x0x_regmap *map = &chip->regmap;
-	int soc, temp, cycle_count, ret;
-	u16 data, timerh;
-
-	if (!chip->model_state_valid)
-		return -EAGAIN;
-
-	soc = max1720x_get_battery_soc(chip);
-	if (soc < BHI_IMPEDANCE_SOC_LO || soc > BHI_IMPEDANCE_SOC_HI)
-		return -ENODATA;
-
-	ret = max17x0x_reg_read(map, MAX17X0X_TAG_temp, &data);
-	if (ret < 0)
-		return -EINVAL;
-
-	temp = reg_to_deci_deg_cel(data);
-	if (temp < BHI_IMPEDANCE_TEMP_LO || temp > BHI_IMPEDANCE_TEMP_HI)
-		return -ENODATA;
-
-	ret = REGMAP_READ(&chip->regmap, MAX1720X_TIMERH, &timerh);
-	if (ret < 0 || timerh == 0)
-		return -ENODATA;
-
-	cycle_count = max1720x_get_cycle_count(chip);
-	if (cycle_count < 0)
-		return -EINVAL;
-
-	/* wait for a few cyles and time in field before validating the value */
-	if (cycle_count < BHI_IMPEDANCE_CYCLE_CNT || timerh < BHI_IMPEDANCE_TIMERH)
-		return -ENODATA;
-
-	*th = timerh;
-	return 0;
-}
-
-static int max17x0x_read_resistance(struct max1720x_chip *chip)
-{
-	u16 data;
 	int ret;
 
-	ret = REGMAP_READ(&chip->regmap, MAX1720X_RCELL, &data);
+	ret = gbms_storage_write(GBMS_TAG_ACIM, &act_impedance, sizeof(act_impedance));
 	if (ret < 0)
-		return ret;
+		return -EIO;
 
-	return reg_to_resistance_micro_ohms(data, chip->RSense);
+	ret = gbms_storage_write(GBMS_TAG_THAS, &act_timerh, sizeof(act_timerh));
+	if (ret < 0)
+		return -EIO;
+
+	return ret;
 }
 
 /* will return error if the value is not valid  */
-static int max1720x_get_health_act_impedance(struct max1720x_chip *chip)
+static int max1720x_health_get_ai(struct max1720x_chip *chip)
 {
 	u16 act_impedance, act_timerh;
 	int ret;
@@ -1946,42 +1985,35 @@ static int max1720x_get_health_act_impedance(struct max1720x_chip *chip)
 	if (ret < 0)
 		return -EIO;
 
-	pr_debug("%s: act_impedance=%d act_timerh=%d\n", __func__,
-		act_impedance, act_timerh);
-
-	/* need to get sstating impedance */
+	/* need to get starting impedance (if qualified) */
 	if (act_impedance == 0xffff || act_timerh == 0xffff) {
-		int resistance;
-
 		ret = max1720x_check_impedance(chip, &act_timerh);
 		if (ret < 0)
-			return -EINVAL;
+			return ret;
 
-		resistance = max17x0x_read_resistance(chip);
-		if (resistance < 0)
-			return -EIO;
-		act_impedance = resistance;
-
-		ret = gbms_storage_write(GBMS_TAG_ACIM, &act_impedance, sizeof(act_impedance));
+		ret = REGMAP_READ(&chip->regmap, MAX1720X_RCELL, &act_impedance);
 		if (ret < 0)
 			return -EIO;
 
-		ret = gbms_storage_write(GBMS_TAG_THAS, &act_timerh, sizeof(act_timerh));
+		ret = max1720x_health_write_ai(act_impedance, act_timerh);
 		if (ret < 0)
 			return -EIO;
 	}
 
-	/* TODO: scale act_impedance with timerh OR invalidate it */
-	chip->bhi_acim = act_impedance;
+	/* not zero, not negative */
+	chip->bhi_acim = reg_to_resistance_micro_ohms(act_impedance, chip->RSense);;
 
-	pr_info("%s: act_impedance=%d act_timerh=%d\n", __func__,
-		act_impedance, act_timerh);
+	/* TODO: corrrect impedance with timerh */
+
+
+	pr_info("%s: chip->bhi_acim =%d act_impedance=%x act_timerh=%x\n",
+		__func__, chip->bhi_acim, act_impedance, act_timerh);
 
 	return chip->bhi_acim;
 }
 
 /* will return negative if the value is not qualified */
-static int max1720x_get_health_impedance(struct max1720x_chip *chip)
+static int max1720x_health_read_impedance(struct max1720x_chip *chip)
 {
 	u16 timerh;
 	int ret;
@@ -1993,6 +2025,7 @@ static int max1720x_get_health_impedance(struct max1720x_chip *chip)
 	return max17x0x_read_resistance(chip);
 }
 
+/* in hours (3.2 hours resolution) */
 static int max1720x_get_age(struct max1720x_chip *chip)
 {
 	u16 timerh;
@@ -2230,10 +2263,19 @@ static int max1720x_get_property(struct power_supply *psy,
 		val->strval = chip->serial_number;
 		break;
 	case GBMS_PROP_HEALTH_ACT_IMPEDANCE:
-		val->intval = max1720x_get_health_act_impedance(chip);
+		val->intval = max1720x_health_get_ai(chip);
 		break;
 	case GBMS_PROP_HEALTH_IMPEDANCE:
-		val->intval = max1720x_get_health_impedance(chip);
+		val->intval = max1720x_health_read_impedance(chip);
+		break;
+	case GBMS_PROP_RESISTANCE:
+		val->intval = max17x0x_read_resistance(chip);
+		break;
+	case GBMS_PROP_RESISTANCE_RAW:
+		val->intval = max17x0x_read_resistance_raw(chip);
+		break;
+	case GBMS_PROP_RESISTANCE_AVG:
+		val->intval = max17x0x_read_resistance_avg(chip);
 		break;
 	case GBMS_PROP_BATTERY_AGE:
 		val->intval = max1720x_get_age(chip);
@@ -3708,9 +3750,69 @@ DEFINE_SIMPLE_ATTRIBUTE(debug_reset_gmsr_fops, NULL, debug_gmsr_reset, "%llu\n")
  *	break;
  */
 
-static int max17x0x_init_debugfs(struct max1720x_chip *chip)
+static ssize_t act_impedance_store(struct device *dev,
+			       struct device_attribute *attr,
+			       const char *buf, size_t count) {
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct max1720x_chip *chip = power_supply_get_drvdata(psy);
+	unsigned int rcell = 0xffff;
+	u16 timerh = 0xffff;
+	int value, ret = 0;
+
+	ret = kstrtoint(buf, 0, &value);
+	if (ret < 0)
+		return ret;
+
+	mutex_lock(&chip->model_lock);
+
+	if (value) {
+
+		/* mOhms to reg*/
+		rcell = (value * 4096) / (1000 * chip->RSense);
+		if (rcell > 0xffff) {
+			pr_info("value=%d, rcell=%d out of bounds\n", value, rcell);
+			mutex_unlock(&chip->model_lock);
+			return -ERANGE;
+		}
+
+		ret = REGMAP_READ(&chip->regmap, MAX1720X_TIMERH, &timerh);
+		if (ret < 0 || timerh == 0) {
+			mutex_unlock(&chip->model_lock);
+			return -EIO;
+		}
+	}
+
+	ret = max1720x_health_write_ai(rcell, timerh);
+	if (ret == 0)
+		chip->bhi_acim = 0;
+
+	pr_info("value=%d act_impedance=%x timerh=%x (%d)\n",
+		value, rcell, timerh, ret);
+
+	mutex_unlock(&chip->model_lock);
+	return count;
+}
+
+static ssize_t act_impedance_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct max1720x_chip *chip = power_supply_get_drvdata(psy);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", max1720x_health_get_ai(chip));
+}
+
+static const DEVICE_ATTR_RW(act_impedance);
+
+static int max17x0x_init_sysfs(struct max1720x_chip *chip)
 {
 	struct dentry *de;
+	int ret;
+
+	/* stats */
+	ret = device_create_file(&chip->psy->dev, &dev_attr_act_impedance);
+	if (ret)
+		dev_err(&chip->psy->dev, "Failed to create act_impedance\n");
 
 	de = debugfs_create_dir(chip->max1720x_psy_desc.name, 0);
 	if (IS_ERR_OR_NULL(de))
@@ -5000,7 +5102,7 @@ static int max17x0x_storage_read(gbms_tag_t tag, void *buff, size_t size,
 			ret = reg->size;
 		break;
 
-	/* Was POWER_SUPPLY_PROP_RESISTANCE_AVG */
+	/* RAVG: was POWER_SUPPLY_PROP_RESISTANCE_AVG, TODO: merge with EEPROM */
 	case GBMS_TAG_RAVG:
 		if (size != sizeof(u16))
 			return -ERANGE;
@@ -5011,7 +5113,7 @@ static int max17x0x_storage_read(gbms_tag_t tag, void *buff, size_t size,
 			*(u16 *)buff = -1;
 		return 0;
 
-	/* Was POWER_SUPPLY_PROP_RES_FILTER_COUNT */
+	/* RAVG: was POWER_SUPPLY_PROP_RES_FILTER_COUNT, TODO: merge with EEPROM */
 	case GBMS_TAG_RFCN:
 		if (size != sizeof(u16))
 			return -ERANGE;
@@ -5056,14 +5158,13 @@ static int max17x0x_storage_write(gbms_tag_t tag, const void *buff, size_t size,
 			return -ERANGE;
 	break;
 
-	/* Was POWER_SUPPLY_PROP_RESISTANCE_AVG */
+	/* RAVG: Was POWER_SUPPLY_PROP_RESISTANCE_AVG, TODO: merge with EEPROM */
 	case GBMS_TAG_RAVG:
 		if (size != sizeof(u16))
 			return -ERANGE;
 		return batt_res_registers(chip, false, SEL_RES_AVG,
 					  (u16 *)buff);
-
-	/* Was POWER_SUPPLY_PROP_RES_FILTER_COUNT */
+	/* RAVG: Was POWER_SUPPLY_PROP_RES_FILTER_COUNT, TODO: merge with EEPROM */
 	case GBMS_TAG_RFCN:
 		if (size != sizeof(u16))
 			return -ERANGE;
@@ -5092,6 +5193,7 @@ static int max17x0x_storage_write(gbms_tag_t tag, const void *buff, size_t size,
 	return ret;
 }
 
+/* when without eeprom */
 static struct gbms_storage_desc max17x0x_storage_dsc = {
 	.info = max17x0x_storage_info,
 	.iter = max17x0x_storage_iter,
@@ -5104,8 +5206,7 @@ static struct gbms_storage_desc max17x0x_storage_dsc = {
 
 static int max17x0x_prop_iter(int index, gbms_tag_t *tag, void *ptr)
 {
-	static gbms_tag_t keys[] = {GBMS_TAG_BRES, GBMS_TAG_GCFE,
-				    GBMS_TAG_CLHI};
+	static gbms_tag_t keys[] = {GBMS_TAG_CLHI};
 	const int count = ARRAY_SIZE(keys);
 
 	if (index >= 0 && index < count) {
@@ -5121,33 +5222,8 @@ static int max17x0x_prop_read(gbms_tag_t tag, void *buff, size_t size,
 {
 	struct max1720x_chip *chip = (struct max1720x_chip *)ptr;
 	int ret = -ENOENT;
-	u16 data;
 
 	switch (tag) {
-	/* Was POWER_SUPPLY_PROP_RESISTANCE */
-	case GBMS_TAG_BRES:
-		if (size != sizeof(u32))
-			return -ERANGE;
-
-		ret = REGMAP_READ(&chip->regmap, MAX1720X_RCELL, &data);
-		if (ret < 0)
-			return ret;
-
-		*(u32 *)buff = reg_to_resistance_micro_ohms(data, chip->RSense);
-		break;
-
-	/* Was POWER_SUPPLY_PROP_CHARGE_FULL_ESTIMATE */
-	case GBMS_TAG_GCFE:
-		if (size != sizeof(u16))
-			return -ERANGE;
-
-		ret = batt_ce_full_estimate(&chip->cap_estimate);
-		if (ret < 0)
-			return ret;
-
-		*(u16 *)buff = ret & 0xffff;
-		break;
-
 	case GBMS_TAG_CLHI:
 		ret = max17x0x_collect_history_data(buff, size, chip);
 		break;
@@ -5229,7 +5305,8 @@ static void max1720x_init_work(struct work_struct *work)
 	chip->resume_complete = true;
 	chip->init_complete = true;
 	chip->bhi_acim = 0;
-	max17x0x_init_debugfs(chip);
+
+	max17x0x_init_sysfs(chip);
 
 	/*
 	 * Handle any IRQ that might have been set before init
@@ -5566,7 +5643,6 @@ static int max1720x_probe(struct i2c_client *client,
 	 * TODO:
 	 *	POWER_SUPPLY_PROP_CHARGE_FULL_ESTIMATE -> GBMS_TAG_GCFE
 	 *	POWER_SUPPLY_PROP_RES_FILTER_COUNT -> GBMS_TAG_RFCN
-	 *	POWER_SUPPLY_PROP_RESISTANCE_AVG -> GBMS_TAG_RAVG
 	 */
 
 	/* M5 battery model needs batt_id and is setup during init() */
