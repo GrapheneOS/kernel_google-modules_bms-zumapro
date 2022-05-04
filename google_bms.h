@@ -533,11 +533,20 @@ enum gbms_charger_modes {
 enum bhi_algo {
 	BHI_ALGO_DISABLED = 0,
 
-	BHI_ALGO_ACHI_QRES = 1,	/* avg from history, qual resistance */
-	BHI_ALGO_ACHI_RAVG = 2, /* avg capacity from history, google_resistance */
-	BHI_ALGO_GCAP_RAVG = 3, /* google_capacity, google_resistance */
-	BHI_ALGO_MIX_N_MATCH = 4,
+	BHI_ALGO_CYCLE_COUNT	= 1, /* bare, just use cycle count */
+	BHI_ALGO_ACHI		= 2, /* cap avg from history, no resistance */
+	BHI_ALGO_ACHI_B		= 3, /* same as ACHI + bounds check */
+	BHI_ALGO_ACHI_RAVG	= 4, /* same as ACHI and google_resistance */
+	BHI_ALGO_ACHI_RAVG_B	= 5, /* same as ACHI_RAVG + bounds check */
 
+	/* TODO:
+	 * BHI_ALGO_ACHI_QRES	 = 4,  cap avg from history, qual resistance
+	 * BHI_ALGO_ACHI_QRES_B	= 21,  same ACHI_QRES + bounds check
+	 * BHI_ALGO_GCAP_RAVG	= 40,  google_capacity, google_resistance
+	 * BHI_ALGO_GCAP_RAVG_B	= 41,  same as GCAP_RAVG + bounds check
+	 */
+
+	BHI_ALGO_MIX_N_MATCH 	= 6,
 	BHI_ALGO_MAX,
 };
 

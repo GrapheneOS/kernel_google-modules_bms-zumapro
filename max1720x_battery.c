@@ -1886,44 +1886,6 @@ static int batt_ce_init(struct gbatt_capacity_estimation *cap_esti,
 	return 0;
 }
 
-/* call holding chip->model_lock */
-static int max1720x_check_impedance(struct max1720x_chip *chip, u16 *th)
-{
-	struct max17x0x_regmap *map = &chip->regmap;
-	int soc, temp, cycle_count, ret;
-	u16 data, timerh;
-
-	if (!chip->model_state_valid)
-		return -EAGAIN;
-
-	soc = max1720x_get_battery_soc(chip);
-	if (soc < BHI_IMPEDANCE_SOC_LO || soc > BHI_IMPEDANCE_SOC_HI)
-		return -EAGAIN;
-
-	ret = max17x0x_reg_read(map, MAX17X0X_TAG_temp, &data);
-	if (ret < 0)
-		return -EIO;
-
-	temp = reg_to_deci_deg_cel(data);
-	if (temp < BHI_IMPEDANCE_TEMP_LO || temp > BHI_IMPEDANCE_TEMP_HI)
-		return -EAGAIN;
-
-	cycle_count = max1720x_get_cycle_count(chip);
-	if (cycle_count < 0)
-		return -EINVAL;
-
-	ret = REGMAP_READ(&chip->regmap, MAX1720X_TIMERH, &timerh);
-	if (ret < 0 || timerh == 0)
-		return -EINVAL;
-
-	/* wait for a few cyles and time in field before validating the value */
-	if (cycle_count < BHI_IMPEDANCE_CYCLE_CNT || timerh < BHI_IMPEDANCE_TIMERH)
-		return -ENODATA;
-
-	*th = timerh;
-	return 0;
-}
-
 /* ------------------------------------------------------------------------- */
 
 #define SEL_RES_AVG		0
@@ -1989,6 +1951,44 @@ static int max1720x_health_write_ai(u16 act_impedance, u16 act_timerh)
 	return ret;
 }
 
+/* call holding chip->model_lock */
+static int max1720x_check_impedance(struct max1720x_chip *chip, u16 *th)
+{
+	struct max17x0x_regmap *map = &chip->regmap;
+	int soc, temp, cycle_count, ret;
+	u16 data, timerh;
+
+	if (!chip->model_state_valid)
+		return -EAGAIN;
+
+	soc = max1720x_get_battery_soc(chip);
+	if (soc < BHI_IMPEDANCE_SOC_LO || soc > BHI_IMPEDANCE_SOC_HI)
+		return -EAGAIN;
+
+	ret = max17x0x_reg_read(map, MAX17X0X_TAG_temp, &data);
+	if (ret < 0)
+		return -EIO;
+
+	temp = reg_to_deci_deg_cel(data);
+	if (temp < BHI_IMPEDANCE_TEMP_LO || temp > BHI_IMPEDANCE_TEMP_HI)
+		return -EAGAIN;
+
+	cycle_count = max1720x_get_cycle_count(chip);
+	if (cycle_count < 0)
+		return -EINVAL;
+
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_TIMERH, &timerh);
+	if (ret < 0 || timerh == 0)
+		return -EINVAL;
+
+	/* wait for a few cyles and time in field before validating the value */
+	if (cycle_count < BHI_IMPEDANCE_CYCLE_CNT || timerh < BHI_IMPEDANCE_TIMERH)
+		return -ENODATA;
+
+	*th = timerh;
+	return 0;
+}
+
 /* will return error if the value is not valid  */
 static int max1720x_health_get_ai(struct max1720x_chip *chip)
 {
@@ -2008,25 +2008,13 @@ static int max1720x_health_get_ai(struct max1720x_chip *chip)
 		return -EIO;
 
 	/* need to get starting impedance (if qualified) */
-	if (act_impedance == 0xffff || act_timerh == 0xffff) {
-		ret = max1720x_check_impedance(chip, &act_timerh);
-		if (ret < 0)
-			return ret;
-
-		ret = REGMAP_READ(&chip->regmap, MAX1720X_RCELL, &act_impedance);
-		if (ret < 0)
-			return -EIO;
-
-		ret = max1720x_health_write_ai(act_impedance, act_timerh);
-		if (ret < 0)
-			return -EIO;
-	}
+	if (act_impedance == 0xffff || act_timerh == 0xffff)
+		return -EINVAL;
 
 	/* not zero, not negative */
 	chip->bhi_acim = reg_to_resistance_micro_ohms(act_impedance, chip->RSense);;
 
 	/* TODO: corrrect impedance with timerh */
-
 
 	pr_info("%s: chip->bhi_acim =%d act_impedance=%x act_timerh=%x\n",
 		__func__, chip->bhi_acim, act_impedance, act_timerh);
@@ -2329,6 +2317,36 @@ static int max1720x_get_property(struct power_supply *psy,
 	return err;
 }
 
+/* needs mutex_lock(&chip->model_lock); */
+static int max1720x_health_update_ai(struct max1720x_chip *chip, int impedance)
+{
+	const u16 act_impedance = impedance / 100;
+	unsigned int rcell = 0xffff;
+	u16 timerh = 0xffff;
+	int ret;
+
+	if (impedance) {
+
+		/* mOhms to reg */
+		rcell = (impedance * 4096) / (1000 * chip->RSense);
+		if (rcell > 0xffff) {
+			pr_err("value=%d, rcell=%d out of bounds\n", impedance, rcell);
+			return -ERANGE;
+		}
+
+		ret = REGMAP_READ(&chip->regmap, MAX1720X_TIMERH, &timerh);
+		if (ret < 0 || timerh == 0)
+			return -EIO;
+	}
+
+	ret = max1720x_health_write_ai(act_impedance, timerh);
+	if (ret == 0)
+		chip->bhi_acim = 0;
+
+	return ret;
+}
+
+
 static void max1720x_fixup_capacity(struct max1720x_chip *chip, int plugged)
 {
 	struct max1720x_drift_data *ddata = &chip->drift_data;
@@ -2428,6 +2446,11 @@ static int max1720x_set_property(struct power_supply *psy,
 				 msecs_to_jiffies(delay_ms));
 
 		break;
+	case GBMS_PROP_HEALTH_ACT_IMPEDANCE:
+		mutex_lock(&chip->model_lock);
+		rc = max1720x_health_update_ai(chip, val->intval);
+		mutex_unlock(&chip->model_lock);
+		break;
 	default:
 		return -EINVAL;
 	}
@@ -2443,6 +2466,7 @@ static int max1720x_property_is_writeable(struct power_supply *psy,
 {
 	switch (psp) {
 	case GBMS_PROP_BATT_CE_CTRL:
+	case GBMS_PROP_HEALTH_ACT_IMPEDANCE:
 		return 1;
 	default:
 		break;
@@ -3786,8 +3810,6 @@ static ssize_t act_impedance_store(struct device *dev,
 			       const char *buf, size_t count) {
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct max1720x_chip *chip = power_supply_get_drvdata(psy);
-	unsigned int rcell = 0xffff;
-	u16 timerh = 0xffff;
 	int value, ret = 0;
 
 	ret = kstrtoint(buf, 0, &value);
@@ -3796,29 +3818,11 @@ static ssize_t act_impedance_store(struct device *dev,
 
 	mutex_lock(&chip->model_lock);
 
-	if (value) {
-
-		/* mOhms to reg*/
-		rcell = (value * 4096) / (1000 * chip->RSense);
-		if (rcell > 0xffff) {
-			pr_info("value=%d, rcell=%d out of bounds\n", value, rcell);
-			mutex_unlock(&chip->model_lock);
-			return -ERANGE;
-		}
-
-		ret = REGMAP_READ(&chip->regmap, MAX1720X_TIMERH, &timerh);
-		if (ret < 0 || timerh == 0) {
-			mutex_unlock(&chip->model_lock);
-			return -EIO;
-		}
-	}
-
-	ret = max1720x_health_write_ai(rcell, timerh);
+	ret = max1720x_health_update_ai(chip, value);
 	if (ret == 0)
 		chip->bhi_acim = 0;
 
-	pr_info("value=%d act_impedance=%x timerh=%x (%d)\n",
-		value, rcell, timerh, ret);
+	pr_info("value=%d  (%d)\n", value, ret);
 
 	mutex_unlock(&chip->model_lock);
 	return count;
