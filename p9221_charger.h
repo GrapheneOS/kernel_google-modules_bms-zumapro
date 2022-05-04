@@ -584,9 +584,11 @@ struct p9221_charger_platform_data {
 	u8				fod[P9221R5_NUM_FOD];
 	u8				fod_epp[P9221R5_NUM_FOD];
 	u8				fod_hpp[P9221R5_NUM_FOD];
+	u8				fod_hpp_hv[P9221R5_NUM_FOD];
 	int				fod_num;
 	int				fod_epp_num;
 	int				fod_hpp_num;
+	int				fod_hpp_hv_num;
 	int				q_value;
 	int				tx_4191q;
 	int				epp_rp_value;
@@ -771,6 +773,9 @@ struct p9221_charger_data {
 	bool				cc_reset_pending;
 	int				send_txid_cnt;
 	bool				sw_ramp_done;
+	bool				hpp_hv;
+	int				fod_mode;
+
 #if IS_ENABLED(CONFIG_GPIOLIB)
 	struct gpio_chip gpio;
 #endif

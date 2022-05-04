@@ -43,6 +43,7 @@
 #define WLC_ALIGN_DEFAULT_SCALAR_HIGH_CURRENT	    118
 #define WLC_ALIGN_DEFAULT_OFFSET_LOW_CURRENT	    125000
 #define WLC_ALIGN_DEFAULT_OFFSET_HIGH_CURRENT	    139000
+#define HPP_FOD_VOUT_THRESHOLD_UV	17500000
 
 #define PROP_MODE_PWR_DEFAULT	30
 
@@ -63,6 +64,7 @@ enum wlc_chg_mode {
 	WLC_BPP = 0,
 	WLC_EPP,
 	WLC_HPP,
+	WLC_HPP_HV,
 };
 
 #define P9221_CRC8_POLYNOMIAL		0x07	/* (x^8) + x^2 + x + 1 */
@@ -291,7 +293,7 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 	int fod_count = charger->pdata->fod_num;
 	int ret;
 	int retries = 3;
-	static char *wlc_mode[] = { "BPP", "EPP", "HPP" };
+	static char *wlc_mode[] = { "BPP", "EPP", "HPP" , "HPP_HV" };
 
 
 	if (charger->no_fod)
@@ -316,7 +318,18 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 		fod = charger->pdata->fod_hpp;
 		fod_count = charger->pdata->fod_hpp_num;
 		mode = WLC_HPP;
+		if (charger->hpp_hv && charger->pdata->fod_hpp_hv_num) {
+			fod = charger->pdata->fod_hpp_hv;
+			fod_count = charger->pdata->fod_hpp_hv_num;
+			mode = WLC_HPP_HV;
+		}
 	}
+
+	if (mode == charger->fod_mode &&
+	    (mode == WLC_HPP || mode == WLC_HPP_HV))
+		return;
+
+	charger->fod_mode = mode;
 
 	if (!fod)
 		goto no_fod;
@@ -357,9 +370,9 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 	}
 
 no_fod:
-	dev_warn(&charger->client->dev, "FOD not set! bpp:%d epp:%d hpp:%d r:%d\n",
+	dev_warn(&charger->client->dev, "FOD not set! bpp:%d epp:%d hpp:%d hpp_hv:%d r:%d\n",
 		 charger->pdata->fod_num, charger->pdata->fod_epp_num,
-		 charger->pdata->fod_hpp_num, retries);
+		 charger->pdata->fod_hpp_num, charger->pdata->fod_hpp_hv_num, retries);
 }
 
 #define CC_DATA_LOCK_MS		250
@@ -810,6 +823,8 @@ static void p9221_set_offline(struct p9221_charger_data *charger)
 	charger->chg_on_rtx = false;
 	p9221_reset_wlc_dc(charger);
 	charger->prop_mode_en = false;
+	charger->hpp_hv = false;
+	charger->fod_mode = -1;
 	set_renego_state(charger, P9XXX_AVAILABLE);
 
 	/* Reset PP buf so we can get a new serial number next time around */
@@ -2415,6 +2430,9 @@ static int p9221_set_property(struct power_supply *psy,
 		/* uV */
 		charger->wlc_dc_voltage_now = val->intval;
 		ret = charger->chip_set_vout_max(charger, P9221_UV_TO_MV(charger->wlc_dc_voltage_now));
+		charger->hpp_hv = (ret == 0 &&
+				   charger->wlc_dc_voltage_now > HPP_FOD_VOUT_THRESHOLD_UV);
+		p9221_write_fod(charger);
 		break;
 
 	default:
@@ -5811,14 +5829,11 @@ static int p9221_parse_dt(struct device *dev,
 	pdata->fod_hpp_num =
 	    of_property_count_elems_of_size(node, "fod_hpp", sizeof(u8));
 	if (pdata->fod_hpp_num <= 0) {
-		dev_err(dev, "No dt fod hpp provided (%d)\n",
-			pdata->fod_hpp_num);
 		pdata->fod_hpp_num = 0;
 	} else {
 		if (pdata->fod_hpp_num > P9221R5_NUM_FOD) {
-			dev_err(dev,
-			    "Incorrect num of HPP FOD %d, using first %d\n",
-			    pdata->fod_hpp_num, P9221R5_NUM_FOD);
+			dev_err(dev, "Incorrect num of HPP FOD %d, using first %d\n",
+				pdata->fod_hpp_num, P9221R5_NUM_FOD);
 			pdata->fod_hpp_num = P9221R5_NUM_FOD;
 		}
 		ret = of_property_read_u8_array(node, "fod_hpp", pdata->fod_hpp,
@@ -5830,6 +5845,28 @@ static int p9221_parse_dt(struct device *dev,
 				      pdata->fod_hpp_num * 3 + 1, false);
 			dev_info(dev, "dt fod_hpp: %s (%d)\n", buf,
 				 pdata->fod_hpp_num);
+		}
+	}
+
+	pdata->fod_hpp_hv_num =
+	    of_property_count_elems_of_size(node, "fod_hpp_hv", sizeof(u8));
+	if (pdata->fod_hpp_hv_num <= 0) {
+		pdata->fod_hpp_hv_num = 0;
+	} else {
+		if (pdata->fod_hpp_hv_num > P9221R5_NUM_FOD) {
+			dev_err(dev, "Incorrect num of HPP HV FOD %d, using first %d\n",
+				pdata->fod_hpp_hv_num, P9221R5_NUM_FOD);
+			pdata->fod_hpp_hv_num = P9221R5_NUM_FOD;
+		}
+		ret = of_property_read_u8_array(node, "fod_hpp_hv", pdata->fod_hpp_hv,
+						pdata->fod_hpp_hv_num);
+		if (ret == 0) {
+			char buf[P9221R5_NUM_FOD * 3 + 1];
+
+			p9221_hex_str(pdata->fod_hpp_hv, pdata->fod_hpp_hv_num, buf,
+				      pdata->fod_hpp_hv_num * 3 + 1, false);
+			dev_info(dev, "dt fod_hpp_hv: %s (%d)\n", buf,
+				 pdata->fod_hpp_hv_num);
 		}
 	}
 
