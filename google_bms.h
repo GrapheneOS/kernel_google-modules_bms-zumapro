@@ -550,7 +550,11 @@ enum gbms_charger_modes {
 /* Battery Health */
 enum bhi_algo {
 	BHI_ALGO_DISABLED = 0,
-	BHI_ALGO_V1 = 1,
+
+	BHI_ALGO_ACHI_QRES = 1,	/* avg from history, qual resistance */
+	BHI_ALGO_ACHI_RAVG = 2, /* avg capacity from history, google_resistance */
+	BHI_ALGO_GCAP_RAVG = 3, /* google_capacity, google_resistance */
+	BHI_ALGO_MIX_N_MATCH = 4,
 
 	BHI_ALGO_MAX,
 };
