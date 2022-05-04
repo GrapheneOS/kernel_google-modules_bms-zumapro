@@ -306,7 +306,7 @@ struct health_data
 	/* default algo */
 	int bhi_algo;
 	int bhi_cap_index;
-	int bhi_perf_index;
+	int bhi_imp_index;
 
 	/* calculation of health index */
 	int bhi_index;
@@ -3349,7 +3349,7 @@ static int bhi_impedance_data_update(struct bhi_data *bhi_data, struct power_sup
 
 exit_done:
 	pr_debug("%s: cur_impedance=%d, act_impedance=%d\n", __func__,
-		cur_impedance, act_impedance);
+		 cur_impedance, act_impedance);
 	return ret;
 }
 
@@ -3411,10 +3411,10 @@ static int bhi_health_get_impedance(int algo, const struct bhi_data *bhi_data)
 	return cur_impedance;
 }
 
-static int bhi_calc_perf_index(int algo, const struct bhi_data *bhi_data)
+static int bhi_calc_imp_index(int algo, const struct bhi_data *bhi_data)
 {
 	u32 cur_impedance;
-	int perf_index;
+	int imp_index;
 
 	if (!bhi_data->act_impedance)
 		return 100;
@@ -3432,16 +3432,16 @@ static int bhi_calc_perf_index(int algo, const struct bhi_data *bhi_data)
 	 */
 
 	/* The limit is 2x of activation. */
-	perf_index = - (cur_impedance - 2 * bhi_data->act_impedance) * 100 /
+	imp_index = - (cur_impedance - 2 * bhi_data->act_impedance) * 100 /
 		     bhi_data->act_impedance;
 
-	pr_debug("%s: pi=%d ci=%d, ai=%d\n", __func__, perf_index,
+	pr_debug("%s: pi=%d ci=%d, ai=%d\n", __func__, imp_index,
 		 cur_impedance, bhi_data->act_impedance);
 
-	if (perf_index < 50)
-		perf_index = 50;
+	if (imp_index < 50)
+		imp_index = 50;
 
-	return perf_index;
+	return imp_index;
 }
 
 /* TODO: use swell comulative? */
@@ -3452,7 +3452,7 @@ static int bhi_calc_sd_index(int algo, const struct bhi_data *bhi_data)
 
 static int bhi_calc_health_index(int algo, const struct health_data *health_data)
 {
-	int perf_index, cap_index, sd_index, ratio;
+	int imp_index, cap_index, sd_index, ratio;
 	int w_ci = health_data->bhi_w_ci;
 	int w_pi = health_data->bhi_w_pi;
 	int w_sd = health_data->bhi_w_sd;
@@ -3464,8 +3464,8 @@ static int bhi_calc_health_index(int algo, const struct health_data *health_data
 	if (cap_index < 0)
 		w_ci = 0;
 
-	perf_index = bhi_calc_perf_index(algo, &health_data->bhi_data);
-	if (perf_index < 0)
+	imp_index = bhi_calc_imp_index(algo, &health_data->bhi_data);
+	if (imp_index < 0)
 		w_pi = 0;
 
 	sd_index = bhi_calc_sd_index(algo, &health_data->bhi_data);;
@@ -3473,13 +3473,13 @@ static int bhi_calc_health_index(int algo, const struct health_data *health_data
 		w_sd = 0;
 
 	pr_debug("%s: ci=%d/%d  pi=%d/%d si=%d/%d\n", __func__,
-		 cap_index, w_ci, perf_index, w_pi, sd_index, w_sd);
+		 cap_index, w_ci, imp_index, w_pi, sd_index, w_sd);
 
 	ratio = w_ci + w_pi + w_sd;
 	if (!ratio)
 		return 100;
 
-	return (cap_index * w_ci + perf_index * w_pi + sd_index * w_sd) / ratio;
+	return (cap_index * w_ci + imp_index * w_pi + sd_index * w_sd) / ratio;
 }
 
 static enum bhi_status bhi_calc_health_status(int algo, int health_index,
@@ -3517,10 +3517,10 @@ static int bhi_update_stats(struct health_data *health_data, struct power_supply
 		index = 100;
 	health_data->bhi_cap_index = index;
 
-	index = bhi_calc_perf_index(bhi_algo, &health_data->bhi_data);
+	index = bhi_calc_imp_index(bhi_algo, &health_data->bhi_data);
 	if (index < 0)
 		index = 100;
-	health_data->bhi_perf_index = index;
+	health_data->bhi_imp_index = index;
 
 	index = bhi_calc_health_index(bhi_algo, health_data);
 	if (index < 0)
@@ -3531,7 +3531,7 @@ static int bhi_update_stats(struct health_data *health_data, struct power_supply
 		bhi_calc_health_status(bhi_algo, index, health_data);
 
 	pr_debug("%s: pi=%d ci=%d, bhi=%d s=%d\n", __func__,
-		 health_data->bhi_cap_index, health_data->bhi_perf_index,
+		 health_data->bhi_cap_index, health_data->bhi_imp_index,
 		 health_data->bhi_index, health_data->bhi_status);
 
 	return 0;
@@ -6103,17 +6103,17 @@ static ssize_t health_status_show(struct device *dev,
 
 static const DEVICE_ATTR_RO(health_status);
 
-static ssize_t health_perf_index_show(struct device *dev,
+static ssize_t health_impedance_index_show(struct device *dev,
 				      struct device_attribute *attr, char *buf)
 {
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
 
 	bhi_update_stats(&batt_drv->health_data, batt_drv->fg_psy);
-	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health_data.bhi_perf_index);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health_data.bhi_imp_index);
 }
 
-static const DEVICE_ATTR_RO(health_perf_index);
+static const DEVICE_ATTR_RO(health_impedance_index);
 
 static ssize_t health_capacity_index_show(struct device *dev,
 				      struct device_attribute *attr, char *buf)
@@ -6147,8 +6147,8 @@ static ssize_t health_index_stats_show(struct device *dev,
 				 bhi_calc_health_status(i, health_index, health_data),
 				 health_index,
 				 bhi_calc_cap_index(i, bhi_data),
-				 bhi_calc_perf_index(i, bhi_data),
-				 bhi_data->swell_cumulative,
+				 bhi_calc_imp_index(i, bhi_data),
+				 bhi_calc_sd_index(i, bhi_data),
 				 (100 - bhi_data->capacity_fade) * bhi_data->capacity_design,
 				 bhi_health_get_impedance(i, bhi_data),
 				 bhi_data->battery_age,
@@ -6586,7 +6586,7 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_health_index_stats);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create health index stats\n");
-	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_health_perf_index);
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_health_impedance_index);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create health perf index\n");
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_health_algo);
