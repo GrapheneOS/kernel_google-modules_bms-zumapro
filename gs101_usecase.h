@@ -20,6 +20,7 @@ struct max77759_usecase_data {
 
 	int ls2_en;		/* OVP LS2, rtx case */
 	int sw_en;		/* OVP SW Enable, rtx+otg case */
+	int dc_sw_gpio;		/* WLC-DC switch enable */
 
 	int vin_is_valid;	/* MAX20339 STATUS1.vinvalid */
 	int lsw1_is_open;	/* MAX20339 STATUS2.lsw1open */
