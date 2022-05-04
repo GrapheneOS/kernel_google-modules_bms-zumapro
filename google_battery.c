@@ -194,7 +194,6 @@ struct gbatt_ccbin_data {
 #define DEFAULT_RAVG_SOC_HIGH	75
 #define DEFAULT_RES_FILT_LEN	10
 
-/* TODO: move google_resistance to bhi_data  */
 struct batt_res {
 	bool estimate_requested;
 
@@ -295,7 +294,11 @@ struct bhi_data
 	int fcn_count;
 
 	int swell_cumulative;
+
+	/* google_resistance */
+	struct batt_res res_state;
 };
+
 struct health_data
 {
 	struct bhi_data bhi_data;
@@ -447,9 +450,6 @@ struct batt_drv {
 	/* battery virtual sensor */
 	struct thermal_zone_device *batt_vs_tz;
 	int batt_vs_w;
-
-	/* Resistance */
-	struct batt_res res_state;
 
 	/* used to detect battery replacements and reset statistics */
 	enum batt_paired_state pairing_state;
@@ -2161,7 +2161,12 @@ static int batt_chg_stats_cstr(char *buff, int size,
 
 /* ------------------------------------------------------------------------- */
 
-static void batt_res_dump_logs(struct batt_res *rstate)
+static int batt_ravg_value(const struct batt_res *rstate)
+{
+	return rstate->resistance_avg * 100;
+}
+
+static void batt_res_dump_logs(const struct batt_res *rstate)
 {
 	pr_info("RAVG: req:%d, sample:%d[%d], filt_cnt:%d, res_avg:%d\n",
 		rstate->estimate_requested, rstate->sample_accumulator,
@@ -2262,9 +2267,9 @@ error_done:
  */
 static void batt_res_work(struct batt_drv *batt_drv)
 {
+	struct batt_res *rstate = &batt_drv->health_data.bhi_data.res_state;
 	const int soc = ssoc_get_real(&batt_drv->ssoc_state);
 	struct power_supply *fg_psy = batt_drv->fg_psy;
-	struct batt_res *rstate = &batt_drv->res_state;
 	int ret, temp, resistance;
 
 	if (soc >= rstate->ravg_soc_high) {
@@ -3300,31 +3305,31 @@ static int hist_get_index(int cycle_count, const struct batt_drv *batt_drv)
 }
 
 /* will return -EAGAIN or -ENODATA until the value is valid */
-static int bhi_cap_data_update(int cap_algo, struct batt_drv *batt_drv)
+static int bhi_cap_data_update(struct bhi_data *bhi_data, struct batt_drv *batt_drv)
 {
-	struct bhi_data *bhi_data = &batt_drv->health_data.bhi_data;
-	int cap_fade = 0;
+	struct power_supply *fg_psy = batt_drv->fg_psy;
+	int cap_fade;
 
-	switch (cap_algo) {
-	default:
-		cap_fade = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_CAPACITY_FADE_RATE);
-		if (cap_fade < 0)
-			cap_fade = 0;
+	cap_fade = GPSY_GET_PROP(fg_psy, GBMS_PROP_CAPACITY_FADE_RATE);
+	if (cap_fade < 0)
+		return -ENODATA;
+	if (cap_fade > 100)
+		cap_fade = 100;
 
-		bhi_data->cycle_count = batt_drv->cycle_count;
-		bhi_data->capacity_fade = cap_fade;
-		break;
-	}
+	bhi_data->capacity_fade = cap_fade;
+	bhi_data->cycle_count = batt_drv->cycle_count;
 
-	pr_debug("%s: cap_fade=%d, cycle_count=%d\n", __func__,
+	pr_info("%s: cap_fade=%d, cycle_count=%d\n", __func__,
 		bhi_data->capacity_fade, bhi_data->cycle_count);
+
 	return 0;
 }
 
 /* will return -ENODATA until the value is valid. Call during charging */
 static int bhi_impedance_data_update(struct bhi_data *bhi_data, struct power_supply *fg_psy)
 {
-	int cur_impedance = -1, act_impedance = -1, age = -1;
+	int act_impedance = bhi_data->act_impedance;
+	int cur_impedance = -1;
 	int ret = -ENODATA;
 
 	if (!bhi_data->act_impedance) {
@@ -3338,17 +3343,13 @@ static int bhi_impedance_data_update(struct bhi_data *bhi_data, struct power_sup
 	if (cur_impedance < 0)
 		goto exit_done;
 
-	age = GPSY_GET_PROP(fg_psy, GBMS_PROP_BATTERY_AGE);
-	if (age < 0)
-		goto exit_done;
-	bhi_data->battery_age = age;
-
+	/* max in this session */
 	if (cur_impedance > bhi_data->cur_impedance)
 		bhi_data->cur_impedance = cur_impedance;
 
 exit_done:
-	pr_debug("%s: cur_impedance=%d, act_impedance=%d, age=%d\n", __func__,
-		cur_impedance, act_impedance, age);
+	pr_debug("%s: cur_impedance=%d, act_impedance=%d\n", __func__,
+		cur_impedance, act_impedance);
 	return ret;
 }
 
@@ -3386,18 +3387,39 @@ static int bhi_calc_cap_index(int algo, const struct bhi_data *bhi_data)
 	return index;
 }
 
+static int bhi_health_get_impedance(int algo, const struct bhi_data *bhi_data)
+{
+	u32 cur_impedance;
+
+	switch (algo) {
+	case BHI_ALGO_ACHI_QRES:
+		cur_impedance = bhi_data->cur_impedance;
+		break;
+	case BHI_ALGO_ACHI_RAVG:
+	case BHI_ALGO_GCAP_RAVG:
+		cur_impedance = batt_ravg_value(&bhi_data->res_state);
+		break;
+	case BHI_ALGO_MIX_N_MATCH:
+		cur_impedance = bhi_data->cur_impedance;
+		if (cur_impedance <= 0)
+			cur_impedance = batt_ravg_value(&bhi_data->res_state);
+		break;
+	default:
+		return bhi_data->act_impedance;
+	}
+
+	return cur_impedance;
+}
+
 static int bhi_calc_perf_index(int algo, const struct bhi_data *bhi_data)
 {
 	u32 cur_impedance;
 	int perf_index;
 
-	if (algo == BHI_ALGO_DISABLED)
+	if (!bhi_data->act_impedance)
 		return 100;
 
-	if (!bhi_data->act_impedance || !bhi_data->cur_impedance)
-		return 100;
-
-	cur_impedance = bhi_data->cur_impedance;
+	cur_impedance = bhi_health_get_impedance(algo, bhi_data);
 	if (cur_impedance < bhi_data->act_impedance)
 		cur_impedance = bhi_data->act_impedance;
 
@@ -3406,6 +3428,7 @@ static int bhi_calc_perf_index(int algo, const struct bhi_data *bhi_data)
 	 *
 	 * TODO: bounds check cur_impedance google_resistance?
 	 * batt_drv->res_state->resistance_avg
+	 *
 	 */
 
 	/* The limit is 2x of activation. */
@@ -3479,10 +3502,15 @@ static enum bhi_status bhi_calc_health_status(int algo, int health_index,
 	return health_status;
 }
 
-static void bhi_update_stats(struct health_data *health_data)
+static int bhi_update_stats(struct health_data *health_data, struct power_supply *fg_psy)
 {
 	const int bhi_algo = health_data->bhi_algo;
-	int index;
+	int age, index;
+
+	age = GPSY_GET_PROP(fg_psy, GBMS_PROP_BATTERY_AGE);
+	if (age < 0)
+		return -EIO;
+	health_data->bhi_data.battery_age = age;
 
 	index = bhi_calc_cap_index(bhi_algo, &health_data->bhi_data);
 	if (index < 0)
@@ -3505,7 +3533,10 @@ static void bhi_update_stats(struct health_data *health_data)
 	pr_debug("%s: pi=%d ci=%d, bhi=%d s=%d\n", __func__,
 		 health_data->bhi_cap_index, health_data->bhi_perf_index,
 		 health_data->bhi_index, health_data->bhi_status);
+
+	return 0;
 }
+
 
 /* ------------------------------------------------------------------------ */
 
@@ -3992,12 +4023,12 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 		 * appropriate
 		 */
 		batt_res_work(batt_drv);
-		batt_res_state_set(&batt_drv->res_state, false);
+		batt_res_state_set(&batt_drv->health_data.bhi_data.res_state, false);
 
 		/* bhi_capacity_index is updated on disconnect */
-		rc = bhi_cap_data_update(BHI_ALGO_MAX1720X, batt_drv);
+		rc = bhi_cap_data_update(&batt_drv->health_data.bhi_data, batt_drv);
 		if (rc == 0)
-			bhi_update_stats(&batt_drv->health_data);
+			bhi_update_stats(&batt_drv->health_data, batt_drv->fg_psy);
 
 		goto msc_logic_done;
 	}
@@ -4007,6 +4038,7 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 	 * The following block one only on start.
 	 */
 	if (batt_drv->ssoc_state.buck_enabled <= 0) {
+		struct bhi_data *bhi_data = &batt_drv->health_data.bhi_data;
 		struct device_node *node = batt_drv->device->of_node;
 		const qnum_t ssoc_delta = ssoc_get_delta(batt_drv);
 		u32 capacity;
@@ -4022,8 +4054,8 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 				  SSOC_UIC_TYPE_CHG);
 
 		/* google_resistance is calculated while charging */
-		if (batt_drv->res_state.estimate_filter)
-			batt_res_state_set(&batt_drv->res_state, true);
+		if (bhi_data->res_state.estimate_filter)
+			batt_res_state_set(&bhi_data->res_state, true);
 
 		capacity = aacr_get_capacity(batt_drv);
 		if (capacity != batt_drv->chg_profile.capacity_ma) {
@@ -4458,7 +4490,7 @@ static ssize_t resistance_avg_show(struct device *dev,
 
 	/* resistance_avg is scaled */
 	return scnprintf(buff, PAGE_SIZE, "%d\n",
-			 batt_drv->res_state.resistance_avg  * 100);
+			 batt_ravg_value(&batt_drv->health_data.bhi_data.res_state));
 }
 
 static const DEVICE_ATTR_RO(resistance_avg);
@@ -4838,14 +4870,15 @@ DEFINE_SIMPLE_ATTRIBUTE(debug_bpst_sbd_status_fops,
 static int debug_ravg_fops_write(void *data, u64 val)
 {
 	struct batt_drv *batt_drv = (struct batt_drv *)data;
+	struct batt_res *res_state = &batt_drv->health_data.bhi_data.res_state;
 	int resistance_avg = val / 100, filter_count = 1;
 	int ret;
 
 	mutex_lock(&batt_drv->chg_lock);
 
-	batt_res_state_set(&batt_drv->res_state, false);
-	batt_drv->res_state.resistance_avg = resistance_avg;
-	batt_drv->res_state.filter_count = filter_count;
+	batt_res_state_set(res_state, false);
+	res_state->resistance_avg = resistance_avg;
+	res_state->filter_count = filter_count;
 
 	/* reset storage to defaults */
 	if (val == 0) {
@@ -6052,7 +6085,7 @@ static ssize_t health_index_show(struct device *dev,
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
 
-	bhi_update_stats(&batt_drv->health_data);
+	bhi_update_stats(&batt_drv->health_data, batt_drv->fg_psy);
 	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health_data.bhi_index);
 }
 
@@ -6064,7 +6097,7 @@ static ssize_t health_status_show(struct device *dev,
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
 
-	bhi_update_stats(&batt_drv->health_data);
+	bhi_update_stats(&batt_drv->health_data, batt_drv->fg_psy);
 	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health_data.bhi_status);
 }
 
@@ -6076,7 +6109,7 @@ static ssize_t health_perf_index_show(struct device *dev,
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
 
-	bhi_update_stats(&batt_drv->health_data);
+	bhi_update_stats(&batt_drv->health_data, batt_drv->fg_psy);
 	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health_data.bhi_perf_index);
 }
 
@@ -6088,7 +6121,7 @@ static ssize_t health_capacity_index_show(struct device *dev,
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
 
-	bhi_update_stats(&batt_drv->health_data);
+	bhi_update_stats(&batt_drv->health_data, batt_drv->fg_psy);
 	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health_data.bhi_cap_index);
 }
 
@@ -6104,7 +6137,7 @@ static ssize_t health_index_stats_show(struct device *dev,
 	struct health_data  *health_data = &batt_drv->health_data;
 	int len = 0, i;
 
-	bhi_update_stats(&batt_drv->health_data);
+	bhi_update_stats(&batt_drv->health_data, batt_drv->fg_psy);
 
 	for (i = 0; i < BHI_ALGO_MAX; i++) {
 		const int health_index = bhi_calc_health_index(i, health_data);
@@ -6117,7 +6150,7 @@ static ssize_t health_index_stats_show(struct device *dev,
 				 bhi_calc_perf_index(i, bhi_data),
 				 bhi_data->swell_cumulative,
 				 (100 - bhi_data->capacity_fade) * bhi_data->capacity_design,
-				 bhi_data->cur_impedance,
+				 bhi_health_get_impedance(i, bhi_data),
 				 bhi_data->battery_age,
 				 bhi_data->cycle_count);
 	}
@@ -6630,10 +6663,14 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	debugfs_create_u32("fcn_count", 0644, de, &batt_drv->health_data.bhi_data.fcn_count);
 
 	/* google_resistance, tuning */
-	debugfs_create_u32("ravg_temp_low", 0644, de, &batt_drv->res_state.res_temp_low);
-	debugfs_create_u32("ravg_temp_high", 0644, de, &batt_drv->res_state.res_temp_high);
-	debugfs_create_u32("ravg_soc_low", 0644, de, &batt_drv->res_state.ravg_soc_low);
-	debugfs_create_u32("ravg_soc_high", 0644, de, &batt_drv->res_state.ravg_soc_high);
+	debugfs_create_u32("ravg_temp_low", 0644, de,
+			   &batt_drv->health_data.bhi_data.res_state.res_temp_low);
+	debugfs_create_u32("ravg_temp_high", 0644, de,
+			   &batt_drv->health_data.bhi_data.res_state.res_temp_high);
+	debugfs_create_u32("ravg_soc_low", 0644, de,
+			   &batt_drv->health_data.bhi_data.res_state.ravg_soc_low);
+	debugfs_create_u32("ravg_soc_high", 0644, de,
+			   &batt_drv->health_data.bhi_data.res_state.ravg_soc_high);
 	debugfs_create_file("ravg", 0400, de,  batt_drv, &debug_ravg_fops);
 
 	return 0;
@@ -7107,9 +7144,6 @@ static void google_battery_work(struct work_struct *work)
 		if (ret < 0 && ret != -ENODATA)
 			pr_warn("cannot update perf index ret=%d\n", ret);
 
-		/* TODO: update bhi_index */
-		/* TODO: update bhi_status */
-
 		/* debounce fg_status changes at 100% */
 		if (fg_status != batt_drv->fg_status) {
 
@@ -7173,7 +7207,7 @@ static void google_battery_work(struct work_struct *work)
 		__pm_relax(batt_drv->poll_ws);
 
 	/* set a connect */
-	if (batt_drv->res_state.estimate_requested)
+	if (batt_drv->health_data.bhi_data.res_state.estimate_requested)
 		batt_res_work(batt_drv);
 
 	/* check only once and when/if the pairing state is reset */
@@ -7888,18 +7922,18 @@ static int batt_bhi_init(struct batt_drv *batt_drv)
 	if (ret < 0)
 		health_data->bhi_data.fcn_count = BHI_CAP_FCN_COUNT;
 
-	/* design (in device tree) or from the device */
+	/* design is the value used to build the charge table */
 	health_data->bhi_data.capacity_design = batt_drv->battery_capacity;
 
 	ret = bhi_impedance_data_update(&health_data->bhi_data, batt_drv->fg_psy);
 	if (ret < 0)
 		pr_err("bhi perf data not available (%d)\n", ret);
 
-	ret = bhi_cap_data_update(BHI_ALGO_MAX1720X, batt_drv);
+	ret = bhi_cap_data_update(&batt_drv->health_data.bhi_data, batt_drv);
 	if (ret < 0)
 		pr_err("bhi cap data not available (%d)\n", ret);
 
-	bhi_update_stats(health_data);
+	bhi_update_stats(health_data, batt_drv->fg_psy);
 	return 0;
 }
 
@@ -8139,10 +8173,11 @@ static void google_battery_init_work(struct work_struct *work)
 	}
 
 	/* google_resistance  */
-	ret = batt_res_load_data(&batt_drv->res_state, batt_drv->fg_psy);
+	ret = batt_res_load_data(&batt_drv->health_data.bhi_data.res_state,
+				 batt_drv->fg_psy);
 	if (ret < 0)
 		dev_warn(batt_drv->device, "RAVG not available (%d)\n", ret);
-	batt_res_dump_logs(&batt_drv->res_state);
+	batt_res_dump_logs(&batt_drv->health_data.bhi_data.res_state);
 
 	/* health based charging, triggers */
 	batt_drv->chg_health.always_on_soc = -1;
@@ -8250,6 +8285,41 @@ static struct thermal_zone_of_device_ops google_battery_tz_ops = {
 	.get_temp = google_battery_tz_get_cycle_count,
 };
 
+static int batt_ravg_init(struct batt_res *res_state, struct device_node *node)
+{
+	int ret;
+
+	if (of_property_read_bool(node, "google,no-ravg"))
+		return -ENOENT;
+
+	/* Resistance Estimation configuration */
+	ret = of_property_read_u32(node, "google,res-temp-hi",
+				   &res_state->res_temp_high);
+	if (ret < 0)
+		res_state->res_temp_high = DEFAULT_RES_TEMP_HIGH;
+
+	ret = of_property_read_u32(node, "google,res-temp-lo",
+				   &res_state->res_temp_low);
+	if (ret < 0)
+		res_state->res_temp_low = DEFAULT_RES_TEMP_LOW;
+
+	ret = of_property_read_u32(node, "google,res-soc-thresh",
+				   &res_state->ravg_soc_high);
+	if (ret < 0)
+		res_state->ravg_soc_high = DEFAULT_RAVG_SOC_HIGH;
+	ret = of_property_read_u32(node, "google,ravg-soc-low",
+				   &res_state->ravg_soc_low);
+	if (ret < 0)
+		res_state->ravg_soc_low = DEFAULT_RAVG_SOC_LOW;
+
+	ret = of_property_read_u32(node, "google,res-filt-length",
+				   &res_state->estimate_filter);
+	if (ret < 0)
+		res_state->estimate_filter = DEFAULT_RES_FILT_LEN;
+
+	return 0;
+}
+
 static int google_battery_probe(struct platform_device *pdev)
 {
 	const char *fg_psy_name, *psy_name = NULL;
@@ -8315,30 +8385,11 @@ static int google_battery_probe(struct platform_device *pdev)
 		batt_drv->ssoc_log = NULL;
 	}
 
-	/* Resistance Estimation configuration */
-	ret = of_property_read_u32(pdev->dev.of_node, "google,res-temp-hi",
-				   &batt_drv->res_state.res_temp_high);
+	/* RAVG: google_resistance */
+	ret = batt_ravg_init(&batt_drv->health_data.bhi_data.res_state,
+			     pdev->dev.of_node);
 	if (ret < 0)
-		batt_drv->res_state.res_temp_high = DEFAULT_RES_TEMP_HIGH;
-
-	ret = of_property_read_u32(pdev->dev.of_node, "google,res-temp-lo",
-				   &batt_drv->res_state.res_temp_low);
-	if (ret < 0)
-		batt_drv->res_state.res_temp_low = DEFAULT_RES_TEMP_LOW;
-
-	ret = of_property_read_u32(pdev->dev.of_node, "google,res-soc-thresh",
-				   &batt_drv->res_state.ravg_soc_high);
-	if (ret < 0)
-		batt_drv->res_state.ravg_soc_high = DEFAULT_RAVG_SOC_HIGH;
-	ret = of_property_read_u32(pdev->dev.of_node, "google,ravg-soc-low",
-				   &batt_drv->res_state.ravg_soc_low);
-	if (ret < 0)
-		batt_drv->res_state.ravg_soc_low = DEFAULT_RAVG_SOC_LOW;
-
-	ret = of_property_read_u32(pdev->dev.of_node, "google,res-filt-length",
-				   &batt_drv->res_state.estimate_filter);
-	if (ret < 0)
-		batt_drv->res_state.estimate_filter = DEFAULT_RES_FILT_LEN;
+		dev_info(batt_drv->device, "RAVG: not available\n");
 
 	batt_drv->tz_dev = thermal_zone_of_sensor_register(batt_drv->device,
 				0, batt_drv, &google_battery_tz_ops);
