@@ -1816,6 +1816,7 @@ static bool batt_chg_stats_close(struct batt_drv *batt_drv,
 	 * NOTE: vbatt_idx != -1 -> temp_idx != -1
 	 */
 	if (batt_drv->vbatt_idx != -1 && batt_drv->temp_idx != -1) {
+		struct batt_bpst *bpst_state = &batt_drv->bpst_state;
 		const ktime_t elap = now - batt_drv->ce_data.last_update;
 		const int tier_idx = batt_chg_vbat2tier(batt_drv->vbatt_idx);
 		const int ibatt = GPSY_GET_PROP(batt_drv->fg_psy,
@@ -1827,6 +1828,12 @@ static bool batt_chg_stats_close(struct batt_drv *batt_drv,
 				      batt_drv->temp_idx, tier_idx,
 				      ibatt / 1000, temp, elap);
 		batt_drv->ce_data.last_update = now;
+
+		/* update battey disconnect detection stats */
+		batt_drv->ce_data.charging_stats.sbd_status =
+			bpst_state->bpst_enable ? (uint16_t)bpst_state->bpst_sbd_status : 0;
+		batt_drv->ce_data.charging_stats.cfd_status =
+			bpst_state->bpst_enable ? (uint16_t)bpst_state->bpst_cell_fault : 0;
 	}
 
 	/* record the closing in data (and qual) */
@@ -1925,7 +1932,7 @@ static void bat_log_chg_stats(struct logbuffer *log,
 			ce_data->adapter_details.ad_voltage * 100,
 			ce_data->adapter_details.ad_amperage * 100);
 
-	logbuffer_log(log, "S: %hu,%hu, %hu,%hu %hu,%hu %ld,%ld, %u",
+	logbuffer_log(log, "S: %hu,%hu, %hu,%hu %hu,%hu %ld,%ld, %u, %d,%d",
 			ce_data->charging_stats.ssoc_in,
 			ce_data->charging_stats.voltage_in,
 			ce_data->charging_stats.ssoc_out,
@@ -1934,7 +1941,9 @@ static void bat_log_chg_stats(struct logbuffer *log,
 			ce_data->charging_stats.cc_out,
 			ce_data->first_update,
 			ce_data->last_update,
-			ce_data->chg_profile->capacity_ma);
+			ce_data->chg_profile->capacity_ma,
+			ce_data->charging_stats.sbd_status,
+			ce_data->charging_stats.cfd_status);
 
 	for (i = 0; i < GBMS_STATS_TIER_COUNT; i++) {
 		const int soc_next = batt_chg_stats_soc_next(ce_data, i);
@@ -2103,13 +2112,15 @@ static int batt_chg_stats_cstr(char *buff, int size,
 				ce_data->adapter_details.ad_voltage * 100,
 				ce_data->adapter_details.ad_amperage * 100);
 
-	len += scnprintf(&buff[len], size - len, "%s%hu,%hu, %hu,%hu %u",
+	len += scnprintf(&buff[len], size - len, "%s%hu,%hu, %hu,%hu %u, %d,%d",
 				(verbose) ?  "\nS: " : ", ",
 				ce_data->charging_stats.ssoc_in,
 				ce_data->charging_stats.voltage_in,
 				ce_data->charging_stats.ssoc_out,
 				ce_data->charging_stats.voltage_out,
-				ce_data->chg_profile->capacity_ma);
+				ce_data->chg_profile->capacity_ma,
+				ce_data->charging_stats.sbd_status,
+				ce_data->charging_stats.cfd_status);
 
 
 	if (verbose) {
@@ -4127,7 +4138,6 @@ static bool batt_cell_fault_detect(struct batt_bpst *bpst_state)
 	 * TODO: will implement the code from the algo in b/203019566
 	 */
 	bpst_sbd_status = bpst_state->bpst_sbd_status;
-	bpst_state->bpst_sbd_status = 0;
 
 	return !!bpst_sbd_status && !bpst_state->bpst_detect_disable;
 }
@@ -4157,6 +4167,9 @@ static int batt_bpst_detect_begin(struct batt_bpst *bpst_state)
 		pr_debug("%s: MSC_BPST: single battery disconnect %d\n",
 			 __func__, bpst_state->bpst_cell_fault);
 	}
+
+	/* reset detection status */
+	bpst_state->bpst_sbd_status = 0;
 
 	pr_debug("%s: MSC_BPST: %d in connected\n", __func__, data);
 	return 0;
@@ -4235,6 +4248,18 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 		if (batt_drv->ssoc_state.buck_enabled == 0)
 			goto msc_logic_exit;
 
+		/* update bpst */
+		mutex_lock(&batt_drv->bpst_state.lock);
+		if (batt_drv->bpst_state.bpst_enable) {
+			bool cell_fault_detect = batt_cell_fault_detect(&batt_drv->bpst_state);
+
+			if (cell_fault_detect) {
+				rc = batt_bpst_detect_update(batt_drv);
+				pr_info("MSC_BPST: cell_fault_detect in disconnected(%d)\n", rc);
+			}
+		}
+		mutex_unlock(&batt_drv->bpst_state.lock);
+
 		/* here on: disconnect */
 		batt_log_csi_info(batt_drv);
 		batt_chg_stats_pub(batt_drv, "disconnect", false, false);
@@ -4258,18 +4283,6 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 		/* TODO: move earlier and include the change to the curve */
 		ssoc_change_state(&batt_drv->ssoc_state, 0);
 		changed = true;
-
-		/* update bpst */
-		mutex_lock(&batt_drv->bpst_state.lock);
-		if (batt_drv->bpst_state.bpst_enable) {
-			bool cell_fault_detect = batt_cell_fault_detect(&batt_drv->bpst_state);
-
-			if (cell_fault_detect) {
-				rc = batt_bpst_detect_update(batt_drv);
-				pr_info("MSC_BPST: cell_fault_detect in disconnected(%d)\n", rc);
-			}
-		}
-		mutex_unlock(&batt_drv->bpst_state.lock);
 
 		/* google_resistance: update and stop accumulation. */
 		batt_res_work(batt_drv);
