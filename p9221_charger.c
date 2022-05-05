@@ -80,6 +80,7 @@ static const char *p9221_get_tx_id_str(struct p9221_charger_data *charger);
 static int p9221_set_bpp_vout(struct p9221_charger_data *charger);
 static int p9221_set_hpp_dc_icl(struct p9221_charger_data *charger, bool enable);
 static void p9221_ll_bpp_cep(struct p9221_charger_data *charger, int capacity);
+static int p9221_ll_check_id(struct p9221_charger_data *charger);
 
 static char *align_status_str[] = {
 	"...", "M2C", "OK", "-1"
@@ -1040,7 +1041,8 @@ static void p9221_power_mitigation_work(struct work_struct *work)
 			charger->chip_set_vout_max(charger, vout_5500mv);
 			dev_info(&charger->client->dev, "power_mitigate: write 0 to 0xF4\n");
 			p9221_reg_write_8(charger, 0xF4, 0);
-			p9221_ll_bpp_cep(charger, charger->last_capacity);
+			if (charger->ll_bpp_cep == 1)
+				p9221_ll_bpp_cep(charger, charger->last_capacity);
 		}
 		charger->fod_cnt = 0;
 		dev_info(&charger->client->dev,
@@ -2260,7 +2262,11 @@ static void p9221_dream_defend(struct p9221_charger_data *charger)
 
 	if (charger->last_capacity > threshold &&
 		!charger->trigger_power_mitigation) {
-
+		/*
+		 * Check Tx type here as tx_id may not be ready at start
+		 * and mfg code cannot be read after LL changing to BPP mode
+		 */
+		charger->ll_bpp_cep = p9221_ll_check_id(charger);
 		/* trigger_power_mitigation is the same as dream defend */
 		charger->trigger_power_mitigation = true;
 		ret = delayed_work_pending(&charger->power_mitigation_work);
@@ -2276,7 +2282,7 @@ static void p9221_ll_check_chg_term(struct p9221_charger_data *charger, int capa
 	if (capacity < 97) {
 		gvotable_cast_int_vote(charger->dc_icl_votable, LL_BPP_CEP_VOTER, 0, false);
 		dev_dbg(&charger->client->dev, "power_mitigate: remove LL_BPP_CEP_VOTER\n");
-	} else if (capacity == 100) {
+	} else if (capacity == 101) {
 		/* when gdf==100, it's chg_term and vote 200mA */
 		gvotable_cast_int_vote(charger->dc_icl_votable, LL_BPP_CEP_VOTER,
 				       P9221_LL_BPP_CHG_TERM_UA, true);
@@ -2351,7 +2357,7 @@ static int p9221_ll_check_id(struct p9221_charger_data *charger)
 
 static void p9221_set_capacity(struct p9221_charger_data *charger, int capacity)
 {
-	int ret;
+	int ret, capacity_raw = capacity;
 
 	mutex_lock(&charger->stats_lock);
 
@@ -2359,7 +2365,7 @@ static void p9221_set_capacity(struct p9221_charger_data *charger, int capacity)
 		(capacity != 100 || !p9221_is_epp(charger)))
 		goto unlock_done;
 
-	charger->last_capacity = capacity;
+	charger->last_capacity = (capacity <= 100) ? capacity : 100;
 
 	if (!p9221_is_online(charger))
 		goto unlock_done;
@@ -2376,10 +2382,8 @@ static void p9221_set_capacity(struct p9221_charger_data *charger, int capacity)
 		p9221_dream_defend(charger);
 
 	/* CEP LL workaround tp improve comms */
-	if (charger->ll_bpp_cep < 0)
-		charger->ll_bpp_cep = p9221_ll_check_id(charger);
 	if (charger->ll_bpp_cep == 1 && !p9221_is_epp(charger))
-		p9221_ll_bpp_cep(charger, charger->last_capacity);
+		p9221_ll_bpp_cep(charger, capacity_raw);
 
 unlock_done:
 	mutex_unlock(&charger->stats_lock);
@@ -2406,7 +2410,7 @@ static int p9221_set_property(struct power_supply *psy,
 		int capacity = val->intval;
 
 		/* TODO: ignore the direct calls when fuel-gauge is defined */
-		if (charger->fg_psy) {
+		if (charger->fg_psy && (capacity != 101)) {
 			union power_supply_propval prop;
 
 			rc = power_supply_get_property(charger->fg_psy,
@@ -2416,7 +2420,6 @@ static int p9221_set_property(struct power_supply *psy,
 					 val->intval, prop.intval);
 				capacity = prop.intval;
 			}
-
 		}
 
 		p9221_set_capacity(charger, capacity);
