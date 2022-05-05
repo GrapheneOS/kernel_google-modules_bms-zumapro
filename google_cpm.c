@@ -2416,7 +2416,9 @@ state2power_table_show(struct device *dev, struct device_attribute *attr, char *
 
 		count += sysfs_emit_at(buf, count, "%u ", budgetMw);
 	}
-	count += sysfs_emit_at(buf, count, "\n");
+
+	/* b/231599097 add the implicit 0 at the end of the table */
+	count += sysfs_emit_at(buf, count, "0\n");
 
 	return count;
 }
