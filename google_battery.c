@@ -6460,7 +6460,7 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create ssoc_details\n");
 
-	/* health based charging */
+	/* adaptive charging */
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_charge_deadline);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create chg_deadline\n");
@@ -6641,7 +6641,7 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	debugfs_create_u32("fake_aacr_cc", 0600, de,
 			    &batt_drv->fake_aacr_cc);
 
-	/* health charging */
+	/* health charging (adaptive charging) */
 	debugfs_create_file("chg_health_thr_soc", 0600, de, batt_drv,
 			    &debug_chg_health_thr_soc_fops);
 	debugfs_create_file("chg_health_rest_rate", 0600, de, batt_drv,
@@ -6660,7 +6660,10 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	debugfs_create_file("power_metrics", 0400, de, batt_drv, &debug_power_metrics_fops);
 
 	/* bhi fullcapnom count */
-	debugfs_create_u32("fcn_count", 0644, de, &batt_drv->health_data.bhi_data.fcn_count);
+	debugfs_create_u32("bhi_fcn_count", 0644, de, &batt_drv->health_data.bhi_data.fcn_count);
+	debugfs_create_u32("bhi_w_ci", 0644, de, &batt_drv->health_data.bhi_w_ci);
+	debugfs_create_u32("bhi_w_pi", 0644, de, &batt_drv->health_data.bhi_w_ci);
+	debugfs_create_u32("bhi_w_sd", 0644, de, &batt_drv->health_data.bhi_w_ci);
 
 	/* google_resistance, tuning */
 	debugfs_create_u32("ravg_temp_low", 0644, de,
