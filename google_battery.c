@@ -2345,8 +2345,8 @@ static void batt_update_csi_type(struct batt_drv *batt_drv)
 
 	/* normal or full if connected, nothing otherwise */
 	gvotable_cast_long_vote(batt_drv->csi_type_votable, "CSI_TYPE_CONNECTED",
-				CSI_TYPE_None,
-				!is_disconnected);
+				is_disconnected ? CSI_TYPE_None : CSI_TYPE_Normal,
+				true);
 
 	/* SW JEITA */
 	gvotable_cast_long_vote(batt_drv->csi_type_votable, "CSI_TYPE_JEITA",
@@ -2444,7 +2444,7 @@ static void batt_update_csi_status(struct batt_drv *batt_drv)
 				!is_disconnected && batt_drv->msc_state == MSC_DSG);
 
 	gvotable_cast_long_vote(batt_drv->csi_status_votable, "CSI_STATUS_100",
-				CSI_TYPE_None,
+				CSI_STATUS_Charging,
 				!is_disconnected && batt_drv->chg_done);
 
 	/* looks at absolute power, it could look also look at golden adapter */
