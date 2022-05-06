@@ -116,6 +116,26 @@ struct gbatt_capacity_estimation {
 
 #define CE_FILTER_COUNT_MAX	15
 
+#define BHI_CAP_FCN_COUNT	3
+
+#pragma pack(1)
+struct max17x0x_eeprom_history {
+	u16 tempco;
+	u16 rcomp0;
+	u8 timerh;
+	unsigned fullcapnom:10;
+	unsigned fullcaprep:10;
+	unsigned mixsoc:6;
+	unsigned vfsoc:6;
+	unsigned maxvolt:4;
+	unsigned minvolt:4;
+	unsigned maxtemp:4;
+	unsigned mintemp:4;
+	unsigned maxchgcurr:4;
+	unsigned maxdischgcurr:4;
+};
+#pragma pack()
+
 
 struct max1720x_history {
 	int page_size;
@@ -224,7 +244,9 @@ struct max1720x_chip {
 
 	struct power_supply_desc max1720x_psy_desc;
 
+	int bhi_fcn_count;
 	int bhi_acim;
+
 };
 
 #define MAX1720_EMPTY_VOLTAGE(profile, temp, cycle) \
@@ -2040,9 +2062,8 @@ static int max1720x_get_age(struct max1720x_chip *chip)
 
 static int max1720x_get_fade_rate(struct max1720x_chip *chip)
 {
-	const int fcn_count = 10;
 	struct max17x0x_eeprom_history hist = { 0 };
-	int idx, i, ret, fcn_sum = 0;
+	int ret, ratio, i, fcn_sum = 0;
 	u16 hist_idx;
 
 	ret = gbms_storage_read(GBMS_TAG_HCNT, &hist_idx, sizeof(hist_idx));
@@ -2051,21 +2072,31 @@ static int max1720x_get_fade_rate(struct max1720x_chip *chip)
 		return -EIO;
 	}
 
-	idx = hist_idx - fcn_count + 1;
-	if (hist_idx < 0 || idx < 0)
+	pr_info("%s: hist_idx=%d\n", __func__, hist_idx);
+
+	if (hist_idx < chip->bhi_fcn_count)
 		return -ENODATA;
 
-	for (i = 0; i < fcn_count; i++, idx++) {
-		const int cnt = gbms_storage_read_data(GBMS_TAG_HIST, &hist,
-						       sizeof(hist), idx);
-		if (cnt <= 0 || hist.fullcapnom == 0x3FF)
+	for (i = chip->bhi_fcn_count; i ; i--, hist_idx--) {
+		ret = gbms_storage_read_data(GBMS_TAG_HIST, &hist,
+					     sizeof(hist), hist_idx);
+
+		pr_info("%s: idx=%d hist.fc=%d (%x) ret=%d\n", __func__,
+			hist_idx, hist.fullcapnom, hist.fullcapnom, ret);
+
+		if (ret < 0 || hist.fullcapnom == 0x3FF)
 			return -EINVAL;
 
+		/* hist.fullcapnom = fullcapnom * 800 / designcap */
 		fcn_sum += hist.fullcapnom;
 	}
 
-	/* convert hist.fullcapnom from max17x0x_eeprom_history to percent */
-	return fcn_sum / (fcn_count * 8);
+	/* convert from max17x0x_eeprom_history to percent */
+	ratio = fcn_sum / (chip->bhi_fcn_count * 8);
+	if (ratio > 100)
+		ratio = 100;
+
+	return 100 - ratio;
 }
 
 
@@ -3856,6 +3887,9 @@ static int max17x0x_init_sysfs(struct max1720x_chip *chip)
 	/* reset fg eeprom data for debugging */
 	debugfs_create_file("cnhs_reset", 0400, de, chip, &debug_reset_cnhs_fops);
 	debugfs_create_file("gmsr_reset", 0400, de, chip, &debug_reset_gmsr_fops);
+
+	/* capacity fade */
+	debugfs_create_u32("bhi_fcn_count", 0644, de, &chip->bhi_fcn_count);
 
 	return 0;
 }
@@ -5670,6 +5704,11 @@ static int max1720x_probe(struct i2c_client *client,
 		dev_err(dev, "failed to obtain logbuffer, ret=%d\n", ret);
 		chip->monitor_log = NULL;
 	}
+
+	ret = of_property_read_u32(dev->of_node, "google,bhi-fcn-count",
+				   &chip->bhi_fcn_count);
+	if (ret < 0)
+		chip->bhi_fcn_count = BHI_CAP_FCN_COUNT;
 
 	/* use VFSOC until it can confirm that FG Model is running */
 	reg = max17x0x_find_by_tag(&chip->regmap, MAX17X0X_TAG_vfsoc);
