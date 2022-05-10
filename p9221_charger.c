@@ -1205,6 +1205,7 @@ static void p9221_align_work(struct work_struct *work)
 	    (charger->pdata->alignment_freq == NULL))
 		return;
 
+	/* reset the alignment value */
 	charger->alignment = -1;
 
 	/* b/159066422 Disable misaligned message in high power mode */
@@ -1214,16 +1215,8 @@ static void p9221_align_work(struct work_struct *work)
 		return;
 	}
 
-	/*
-	 *  NOTE: mfg may be zero due to race condition during boot. If the
-	 *  mfg check continues to fail then mfg is not correct and we do not
-	 *  reschedule align_work. Always reschedule if alignment_capable is 1.
-	 *  Check 10 times if alignment_capble is still 0.
-	 */
-	if ((charger->mfg_check_count < 10) ||
-	    (charger->alignment_capable == ALIGN_MFG_PASSED))
-		schedule_delayed_work(&charger->align_work,
-				      msecs_to_jiffies(P9221_ALIGN_DELAY_MS));
+	/* take the align_ws, must be released */
+	__pm_stay_awake(charger->align_ws);
 
 	if (charger->alignment_capable == ALIGN_MFG_CHECKING) {
 		charger->mfg_check_count += 1;
@@ -1232,60 +1225,82 @@ static void p9221_align_work(struct work_struct *work)
 		if (res < 0) {
 			dev_err(&charger->client->dev,
 				"cannot read MFG_CODE (%d)\n", res);
-			return;
+			goto align_again;
 		}
 
 		/* No mfg update. Will check again on next schedule */
 		if (charger->mfg == 0)
-			return;
+			goto align_again;
 
 		if ((charger->mfg != WLC_MFG_GOOGLE) ||
 		    !p9221_is_epp(charger)) {
 			logbuffer_log(charger->log,
 				      "align: not align capable mfg: 0x%x",
 				      charger->mfg);
-			cancel_delayed_work(&charger->align_work);
 			charger->alignment_capable = ALIGN_MFG_FAILED;
-			return;
+			goto align_end;
 		}
 		charger->alignment_capable = ALIGN_MFG_PASSED;
 	}
 
 	/* move to ALIGN_MFG_CHECKING or cache the value */
 	if (!p9221_check_feature(charger, WLCF_DREAM_ALIGN))
-		return;
+		goto align_again;
 
-	if (charger->pdata->alignment_scalar == 0)
-		goto no_scaling;
+	if (charger->pdata->alignment_scalar != 0) {
+		res = charger->chip_get_iout(charger, &current_now);
+		if (res != 0) {
+			logbuffer_log(charger->log, "align: failed to read IOUT");
+			current_now = 0;
+		}
 
-	res = charger->chip_get_iout(charger, &current_now);
-	if (res != 0) {
-		logbuffer_log(charger->log, "align: failed to read IOUT");
-		current_now = 0;
-	}
-
-	current_filter_sample =
+		current_filter_sample =
 			charger->current_filtered / WLC_CURRENT_FILTER_LENGTH;
 
-	if (charger->current_sample_cnt < WLC_CURRENT_FILTER_LENGTH)
-		charger->current_sample_cnt++;
-	else
-		charger->current_filtered -= current_filter_sample;
+		if (charger->current_sample_cnt < WLC_CURRENT_FILTER_LENGTH)
+			charger->current_sample_cnt++;
+		else
+			charger->current_filtered -= current_filter_sample;
 
-	charger->current_filtered += (current_now / WLC_CURRENT_FILTER_LENGTH);
-	if (charger->log_current_filtered)
-		dev_info(&charger->client->dev, "current = %umA, avg_current = %umA\n",
-			 current_now, charger->current_filtered);
+		charger->current_filtered += (current_now / WLC_CURRENT_FILTER_LENGTH);
+		if (charger->log_current_filtered)
+			dev_info(&charger->client->dev, "current = %umA, avg_current = %umA\n",
+				 current_now, charger->current_filtered);
 
-	current_scaling = charger->pdata->alignment_scalar *
-			  charger->current_filtered;
-
-no_scaling:
+		current_scaling = charger->pdata->alignment_scalar * charger->current_filtered;
+	}
 
 	if (charger->chip_id == P9221_CHIP_ID)
 		p9221_align_check(charger, current_scaling);
 	else
 		p9xxx_align_check(charger);
+
+align_again:
+	/*
+	 *  NOTE: mfg may be zero due to race condition during boot. If the
+	 *  mfg check continues to fail then mfg is not correct and we do not
+	 *  reschedule align_work. Always reschedule if alignment_capable is 1.
+	 *  Check 10 times if alignment_capble is still 0.
+	 */
+
+	if ((charger->mfg_check_count < 10) ||
+	    (charger->alignment_capable == ALIGN_MFG_PASSED)) {
+
+		/* release the align_ws before return*/
+		__pm_relax(charger->align_ws);
+
+		schedule_delayed_work(&charger->align_work,
+				      msecs_to_jiffies(P9221_ALIGN_DELAY_MS));
+
+		return;
+	}
+
+align_end:
+
+	/* release the align_ws */
+	__pm_relax(charger->align_ws);
+
+	dev_info(&charger->client->dev, "align_work ended\n");
 }
 
 static const char *p9221_get_tx_id_str(struct p9221_charger_data *charger)
@@ -6308,6 +6323,8 @@ static int p9221_charger_probe(struct i2c_client *client,
 
 	init_waitqueue_head(&charger->ccreset_wq);
 
+	charger->align_ws = wakeup_source_register(NULL, "p9221_align");
+
 	/* setup function pointers for platform */
 	/* first from *_charger.c -> *_chip.c */
 	charger->reg_read_n = p9221_reg_read_n;
@@ -6621,6 +6638,8 @@ static int p9221_charger_remove(struct i2c_client *client)
 		logbuffer_unregister(charger->log);
 	if (charger->rtx_log)
 		logbuffer_unregister(charger->rtx_log);
+
+	wakeup_source_unregister(charger->align_ws);
 	return 0;
 }
 

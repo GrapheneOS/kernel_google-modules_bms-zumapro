@@ -686,6 +686,7 @@ struct p9221_charger_data {
 	struct dentry			*debug_entry;
 	struct p9221_charger_feature	chg_features;
 	struct p9221_charger_cc_data_lock	cc_data_lock;
+	struct wakeup_source		*align_ws;
 	u16				chip_id;
 	int				online;
 	bool				enabled;
