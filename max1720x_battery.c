@@ -1391,6 +1391,9 @@ static void max1720x_handle_update_filtercfg(struct max1720x_chip *chip,
 	if (filtercfg->temp == -1)
 		return;
 
+	if (chip->por)
+		return;
+
 	mutex_lock(&filtercfg->lock);
 	if (temp <= filtercfg->temp)
 		filtercfg_val = filtercfg->adjust_val;
