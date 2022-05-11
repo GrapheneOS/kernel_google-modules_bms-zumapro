@@ -1999,14 +1999,15 @@ static int gcpm_psy_set_property(struct power_supply *psy,
 	 */
 	if (gcpm->dc_init_complete && ta_check) {
 		const bool was_dc = gcpm_is_dc(gcpm, gcpm->dc_index);
+		int rc;
 
 		/*
 		 * Synchronous! might kick off gcpm_pps_wlc_dc_work to negotiate
 		 * DC charging. -EAGAIN will cause this code to be called again.
 		 * NOTE: gcpm_chg_select_logic() might change gcpm->dc_index
 		 */
-		ret = gcpm_chg_select_logic(gcpm);
-		if (ret == -EAGAIN) {
+		rc = gcpm_chg_select_logic(gcpm);
+		if (rc == -EAGAIN) {
 			const int interval = 5; /* seconds */
 
 			/* let the setting go through but */
