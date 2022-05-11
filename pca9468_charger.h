@@ -40,6 +40,7 @@ struct pca9468_platform_data {
 	/* irdrop */
 	unsigned int	irdrop_limits[3];
 	int		irdrop_limit_cnt;
+	bool		pca_irdrop;
 
 	/* Spread Spectrum settings */
 	unsigned int	sc_clk_dither_rate;
@@ -176,7 +177,6 @@ static inline void p9468_chg_stats_inc_ovcf(struct p9468_chg_stats *chg_data,
  * @debug_adc_channel: ADC channel to read
  * @init_done: true when initialization is complete
  * @dc_start_time: start time (sec since boot) of the DC session
- * @irdrop_comp_ok: when true clear GBMS_CS_FLAG_NOCOMP in flags
  */
 struct pca9468_charger {
 	struct wakeup_source	*monitor_wake_lock;
