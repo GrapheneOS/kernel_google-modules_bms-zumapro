@@ -4081,6 +4081,7 @@ static int chg_create_votables(struct chg_drv *chg_drv)
 	}
 
 	gvotable_set_vote2str(chg_drv->msc_fv_votable, gvotable_v2s_int);
+	gvotable_disable_force_int_entry(chg_drv->msc_fv_votable);
 	gvotable_election_set_name(chg_drv->msc_fv_votable, VOTABLE_MSC_FV);
 
 	chg_drv->msc_fcc_votable =
@@ -4093,6 +4094,7 @@ static int chg_create_votables(struct chg_drv *chg_drv)
 	}
 
 	gvotable_set_vote2str(chg_drv->msc_fcc_votable, gvotable_v2s_int);
+	gvotable_disable_force_int_entry(chg_drv->msc_fcc_votable);
 	gvotable_election_set_name(chg_drv->msc_fcc_votable, VOTABLE_MSC_FCC);
 
 	chg_drv->msc_interval_votable =
