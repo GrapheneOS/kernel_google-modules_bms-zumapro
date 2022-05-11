@@ -422,6 +422,8 @@ error:
 	return ret;
 }
 
+static int p9221_send_ccreset(struct p9221_charger_data *charger);
+
 /* call with lock on mutex_lock(&charger->stats_lock) */
 static int p9221_send_csp(struct p9221_charger_data *charger, u8 stat)
 {
@@ -433,7 +435,7 @@ static int p9221_send_csp(struct p9221_charger_data *charger, u8 stat)
 	if (no_csp) {
 		charger->last_capacity = -1;
 		if (charger->com_busy >= COM_BUSY_MAX) {
-			if (charger->chip_send_ccreset(charger) == 0)
+			if (p9221_send_ccreset(charger) == 0)
 				charger->com_busy = 0;
 		} else {
 			charger->com_busy += 1;
@@ -506,6 +508,13 @@ static int set_renego_state(struct p9221_charger_data *charger, enum p9xxx_reneg
 	dev_warn(&charger->client->dev, "Not allowed due to renego_state=%d\n", charger->renego_state);
 	return -EAGAIN;
 }
+
+static int p9221_send_ccreset(struct p9221_charger_data *charger)
+{
+	set_renego_state(charger, P9XXX_AVAILABLE);
+	return charger->chip_send_ccreset(charger);
+}
+
 
 static void p9221_abort_transfers(struct p9221_charger_data *charger)
 {
@@ -3672,7 +3681,7 @@ static ssize_t p9221_store_ccreset(struct device *dev,
 	struct p9221_charger_data *charger = i2c_get_clientdata(client);
 	int ret;
 
-	ret = charger->chip_send_ccreset(charger);
+	ret = p9221_send_ccreset(charger);
 	if (ret)
 		return ret;
 	return count;
@@ -3747,7 +3756,8 @@ static ssize_t p9221_store_txlen(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	cancel_delayed_work_sync(&charger->tx_work);
+	if (!charger->online)
+		return -ENODEV;
 
 	charger->tx_len = len;
 
@@ -3761,6 +3771,7 @@ static ssize_t p9221_store_txlen(struct device *dev,
 		return ret;
 	}
 
+	cancel_delayed_work_sync(&charger->tx_work);
 	schedule_delayed_work(&charger->tx_work,
 			      msecs_to_jiffies(P9221_TX_TIMEOUT_MS));
 
@@ -5013,7 +5024,7 @@ static void p9382_txid_work(struct work_struct *work)
 
 	if (charger->ints.pppsent_bit && charger->com_busy) {
 		if (charger->com_busy >= COM_BUSY_MAX) {
-			if (charger->chip_send_ccreset(charger) == 0)
+			if (p9221_send_ccreset(charger) == 0)
 				charger->com_busy = 0;
 		} else {
 			charger->com_busy += 1;
@@ -5416,6 +5427,7 @@ static void p9221_irq_handler(struct p9221_charger_data *charger, u16 irq_src)
 		charger->cc_data_lock.cc_use = true;
 		charger->cc_data_lock.cc_rcv_at = 0;
 		if (charger->cc_reset_pending) {
+			charger->cc_data_lock.cc_use = false;
 			charger->cc_reset_pending = false;
 			wake_up_all(&charger->ccreset_wq);
 		}
