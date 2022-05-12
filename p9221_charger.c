@@ -552,6 +552,8 @@ static void p9221_vote_defaults(struct p9221_charger_data *charger)
 	p9221_set_auth_dc_icl(charger, false);
 	gvotable_cast_int_vote(charger->dc_icl_votable,
 			       P9221_RAMP_VOTER, 0, false);
+	gvotable_cast_int_vote(charger->dc_icl_votable,
+			       P9221_HPP_VOTER, 0, false);
 }
 
 static int p9221_set_switch_reg(struct p9221_charger_data *charger, bool enable)
