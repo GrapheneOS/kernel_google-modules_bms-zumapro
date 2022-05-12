@@ -2014,12 +2014,7 @@ int p9221_set_auth_dc_icl(struct p9221_charger_data *charger, bool enable)
 {
 	int ret = 0, icl_ua;
 
-	if (!enable)
-		icl_ua = 0;
-	if (charger->last_capacity > 80)
-		icl_ua = P9221_AUTH_DC_ICL_UA_100;
-	else
-		icl_ua = P9221_AUTH_DC_ICL_UA_500;
+	icl_ua = enable ? P9221_AUTH_DC_ICL_UA_500 : 0;
 
 	if (!charger->dc_icl_votable)
 		goto exit;
