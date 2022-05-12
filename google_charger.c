@@ -1822,6 +1822,26 @@ static void bd_dd_init(struct chg_drv *chg_drv)
 		bd_state->dd_state, bd_state->dd_settings);
 }
 
+static int bd_dd_state_update(const int dd_state, const bool dd_triggered, const bool change)
+{
+	int new_state = dd_state;
+
+	switch (new_state) {
+	case DOCK_DEFEND_ENABLED:
+		if (dd_triggered && change)
+			new_state = DOCK_DEFEND_ACTIVE;
+		break;
+	case DOCK_DEFEND_ACTIVE:
+		if (!dd_triggered)
+			new_state = DOCK_DEFEND_ENABLED;
+		break;
+	default:
+		break;
+	}
+
+	return new_state;
+}
+
 #define dd_is_enabled(bd_state) \
 	((bd_state)->dd_state != DOCK_DEFEND_DISABLED && \
 	(bd_state)->dd_settings == DOCK_DEFEND_USER_ENABLED)
@@ -1829,8 +1849,8 @@ static void bd_dd_run_defender(struct chg_drv *chg_drv, int soc, int *disable_ch
 {
 	struct bd_data *bd_state = &chg_drv->bd_state;
 	const bool was_triggered = bd_state->dd_triggered;
-	const int upperbd = chg_drv->bd_state.dd_charge_stop_level;
-	const int lowerbd = chg_drv->bd_state.dd_charge_start_level;
+	const int upperbd = bd_state->dd_charge_stop_level;
+	const int lowerbd = bd_state->dd_charge_start_level;
 
 	bd_state->dd_triggered = dd_is_enabled(bd_state) ?
 				 chg_is_custom_enabled(upperbd, lowerbd) : false;
@@ -1839,6 +1859,11 @@ static void bd_dd_run_defender(struct chg_drv *chg_drv, int soc, int *disable_ch
 		*disable_charging = bd_recharge_logic(bd_state, soc);
 	if (*disable_charging)
 		*disable_pwrsrc = soc > bd_state->dd_charge_stop_level;
+
+	/* update dd_state to user space */
+	bd_state->dd_state = bd_dd_state_update(bd_state->dd_state,
+						bd_state->dd_triggered,
+						(soc >= upperbd));
 
 	/* need icl_ramp_work when disable_pwrsrc 1 -> 0 */
 	if (!*disable_pwrsrc && chg_drv->disable_pwrsrc) {
@@ -2190,6 +2215,10 @@ static void chg_work(struct work_struct *work)
 			chg_update_charging_state(chg_drv, false, false);
 			chg_drv->bd_state.dd_triggered = 0;
 		}
+		if (chg_drv->bd_state.dd_settings == DOCK_DEFEND_USER_CLEARED)
+			chg_drv->bd_state.dd_settings = DOCK_DEFEND_USER_ENABLED;
+		if (chg_drv->bd_state.dd_state == DOCK_DEFEND_ACTIVE)
+			chg_drv->bd_state.dd_state = DOCK_DEFEND_ENABLED;
 
 		rc = chg_start_bd_work(chg_drv);
 		if (rc < 0)
@@ -3009,10 +3038,8 @@ static ssize_t show_dd_state(struct device *dev, struct device_attribute *attr,
 			     char *buf)
 {
 	struct chg_drv *chg_drv = dev_get_drvdata(dev);
-	const int dd_state = chg_drv->bd_state.dd_triggered ?
-			     DOCK_DEFEND_ACTIVE : chg_drv->bd_state.dd_state;
 
-	return scnprintf(buf, PAGE_SIZE, "%d\n", dd_state);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", chg_drv->bd_state.dd_state);
 }
 
 static ssize_t set_dd_state(struct device *dev, struct device_attribute *attr,
