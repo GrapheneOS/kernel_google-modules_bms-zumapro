@@ -669,12 +669,7 @@ static int feature_set_dc_icl(struct p9221_charger_data *charger, u32 ilim_ua)
 	 * TODO: use p9221_icl_ramp_start(charger) for ilim_ua.
 	 * Need to make sure that charger->pdata->icl_ramp_delay_ms is set.
 	 */
-	if (ilim_ua > 0) {
-		charger->icl_ramp_alt_ua = ilim_ua;
-	} else {
-		charger->icl_ramp_alt_ua = 0;
-	}
-
+	charger->icl_ramp_alt_ua = ilim_ua > 0 ? ilim_ua : 0;
 	p9221_set_auth_dc_icl(charger, false);
 	p9221_icl_ramp_reset(charger);
 
@@ -682,9 +677,9 @@ static int feature_set_dc_icl(struct p9221_charger_data *charger, u32 ilim_ua)
 		 charger->pdata->icl_ramp_delay_ms, charger->icl_ramp_alt_ua,
 		 charger->icl_ramp);
 
+	/* can I just shorcut the 0? */
 	alarm_start_relative(&charger->icl_ramp_alarm,
 			     ms_to_ktime(charger->pdata->icl_ramp_delay_ms));
-
 	return 0;
 }
 
@@ -715,17 +710,28 @@ static int feature_15w_enable(struct p9221_charger_data *charger, bool enable)
 						      true);
 		/* TODO: feature_set_dc_icl() needs mutex_unlock(&charger->auth_lock); */
 	} else if (!enable && (chg_fts->session_features & WLCF_CHARGE_15W)) {
-		int ocp_icl;
-
-		/* not support disable while online (maybe todo) */
-		if (charger->online)
-			return -EINVAL;
+		const u32 vout_mv = P9221_UV_TO_MV(P9221_EPP_THRESHOLD_UV);
+		const int ocp_icl = (charger->dc_icl_epp > 0) ?
+				    charger->dc_icl_epp : P9221_DC_ICL_EPP_UA;
+		int rc1, rc2, rc3;
 
 		/* WLCF_CHARGE_15W is not not set on !P9412_CHIP_ID */
-		ocp_icl = (charger->dc_icl_epp > 0) ?
-			   charger->dc_icl_epp : P9221_DC_ICL_EPP_UA;
-		ret = gvotable_cast_long_vote(charger->dc_icl_votable,
-					      P9221_OCP_VOTER, ocp_icl, true);
+
+		rc1 = gvotable_cast_long_vote(charger->dc_icl_votable,
+					      P9221_OCP_VOTER, ocp_icl,
+					      true);
+		if (rc1 < 0)
+			dev_err(&charger->client->dev, "15W: cannot reset ocp_icl (%d)", rc1);
+		/* reset ramp */
+		rc2 = feature_set_dc_icl(charger, -1);
+		if (rc2 < 0)
+			dev_err(&charger->client->dev, "15W: cannot reset ramp (%d)", rc2);
+		/* reset VOUT to proper */
+		rc3 = charger->chip_set_vout_max(charger, vout_mv);
+		if (rc3 < 0)
+			dev_err(&charger->client->dev, "15W: cannot reset vout (%d)", rc3);
+
+		ret = rc1 < 0 || rc2 < 0 || rc3 < 0 ? -EIO : 0;
 	}
 
 	return ret;
@@ -766,13 +772,15 @@ static int feature_update_session(struct p9221_charger_data *charger, u64 ft)
 		chg_fts->session_features |= WLCF_FAST_CHARGE;
 	} else if (chg_fts->session_features & WLCF_FAST_CHARGE) {
 
-		/* TODO: support disable while online */
-		if (charger->online) {
-			dev_warn(&charger->client->dev, "Cannot disable FAST_CHARGE while online\n");
-		} else {
-			chg_fts->session_features &= ~WLCF_FAST_CHARGE;
-			charger->icl_ramp_alt_ua = 0;
-		}
+		if (charger->online)
+			dev_warn(&charger->client->dev,
+				 "Cannot disable FAST_CHARGE while online\n");
+
+		/*
+		 * WLCF_FAST_CHARGE enables HPP when supported.
+		 * TODO: gracefully degrade to 15W otherwise.
+		 */
+		chg_fts->session_features &= ~WLCF_FAST_CHARGE;
 	}
 
 	/* this might fail in interesting ways */
@@ -792,6 +800,7 @@ static int feature_update_session(struct p9221_charger_data *charger, u64 ft)
 		chg_fts->session_features |= WLCF_CHARGE_15W;
 	} else {
 		chg_fts->session_features &= ~WLCF_CHARGE_15W;
+		charger->icl_ramp_alt_ua = 0; /* TODO cleanup the interface */
 	}
 
 	/* warn when a feature doesn't have a rule and align session_features */
