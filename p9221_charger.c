@@ -45,6 +45,7 @@
 #define WLC_ALIGN_DEFAULT_OFFSET_HIGH_CURRENT	    139000
 #define HPP_FOD_VOUT_THRESHOLD_UV	17500000
 
+#define WLC_HPP_SOC_LIMIT	80
 #define PROP_MODE_PWR_DEFAULT	30
 
 #define RTX_BEN_DISABLED	0
@@ -2133,6 +2134,9 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 
 		/* not there, must return not supp */
 		if (!charger->pdata->has_wlc_dc || !p9221_is_online(charger))
+			return -EOPNOTSUPP;
+
+		if (charger->last_capacity > WLC_HPP_SOC_LIMIT)
 			return -EOPNOTSUPP;
 
 		/* need to check calibration is done before re-negotiate */
