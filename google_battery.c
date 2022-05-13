@@ -341,6 +341,21 @@ struct power_metrics {
 	struct delayed_work work;
 };
 
+struct csi_stats {
+	int ssoc;
+
+	int csi_speed_min;
+	int csi_speed_max;
+
+	int csi_current_status;
+	int csi_current_type;
+
+	ktime_t csi_time_sum;
+	int speed_sum;
+
+	ktime_t last_update;
+};
+
 /* battery driver state */
 struct batt_drv {
 	struct device *device;
@@ -486,6 +501,7 @@ struct batt_drv {
 	struct swelling_data sd;
 
 	/* CSI: charging speed */
+	struct csi_stats csi_stats;
 	struct gvotable_election *csi_status_votable;
 	int csi_current_status;
 	struct gvotable_election *csi_type_votable;
@@ -2318,20 +2334,69 @@ static void batt_res_work(struct batt_drv *batt_drv)
 
 /* ------------------------------------------------------------------------- */
 
-static void batt_log_csi_info(const struct batt_drv *batt_drv)
+static void batt_log_csi_info(struct batt_drv *batt_drv)
 {
-	const int current_speed = batt_drv->csi_current_speed < 0 ? 0 :
-				  batt_drv->csi_current_speed;
+	struct csi_stats *csi_stats = &batt_drv->csi_stats;
+	const bool same_type_and_status =
+		csi_stats->csi_current_type == batt_drv->csi_current_type &&
+		csi_stats->csi_current_status == batt_drv->csi_current_status;
+	int current_speed = batt_drv->csi_current_speed < 0 ? 0 :
+			    batt_drv->csi_current_speed;
+	const ktime_t right_now = get_boot_sec();
+	int ssoc = -1;
 
 	if (chg_state_is_disconnected(&batt_drv->chg_state))
-		return;
+		goto log_and_done;
 
-	gbms_logbuffer_prlog(batt_drv->ttf_stats.ttf_log, LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG,
-			     "CSI ssoc=%d speed=%d type=%d status=%d",
-			     ssoc_get_capacity(&batt_drv->ssoc_state),
-			     current_speed,
-			     batt_drv->csi_current_type,
-			     batt_drv->csi_current_status);
+	ssoc = ssoc_get_capacity(&batt_drv->ssoc_state);
+	if (ssoc == csi_stats->ssoc && same_type_and_status) {
+		const ktime_t elap = right_now - csi_stats->last_update;
+
+		csi_stats->last_update = right_now;
+
+		/* accumulate only positive*/
+		if (batt_drv->csi_current_speed < 0)
+			return;
+
+		if (current_speed < csi_stats->csi_speed_min)
+			csi_stats->csi_speed_min = current_speed;
+		else if (current_speed > csi_stats->csi_speed_max)
+			csi_stats->csi_speed_max = current_speed;
+
+		csi_stats->speed_sum += current_speed * elap;
+		csi_stats->csi_time_sum += elap;
+		return;
+	}
+
+log_and_done:
+	csi_stats->csi_current_status = batt_drv->csi_current_status;
+	csi_stats->csi_current_type = batt_drv->csi_current_type;
+
+	if (csi_stats->ssoc != -1) {
+		const int csi_speed_avg = csi_stats->csi_time_sum == 0 ?
+					  csi_stats->speed_sum :
+					  (csi_stats->speed_sum / csi_stats->csi_time_sum);
+
+		gbms_logbuffer_prlog(batt_drv->ttf_stats.ttf_log, LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG,
+				     "CSI ssoc=%d min=%d max=%d avg=%d type=%d status=%d",
+				     csi_stats->ssoc,
+				     csi_stats->csi_speed_min, csi_stats->csi_speed_max,
+				     csi_speed_avg,
+				     csi_stats->csi_current_type,
+				     csi_stats->csi_current_status);
+	}
+
+	/* ssoc == -1 on disconnect */
+	if (ssoc == -1)
+		current_speed = 0;
+
+	csi_stats->ssoc = ssoc;
+	csi_stats->csi_speed_min = current_speed;
+	csi_stats->csi_speed_max = current_speed;
+
+	csi_stats->csi_time_sum = 0;
+	csi_stats->speed_sum = current_speed;
+	csi_stats->last_update = right_now;
 }
 
 static int csi_status_cb(struct gvotable_election *el, const char *reason,
@@ -2413,9 +2478,6 @@ static void batt_update_csi_type(struct batt_drv *batt_drv)
 
 static bool batt_csi_check_ad_qual(const struct batt_drv *chg_drv)
 {
-
-
-
 	return false; /* TODO */
 }
 
@@ -4174,6 +4236,7 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 			goto msc_logic_exit;
 
 		/* here on: disconnect */
+		batt_log_csi_info(batt_drv);
 		batt_chg_stats_pub(batt_drv, "disconnect", false, false);
 
 		/* change curve before changing the state. */
@@ -7362,6 +7425,7 @@ static void google_battery_work(struct work_struct *work)
 				bat_log_ttf_estimate("SSOC", ssoc, batt_drv);
 
 			dump_ssoc_state(ssoc_state, batt_drv->ssoc_log);
+			batt_log_csi_info(batt_drv);
 			notify_psy_changed = true;
 		}
 
