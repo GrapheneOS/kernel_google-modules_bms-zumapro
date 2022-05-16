@@ -1491,7 +1491,7 @@ static u16 max1720x_save_battery_cycle(const struct max1720x_chip *chip,
 	ret = gbms_storage_write(GBMS_TAG_CNHS, &reg_cycle,
 				sizeof(reg_cycle));
 	if (ret < 0)
-		pr_info("Fail to write %d eeprom cycle count (%d)", reg_cycle, ret);
+		dev_info(chip->dev, "Fail to write %d eeprom cycle count (%d)", reg_cycle, ret);
 	else
 		eeprom_cycle = reg_cycle;
 
@@ -2019,8 +2019,8 @@ static int max1720x_health_get_ai(struct max1720x_chip *chip)
 
 	/* TODO: corrrect impedance with timerh */
 
-	pr_info("%s: chip->bhi_acim =%d act_impedance=%x act_timerh=%x\n",
-		__func__, chip->bhi_acim, act_impedance, act_timerh);
+	dev_info(chip->dev, "%s: chip->bhi_acim =%d act_impedance=%x act_timerh=%x\n",
+		 __func__, chip->bhi_acim, act_impedance, act_timerh);
 
 	return chip->bhi_acim;
 }
@@ -2059,11 +2059,11 @@ static int max1720x_get_fade_rate(struct max1720x_chip *chip)
 
 	ret = gbms_storage_read(GBMS_TAG_HCNT, &hist_idx, sizeof(hist_idx));
 	if (ret < 0) {
-		pr_err("failed to get history index (%d)\n", ret);
+		dev_err(chip->dev, "failed to get history index (%d)\n", ret);
 		return -EIO;
 	}
 
-	pr_info("%s: hist_idx=%d\n", __func__, hist_idx);
+	dev_info(chip->dev, "%s: hist_idx=%d\n", __func__, hist_idx);
 
 	if (hist_idx < chip->bhi_fcn_count)
 		return -ENODATA;
@@ -2072,7 +2072,7 @@ static int max1720x_get_fade_rate(struct max1720x_chip *chip)
 		ret = gbms_storage_read_data(GBMS_TAG_HIST, &hist,
 					     sizeof(hist), hist_idx);
 
-		pr_info("%s: idx=%d hist.fc=%d (%x) ret=%d\n", __func__,
+		dev_info(chip->dev, "%s: idx=%d hist.fc=%d (%x) ret=%d\n", __func__,
 			hist_idx, hist.fullcapnom, hist.fullcapnom, ret);
 
 		if (ret < 0 || hist.fullcapnom == 0x3FF)
@@ -2548,8 +2548,8 @@ static int max1720x_monitor_log_data(struct max1720x_chip *chip)
 			     "%s %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
 			     " %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
 			     " %02X:%04X %02X:%04X %02X:%04X CC:%d",
-			     __func__, MAX1720X_REPSOC, data, MAX1720X_VFSOC, vfsoc,
-			     MAX1720X_AVCAP, avcap, MAX1720X_REPCAP, repcap,
+			     chip->max1720x_psy_desc.name, MAX1720X_REPSOC, data, MAX1720X_VFSOC,
+			     vfsoc, MAX1720X_AVCAP, avcap, MAX1720X_REPCAP, repcap,
 			     MAX1720X_FULLCAP, fullcap, MAX1720X_FULLCAPREP, fullcaprep,
 			     MAX1720X_FULLCAPNOM, fullcapnom, MAX1720X_QH0, qh0,
 			     MAX1720X_QH, qh, MAX1720X_DQACC, dqacc, MAX1720X_DPACC, dpacc,
@@ -3770,6 +3770,7 @@ BATTERY_DEBUG_ATTRIBUTE(debug_force_psy_update_fops, NULL,
 
 static int debug_cnhs_reset(void *data, u64 val)
 {
+	struct max1720x_chip *chip = data;
 	u16 reset_val;
 	int ret;
 
@@ -3777,7 +3778,7 @@ static int debug_cnhs_reset(void *data, u64 val)
 
 	ret = gbms_storage_write(GBMS_TAG_CNHS, &reset_val,
 				sizeof(reset_val));
-	pr_info("reset CNHS to %d, (ret=%d)\n", reset_val, ret);
+	dev_info(chip->dev, "reset CNHS to %d, (ret=%d)\n", reset_val, ret);
 
 	return ret;
 }
@@ -3790,7 +3791,7 @@ static int debug_gmsr_reset(void *data, u64 val)
 	int ret;
 
 	ret = max_m5_reset_state_data(chip->model_data);
-	pr_info("reset GMSR (ret=%d)\n", ret);
+	dev_info(chip->dev, "reset GMSR (ret=%d)\n", ret);
 
 	return ret;
 }
@@ -3825,7 +3826,7 @@ static ssize_t act_impedance_store(struct device *dev,
 	if (ret == 0)
 		chip->bhi_acim = 0;
 
-	pr_info("value=%d  (%d)\n", value, ret);
+	dev_info(chip->dev, "value=%d  (%d)\n", value, ret);
 
 	mutex_unlock(&chip->model_lock);
 	return count;
@@ -5639,7 +5640,7 @@ static int max1720x_probe(struct i2c_client *client,
 	else
 		chip->max1720x_psy_desc.name = "maxfg";
 
-	pr_info("max1720x_psy_desc.name=%s\n", chip->max1720x_psy_desc.name);
+	dev_info(dev, "max1720x_psy_desc.name=%s\n", chip->max1720x_psy_desc.name);
 
 	chip->max1720x_psy_desc.type = POWER_SUPPLY_TYPE_BATTERY;
 	chip->max1720x_psy_desc.get_property = max1720x_get_property;
