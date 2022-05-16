@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Copyright 2020 Google, LLC
+ * Copyright 2020-2022 Google LLC
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -974,8 +974,8 @@ static int max77759_wcin_is_online(struct max77759_chgr_data *data);
  * I am using a the comparator_none, need scan all the votes to determine
  * the actual.
  */
-static void max77759_mode_callback(struct gvotable_election *el,
-				   const char *trigger, void *value)
+static int max77759_mode_callback(struct gvotable_election *el,
+				  const char *trigger, void *value)
 {
 	struct max77759_chgr_data *data = gvotable_get_data(el);
 	const int from_use_case = data->uc_data.use_case;
@@ -1067,6 +1067,29 @@ static void max77759_mode_callback(struct gvotable_election *el,
 			dev_err(data->dev, "no valid use case %d\n", use_case);
 			goto unlock_done;
 		}
+
+		dev_dbg(data->dev, "fccm_reset=%d data->otg_changed=%d cb_data.otg_on=%d\n",
+			data->otg_fccm_reset, data->otg_changed, cb_data.otg_on);
+
+		/* re-set FCCM mode for OTG */
+		if (data->otg_fccm_reset && data->otg_changed != cb_data.otg_on) {
+			data->otg_changed = cb_data.otg_on;
+			/*
+			 * cb_data.otg_on is disabled in max77759_get_usecase
+			 * for GSU_MODE_USB_OTG_WLC_DC.
+			 */
+			if (cb_data.otg_on) {
+				schedule_delayed_work(&data->otg_fccm_worker,
+						      msecs_to_jiffies(0));
+			} else {
+				alarm_try_to_cancel(&data->otg_fccm_alarm);
+
+				/* Force to reset the FCCM mode to disable */
+				if (data->uc_data.ext_bst_mode > 0)
+					gpio_set_value_cansleep(data->uc_data.ext_bst_mode, 0);
+				__pm_relax(data->otg_fccm_wake_lock);
+			}
+		}
 	}
 
 	/* state machine that handle transition between states */
@@ -1113,6 +1136,7 @@ unlock_done:
 			 __func__, trigger ? trigger : "<>");
 	mutex_unlock(&data->io_lock);
 	__pm_relax(data->usecase_wake_lock);
+	return 0;
 }
 
 #define MODE_RERUN	"RERUN"
@@ -1481,8 +1505,8 @@ static int max77759_wcin_get_ilim_max_ua(struct max77759_chgr_data *data,
 }
 
 /* default is no suspend, any valid vote will suspend  */
-static void max77759_dc_suspend_vote_callback(struct gvotable_election *el,
-					      const char *reason, void *value)
+static int max77759_dc_suspend_vote_callback(struct gvotable_election *el,
+					     const char *reason, void *value)
 {
 	struct max77759_chgr_data *data = gvotable_get_data(el);
 	int ret, suspend = (long)value > 0;
@@ -1490,15 +1514,17 @@ static void max77759_dc_suspend_vote_callback(struct gvotable_election *el,
 	/* will trigger a CHARGER_MODE callback */
 	ret = max77759_wcin_input_suspend(data, suspend, "DC_SUSPEND");
 	if (ret < 0)
-		return;
+		return 0;
 
 	pr_debug("%s: DC_SUSPEND reason=%s, value=%ld suspend=%d (%d)\n",
 		 __func__, reason ? reason : "", (long)value, suspend, ret);
+
+	return 0;
 }
 
-static void max77759_dcicl_callback(struct gvotable_election *el,
-				    const char *reason,
-				    void *value)
+static int max77759_dcicl_callback(struct gvotable_election *el,
+				   const char *reason,
+				   void *value)
 {
 	struct max77759_chgr_data *data = gvotable_get_data(el);
 	int dc_icl = (long)value;
@@ -1519,6 +1545,7 @@ static void max77759_dcicl_callback(struct gvotable_election *el,
 		dev_err(data->dev, "cannot set suspend=%d (%d)\n",
 			suspend, ret);
 
+	return 0;
 }
 
 /*************************
@@ -2864,6 +2891,57 @@ static int max77759_init_bcl(struct max77759_chgr_data *data)
 }
 #endif
 
+static void max77759_otg_fccm_worker(struct work_struct *work)
+{
+	struct max77759_chgr_data *data = container_of(work,
+						struct max77759_chgr_data,
+						otg_fccm_worker.work);
+	int gpio_en, vbatt, ret;
+
+	if (data->uc_data.ext_bst_mode <= 0)
+		goto done_relax;
+
+	ret = max77759_read_vbatt(data, &vbatt);
+	if (ret < 0) {
+		schedule_delayed_work(&data->otg_fccm_worker, msecs_to_jiffies(50));
+		return;
+        }
+
+	vbatt = vbatt / 1000;
+	gpio_en = gpio_get_value_cansleep(data->uc_data.ext_bst_mode);
+
+	dev_dbg(data->dev, "fccm: vbatt=%d, gpio_en=%d\n", vbatt, gpio_en);
+
+	if (vbatt > data->otg_fccm_vbatt_upperbd && !gpio_en) {
+		dev_info(data->dev, "enable fccm mode.\n");
+		gpio_set_value_cansleep(data->uc_data.ext_bst_mode, 1);
+	} else if (vbatt < data->otg_fccm_vbatt_lowerbd && gpio_en) {
+		dev_info(data->dev, "disable fccm mode.\n");
+		gpio_set_value_cansleep(data->uc_data.ext_bst_mode, 0);
+	}
+
+	alarm_start_relative(&data->otg_fccm_alarm, ms_to_ktime(30000));
+done_relax:
+	__pm_relax(data->otg_fccm_wake_lock);
+}
+
+static enum alarmtimer_restart max77759_otg_fccm_alarm(struct alarm *alarm,
+						       ktime_t now)
+{
+	struct max77759_chgr_data *data =
+		container_of(alarm, struct max77759_chgr_data, otg_fccm_alarm);
+
+	__pm_stay_awake(data->otg_fccm_wake_lock);
+
+	if (data->uc_data.ext_bst_mode > 0)
+		schedule_delayed_work(&data->otg_fccm_worker,
+				      msecs_to_jiffies(0));
+
+	return ALARMTIMER_NORESTART;
+}
+
+#define MAX77759_FCCM_UPPERBD_VOL 4400
+#define MAX77759_FCCM_LOWERBD_VOL 3600
 static int max77759_charger_probe(struct i2c_client *client,
 				  const struct i2c_device_id *id)
 {
@@ -2998,6 +3076,31 @@ static int max77759_charger_probe(struct i2c_client *client,
 
 	mutex_unlock(&data->io_lock);
 
+	data->otg_fccm_wake_lock = wakeup_source_register(NULL, "max77759-otg_fccm");
+	if (!data->otg_fccm_wake_lock)
+		pr_err("Failed to register otg_fccm wakeup source\n");
+
+	ret = of_property_read_u32(dev->of_node,
+				   "max77759,otg-fccm-vbatt-upperbd",
+				   &data->otg_fccm_vbatt_upperbd);
+	if (ret == 0)
+		ret = of_property_read_u32(dev->of_node,
+					   "max77759,otg-fccm-vbatt-lowerbd",
+					   &data->otg_fccm_vbatt_lowerbd);
+	data->otg_changed = false;
+	data->otg_fccm_reset = ret == 0 &&
+		data->otg_fccm_vbatt_upperbd > data->otg_fccm_vbatt_lowerbd &&
+		data->otg_fccm_vbatt_upperbd < MAX77759_FCCM_UPPERBD_VOL &&
+		data->otg_fccm_vbatt_lowerbd > MAX77759_FCCM_LOWERBD_VOL;
+	if (data->otg_fccm_reset)
+		dev_info(dev, "fccm_reset enabled lo=%dmV hi=%dmV\n",
+			 data->otg_fccm_vbatt_lowerbd,
+			 data->otg_fccm_vbatt_upperbd);
+
+	alarm_init(&data->otg_fccm_alarm, ALARM_BOOTTIME,
+		   max77759_otg_fccm_alarm);
+	INIT_DELAYED_WORK(&data->otg_fccm_worker, max77759_otg_fccm_worker);
+
 	ret = of_property_read_u32(dev->of_node, "max77759,chg-term-voltage",
 				   &data->chg_term_voltage);
 	if (ret < 0)
@@ -3049,6 +3152,7 @@ static int max77759_charger_remove(struct i2c_client *client)
 	if (data->de)
 		debugfs_remove(data->de);
 	wakeup_source_unregister(data->usecase_wake_lock);
+	wakeup_source_unregister(data->otg_fccm_wake_lock);
 
 	return 0;
 }

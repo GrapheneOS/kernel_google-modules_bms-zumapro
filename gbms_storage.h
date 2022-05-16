@@ -43,11 +43,7 @@
 /* TODO: link to the structure used to save this*/
 #define BATT_ONE_HIST_LEN	12
 /* TODO: this depends on the EEPROM size */
-#define BATT_TOTAL_HIST_LEN	900
-/* TODO: this depends on the EEPROM size */
-#define BATT_MAX_HIST_CNT	\
-		(BATT_TOTAL_HIST_LEN / BATT_ONE_HIST_LEN) // 75
-
+#define BATT_MAX_HIST_CNT	75
 
 #define GBMS_CCBIN_BUCKET_COUNT	10
 
@@ -78,6 +74,7 @@ enum gbms_tags {
 	GBMS_TAG_DXAC = 0x44584143,
 	GBMS_TAG_GCFE = 0x47434645,
 	GBMS_TAG_GMSR = 0x474d5352,
+	GBMS_TAG_HCNT = 0x48434e54,
 	GBMS_TAG_HIST = 0x48495354,
 	GBMS_TAG_LOTR = 0x4C4F5452,
 	GBMS_TAG_MINF = 0x4d494e46,

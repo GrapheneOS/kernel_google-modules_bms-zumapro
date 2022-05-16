@@ -362,8 +362,11 @@ struct gbms_charging_event {
 	struct gbms_ce_tier_stats trickle_stats;
 };
 
-#define GBMS_CCCM_LIMITS(profile, ti, vi) \
+#define GBMS_CCCM_LIMITS_SET(profile, ti, vi) \
 	profile->cccm_limits[(ti * profile->volt_nb_limits) + vi]
+
+#define GBMS_CCCM_LIMITS(profile, ti, vi) \
+	(ti >= 0 && vi >= 0) ? profile->cccm_limits[(ti * profile->volt_nb_limits) + vi] : 0
 
 /* newgen charging */
 #define GBMS_CS_FLAG_BUCK_EN	BIT(0)
@@ -526,6 +529,27 @@ enum gbms_charger_modes {
 
 #define GBMS_MODE_VOTABLE "CHARGER_MODE"
 
+/* Battery Health */
+enum bhi_algo {
+	BHI_ALGO_DISABLED = 0,
+
+	BHI_ALGO_CYCLE_COUNT	= 1, /* bare, just use cycle count */
+	BHI_ALGO_ACHI		= 2, /* cap avg from history, no resistance */
+	BHI_ALGO_ACHI_B		= 3, /* same as ACHI + bounds check */
+	BHI_ALGO_ACHI_RAVG	= 4, /* same as ACHI and google_resistance */
+	BHI_ALGO_ACHI_RAVG_B	= 5, /* same as ACHI_RAVG + bounds check */
+
+	/* TODO:
+	 * BHI_ALGO_ACHI_QRES	 = 4,  cap avg from history, qual resistance
+	 * BHI_ALGO_ACHI_QRES_B	= 21,  same ACHI_QRES + bounds check
+	 * BHI_ALGO_GCAP_RAVG	= 40,  google_capacity, google_resistance
+	 * BHI_ALGO_GCAP_RAVG_B	= 41,  same as GCAP_RAVG + bounds check
+	 */
+
+	BHI_ALGO_MIX_N_MATCH 	= 6,
+	BHI_ALGO_MAX,
+};
+
 enum bhi_status {
 	BH_UNKNOWN = -1,
 	BH_NOMINAL,
@@ -534,6 +558,7 @@ enum bhi_status {
 	BH_FAILED,
 };
 
+/* Charging Speed */
 enum csi_type {
 	CSI_TYPE_UNKNOWN = -1,
 

@@ -121,7 +121,7 @@ void gbms_init_chg_table(struct gbms_chg_profile *profile,
 				ccm = DIV_ROUND_CLOSEST(ccm, fv_uv_step)
 					* fv_uv_step;
 
-			GBMS_CCCM_LIMITS(profile, ti, vi) = ccm;
+			GBMS_CCCM_LIMITS_SET(profile, ti, vi) = ccm;
 		}
 	}
 }
@@ -530,6 +530,8 @@ int gbms_read_charger_state(union gbms_charger_state *chg_state,
 				  &ret);
 	if (ret == 0) {
 		chg_state->v = val;
+	} else if (ret == -EAGAIN) {
+		return ret;
 	} else {
 		int ichg;
 

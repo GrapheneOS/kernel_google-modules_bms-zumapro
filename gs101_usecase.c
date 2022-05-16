@@ -556,6 +556,8 @@ int gs101_to_standby(struct max77759_usecase_data *uc_data, int use_case)
 
 	/* from WLC-DC to STBY */
 	if (from_uc == GSU_MODE_WLC_DC) {
+		if (uc_data->dc_sw_gpio > 0)
+			gpio_set_value_cansleep(uc_data->dc_sw_gpio, 0);
 		ret = gs101_ext_mode(uc_data, EXT_MODE_OFF);
 		if (ret < 0) {
 			pr_debug("%s: cannot change extmode ret:%d\n",
@@ -858,12 +860,24 @@ static int gs101_wlctx_otg_en(struct max77759_usecase_data *uc_data, bool enable
 
 static int gs101_ext_bst_mode(struct max77759_usecase_data *uc_data, int mode)
 {
+	struct max77759_chgr_data *data;
 
 	pr_debug("%s: ext_bst_mode=%d mode=%d\n", __func__, uc_data->ext_bst_mode, mode);
 
-	if (uc_data->ext_bst_mode >= 0)
-		gpio_set_value_cansleep(uc_data->ext_bst_mode, mode);
+	if (uc_data->ext_bst_mode < 0)
+		return 0;
 
+	if (!uc_data->client)
+		goto write_bst_mode;
+
+	data = i2c_get_clientdata(uc_data->client);
+	if (data && data->otg_fccm_reset) {
+		pr_info("Set FCCM on 77759's callback\n");
+		return 0;
+	}
+
+write_bst_mode:
+	gpio_set_value_cansleep(uc_data->ext_bst_mode, mode);
 	return 0;
 }
 
@@ -1108,6 +1122,8 @@ int gs101_to_usecase(struct max77759_usecase_data *uc_data, int use_case)
 		/* just write the value to the register (it's in stby) */
 		break;
 	case GSU_MODE_WLC_DC:
+		if (uc_data->dc_sw_gpio > 0)
+			gpio_set_value_cansleep(uc_data->dc_sw_gpio, 1);
 		ret = gs101_ext_mode(uc_data, EXT_MODE_OTG_5_0V);
 		if (ret < 0) {
 			pr_debug("%s: cannot change extmode ret:%d\n",
@@ -1204,6 +1220,7 @@ static void gs101_setup_default_usecase(struct max77759_usecase_data *uc_data)
 	uc_data->cpout21_en = -EPROBE_DEFER;
 
 	uc_data->ext_bst_mode = -EPROBE_DEFER;
+	uc_data->dc_sw_gpio = -EPROBE_DEFER;
 
 	uc_data->init_done = false;
 
@@ -1290,6 +1307,9 @@ bool gs101_setup_usecases(struct max77759_usecase_data *uc_data,
 	/* OPTIONAL: use bst_on first on/off sequence */
 	uc_data->wlctx_bst_en_first = of_property_read_bool(node, "max77759,bst-lsw-sequence");
 
+	if (uc_data->dc_sw_gpio == -EPROBE_DEFER)
+		uc_data->dc_sw_gpio = of_get_named_gpio(node, "max77759,gpio_dc_switch", 0);
+
 	return gs101_setup_usecases_done(uc_data);
 }
 EXPORT_SYMBOL_GPL(gs101_setup_usecases);
@@ -1303,8 +1323,8 @@ void gs101_dump_usecasase_config(struct max77759_usecase_data *uc_data)
 	pr_info("wlc_en:%d wlc_vbus_en:%d cpout_en:%d cpout_ctl:%d cpout21_en=%d\n",
 		uc_data->wlc_en, uc_data->wlc_vbus_en,
 		uc_data->cpout_en, uc_data->cpout_ctl, uc_data->cpout21_en);
-	pr_info("ls2_en:%d sw_en:%d ext_bst_mode:%d\n",
-		uc_data->ls2_en, uc_data->sw_en, uc_data->ext_bst_mode);
+	pr_info("ls2_en:%d sw_en:%d ext_bst_mode:%d dc_sw_en:%d\n",
+		uc_data->ls2_en, uc_data->sw_en, uc_data->ext_bst_mode, uc_data->dc_sw_gpio);
 	pr_info("rx_to_rx_otg:%d ext_otg_only:%d\n",
 		uc_data->rx_otg_en, uc_data->ext_otg_only);
 }

@@ -594,6 +594,11 @@ static void gbms_show_storage_provider(struct seq_file *m,
 	gbms_tag_t tag;
 	int ret = 0, i;
 
+	if (!slot->dsc || !slot->dsc->iter) {
+		seq_printf(m, "?");
+		return;
+	}
+
 	for (i = 0 ; ret == 0; i++) {
 		ret = slot->dsc->iter(i, &tag, slot->ptr);
 		if (ret < 0)
@@ -625,11 +630,7 @@ static int gbms_show_storage_clients(struct seq_file *m, void *data)
 		seq_printf(m, gbms_providers[i].offline ? "%d (%s):" : "%d %s:",
 			   i, gbms_providers[i].name);
 
-		if (!gbms_providers[i].dsc || !gbms_providers[i].dsc->iter)
-			continue;
-
 		gbms_show_storage_provider(m, &gbms_providers[i], false);
-
 		seq_printf(m, "\n");
 	}
 
