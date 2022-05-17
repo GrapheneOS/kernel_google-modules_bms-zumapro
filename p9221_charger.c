@@ -455,14 +455,12 @@ static int p9221_send_csp(struct p9221_charger_data *charger, u8 stat)
 	}
 
 	if (charger->online) {
-		dev_info(&charger->client->dev, "Send CSP status=%d\n", stat);
-
-		ret = p9221_reg_write_8(charger, P9221R5_CHARGE_STAT_REG,
-					stat);
-		if (ret == 0) {
-			ret = charger->chip_set_cmd(charger,
-						    P9221R5_COM_SENDCSP);
-		}
+		ret = p9221_reg_write_8(charger, P9221R5_CHARGE_STAT_REG, stat);
+		if (ret == 0)
+			ret = charger->chip_set_cmd(charger, P9221R5_COM_SENDCSP);
+		if (ret < 0)
+			dev_info(&charger->client->dev, "Send CSP status=%d (%d)\n",
+				 stat, ret);
 	}
 
 	mutex_unlock(&charger->cmd_lock);
@@ -717,6 +715,7 @@ static int feature_15w_enable(struct p9221_charger_data *charger, bool enable)
 
 		/* WLCF_CHARGE_15W is not not set on !P9412_CHIP_ID */
 
+		/* offline might have reset this already */
 		rc1 = gvotable_cast_long_vote(charger->dc_icl_votable,
 					      P9221_OCP_VOTER, ocp_icl,
 					      true);
@@ -726,12 +725,12 @@ static int feature_15w_enable(struct p9221_charger_data *charger, bool enable)
 		rc2 = feature_set_dc_icl(charger, -1);
 		if (rc2 < 0)
 			dev_err(&charger->client->dev, "15W: cannot reset ramp (%d)", rc2);
-		/* reset VOUT to proper */
+		/* reset VOUT will fail if online */
 		rc3 = charger->chip_set_vout_max(charger, vout_mv);
 		if (rc3 < 0)
-			dev_err(&charger->client->dev, "15W: cannot reset vout (%d)", rc3);
+			dev_dbg(&charger->client->dev, "15W: cannot reset vout (%d)", rc3);
 
-		ret = rc1 < 0 || rc2 < 0 || rc3 < 0 ? -EIO : 0;
+		ret = rc1 < 0 || rc2 < 0 ? -EIO : 0;
 	}
 
 	return ret;
@@ -795,7 +794,6 @@ static int feature_update_session(struct p9221_charger_data *charger, u64 ft)
 		 * -EINVAL, -ENOTSUPP or an I/O error.
 		 * TODO report the failure in the session_features
 		 */
-
 	} else if (ft & WLCF_CHARGE_15W) {
 		chg_fts->session_features |= WLCF_CHARGE_15W;
 	} else {
