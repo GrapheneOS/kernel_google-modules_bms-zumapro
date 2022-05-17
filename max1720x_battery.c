@@ -2765,7 +2765,7 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 
 		/* trigger model load */
 		mutex_lock(&chip->model_lock);
-		err = max1720x_model_reload(chip, false);
+		err = max1720x_model_reload(chip, true);
 		if (err < 0)
 			fg_status_clr &= ~MAX1720X_STATUS_POR;
 
