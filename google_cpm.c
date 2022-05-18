@@ -2390,6 +2390,9 @@ static int gcpm_set_mdis_charge_cntl_limit(struct thermal_cooling_device *tcd,
 		} else if (gcpm_mdis_in_is_wireless(gcpm, in_idx)) {
 			/* WLC_CP? use the charge pump with wireless charging */
 			cp_fcc = gcpm->mdis_out_limits[1][lvl + tdev->thermal_levels];
+			/* forces wlc-overrides-fcc when wireless charging */
+			if (online != PPS_PSY_PROG_ONLINE)
+				msc_fcc = -1;
 		} else {
 			/* PPS_CP? use the charge pump with TCPM */
 			cp_fcc = gcpm->mdis_out_limits[1][lvl];
