@@ -757,17 +757,24 @@ static int gcpm_mdis_match_cp_source(struct gcpm_drv *gcpm, int *online)
 	return -EINVAL;
 }
 
-/* call holding mutex_lock(&gcpm->chg_psy_lock) */
-static int gcpm_chg_select_by_demand(struct gcpm_drv *gcpm)
+static int gcpm_chg_select_check_cp_limit(struct gcpm_drv *gcpm)
 {
-	int cc_max = gcpm->cc_max; /* from google_charger */
 	int cp_min = gcpm->dc_limit_cc_min;
-	int index = GCPM_DEFAULT_CHARGER;
-	int batt_demand = -1;
 
 	/* wlc might use a different CP limit than wired */
 	if (gcpm->wlc_pps_data.pd_online && gcpm->dc_limit_cc_min_wlc >= 0)
 		cp_min = gcpm->dc_limit_cc_min_wlc;
+
+	return cp_min;
+}
+
+/* call holding mutex_lock(&gcpm->chg_psy_lock) */
+static int gcpm_chg_select_by_demand(struct gcpm_drv *gcpm)
+{
+	const int cp_min = gcpm_chg_select_check_cp_limit(gcpm);
+	int cc_max = gcpm->cc_max; /* from google_charger */
+	int index = GCPM_DEFAULT_CHARGER;
+	int batt_demand = -1;
 
 	/*
 	 * ->cp_fcc_hold keeps the current (default) charger until the thermal
@@ -2302,7 +2309,7 @@ static int gcpm_mdis_update_limits(struct gcpm_drv *gcpm, int msc_fcc,
 	struct gvotable_election *el;
 	int ret;
 
-	/* applied only when CP is not enabled */
+	/* votes on MSC_FCC applied only when CP is not enabled */
 	el = gcpm_get_fcc_votable(gcpm);
 	if (el) {
 		ret = mdis_cast_vote(el, msc_fcc, msc_fcc >= 0 && !cp_enabled);
@@ -2311,6 +2318,7 @@ static int gcpm_mdis_update_limits(struct gcpm_drv *gcpm, int msc_fcc,
 				msc_fcc, ret);
 	}
 
+	/* votes on DC_ICL applied only when CP is not enabled */
 	el = gcpm_get_dc_icl_votable(gcpm);
 	if (el) {
 		ret = mdis_cast_vote(el, dc_icl, dc_icl >= 0 && !cp_enabled);
@@ -2319,6 +2327,7 @@ static int gcpm_mdis_update_limits(struct gcpm_drv *gcpm, int msc_fcc,
 				dc_icl, ret);
 	}
 
+	/* votes on GCPM_FCC */
 	el = gcpm_get_cp_votable(gcpm);
 	if (el) {
 		ret = mdis_cast_vote(el, cp_fcc, cp_fcc >= 0);
@@ -2361,6 +2370,8 @@ static int gcpm_set_mdis_charge_cntl_limit(struct thermal_cooling_device *tcd,
 		budget = tdev->thermal_mitigation[0];
 		msc_fcc = dc_icl = cp_fcc = -1;
 	} else {
+		int cp_min;
+
 		budget = tdev->thermal_mitigation[lvl];
 
 		/* 0 always is the main-charger */
@@ -2382,6 +2393,21 @@ static int gcpm_set_mdis_charge_cntl_limit(struct thermal_cooling_device *tcd,
 		} else {
 			/* PPS_CP? use the charge pump with TCPM */
 			cp_fcc = gcpm->mdis_out_limits[1][lvl];
+		}
+
+		/*
+		 * validate the new cp limit against cp_min and disable CP
+		 * if the new limit is under it. Disabling CP will enable
+		 * the votes on MSC_FCC and DC_ICL which will cause a respin
+		 * of the roundtrip.
+		 * NOTE: there might be a corner case when the MSC_FCC or the
+		 * DC_ICL limit doesn't change after re-enabling the vote.
+		 */
+		cp_min = gcpm_chg_select_check_cp_limit(gcpm);
+		if (cp_fcc <= cp_min) {
+			pr_debug("MSC_MDIS cp_fcc:%d->-1 cp_min=%d\n",
+				 cp_fcc, cp_min);
+			cp_fcc = -1;
 		}
 
 	}
@@ -2714,12 +2740,20 @@ static int gcpm_fcc_callback(struct gvotable_election *el, const char *reason,
 	struct gcpm_drv *gcpm = gvotable_get_data(el);
 	const int limit = GVOTABLE_PTR_TO_INT(value);
 	struct power_supply *cp_psy;
-	int ret = -ENODEV;
+	int cp_min, ret;
 
 	/* apply the vote to the DC charger */
 	cp_psy = gcpm_chg_get_active_cp(gcpm);
-	if (!cp_psy || limit < 0) {
+	if (!cp_psy) {
 		pr_debug("MSC_MDIS: has_psy=%d limit=%d\n", !!cp_psy, limit);
+		return 0;
+	}
+
+	/* the current limit is changed, validate it agaist the min */
+	cp_min = gcpm_chg_select_check_cp_limit(gcpm);
+	if (limit <= cp_min) {
+		pr_debug("MSC_MDIS: limit=%d under cpmin=%d\n", limit, cp_min);
+		mod_delayed_work(system_wq, &gcpm->select_work, 0);
 		return 0;
 	}
 
@@ -2729,7 +2763,9 @@ static int gcpm_fcc_callback(struct gvotable_election *el, const char *reason,
 		pr_err("MSC_MDIS: cannot apply cp_limit to cc_max=%d (%d)\n",
 		       limit, ret);
 
-	pr_debug("MSC_MDIS: new cp_limit=%d ret=%d\n", limit, ret);
+	pr_debug("MSC_MDIS: applied new cp_limit=%d cp_min=%d ret=%d\n",
+		 limit, cp_min, ret);
+
 	return 0;
 }
 
