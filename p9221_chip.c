@@ -1271,20 +1271,6 @@ static int p9412_prop_mode_capdiv_enable(struct p9221_charger_data *chgr)
 {
 	int ret, i;
 
-	if (chgr->pdata->has_sw_ramp) {
-		dev_dbg(&chgr->client->dev, "%s: voter=%s, icl=%d\n",
-			__func__, P9221_HPP_VOTER, P9XXX_CDMODE_ENABLE_ICL_UA);
-		ret = p9xxx_sw_ramp_icl(chgr, P9XXX_CDMODE_ENABLE_ICL_UA);
-		if (ret < 0)
-			return ret;
-
-		ret = gvotable_cast_int_vote(chgr->dc_icl_votable,
-					     P9221_HPP_VOTER,
-					     P9XXX_CDMODE_ENABLE_ICL_UA, true);
-		if (ret == 0)
-			gvotable_cast_int_vote(chgr->dc_icl_votable,
-					       P9221_RAMP_VOTER, 0, false);
-	}
 
 	/* TODO: need to become a fake GPIO in the max77759 charger */
 	if (!chgr->chg_mode_votable)
@@ -1395,6 +1381,24 @@ static int p9412_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 	msleep(50);
 
 enable_capdiv:
+	if (chgr->pdata->has_sw_ramp) {
+		dev_dbg(&chgr->client->dev, "%s: voter=%s, icl=%d\n",
+			__func__, P9221_HPP_VOTER, P9XXX_CDMODE_ENABLE_ICL_UA);
+		ret = p9xxx_sw_ramp_icl(chgr, P9XXX_CDMODE_ENABLE_ICL_UA);
+		if (ret < 0)
+			return ret;
+
+		ret = gvotable_cast_int_vote(chgr->dc_icl_votable, P9221_HPP_VOTER,
+					     P9XXX_CDMODE_ENABLE_ICL_UA, true);
+		if (ret == 0)
+			ret = gvotable_cast_int_vote(chgr->dc_icl_votable,
+						     P9221_RAMP_VOTER, 0, false);
+		if (ret < 0)
+			dev_err(&chgr->client->dev, "%s: cannot setup sw ramp (%d)\n",
+				__func__, ret);
+
+	}
+
 	/*
 	 * Step 2: enable Cap Divider configuration:
 	 * write 0x02 to 0x101 then write 0x40 to 0x4E
@@ -1506,6 +1510,17 @@ err_exit:
 			 "req_pwr=%02x,prop_cur_pwr=%02x",
 			 chgr->prop_mode_en, val8, mode_sts, err_sts,
 			 cdmode, pwr_stp, prop_req_pwr, prop_cur_pwr);
+	}
+
+
+	if (!chgr->prop_mode_en) {
+		int rc;
+
+		rc = gvotable_cast_int_vote(chgr->dc_icl_votable, P9221_HPP_VOTER,
+					    P9XXX_CDMODE_ENABLE_ICL_UA, false);
+		if (rc <0)
+			dev_err(&chgr->client->dev, "%s: cannot remove HPP voter (%d)\n",
+				__func__, ret);
 	}
 
 	return chgr->prop_mode_en;
