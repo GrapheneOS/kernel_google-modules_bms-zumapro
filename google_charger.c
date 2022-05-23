@@ -2299,9 +2299,12 @@ static void chg_work(struct work_struct *work)
 		goto rerun_error;
 
 	update_interval = rc;
-	if (update_interval >= 0)
+	if (update_interval >= 0) {
 		chg_done = (chg_drv->chg_state.f.flags &
 			    GBMS_CS_FLAG_DONE) != 0;
+		/* clear rc for exit_chg_work: update correct data */
+		rc = 0;
+	}
 
 	/*
 	 * chg_drv->disable_pwrsrc -> chg_drv->disable_charging
