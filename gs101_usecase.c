@@ -860,12 +860,24 @@ static int gs101_wlctx_otg_en(struct max77759_usecase_data *uc_data, bool enable
 
 static int gs101_ext_bst_mode(struct max77759_usecase_data *uc_data, int mode)
 {
+	struct max77759_chgr_data *data;
 
 	pr_debug("%s: ext_bst_mode=%d mode=%d\n", __func__, uc_data->ext_bst_mode, mode);
 
-	if (uc_data->ext_bst_mode >= 0)
-		gpio_set_value_cansleep(uc_data->ext_bst_mode, mode);
+	if (uc_data->ext_bst_mode < 0)
+		return 0;
 
+	if (!uc_data->client)
+		goto write_bst_mode;
+
+	data = i2c_get_clientdata(uc_data->client);
+	if (data && data->otg_fccm_reset) {
+		pr_info("Set FCCM on 77759's callback\n");
+		return 0;
+	}
+
+write_bst_mode:
+	gpio_set_value_cansleep(uc_data->ext_bst_mode, mode);
 	return 0;
 }
 

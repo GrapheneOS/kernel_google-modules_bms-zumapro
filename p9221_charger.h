@@ -45,7 +45,6 @@
 #define P9XXX_SW_RAMP_ICL_STEP_UA		100000
 #define P9XXX_CDMODE_ENABLE_ICL_UA		200000
 #define P9221_AUTH_DC_ICL_UA_500		500000
-#define P9221_AUTH_DC_ICL_UA_100		100000
 #define P9221_LL_BPP_CHG_TERM_UA		200000
 #define P9221_EPP_THRESHOLD_UV			7000000
 #define P9221_MAX_VOUT_SET_MV_DEFAULT		9000
@@ -585,9 +584,11 @@ struct p9221_charger_platform_data {
 	u8				fod[P9221R5_NUM_FOD];
 	u8				fod_epp[P9221R5_NUM_FOD];
 	u8				fod_hpp[P9221R5_NUM_FOD];
+	u8				fod_hpp_hv[P9221R5_NUM_FOD];
 	int				fod_num;
 	int				fod_epp_num;
 	int				fod_hpp_num;
+	int				fod_hpp_hv_num;
 	int				q_value;
 	int				tx_4191q;
 	int				epp_rp_value;
@@ -609,6 +610,8 @@ struct p9221_charger_platform_data {
 	bool				feat_compat_mode;
 	bool				apbst_en;
 	bool				has_sw_ramp;
+	/* phone type for tx_id*/
+	u8				phone_type;
 };
 
 struct p9221_charger_ints_bit {
@@ -685,6 +688,7 @@ struct p9221_charger_data {
 	struct dentry			*debug_entry;
 	struct p9221_charger_feature	chg_features;
 	struct p9221_charger_cc_data_lock	cc_data_lock;
+	struct wakeup_source		*align_ws;
 	u16				chip_id;
 	int				online;
 	bool				enabled;
@@ -772,6 +776,9 @@ struct p9221_charger_data {
 	bool				cc_reset_pending;
 	int				send_txid_cnt;
 	bool				sw_ramp_done;
+	bool				hpp_hv;
+	int				fod_mode;
+
 #if IS_ENABLED(CONFIG_GPIOLIB)
 	struct gpio_chip gpio;
 #endif
