@@ -8,6 +8,7 @@ GBMS_MODULES =	GOOGLE_BMS \
 		GOOGLE_CPM \
 		GOOGLE_BEE \
 		GOOGLE_DUAL_BATT_GAUGE \
+		GOOGLE_DOCK \
 		USB_OVERHEAT_MITIGATION \
 		PMIC_MAX77729 \
 		UIC_MAX77729 \
@@ -30,8 +31,8 @@ google-bms-objs += gbms_storage.o
 # KBUILD_OPTIONS += CONFIG_GOOGLE_BEE=m \
 # obj-$(CONFIG_GOOGLE_BEE)	+= google_eeprom.o
 google-bms-objs += google_eeprom.o
-# TODO(163679860) remove pmic-voter usage from bms
-google-bms-objs += pmic-voter-compat.o
+google-bms-objs += google_eeprom_01.o
+google-bms-objs += gs101_usecase.o
 
 # Battery
 obj-$(CONFIG_GOOGLE_BATTERY) += google-battery.o
@@ -51,6 +52,9 @@ obj-$(CONFIG_GOOGLE_DUAL_BATT_GAUGE)	+= google_dual_batt_gauge.o
 obj-$(CONFIG_GOOGLE_CPM)	+= google-cpm.o
 google-cpm-objs += google_cpm.o
 google-cpm-objs += google_dc_pps.o
+
+# google_dock
+obj-$(CONFIG_GOOGLE_DOCK)	+= google_dock.o
 
 # Overheat mitigation driver
 obj-$(CONFIG_USB_OVERHEAT_MITIGATION)	+= overheat_mitigation.o
@@ -117,6 +121,7 @@ CFLAGS_google_charger.o += -Wno-enum-conversion
 CFLAGS_google_bms.o += -Wno-enum-conversion
 CFLAGS_google_cpm.o += $(WENUMS)
 CFLAGS_google_dual_batt_gauge.o += $(WENUMS)
+CFLAGS_google_dock.o += $(WENUMS)
 
 KERNEL_SRC ?= /lib/modules/$(shell uname -r)/build
 M ?= $(shell pwd)
@@ -127,7 +132,7 @@ KBUILD_OPTIONS += $(foreach m,$(GBMS_MODULES),CONFIG_$(m)=m )
 EXTRA_CFLAGS += -DDYNAMIC_DEBUG_MODULE
 EXTRA_CFLAGS += $(foreach m,$(GBMS_MODULES),-DCONFIG_$(m)_MODULE)
 
-include $(KERNEL_SRC)/../gs/google-modules/soc-modules/Makefile.include
+include $(KERNEL_SRC)/../private/google-modules/soc/gs/Makefile.include
 
 modules modules_install clean:
 	$(MAKE) -C $(KERNEL_SRC) M=$(M) W=1 \

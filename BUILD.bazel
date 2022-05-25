@@ -14,7 +14,7 @@ filegroup(
         "*.h",
     ]),
     visibility = [
-        "//gs/google-modules/power/reset:__subpackages__",
+        "//private/google-modules/power/reset:__subpackages__",
     ],
 )
 
@@ -25,13 +25,14 @@ kernel_module(
         "**/*.h",
         "Kbuild",
     ]) + [
-        "//gs/google-modules/soc-modules:gs101_soc_headers",
+        "//private/google-modules/soc/gs:gs101_soc_headers",
     ],
     outs = [
         "google-battery.ko",
         "google-bms.ko",
         "google-charger.ko",
         "google-cpm.ko",
+        "google_dock.ko",
         "google_dual_batt_gauge.ko",
         "max1720x-battery.ko",
         "max20339.ko",
@@ -47,12 +48,12 @@ kernel_module(
         # "max77759.ko",
         # "pca9468-google.ko",
     ],
-    kernel_build = "//gs/google-modules/soc-modules:slider",
+    kernel_build = "//private/google-modules/soc/gs:slider",
     kernel_module_deps = [
-        "//gs/google-modules/soc-modules:gs101_soc",
+        "//private/google-modules/soc/gs:gs101_soc",
     ],
     visibility = [
-        "//gs/google-modules/power/reset:__subpackages__",
-        "//gs/google-modules/soc-modules:__pkg__",
+        "//private/google-modules/power/reset:__subpackages__",
+        "//private/google-modules/soc/gs:__pkg__",
     ],
 )

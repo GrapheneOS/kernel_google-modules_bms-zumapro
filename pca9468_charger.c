@@ -122,6 +122,10 @@ static int adc_gain[16] = { 0,  1,  2,  3,  4,  5,  6,  7,
 #define PCA9468_IRDROP_LIMIT_TIER2	75000	/* uV */
 #define PCA9468_IRDROP_LIMIT_TIER3	0	/* uV */
 
+/* Spread Spectrum default settings */
+#define PCA9468_SC_CLK_DITHER_RATE_DEF	0	/* 25kHz */
+#define PCA9468_SC_CLK_DITHER_LIMIT_DEF	0xF	/* 10% */
+
 /* INT1 Register Buffer */
 enum {
 	REG_INT1,
@@ -434,11 +438,8 @@ static int pca9468_wlc_ramp_down_vout(struct pca9468_charger *pca9468,
 {
 	const int ramp_down_step = WLC_VOUT_CFG_STEP;
 	union power_supply_propval pro_val;
+	int vout = 0, vout_target = pca9468->wlc_ramp_out_vout_target;
 	int ret, vbatt;
-	int vout = 0;
-
-	if (!pca9468->wlc_ramp_out_vout)
-		return 0;
 
 	while (true) {
 		vbatt = pca9468_read_adc(pca9468, ADCCH_VBAT);
@@ -454,14 +455,14 @@ static int pca9468_wlc_ramp_down_vout(struct pca9468_charger *pca9468,
 			break;
 		}
 
-		if (pro_val.intval <= vbatt * 4)
-			return 0;
+		if (!pca9468->wlc_ramp_out_vout_target)
+			vout_target = vbatt * 4;
 
 		if (!vout)
 			vout = pro_val.intval;
-		if (vout < vbatt * 4) {
+		if (vout < vout_target) {
 			pr_debug("%s: underflow vout=%d, vbatt=%d (target=%d)\n", __func__,
-			         vout, vbatt, vbatt * 4);
+			         vout, vbatt, vout_target);
 			return 0;
 		}
 
@@ -572,9 +573,6 @@ static int pca9468_set_charging(struct pca9468_charger *pca9468, bool enable)
 
 			wlc_psy = pca9468_get_rx_psy(pca9468);
 			if (wlc_psy) {
-				union power_supply_propval pro_val;
-				int vbatt;
-
 				ret = pca9468_wlc_ramp_down_iin(pca9468, wlc_psy);
 				if (ret < 0)
 					dev_err(pca9468->dev, "cannot ramp out iin (%d)\n", ret);
@@ -582,21 +580,6 @@ static int pca9468_set_charging(struct pca9468_charger *pca9468, bool enable)
 				ret = pca9468_wlc_ramp_down_vout(pca9468, wlc_psy);
 				if (ret < 0)
 					dev_err(pca9468->dev, "cannot ramp out vout (%d)\n", ret);
-
-				/* last step will always set vout to 4 * vbatt */
-				vbatt = pca9468_read_adc(pca9468, ADCCH_VBAT);
-				if (vbatt > 0) {
-					pro_val.intval = vbatt * 4;
-
-					ret = power_supply_set_property(wlc_psy,
-							POWER_SUPPLY_PROP_VOLTAGE_NOW,
-							&pro_val);
-
-					dev_info(pca9468->dev, "set rx voltage to %d, vbatt=%d (%d)\n",
-						 pro_val.intval, vbatt, ret);
-				} else {
-					dev_info(pca9468->dev, "cannot set rx voltage, vbatt=%d\n", vbatt);
-				}
 			}
 		}
 
@@ -1621,7 +1604,7 @@ static int pca9468_set_ta_voltage_comp(struct pca9468_charger *pca9468)
 {
 	const int iin_high = pca9468->iin_cc + pca9468->pdata->iin_cc_comp_offset;
 	const int iin_low = pca9468->iin_cc - pca9468->pdata->iin_cc_comp_offset;
-	const ibat_limit = (pca9468->cc_max * FCC_POWER_INCREASE_THRESHOLD) / 100;
+	const int ibat_limit = (pca9468->cc_max * FCC_POWER_INCREASE_THRESHOLD) / 100;
 	int rc, ibat, icn = -EINVAL, iin = -EINVAL;
 	bool ovc_flag;
 
@@ -1840,7 +1823,7 @@ static int pca9468_set_wireless_dc(struct pca9468_charger *pca9468, int vbat)
 
 	/* ta_cur is ignored */
 	logbuffer_prlog(pca9468, LOGLEVEL_DEBUG,
-			"%s: iin_cc=%d, ta_vol=%d ta_max_vol=%d\n", __func__,
+			"%s: iin_cc=%d, ta_vol=%d ta_max_vol=%d", __func__,
 			pca9468->iin_cc, pca9468->ta_vol, pca9468->ta_max_vol);
 
 	return 0;
@@ -1936,22 +1919,30 @@ error:
 /*
  * The caller was triggered from pca9468_apply_new_iin(), return to the
  * calling CC or CV loop.
+ * call holding mutex_unlock(&pca9468->lock);
  */
 static void pca9468_return_to_loop(struct pca9468_charger *pca9468)
 {
-	pca9468->new_iin = 0;
+	switch (pca9468->ret_state) {
+	case DC_STATE_CC_MODE:
+		pca9468->timer_id = TIMER_CHECK_CCMODE;
+		break;
+	case DC_STATE_CV_MODE:
+		pca9468->timer_id = TIMER_CHECK_CVMODE;
+		break;
+	default:
+		dev_err(pca9468->dev, "%s: invalid ret_state=%u\n",
+			__func__, pca9468->ret_state);
+		return;
+	}
 
 	dev_info(pca9468->dev, "%s: charging_state=%u->%u\n", __func__,
 		 pca9468->charging_state, pca9468->ret_state);
 
-	/* Go to return state  */
 	pca9468->charging_state = pca9468->ret_state;
-	if (pca9468->charging_state == DC_STATE_CC_MODE)
-		pca9468->timer_id = TIMER_CHECK_CCMODE;
-	else
-		pca9468->timer_id = TIMER_CHECK_CVMODE;
-
-	pca9468->timer_period = 1000;	/* Wait 1000ms */
+	pca9468->timer_period = 1000;
+	pca9468->ret_state = 0;
+	pca9468->new_iin = 0;
 }
 
 /*
@@ -2298,8 +2289,8 @@ static int pca9468_set_new_iin(struct pca9468_charger *pca9468, int iin)
 		return 0;
 	}
 
-	/* previus request still pending, no need to update */
-	if (pca9468->iin_cc == pca9468->new_iin)
+	/* same as previous request nevermind */
+	if (iin == pca9468->new_iin)
 		return 0;
 
 	pr_debug("%s: new_iin=%d->%d state=%d\n", __func__,
@@ -2312,15 +2303,16 @@ static int pca9468_set_new_iin(struct pca9468_charger *pca9468, int iin)
 		/* used on start vs the ->iin_cfg one */
 		pca9468->pdata->iin_cfg = iin;
 		pca9468->iin_cc = iin;
-	} else if (pca9468->new_iin == 0) {
+	} else if (pca9468->ret_state == 0) {
 		/*
-		 * applied in pca9468_apply_new_iin() from CC or in CV loop
-		 * will ultimately update pca9468->iin_cc and iin_cfg.
+		 * pca9468_apply_new_iin() has not picked out the value yet
+		 * and the value can be changed safely.
 		 */
 		pca9468->new_iin = iin;
 
-		/* might want to tickle the cycle now */
+		/* might want to tickle the loop now */
 	} else {
+		/* the caller must retry */
 		ret = -EAGAIN;
 	}
 
@@ -2335,6 +2327,7 @@ static int pca9468_set_new_iin(struct pca9468_charger *pca9468, int iin)
  */
 static int pca9468_set_new_cc_max(struct pca9468_charger *pca9468, int cc_max)
 {
+	const int prev_cc_max = pca9468->cc_max;
 	int iin_max, ret = 0;
 
 	if (cc_max < 0) {
@@ -2361,7 +2354,7 @@ static int pca9468_set_new_cc_max(struct pca9468_charger *pca9468, int cc_max)
 
 	logbuffer_prlog(pca9468, LOGLEVEL_INFO,
 			"%s: charging_state=%d cc_max=%d->%d iin_max=%d, ret=%d",
-			__func__, pca9468->charging_state, pca9468->cc_max,
+			__func__, pca9468->charging_state, prev_cc_max,
 			cc_max, iin_max, ret);
 
 done:
@@ -3983,6 +3976,23 @@ static int pca9468_hw_init(struct pca9468_charger *pca9468)
 	if (ret < 0)
 		return ret;
 
+	/* Spread Spectrum settings */
+	ret = regmap_update_bits(pca9468->regmap, PCA9468_REG_ADC_CTRL,
+				 PCA9468_BIT_SC_CLK_DITHER_RATE,
+				 pca9468->pdata->sc_clk_dither_rate);
+	if (ret < 0)
+		return ret;
+	ret = regmap_update_bits(pca9468->regmap, PCA9468_REG_NTC_TH_2,
+				 PCA9468_SC_CLK_DITHER_LIMIT,
+				 pca9468->pdata->sc_clk_dither_limit << 4);
+	if (ret < 0)
+		return ret;
+	val = pca9468->pdata->sc_clk_dither_en ? PCA9468_BIT_SC_CLK_DITHER_EN : 0;
+	ret = regmap_update_bits(pca9468->regmap, PCA9468_REG_TEMP_CTRL,
+				 PCA9468_BIT_SC_CLK_DITHER_EN, val);
+	if (ret < 0)
+		return ret;
+
 	return ret;
 }
 
@@ -4515,7 +4525,7 @@ static bool pca9468_is_reg(struct device *dev, unsigned int reg)
 	return false;
 }
 
-static const struct regmap_config pca9468_regmap = {
+static struct regmap_config pca9468_regmap = {
 	.name		= "pca9468-mains",
 	.reg_bits	= 8,
 	.val_bits	= 8,
@@ -4524,7 +4534,7 @@ static const struct regmap_config pca9468_regmap = {
 	.volatile_reg = pca9468_is_reg,
 };
 
-static const struct power_supply_desc pca9468_mains_desc = {
+static struct power_supply_desc pca9468_mains_desc = {
 	.name		= "pca9468-mains",
 	/* b/179246019 will not look online to Android */
 	.type		= POWER_SUPPLY_TYPE_UNKNOWN,
@@ -4629,6 +4639,24 @@ static int of_pca9468_dt(struct device *dev,
 		pdata->irdrop_limits[1] = PCA9468_IRDROP_LIMIT_TIER2;
 		pdata->irdrop_limits[2] = PCA9468_IRDROP_LIMIT_TIER3;
 	}
+
+	/* Spread Spectrum settings */
+	ret = of_property_read_u32(np_pca9468, "pca9468,sc-clk-dither-rate",
+				   &pdata->sc_clk_dither_rate);
+	if (ret)
+		pdata->sc_clk_dither_rate = PCA9468_SC_CLK_DITHER_RATE_DEF;
+	else
+		pr_info("%s: pca9468,sc-clk-dither-rate is %u\n", __func__,
+			pdata->sc_clk_dither_rate);
+	ret = of_property_read_u32(np_pca9468, "pca9468,sc-clk-dither-limit",
+				   &pdata->sc_clk_dither_limit);
+	if (ret)
+		pdata->sc_clk_dither_limit = PCA9468_SC_CLK_DITHER_LIMIT_DEF;
+	else
+		pr_info("%s: pca9468,sc-clk-dither-limit is %u\n", __func__,
+			pdata->sc_clk_dither_limit);
+	pdata->sc_clk_dither_en = of_property_read_bool(np_pca9468, "pca9468,spread-spectrum");
+	pr_info("%s: pca9468,spread-spectrum is %u\n", __func__, pdata->sc_clk_dither_en);
 
 #ifdef CONFIG_THERMAL
 	/* USBC thermal zone */
@@ -4867,10 +4895,10 @@ static int pca9468_create_fs_entries(struct pca9468_charger *chip)
 
 	debugfs_create_bool("wlc_rampout_iin", 0644, chip->debug_root,
 			     &chip->wlc_ramp_out_iin);
-	debugfs_create_bool("wlc_rampout_vout", 0644, chip->debug_root,
-			    &chip->wlc_ramp_out_vout);
 	debugfs_create_u32("wlc_rampout_delay", 0644, chip->debug_root,
 			   &chip->wlc_ramp_out_delay);
+	debugfs_create_u32("wlc_rampout_vout_target", 0644, chip->debug_root,
+			   &chip->wlc_ramp_out_vout_target);
 
 
 	debugfs_create_u32("debug_level", 0644, chip->debug_root,
@@ -4908,6 +4936,7 @@ static int pca9468_probe(struct i2c_client *client,
 	struct pca9468_platform_data *pdata;
 	struct pca9468_charger *pca9468_chg;
 	struct device *dev = &client->dev;
+	const char *psy_name = NULL;
 	int ret;
 
 	pr_debug("%s: =========START=========\n", __func__);
@@ -4949,6 +4978,7 @@ static int pca9468_probe(struct i2c_client *client,
 	pca9468_chg->pdata = pdata;
 	pca9468_chg->charging_state = DC_STATE_NO_CHARGING;
 	pca9468_chg->wlc_ramp_out_iin = true;
+	pca9468_chg->wlc_ramp_out_vout_target = 15300000; /* 15.3V as default */
 	pca9468_chg->wlc_ramp_out_delay = 250; /* 250 ms default */
 
 	/* Create a work queue for the direct charger */
@@ -4971,6 +5001,12 @@ static int pca9468_probe(struct i2c_client *client,
 	pca9468_chg->timer_period = 0;
 
 	INIT_DELAYED_WORK(&pca9468_chg->pps_work, pca9468_pps_request_work);
+
+	ret = of_property_read_string(dev->of_node,
+				      "pca9468,psy_name", &psy_name);
+	if ((ret == 0) && (strlen(psy_name) > 0))
+		pca9468_regmap.name = pca9468_mains_desc.name =
+		    devm_kstrdup(dev, psy_name, GFP_KERNEL);
 
 	pca9468_chg->regmap = devm_regmap_init_i2c(client, &pca9468_regmap);
 	if (IS_ERR(pca9468_chg->regmap)) {

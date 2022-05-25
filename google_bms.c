@@ -93,13 +93,22 @@ EXPORT_SYMBOL_GPL(gbms_chg_ev_adapter_s);
  * NOTE: the call covert C rates to chanrge currents IN PLACE, ie you cannot
  * call this twice.
  */
-void gbms_init_chg_table(struct gbms_chg_profile *profile, u32 capacity_ma)
+void gbms_init_chg_table(struct gbms_chg_profile *profile,
+			 struct device_node *node, u32 capacity_ma)
 {
 	u32 ccm;
-	int vi, ti;
+	int vi, ti, ret;
 	const int fv_uv_step = profile->fv_uv_resolution;
+	u32 cccm_array_size = (profile->temp_nb_limits - 1)
+			       * profile->volt_nb_limits;
 
 	profile->capacity_ma = capacity_ma;
+
+	ret = of_property_read_u32_array(node, "google,chg-cc-limits",
+					 profile->cccm_limits,
+					 cccm_array_size);
+	if (ret < 0)
+		pr_warn("unable to get default cccm_limits.\n");
 
 	/* chg-battery-capacity is in mAh, chg-cc-limits relative to 100 */
 	for (ti = 0; ti < profile->temp_nb_limits - 1; ti++) {
@@ -112,7 +121,7 @@ void gbms_init_chg_table(struct gbms_chg_profile *profile, u32 capacity_ma)
 				ccm = DIV_ROUND_CLOSEST(ccm, fv_uv_step)
 					* fv_uv_step;
 
-			GBMS_CCCM_LIMITS(profile, ti, vi) = ccm;
+			GBMS_CCCM_LIMITS_SET(profile, ti, vi) = ccm;
 		}
 	}
 }
@@ -168,8 +177,105 @@ static int gbms_read_cccm_limits(struct gbms_chg_profile *profile,
 		return ret;
 	}
 
+	memset(profile->topoff_limits, 0, sizeof(profile->topoff_limits));
+	profile->topoff_nb_limits =
+	    of_property_count_elems_of_size(node, "google,chg-topoff-limits",
+					    sizeof(u32));
+	if (profile->topoff_nb_limits > 0) {
+		if (profile->topoff_nb_limits > GBMS_CHG_TOPOFF_NB_LIMITS_MAX) {
+			gbms_err(profile, "chg-topoff-nb-limits exceeds driver max:%d\n",
+			       GBMS_CHG_TOPOFF_NB_LIMITS_MAX);
+			return -EINVAL;
+		}
+		ret = of_property_read_u32_array(node, "google,chg-topoff-limits",
+						(u32 *)profile->topoff_limits,
+						profile->topoff_nb_limits);
+		if (ret < 0) {
+			gbms_err(profile, "cannot read chg-topoff-limits table, ret=%d\n",
+				 ret);
+			return ret;
+		}
+		gbms_info(profile, "dynamic topoff enabled\n");
+	}
+
 	return 0;
 }
+
+int gbms_read_aacr_limits(struct gbms_chg_profile *profile,
+			  struct device_node *node)
+{
+	int ret = 0, cycle_nb_limits = 0, fade10_nb_limits = 0;
+
+	if (!profile || !node)
+		return -ENODEV;
+
+	ret = of_property_count_elems_of_size(node,
+					      "google,aacr-ref-cycles", sizeof(u32));
+	if (ret < 0)
+		goto no_data;
+
+	cycle_nb_limits = ret;
+
+	ret = of_property_count_elems_of_size(node,
+					      "google,aacr-ref-fade10", sizeof(u32));
+	if (ret < 0)
+		goto no_data;
+
+	fade10_nb_limits = ret;
+
+	if (cycle_nb_limits != fade10_nb_limits ||
+	    cycle_nb_limits > GBMS_AACR_DATA_MAX ||
+	    cycle_nb_limits == 0) {
+		gbms_warn(profile, "aacr not enable, cycle_nb:%d, fade10_nb:%d, max:%d",
+			  cycle_nb_limits, fade10_nb_limits, GBMS_AACR_DATA_MAX);
+		profile->aacr_nb_limits = 0;
+		return -ERANGE;
+	}
+
+	ret = of_property_read_u32_array(node, "google,aacr-ref-cycles",
+					 (u32 *)profile->reference_cycles, cycle_nb_limits);
+	if (ret < 0)
+		return ret;
+
+	ret = of_property_read_u32_array(node, "google,aacr-ref-fade10",
+					 (u32 *)profile->reference_fade10, fade10_nb_limits);
+	if (ret < 0)
+		return ret;
+
+	profile->aacr_nb_limits = cycle_nb_limits;
+
+	return 0;
+
+no_data:
+	profile->aacr_nb_limits = 0;
+	return ret;
+}
+EXPORT_SYMBOL_GPL(gbms_read_aacr_limits);
+
+/* return the pct amount of capacity fade at cycles or negative if not enabled */
+int gbms_aacr_fade10(const struct gbms_chg_profile *profile, int cycles)
+{
+	int cycle_s = 0, fade_s = 0;
+	int idx, cycle_f, fade_f;
+
+	if (profile->aacr_nb_limits == 0 || cycles < 0)
+		return -EINVAL;
+
+	for (idx = 0; idx < profile->aacr_nb_limits; idx++)
+		if (cycles < profile->reference_cycles[idx])
+			break;
+
+	/* Interpolation */
+	cycle_f = profile->reference_cycles[idx];
+	fade_f = profile->reference_fade10[idx];
+	if (idx > 0) {
+		cycle_s = profile->reference_cycles[idx - 1];
+		fade_s = profile->reference_fade10[idx - 1];
+	}
+
+	return (cycles - cycle_s) * (fade_f - fade_s) / (cycle_f - cycle_s) + fade_s;
+}
+EXPORT_SYMBOL_GPL(gbms_aacr_fade10);
 
 int gbms_init_chg_profile_internal(struct gbms_chg_profile *profile,
 			  struct device_node *node,
@@ -269,23 +375,20 @@ void gbms_free_chg_profile(struct gbms_chg_profile *profile)
 EXPORT_SYMBOL_GPL(gbms_free_chg_profile);
 
 /* NOTE: I should really pass the scale */
-void gbms_dump_raw_profile(const struct gbms_chg_profile *profile, int scale)
+void gbms_dump_raw_profile(char *buff, size_t len, const struct gbms_chg_profile *profile, int scale)
 {
 	const int tscale = (scale == 1) ? 1 : 10;
-	/* with scale == 1 voltage takes 7 bytes, add 7 bytes of temperature */
-	char buff[GBMS_CHG_VOLT_NB_LIMITS_MAX * 9 + 7];
-	int ti, vi, count, len = sizeof(buff);
+	int ti, vi, count = 0;
 
-	gbms_info(profile, "Profile constant charge limits:\n");
-	count = 0;
+	count += scnprintf(buff + count, len - count, "Profile constant charge limits:\n");
+	count += scnprintf(buff + count, len - count, "|T \\ V");
 	for (vi = 0; vi < profile->volt_nb_limits; vi++) {
 		count += scnprintf(buff + count, len - count, "  %4d",
 				   profile->volt_limits[vi] / scale);
 	}
-	gbms_info(profile, "|T \\ V%s\n", buff);
+	count += scnprintf(buff + count, len - count, "\n");
 
 	for (ti = 0; ti < profile->temp_nb_limits - 1; ti++) {
-		count = 0;
 		count += scnprintf(buff + count, len - count, "|%2d:%2d",
 				   profile->temp_limits[ti] / tscale,
 				   profile->temp_limits[ti + 1] / tscale);
@@ -294,7 +397,7 @@ void gbms_dump_raw_profile(const struct gbms_chg_profile *profile, int scale)
 					   GBMS_CCCM_LIMITS(profile, ti, vi)
 					   / scale);
 		}
-		gbms_info(profile, "%s\n", buff);
+		count += scnprintf(buff + count, len - count, "\n");
 	}
 }
 EXPORT_SYMBOL_GPL(gbms_dump_raw_profile);
@@ -327,7 +430,12 @@ int gbms_msc_temp_idx(const struct gbms_chg_profile *profile, int temp)
 {
 	int temp_idx = 0;
 
-	while (temp_idx < profile->temp_nb_limits - 1 &&
+	/*
+	 * needs to limit under table size after the last ++
+	 * ex. temp_nb_limits=7 make 6 temp range from 0 to 5
+	 * so we need to limit in temp_nb_limits - 2
+	 */
+	while (temp_idx < profile->temp_nb_limits - 2 &&
 	       temp >= profile->temp_limits[temp_idx + 1])
 		temp_idx++;
 
@@ -422,6 +530,8 @@ int gbms_read_charger_state(union gbms_charger_state *chg_state,
 				  &ret);
 	if (ret == 0) {
 		chg_state->v = val;
+	} else if (ret == -EAGAIN) {
+		return ret;
 	} else {
 		int ichg;
 
@@ -484,19 +594,6 @@ int gbms_cycle_count_sscan_bc(u16 *ccount, int bcnt, const char *buff)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(gbms_cycle_count_sscan_bc);
-
-/* ------------------------------------------------------------------------- */
-
-bool gbms_temp_defend_dry_run(bool update, bool dry_run)
-{
-	static bool is_dry_run;
-
-	if (update)
-		is_dry_run = dry_run;
-
-	return is_dry_run;
-}
-EXPORT_SYMBOL_GPL(gbms_temp_defend_dry_run);
 
 /* ------------------------------------------------------------------------- */
 
@@ -567,3 +664,27 @@ int gbms_get_property(struct power_supply *psy, enum gbms_property psp,
 }
 EXPORT_SYMBOL_GPL(gbms_get_property);
 
+void gbms_logbuffer_prlog(struct logbuffer *log, int level, int debug_no_logbuffer,
+			  int debug_printk_prlog, const char *f, ...)
+{
+	va_list args;
+
+	va_start(args, f);
+
+	if (!debug_no_logbuffer)
+		logbuffer_vlog(log, f, args);
+
+	if (level <= debug_printk_prlog)
+		vprintk(f, args);
+
+	va_end(args);
+}
+EXPORT_SYMBOL_GPL(gbms_logbuffer_prlog);
+
+bool chg_state_is_disconnected(const union gbms_charger_state *chg_state)
+{
+	return ((chg_state->f.flags & GBMS_CS_FLAG_BUCK_EN) == 0) &&
+	       (chg_state->f.chg_status == POWER_SUPPLY_STATUS_DISCHARGING ||
+	       chg_state->f.chg_status == POWER_SUPPLY_STATUS_UNKNOWN);
+}
+EXPORT_SYMBOL_GPL(chg_state_is_disconnected);

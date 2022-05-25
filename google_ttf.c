@@ -15,7 +15,6 @@
 #include <linux/kernel.h>
 #include <linux/printk.h>
 #include <linux/of.h>
-#include <misc/logbuffer.h>
 #include <linux/slab.h>
 #include "google_bms.h"
 #include "google_psy.h"
@@ -55,7 +54,7 @@ static int ttf_pwr_icl(const struct gbms_ce_tier_stats *ts,
 }
 
 /* NOTE: the current in taper might need to be accounted in a different way */
-static int ttf_pwr_ibatt(const struct gbms_ce_tier_stats *ts)
+int ttf_pwr_ibatt(const struct gbms_ce_tier_stats *ts)
 {
 	int avg_ibatt, elap, sign = 1;
 
@@ -81,7 +80,7 @@ static int ttf_pwr_ibatt(const struct gbms_ce_tier_stats *ts)
 }
 
 /* nominal voltage tier index for this soc */
-static int ttf_pwr_vtier_idx(const struct batt_ttf_stats *stats, int soc)
+int ttf_pwr_vtier_idx(const struct batt_ttf_stats *stats, int soc)
 {
 	int i;
 
@@ -96,10 +95,14 @@ static int ttf_pwr_vtier_idx(const struct batt_ttf_stats *stats, int soc)
  * reference or current average current demand for a soc at max rate.
  * NOTE: always <= cc_max for reference temperature
  */
-static int ttf_ref_cc(const struct batt_ttf_stats *stats, int soc)
+int ttf_ref_cc(const struct batt_ttf_stats *stats, int soc)
 {
 	const struct ttf_soc_stats *sstat = NULL;
 	int delta_cc;
+
+	/* out of range */
+	if (soc + 1 >= GBMS_SOC_STATS_LEN)
+		return 0;
 
 	/* soc average current demand */
 	if (stats->soc_stats.cc[soc + 1] && stats->soc_stats.cc[soc] &&
@@ -340,7 +343,7 @@ static int ttf_elap(ktime_t *estimate, const struct batt_ttf_stats *stats,
 	pr_debug("%s: soc=%d estimate=%lld elap=%lld ratio=%d\n",
 		 __func__, soc, *estimate, elap, ratio);
 
-	return 0;
+	return ratio;
 }
 
 /*
@@ -354,7 +357,7 @@ int ttf_soc_estimate(ktime_t *res, const struct batt_ttf_stats *stats,
 {
 	const int ssoc_in = ce_data->charging_stats.ssoc_in;
 	ktime_t elap, estimate = 0;
-	int i = 0, ret, frac;
+	int i = 0, ratio, frac, max_ratio = 0;
 
 	if (last > qnum_rconst(100) || last < soc)
 		return -EINVAL;
@@ -368,8 +371,8 @@ int ttf_soc_estimate(ktime_t *res, const struct batt_ttf_stats *stats,
 	frac = (int)qnum_nfracdgt(soc, 2);
 	if (frac) {
 
-		ret = ttf_elap(&elap, stats, ce_data, qnum_toint(soc));
-		if (ret == 0)
+		ratio = ttf_elap(&elap, stats, ce_data, qnum_toint(soc));
+		if (ratio >= 0)
 			estimate += (elap * (100 - frac)) / 100;
 
 		i += 1;
@@ -383,9 +386,11 @@ int ttf_soc_estimate(ktime_t *res, const struct batt_ttf_stats *stats,
 			elap = ce_data->soc_stats.elap[i] * 100;
 		} else {
 			/* future (and soc before ssoc_in) */
-			ret = ttf_elap(&elap, stats, ce_data, i);
-			if (ret < 0)
-				return ret;
+			ratio = ttf_elap(&elap, stats, ce_data, i);
+			if (ratio < 0)
+				return ratio;
+			if (ratio > max_ratio)
+				max_ratio = ratio;
 		}
 
 		estimate += elap;
@@ -394,13 +399,13 @@ int ttf_soc_estimate(ktime_t *res, const struct batt_ttf_stats *stats,
 	/* LAST: first 2 digits of the fractional part of soc if any */
 	frac = (int)qnum_nfracdgt(last, 2);
 	if (frac) {
-		ret = ttf_elap(&elap, stats, ce_data, qnum_toint(last));
-		if (ret == 0)
+		ratio = ttf_elap(&elap, stats, ce_data, qnum_toint(last));
+		if (ratio >= 0)
 			estimate += (elap * frac) / 100;
 	}
 
 	*res = estimate / 100;
-	return 0;
+	return max_ratio;
 }
 
 int ttf_soc_cstr(char *buff, int size, const struct ttf_soc_stats *soc_stats,
@@ -636,7 +641,7 @@ static int ttf_tier_sscan(struct batt_ttf_stats *stats,
 {
 	int j, len = 0;
 
-	memset(&stats->tier_stats, 0, sizeof(*stats));
+	memset(&stats->tier_stats, 0, sizeof(stats->tier_stats));
 
 	while (buff[len] != '[' && len < size)
 		len++;
