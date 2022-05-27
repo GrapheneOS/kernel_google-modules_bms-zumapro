@@ -3183,8 +3183,10 @@ static ssize_t set_dd_charge_stop_level(struct device *dev, struct device_attrib
 		return -ENODATA;
 	}
 
-	if ((val == chg_drv->bd_state.dd_charge_stop_level) ||
-	    (val <= chg_drv->bd_state.dd_charge_start_level) ||
+	if (val == chg_drv->bd_state.dd_charge_stop_level)
+		return count;
+
+	if ((val <= chg_drv->bd_state.dd_charge_start_level) ||
 	    (val > DEFAULT_CHARGE_STOP_LEVEL))
 		return -EINVAL;
 
@@ -3221,8 +3223,10 @@ static ssize_t set_dd_charge_start_level(struct device *dev, struct device_attri
 		return -ENODATA;
 	}
 
-	if ((val == chg_drv->bd_state.dd_charge_start_level) ||
-	    (val >= chg_drv->bd_state.dd_charge_stop_level) ||
+	if (val == chg_drv->bd_state.dd_charge_start_level)
+		return count;
+
+	if ((val >= chg_drv->bd_state.dd_charge_stop_level) ||
 	    (val < DEFAULT_CHARGE_START_LEVEL))
 		return -EINVAL;
 
