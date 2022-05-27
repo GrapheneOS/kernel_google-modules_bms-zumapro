@@ -994,10 +994,13 @@ static int gs101_to_otg_usecase(struct max77759_usecase_data *uc_data, int use_c
 	case GSU_MODE_WLC_RX:
 	case GSU_MODE_DOCK:
 		if (use_case == GSU_MODE_USB_OTG_WLC_RX) {
-			if (uc_data->rx_otg_en)
-				ret = gs101_standby_to_otg(uc_data, use_case);
-			else
+			if (uc_data->rx_otg_en) {
+				ret = gs101_cpout_mode(uc_data, GS101_WLCRX_CPOUT_5_2V);
+				if (ret == 0)
+					ret = gs101_standby_to_otg(uc_data, use_case);
+			} else {
 				ret = gs101_wlcrx_to_wlcrx_otg(uc_data);
+			}
 		}
 	break;
 
@@ -1025,9 +1028,10 @@ static int gs101_to_otg_usecase(struct max77759_usecase_data *uc_data, int use_c
 	break;
 	case GSU_MODE_USB_OTG_WLC_RX:
 		/* b/179816224: WLC_RX + OTG -> OTG */
-		if (use_case == GSU_MODE_USB_OTG && !uc_data->ext_otg_only) {
+		if (use_case == GSU_MODE_USB_OTG) {
 			/* it's in STBY, no need to reset gs101_otg_mode()  */
-			ret = gs101_ext_bst_mode(uc_data, 0);
+			if (!uc_data->ext_otg_only)
+				ret = gs101_ext_bst_mode(uc_data, 0);
 			if (ret == 0)
 				ret = gs101_cpout_mode(uc_data, GS101_WLCRX_CPOUT_DFLT);
 		}
@@ -1092,6 +1096,8 @@ int gs101_to_usecase(struct max77759_usecase_data *uc_data, int use_case)
 					ret = gs101_ls_mode(uc_data, 0);
 				if (ret == 0)
 					ret = gs101_ext_mode(uc_data, 0);
+				if (ret == 0)
+					ret = gs101_cpout_mode(uc_data, GS101_WLCRX_CPOUT_DFLT);
 			} else {
 				if (ret == 0)
 					ret = gs101_cpout_mode(uc_data, GS101_WLCRX_CPOUT_DFLT);
