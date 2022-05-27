@@ -1889,6 +1889,9 @@ static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 	case P9XXX_GPIO_CPOUT_CTL_EN:
 		if (p9221_is_epp(charger))
 			break;
+		/* No need if DD is triggered */
+		if (charger->trigger_power_mitigation)
+			break;
 		/* b/174068520: set vout to 5.2 for BPP_WLC_RX+OTG */
 		if (value)
 			ret = charger->chip_set_vout_max(charger, P9412_BPP_WLC_OTG_VOUT);
