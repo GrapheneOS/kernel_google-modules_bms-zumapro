@@ -263,7 +263,7 @@ static int max_m5_update_custom_parameters(struct max_m5_data *m5_data)
 	int tmp, ret;
 	u16 vfsoc;
 
-	ret = REGMAP_WRITE(regmap, MAX_M5_REPCAP, 0x0);
+	ret = REGMAP_WRITE_VERIFY(regmap, MAX_M5_REPCAP, 0x0);
 	if (ret == 0)
 		ret = REGMAP_WRITE_VERIFY(regmap, MAX_M5_RELAXCFG,
 					  cp->relaxcfg);
