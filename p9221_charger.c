@@ -4738,6 +4738,7 @@ static ssize_t rtx_store(struct device *dev,
 	if (buf[0] == '0') {
 		dev_info(&charger->client->dev, "battery share off\n");
 		logbuffer_log(charger->rtx_log, "battery share off");
+		cancel_delayed_work_sync(&charger->rtx_work);
 		charger->rtx_reset_cnt = 0;
 		ret = p9382_set_rtx(charger, false);
 	} else if (buf[0] == '1') {
