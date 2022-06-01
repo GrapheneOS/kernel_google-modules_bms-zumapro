@@ -16,7 +16,7 @@
 #include "max77759_charger.h"
 
 /* ----------------------------------------------------------------------- */
-static int gs101_ext_bst_mode(struct max77759_usecase_data *uc_data, int mode);
+static void gs101_ext_bst_mode(struct max77759_usecase_data *uc_data, int mode);
 static int max77759_chgr_reg_write(struct i2c_client *client, u8 reg, u8 value)
 {
 	struct max77759_chgr_data *data;
@@ -490,9 +490,9 @@ int gs101_to_standby(struct max77759_usecase_data *uc_data, int use_case)
 			break;
 
 		/* From 5. USB OTG to anything else, go to stby */
-		ret = gs101_ext_bst_mode(uc_data, 0);
-		if (ret == 0)
-			ret = gs101_ls_mode(uc_data, 0);
+		gs101_ext_bst_mode(uc_data, 0);
+
+		ret = gs101_ls_mode(uc_data, 0);
 		if (ret == 0)
 			ret = gs101_ext_mode(uc_data, 0);
 		if (ret < 0)
@@ -602,6 +602,10 @@ int gs101_to_standby(struct max77759_usecase_data *uc_data, int use_case)
 		ret = gs101_cpout_mode(uc_data, GS101_WLCRX_CPOUT_DFLT);
 		if (ret < 0)
 			pr_err("%s: cannot reset cpout (%d)\n", __func__, ret);
+
+		/* Reset the extbst mode */
+		if (uc_data->wlc_otg_extbst_en)
+			gs101_ext_bst_mode(uc_data, 0);
 	}
 
 	/* from POGO_VOUT to STBY */
@@ -678,6 +682,8 @@ int gs101_force_standby(struct max77759_usecase_data *uc_data)
 	if (ret < 0)
 		pr_err("%s: cannot reset insel (%d)\n",
 			__func__, ret);
+
+	gs101_ext_bst_mode(uc_data, 0);
 
 	return 0;
 }
@@ -897,14 +903,18 @@ static int gs101_wlctx_otg_en(struct max77759_usecase_data *uc_data, bool enable
 	return ret;
 }
 
-static int gs101_ext_bst_mode(struct max77759_usecase_data *uc_data, int mode)
+/*
+ * Control the extbst mode enable/disable by the platform:
+ * otg_fccm_reset = 1, ignore the ext_bst_mode control
+ */
+static void gs101_ext_bst_mode(struct max77759_usecase_data *uc_data, int mode)
 {
 	struct max77759_chgr_data *data;
 
 	pr_debug("%s: ext_bst_mode=%d mode=%d\n", __func__, uc_data->ext_bst_mode, mode);
 
-	if (uc_data->ext_bst_mode < 0)
-		return 0;
+	if (uc_data->ext_bst_mode <= 0)
+		return;
 
 	if (!uc_data->client)
 		goto write_bst_mode;
@@ -912,12 +922,11 @@ static int gs101_ext_bst_mode(struct max77759_usecase_data *uc_data, int mode)
 	data = i2c_get_clientdata(uc_data->client);
 	if (data && data->otg_fccm_reset) {
 		pr_info("Set FCCM on 77759's callback\n");
-		return 0;
+		return;
 	}
 
 write_bst_mode:
 	gpio_set_value_cansleep(uc_data->ext_bst_mode, mode);
-	return 0;
 }
 
 /*
@@ -970,8 +979,8 @@ static int gs101_standby_to_otg(struct max77759_usecase_data *uc_data, int use_c
 			 EXT_MODE_OTG_5_0V : EXT_MODE_OFF;
 
 	ret = gs101_otg_enable(uc_data, mode);
-	if (ret == 0 && uc_data->ext_otg_only)
-		ret = gs101_ext_bst_mode(uc_data, 1);
+	if (ret == 0 && uc_data->ext_otg_only && !uc_data->wlc_otg_extbst_en)
+		gs101_ext_bst_mode(uc_data, 1);
 
 	if (ret == 0)
 		usleep_range(5 * USEC_PER_MSEC, 5 * USEC_PER_MSEC + 100);
@@ -1033,6 +1042,10 @@ static int gs101_to_otg_usecase(struct max77759_usecase_data *uc_data, int use_c
 	case GSU_MODE_WLC_RX:
 	case GSU_MODE_DOCK:
 		if (use_case == GSU_MODE_USB_OTG_WLC_RX) {
+			/* OTG+WLC set extbst mode to high */
+			if (uc_data->wlc_otg_extbst_en)
+				gs101_ext_bst_mode(uc_data, 1);
+
 			if (uc_data->rx_otg_en) {
 				ret = gs101_cpout_mode(uc_data, GS101_WLCRX_CPOUT_5_2V);
 				if (ret == 0)
@@ -1052,9 +1065,18 @@ static int gs101_to_otg_usecase(struct max77759_usecase_data *uc_data, int use_c
 		}
 		/* b/179816224: OTG -> WLC_RX + OTG */
 		if (use_case == GSU_MODE_USB_OTG_WLC_RX) {
-			ret = gs101_cpout_mode(uc_data, GS101_WLCRX_CPOUT_5_2V);
-			if (ret == 0)
-				ret = gs101_ext_bst_mode(uc_data, 1);
+			/* OTG+WLC set extbst mode to high */
+			if (uc_data->wlc_otg_extbst_en) {
+				gs101_ext_bst_mode(uc_data, 1);
+
+				ret = gs101_cpout_mode(uc_data,
+						       GS101_WLCRX_CPOUT_5_2V);
+			} else {
+				ret = gs101_cpout_mode(uc_data,
+						       GS101_WLCRX_CPOUT_5_2V);
+				if (!ret)
+					gs101_ext_bst_mode(uc_data, 1);
+			}
 		}
 		if (use_case == GSU_MODE_USB_OTG_POGO_VOUT) {
 			ret = gs101_otg_mode(uc_data, GSU_MODE_USB_OTG_FRS);
@@ -1074,10 +1096,18 @@ static int gs101_to_otg_usecase(struct max77759_usecase_data *uc_data, int use_c
 		/* b/179816224: WLC_RX + OTG -> OTG */
 		if (use_case == GSU_MODE_USB_OTG) {
 			/* it's in STBY, no need to reset gs101_otg_mode()  */
-			if (!uc_data->ext_otg_only)
-				ret = gs101_ext_bst_mode(uc_data, 0);
-			if (ret == 0)
-				ret = gs101_cpout_mode(uc_data, GS101_WLCRX_CPOUT_DFLT);
+			if (!uc_data->ext_otg_only) {
+				gs101_ext_bst_mode(uc_data, 0);
+
+				ret = gs101_cpout_mode(uc_data,
+						       GS101_WLCRX_CPOUT_DFLT);
+			} else {
+				/* OTG only, set extbst mode to low */
+				ret = gs101_cpout_mode(uc_data,
+						       GS101_WLCRX_CPOUT_DFLT);
+				if (uc_data->wlc_otg_extbst_en)
+					gs101_ext_bst_mode(uc_data, 0);
+			}
 		}
 	break;
 	/* TODO: */
@@ -1156,7 +1186,7 @@ int gs101_to_usecase(struct max77759_usecase_data *uc_data, int use_case)
 	case GSU_MODE_DOCK:
 		if (from_uc == GSU_MODE_USB_OTG_WLC_RX) {
 			/* to_stby brought to stby */
-			ret = gs101_ext_bst_mode(uc_data, 0);
+			gs101_ext_bst_mode(uc_data, 0);
 			if (uc_data->ext_otg_only) {
 				if (ret == 0)
 					ret = gs101_ls_mode(uc_data, 0);
@@ -1406,6 +1436,9 @@ bool gs101_setup_usecases(struct max77759_usecase_data *uc_data,
 	uc_data->ext_otg_only = of_property_read_bool(node, "max77759,ext-otg-only");
 	/* OPTIONAL: use bst_on first on/off sequence */
 	uc_data->wlctx_bst_en_first = of_property_read_bool(node, "max77759,bst-lsw-sequence");
+
+	/* OPTIONAL: only extbst-enable when wlc+otg */
+	uc_data->wlc_otg_extbst_en = of_property_read_bool(node, "max77759,wlc-otg-extbst-en");
 
 	if (uc_data->dc_sw_gpio == -EPROBE_DEFER)
 		uc_data->dc_sw_gpio = of_get_named_gpio(node, "max77759,gpio_dc_switch", 0);

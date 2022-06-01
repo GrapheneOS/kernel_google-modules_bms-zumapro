@@ -48,6 +48,8 @@ struct max77759_usecase_data {
 
 	bool dcin_is_dock;
 	bool wlctx_bst_en_first;
+
+	bool wlc_otg_extbst_en;	/* Only WLC+OTG, set extbst mode to high */
 };
 
 enum gsu_usecases {
