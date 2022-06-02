@@ -4283,8 +4283,12 @@ static int chg_therm_update_fcc(struct chg_drv *chg_drv)
 
 	/* restore the thermal vote FCC level (if enabled) */
 	override_fcc = chg_therm_override_fcc(chg_drv);
-	if (!override_fcc && tdev->current_level > 0)
-		fcc = tdev->thermal_mitigation[tdev->current_level];
+	if (!override_fcc && tdev->current_level > 0) {
+		if (tdev->current_level < tdev->thermal_levels)
+			fcc = tdev->thermal_mitigation[tdev->current_level];
+		else
+			fcc = 0;
+	}
 
 	/* !override_fcc will restore the fcc thermal limit when set */
 	ret = gvotable_cast_int_vote(chg_drv->msc_fcc_votable,
