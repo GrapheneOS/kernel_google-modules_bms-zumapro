@@ -2868,20 +2868,6 @@ static int gcpm_init_mdis(struct gcpm_drv *gcpm)
 		gcpm->mdis_out_limits[i] = limits;
 	}
 
-	/* GCPM_FCC has the current cc_max for the selected charger */
-	gcpm->cp_votable =
-		gvotable_create_int_election(NULL, gvotable_comparator_int_min,
-					     gcpm_fcc_callback, gcpm);
-	if (IS_ERR_OR_NULL(gcpm->cp_votable)) {
-		ret = PTR_ERR(gcpm->cp_votable);
-		dev_err(gcpm->device, "no CP_FCC votable (%d)\n", ret);
-		return ret;
-	}
-
-	gvotable_set_default(gcpm->cp_votable, (void *)-1);
-	gvotable_set_vote2str(gcpm->cp_votable, gvotable_v2s_int);
-	gvotable_election_set_name(gcpm->cp_votable, "GCPM_FCC");
-
 	/* mdis thermal engine uses this callback */
 	gcpm->mdis_votable =
 		gvotable_create_int_election(NULL, gvotable_comparator_int_min,
@@ -3760,6 +3746,20 @@ static int google_cpm_probe(struct platform_device *pdev)
 		 gcpm->taper_step_interval, gcpm->taper_step_count,
 		 gcpm->taper_step_grace, gcpm->taper_step_voltage,
 		 gcpm->taper_step_current);
+
+	/* GCPM_FCC has the current cc_max for the selected charger */
+	gcpm->cp_votable =
+		gvotable_create_int_election(NULL, gvotable_comparator_int_min,
+					     gcpm_fcc_callback, gcpm);
+	if (IS_ERR_OR_NULL(gcpm->cp_votable)) {
+		ret = PTR_ERR(gcpm->cp_votable);
+		dev_err(gcpm->device, "no CP_FCC votable (%d)\n", ret);
+		return ret;
+	}
+
+	gvotable_set_default(gcpm->cp_votable, (void *)-1);
+	gvotable_set_vote2str(gcpm->cp_votable, gvotable_v2s_int);
+	gvotable_election_set_name(gcpm->cp_votable, "GCPM_FCC");
 
 	/*
 	 * WirelessDC and Wireless charging use different thermal limit.
