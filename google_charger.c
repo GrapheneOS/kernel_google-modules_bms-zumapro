@@ -1863,7 +1863,7 @@ static void bd_dd_run_defender(struct chg_drv *chg_drv, int soc, int *disable_ch
 	/* update dd_state to user space */
 	bd_state->dd_state = bd_dd_state_update(bd_state->dd_state,
 						bd_state->dd_triggered,
-						(soc >= upperbd));
+						(soc >= lowerbd));
 
 	/* need icl_ramp_work when disable_pwrsrc 1 -> 0 */
 	if (!*disable_pwrsrc && chg_drv->disable_pwrsrc) {
