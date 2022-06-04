@@ -147,8 +147,6 @@ struct gbms_ce_stats {
 	uint16_t 	voltage_out;
 	uint16_t 	ssoc_out;
 	uint16_t	cc_out;
-	uint16_t	sbd_status;
-	uint16_t	cfd_status;
 };
 
 struct ttf_tier_stat {

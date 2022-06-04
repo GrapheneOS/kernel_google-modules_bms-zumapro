@@ -215,6 +215,13 @@ struct batt_res {
 };
 
 /* TODO: move single cell disconnect to bhi_data */
+enum bpst_batt_status {
+	BPST_BATT_UNKNOWN = 0,
+	BPST_BATT_CONNECT = 1,
+	BPST_BATT_DISCONNECT = 2,
+	BPST_BATT_CELL_FAULT = 3,
+};
+
 struct batt_bpst {
 	struct mutex lock;
 	bool bpst_enable;
@@ -1799,6 +1806,22 @@ static int batt_chg_vbat2tier(const int vbatt_idx)
 		vbatt_idx : GBMS_STATS_TIER_COUNT - 1;
 }
 
+static int batt_bpst_stats_update(struct batt_drv *batt_drv)
+{
+	struct batt_bpst *bpst_state = &batt_drv->bpst_state;
+
+	if (!bpst_state->bpst_enable)
+		return BPST_BATT_UNKNOWN;
+
+	if (bpst_state->bpst_cell_fault)
+		return BPST_BATT_CELL_FAULT;
+
+	if (bpst_state->bpst_sbd_status)
+		return BPST_BATT_DISCONNECT;
+
+	return BPST_BATT_CONNECT;
+}
+
 /* Only the qualified copy gets the timestamp and the exit voltage. */
 static bool batt_chg_stats_close(struct batt_drv *batt_drv,
 				 char *reason,
@@ -1816,7 +1839,6 @@ static bool batt_chg_stats_close(struct batt_drv *batt_drv,
 	 * NOTE: vbatt_idx != -1 -> temp_idx != -1
 	 */
 	if (batt_drv->vbatt_idx != -1 && batt_drv->temp_idx != -1) {
-		struct batt_bpst *bpst_state = &batt_drv->bpst_state;
 		const ktime_t elap = now - batt_drv->ce_data.last_update;
 		const int tier_idx = batt_chg_vbat2tier(batt_drv->vbatt_idx);
 		const int ibatt = GPSY_GET_PROP(batt_drv->fg_psy,
@@ -1828,12 +1850,6 @@ static bool batt_chg_stats_close(struct batt_drv *batt_drv,
 				      batt_drv->temp_idx, tier_idx,
 				      ibatt / 1000, temp, elap);
 		batt_drv->ce_data.last_update = now;
-
-		/* update battey disconnect detection stats */
-		batt_drv->ce_data.charging_stats.sbd_status =
-			bpst_state->bpst_enable ? (uint16_t)bpst_state->bpst_sbd_status : 0;
-		batt_drv->ce_data.charging_stats.cfd_status =
-			bpst_state->bpst_enable ? (uint16_t)bpst_state->bpst_cell_fault : 0;
 	}
 
 	/* record the closing in data (and qual) */
@@ -1932,7 +1948,7 @@ static void bat_log_chg_stats(struct logbuffer *log,
 			ce_data->adapter_details.ad_voltage * 100,
 			ce_data->adapter_details.ad_amperage * 100);
 
-	logbuffer_log(log, "S: %hu,%hu, %hu,%hu %hu,%hu %ld,%ld, %u, %d,%d",
+	logbuffer_log(log, "S: %hu,%hu, %hu,%hu %hu,%hu %ld,%ld, %u",
 			ce_data->charging_stats.ssoc_in,
 			ce_data->charging_stats.voltage_in,
 			ce_data->charging_stats.ssoc_out,
@@ -1941,9 +1957,7 @@ static void bat_log_chg_stats(struct logbuffer *log,
 			ce_data->charging_stats.cc_out,
 			ce_data->first_update,
 			ce_data->last_update,
-			ce_data->chg_profile->capacity_ma,
-			ce_data->charging_stats.sbd_status,
-			ce_data->charging_stats.cfd_status);
+			ce_data->chg_profile->capacity_ma);
 
 	for (i = 0; i < GBMS_STATS_TIER_COUNT; i++) {
 		const int soc_next = batt_chg_stats_soc_next(ce_data, i);
@@ -2112,15 +2126,13 @@ static int batt_chg_stats_cstr(char *buff, int size,
 				ce_data->adapter_details.ad_voltage * 100,
 				ce_data->adapter_details.ad_amperage * 100);
 
-	len += scnprintf(&buff[len], size - len, "%s%hu,%hu, %hu,%hu %u, %d,%d",
+	len += scnprintf(&buff[len], size - len, "%s%hu,%hu, %hu,%hu %u",
 				(verbose) ?  "\nS: " : ", ",
 				ce_data->charging_stats.ssoc_in,
 				ce_data->charging_stats.voltage_in,
 				ce_data->charging_stats.ssoc_out,
 				ce_data->charging_stats.voltage_out,
-				ce_data->chg_profile->capacity_ma,
-				ce_data->charging_stats.sbd_status,
-				ce_data->charging_stats.cfd_status);
+				ce_data->chg_profile->capacity_ma);
 
 
 	if (verbose) {
@@ -6414,7 +6426,7 @@ static ssize_t health_index_stats_show(struct device *dev,
 		health_status = bhi_calc_health_status(i, BHI_ROUND_INDEX(health_index), health_data);
 
 		len += scnprintf(&buf[len], PAGE_SIZE - len,
-				 "%d: %d, %d,%d,%d %d,%d,%d %d,%d\n",
+				 "%d: %d, %d,%d,%d %d,%d,%d %d,%d, %d\n",
 				 i, health_status,
 				 BHI_ROUND_INDEX(health_index),
 				 BHI_ROUND_INDEX(cap_index),
@@ -6423,7 +6435,8 @@ static ssize_t health_index_stats_show(struct device *dev,
 				 bhi_health_get_capacity(i, bhi_data),
 				 bhi_health_get_impedance(i, bhi_data),
 				 bhi_data->battery_age,
-				 bhi_data->cycle_count);
+				 bhi_data->cycle_count,
+				 batt_bpst_stats_update(batt_drv));
 	}
 
 	mutex_unlock(&batt_drv->chg_lock);
