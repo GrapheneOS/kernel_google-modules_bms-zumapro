@@ -1553,6 +1553,8 @@ static void gcpm_pps_wlc_dc_work(struct work_struct *work)
 		if (!dc_disable)
 			gcpm->dc_state = DC_IDLE;
 
+		gcpm->dc_start_time = 0;
+
 		gbms_logbuffer_prlog(gcpm->log, LOGLEVEL_INFO, 0, debug_printk_prlog,
 				     "PPS_Work: done%selap=%lld dc_state=%d %d->%d\n",
 				     dc_disable ? "for the session " : " ",
