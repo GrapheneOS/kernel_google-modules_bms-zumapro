@@ -1773,19 +1773,21 @@ static int gcpm_dc_fcc_callback(struct gvotable_election *el,
 	mutex_lock(&gcpm->chg_psy_lock);
 
 	/*
-	 * applied=1 when the dc_limit has been applied to MSC_FCC and we need
-	 * to re-run the selection.
+	 * ->cp_fcc_hold_limit is updated from MDIS and from the DC_FCC code.
+	 *
+	 * applied=1 here when the dc_limit has been applied to MSC_FCC and we
+	 * need to re-run the selection. Here the limit is applied ONLY when
+	 * using WLC_CP.
+	 *
+	 * NOTE: the thermal engine needs to vote on mdis_chg OR on dc_fcc,
+	 * dc_icl and msc_fcc.
 	 */
 	applied = gcpm_dc_fcc_update(gcpm, limit);
 	if (applied < 0)
 		pr_err("%s: cannot enforce DC_FCC limit applied=%d\n",
 			__func__, applied);
-	/*
-	 * ->cp_fcc_hold_limit is updated from MDIS and from the DC_FCC code.
-	 * NOTE: the thermal engine needs to vote on mdis_chg OR on dc_fcc,
-	 * dc_icl and msc_fcc.
-	 */
-	gcpm->cp_fcc_hold_limit = limit;
+	else if (applied)
+		gcpm->cp_fcc_hold_limit = limit;
 
 	/*
 	 * ->cp_fcc_hold will be set in gcpm_chg_select_by_demand() for WLC_DC
