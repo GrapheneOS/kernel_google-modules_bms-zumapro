@@ -6734,7 +6734,6 @@ static const DEVICE_ATTR_RW(dev_sn);
 
 static int batt_init_fs(struct batt_drv *batt_drv)
 {
-	struct dentry *de = NULL;
 	int ret;
 
 	/* stats */
@@ -6907,6 +6906,14 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create dev sn\n");
 
+	return 0;
+
+}
+
+static int batt_init_debugfs(struct batt_drv *batt_drv)
+{
+	struct dentry *de = NULL;
+
 	de = debugfs_create_dir("google_battery", 0);
 	if (IS_ERR_OR_NULL(de))
 		return 0;
@@ -6980,7 +6987,6 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 /* bpst detection */
 static int batt_bpst_init_fs(struct batt_drv *batt_drv)
 {
-	struct dentry *de = NULL;
 	int ret;
 
 	if (!batt_drv->bpst_state.bpst_enable)
@@ -6992,6 +6998,14 @@ static int batt_bpst_init_fs(struct batt_drv *batt_drv)
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_bpst_detect_disable);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create bpst_detect_disable\n");
+
+	return 0;
+
+}
+
+static int batt_bpst_init_debugfs(struct batt_drv *batt_drv)
+{
+	struct dentry *de = NULL;
 
 	de = debugfs_create_dir("bpst", 0);
 	if (IS_ERR_OR_NULL(de))
@@ -8559,10 +8573,10 @@ static void google_battery_init_work(struct work_struct *work)
 	}
 
 	/* debugfs */
-	(void)batt_init_fs(batt_drv);
+	(void)batt_init_debugfs(batt_drv);
 
 	/* single battery disconnect */
-	(void)batt_bpst_init_fs(batt_drv);
+	(void)batt_bpst_init_debugfs(batt_drv);
 
 	/* these don't require nvm storage */
 	ret = gbms_storage_register(&batt_prop_dsc, "battery", batt_drv);
@@ -8775,6 +8789,10 @@ static int google_battery_probe(struct platform_device *pdev)
 	batt_drv->aacr_cycle_grace = AACR_START_CYCLE_DEFAULT;
 	batt_drv->aacr_cycle_max = AACR_MAX_CYCLE_DEFAULT;
 	batt_drv->aacr_state = BATT_AACR_DISABLED;
+
+	/* create the sysfs node */
+	batt_init_fs(batt_drv);
+	batt_bpst_init_fs(batt_drv);
 
 	/* give time to fg driver to start */
 	schedule_delayed_work(&batt_drv->init_work,
