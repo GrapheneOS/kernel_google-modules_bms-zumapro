@@ -310,6 +310,10 @@ struct chg_drv {
 
 	/* debug */
 	struct dentry *debug_entry;
+
+	/* dock_defend */
+	struct delayed_work bd_dd_work;
+	bool ext_volt_complete;
 };
 
 static void reschedule_chg_work(struct chg_drv *chg_drv)
@@ -1842,6 +1846,41 @@ static int bd_dd_state_update(const int dd_state, const bool dd_triggered, const
 	return new_state;
 }
 
+static void bd_dd_work(struct work_struct *work)
+{
+	struct chg_drv *chg_drv =
+		container_of(work, struct chg_drv, bd_dd_work.work);
+	struct power_supply *ext_psy = chg_drv->ext_psy;
+	int ext_present = GPSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_PRESENT);
+	int ext_online = GPSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_ONLINE);
+
+	if (!ext_present)
+		chg_drv->bd_state.dd_enabled = 0;
+	else if (ext_present && ext_online)
+		chg_drv->bd_state.dd_enabled = 1;
+
+	pr_info("MSC_BD dd_enabled:%d\n", chg_drv->bd_state.dd_enabled);
+}
+
+/*
+ * When ext_present && ext_online, debounce dd_enabled with one second
+ */
+#define DD_DEBOUNCE_MS	1000
+static void bd_dd_set_enabled(struct chg_drv *chg_drv, const int ext_present, const int ext_online)
+{
+	if (!ext_present) {
+		chg_drv->bd_state.dd_enabled = 0;
+		chg_drv->ext_volt_complete = false;
+	} else if (ext_present && ext_online && !chg_drv->ext_volt_complete) {
+		cancel_delayed_work_sync(&chg_drv->bd_dd_work);
+		schedule_delayed_work(&chg_drv->bd_dd_work,
+				      msecs_to_jiffies(DD_DEBOUNCE_MS));
+		chg_drv->ext_volt_complete = true;
+
+		pr_info("MSC_BD debounce %dms for dock_defend\n", DD_DEBOUNCE_MS);
+	}
+}
+
 #define dd_is_enabled(bd_state) \
 	((bd_state)->dd_state != DOCK_DEFEND_DISABLED && \
 	(bd_state)->dd_settings == DOCK_DEFEND_USER_ENABLED)
@@ -2192,7 +2231,9 @@ static void chg_work(struct work_struct *work)
 	if (ext_psy) {
 		ext_online = GPSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_ONLINE);
 		ext_present = GPSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_PRESENT);
-		chg_drv->bd_state.dd_enabled = ext_present;
+
+		/* set dd_enabled for dock_defend */
+		bd_dd_set_enabled(chg_drv, ext_present, ext_online);
 	}
 
 	/* ICL=0 on discharge will (might) cause usb online to go to 0 */
@@ -5065,6 +5106,7 @@ static int google_charger_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 	INIT_DELAYED_WORK(&chg_drv->bd_work, bd_work);
+	INIT_DELAYED_WORK(&chg_drv->bd_dd_work, bd_dd_work);
 	bd_init(&chg_drv->bd_state, chg_drv->device);
 
 	INIT_DELAYED_WORK(&chg_drv->init_work, google_charger_init_work);
