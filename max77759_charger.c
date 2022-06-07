@@ -2153,6 +2153,9 @@ static int max77759_psy_set_property(struct power_supply *psy,
 		pr_debug("%s: topoff_current=%d (%d)\n",
 			__func__, pval->intval, ret);
 		break;
+	case GBMS_PROP_TAPER_CONTROL:
+		ret = 0;
+		break;
 	default:
 		break;
 	}
@@ -2237,7 +2240,9 @@ static int max77759_psy_get_property(struct power_supply *psy,
 		if (rc < 0)
 			pval->intval = rc;
 		break;
-
+	case GBMS_PROP_TAPER_CONTROL:
+		ret = 0;
+		break;
 	default:
 		pr_debug("property (%d) unsupported.\n", psp);
 		ret = -EINVAL;
@@ -2258,6 +2263,7 @@ static int max77759_psy_is_writeable(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
 	case GBMS_PROP_CHARGE_DISABLE:
 	case POWER_SUPPLY_PROP_CHARGE_TERM_CURRENT:
+	case GBMS_PROP_TAPER_CONTROL:
 		return 1;
 	default:
 		break;
