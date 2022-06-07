@@ -2197,6 +2197,11 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 			if (ret < 0)
 				dev_warn(&charger->client->dev,
 					 "Cannot disable HPP_ICL (%d)\n", ret);
+			ret = gvotable_cast_int_vote(charger->dc_icl_votable,
+					P9221_HPP_VOTER, 0, false);
+			if (ret < 0)
+				dev_warn(&charger->client->dev,
+					 "Cannot disable HPP_VOTER (%d)\n", ret);
 
 			pr_debug("%s: HPP not supported\n", __func__);
 			return -EOPNOTSUPP;
@@ -2228,6 +2233,9 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 	ret = p9221_set_hpp_dc_icl(charger, false);
 	if (ret < 0)
 		dev_warn(&charger->client->dev, "Cannot disable HPP_ICL (%d)\n", ret);
+
+	gvotable_cast_int_vote(charger->dc_icl_votable,
+				P9221_HPP_VOTER, 0, false);
 
 	dev_warn(&charger->client->dev, "Set enable %d, wlc_dc_enabled:%d->%d\n",
 		charger->enabled, wlc_dc_enabled, charger->wlc_dc_enabled);
@@ -2616,8 +2624,7 @@ int p9xxx_sw_ramp_icl(struct p9221_charger_data *charger, const int icl_target)
 
 	step = (icl_target > icl_now) ? P9XXX_SW_RAMP_ICL_STEP_UA : -P9XXX_SW_RAMP_ICL_STEP_UA;
 
-	while (icl_now != icl_target &&
-	       charger->online) {
+	while (icl_now != icl_target && charger->online) {
 		dev_dbg(&charger->client->dev, "%s: step=%d, get_current_vote=%d\n",
 			 __func__,step, gvotable_get_current_int_vote(charger->dc_icl_votable));
 
