@@ -638,6 +638,8 @@ static int gcpm_update_votes(struct gcpm_drv *gcpm, int cp_limit)
 	struct gvotable_election *el;
 	int ret;
 
+	pr_debug("%s: cp_limit=%d\n", __func__, cp_limit);
+
 	/* update DC_FCC limit before disabling the others */
 	if (cp_limit > 0)
 		ret = gcpm_dc_fcc_update(gcpm, enable ? cp_limit : -1);
@@ -645,12 +647,12 @@ static int gcpm_update_votes(struct gcpm_drv *gcpm, int cp_limit)
 	/* vote on DC_ICL */
 	el = gcpm_get_dc_icl_votable(gcpm);
 	if (el)
-		gvotable_recast_ballot(el, "MDIS", enable && cp_limit <= 0);
+		gvotable_recast_ballot(el, "MDIS", enable && cp_limit == 0);
 
 	/* vote on MSC_FCC: applied only when CP is not enabled */
 	el = gcpm_get_fcc_votable(gcpm);
 	if (el)
-		gvotable_recast_ballot(el, "MDIS", enable && cp_limit <= 0);
+		gvotable_recast_ballot(el, "MDIS", enable && cp_limit == 0);
 
 	/* vote on GCPM_FCC: valid only on cp */
 	el = gcpm_get_cp_votable(gcpm);
@@ -1446,7 +1448,7 @@ static int gcpm_pps_wlc_dc_restart_default(struct gcpm_drv *gcpm)
 	int pps_done, ret;
 
 	/* DC_FCC limit might be enabled as soon as we enter WLC_DC */
-	ret = gcpm_update_votes(gcpm, -1);
+	ret = gcpm_update_votes(gcpm, 0);
 	if (ret < 0)
 		pr_err("PPS_DC: wlc_dc_rd cannot update votes (%d)\n", ret);
 
