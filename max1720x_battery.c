@@ -3753,6 +3753,43 @@ static ssize_t max1720x_show_reg_all(struct file *filp, char __user *buf,
 
 BATTERY_DEBUG_ATTRIBUTE(debug_reg_all_fops, max1720x_show_reg_all, NULL);
 
+static ssize_t max1720x_show_nvreg_all(struct file *filp, char __user *buf,
+					size_t count, loff_t *ppos)
+{
+	struct max1720x_chip *chip = (struct max1720x_chip *)filp->private_data;
+	const struct max17x0x_regmap *map = &chip->regmap_nvram;
+	u32 reg_address;
+	unsigned int data;
+	char *tmp;
+	int ret = 0, len = 0;
+
+	if (!map->regmap) {
+		pr_err("Failed to read, no regmap\n");
+		return -EIO;
+	}
+
+	tmp = kmalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!tmp)
+		return -ENOMEM;
+
+	for (reg_address = 0; reg_address <= 0xFF; reg_address++) {
+		ret = regmap_read(map->regmap, reg_address, &data);
+		if (ret < 0)
+			continue;
+
+		len += scnprintf(tmp + len, PAGE_SIZE - len, "%02x: %04x\n", reg_address, data);
+	}
+
+	if (len > 0)
+		len = simple_read_from_buffer(buf, count,  ppos, tmp, strlen(tmp));
+
+	kfree(tmp);
+
+	return len;
+}
+
+BATTERY_DEBUG_ATTRIBUTE(debug_nvreg_all_fops, max1720x_show_nvreg_all, NULL);
+
 static ssize_t max1720x_force_psy_update(struct file *filp,
 					 const char __user *user_buf,
 					 size_t count, loff_t *ppos)
@@ -3892,9 +3929,14 @@ static int max17x0x_init_sysfs(struct max1720x_chip *chip)
 	/* dump all registers */
 	debugfs_create_file("registers", 0444, de, chip, &debug_reg_all_fops);
 
+	if (chip->regmap_nvram.regmap)
+		debugfs_create_file("nv_registers", 0444, de, chip, &debug_nvreg_all_fops);
+
 	/* reset fg eeprom data for debugging */
-	debugfs_create_file("cnhs_reset", 0400, de, chip, &debug_reset_cnhs_fops);
-	debugfs_create_file("gmsr_reset", 0400, de, chip, &debug_reset_gmsr_fops);
+	if (chip->gauge_type == MAX_M5_GAUGE_TYPE) {
+		debugfs_create_file("cnhs_reset", 0400, de, chip, &debug_reset_cnhs_fops);
+		debugfs_create_file("gmsr_reset", 0400, de, chip, &debug_reset_gmsr_fops);
+	}
 
 	/* capacity fade */
 	debugfs_create_u32("bhi_fcn_count", 0644, de, &chip->bhi_fcn_count);
