@@ -1015,6 +1015,10 @@ static int max77759_mode_callback(struct gvotable_election *el,
 	cb_data.wlc_rx = max77759_wcin_is_online(data) &&
 			 !data->wcin_input_suspend;
 	cb_data.wlcin_off = !!data->wcin_input_suspend;
+
+	pr_debug("%s: wcin_is_online=%d data->wcin_input_suspend=%d\n", __func__,
+		  max77759_wcin_is_online(data), data->wcin_input_suspend);
+
 	/* now scan all the reasons, accumulate in cb_data */
 	gvotable_election_for_each(el, max77759_foreach_callback, &cb_data);
 
@@ -1216,6 +1220,7 @@ static int max77759_set_charge_enabled(struct max77759_chgr_data *data,
 				       int enabled, const char *reason)
 {
 	/* ->charge_done is reset in max77759_enable_sw_recharge() */
+	pr_debug("%s %s enabled=%d\n", __func__, reason, enabled);
 
 	return gvotable_cast_long_vote(data->mode_votable, reason,
 				       GBMS_CHGR_MODE_CHGR_BUCK_ON, enabled);
@@ -1242,12 +1247,17 @@ static int max77759_set_charge_disable(struct max77759_chgr_data *data,
 static int max77759_chgin_input_suspend(struct max77759_chgr_data *data,
 					bool enabled, const char *reason)
 {
+	const int old_value = data->chgin_input_suspend;
 	int ret;
 
+	pr_debug("%s enabled=%d->%d reason=%s\n", __func__,
+		 data->wcin_input_suspend, enabled, reason);
+
+	data->chgin_input_suspend = enabled; /* the callback might use this */
 	ret = gvotable_cast_long_vote(data->mode_votable, "CHGIN_SUSP",
 				      GBMS_CHGR_MODE_CHGIN_OFF, enabled);
-	if (ret == 0)
-		data->chgin_input_suspend = enabled; /* cache */
+	if (ret < 0)
+		data->chgin_input_suspend = old_value; /* restored */
 
 	return ret;
 }
@@ -1255,12 +1265,17 @@ static int max77759_chgin_input_suspend(struct max77759_chgr_data *data,
 static int max77759_wcin_input_suspend(struct max77759_chgr_data *data,
 				       bool enabled, const char *reason)
 {
+	const int old_value = data->wcin_input_suspend;
 	int ret;
 
-	ret = gvotable_cast_long_vote(data->mode_votable, "WCIN_SUSP",
+	pr_debug("%s enabled=%d->%d reason=%s\n", __func__,
+		 data->wcin_input_suspend, enabled, reason);
+
+	data->wcin_input_suspend = enabled; /* the callback uses this!  */
+	ret = gvotable_cast_long_vote(data->mode_votable, reason,
 				      GBMS_CHGR_MODE_WLCIN_OFF, enabled);
-	if (ret == 0)
-		data->wcin_input_suspend = enabled; /* cache */
+	if (ret < 0)
+		data->wcin_input_suspend = old_value; /* restore */
 
 	return ret;
 }
@@ -1534,6 +1549,7 @@ static int max77759_dcicl_callback(struct gvotable_election *el,
 	pr_debug("%s: DC_ICL reason=%s, value=%ld suspend=%d\n",
 		 __func__, reason ? reason : "", (long)value, suspend);
 
+	/* doesn't trigger a CHARGER_MODE */
 	ret = max77759_wcin_set_ilim_max_ua(data, dc_icl);
 	if (ret < 0)
 		dev_err(data->dev, "cannot set dc_icl=%d (%d)\n",
