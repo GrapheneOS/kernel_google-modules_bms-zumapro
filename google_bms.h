@@ -294,8 +294,10 @@ enum gbms_stats_tier_idx_t {
 	GBMS_STATS_BD_TI_OVERHEAT_TEMP = 110,
 	GBMS_STATS_BD_TI_CUSTOM_LEVELS = 111,
 	GBMS_STATS_BD_TI_TRICKLE = 112,
+	GBMS_STATS_BD_TI_DOCK = 113,
 
 	GBMS_STATS_BD_TI_TRICKLE_CLEARED = 122,
+	GBMS_STATS_BD_TI_DOCK_CLEARED = 123,
 };
 
 /* health state */
@@ -514,6 +516,26 @@ int gbms_read_aacr_limits(struct gbms_chg_profile *profile,
 			  struct device_node *node);
 
 bool chg_state_is_disconnected(const union gbms_charger_state *chg_state);
+
+/* Voltage tier stats */
+void gbms_tier_stats_init(struct gbms_ce_tier_stats *stats, int8_t idx);
+
+void gbms_chg_stats_tier(struct gbms_ce_tier_stats *tier,
+			 int msc_state, ktime_t elap);
+
+void gbms_stats_update_tier(int temp_idx, int ibatt_ma, int temp, ktime_t elap,
+			    int cc, union gbms_charger_state *chg_state,
+			    enum gbms_msc_states_t msc_state, int soc_in,
+			    struct gbms_ce_tier_stats *tier);
+
+int gbms_tier_stats_cstr(char *buff, int size,
+			 const struct gbms_ce_tier_stats *tier_stat,
+			 bool verbose);
+
+void gbms_log_cstr_handler(struct logbuffer *log, char *buf, int len);
+
+
+
 
 /*
  * Charger modes
