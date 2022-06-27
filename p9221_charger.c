@@ -597,6 +597,7 @@ static int p9221_set_switch_reg(struct p9221_charger_data *charger, bool enable)
 #define EPP_MODE_REQ_PWR		15
 static int p9221_reset_wlc_dc(struct p9221_charger_data *charger)
 {
+	const int dc_sw_gpio = charger->pdata->dc_switch_gpio;
 	const int extben_gpio = charger->pdata->ext_ben_gpio;
 	const int req_pwr = EPP_MODE_REQ_PWR;
 	int ret, i;
@@ -606,6 +607,8 @@ static int p9221_reset_wlc_dc(struct p9221_charger_data *charger)
 		return 0;
 
 	charger->wlc_dc_enabled = false;
+	if (dc_sw_gpio >= 0)
+		gpio_set_value_cansleep(dc_sw_gpio, 0);
 	if (extben_gpio)
 		gpio_set_value_cansleep(extben_gpio, 0);
 

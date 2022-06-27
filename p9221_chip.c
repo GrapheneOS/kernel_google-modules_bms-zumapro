@@ -26,6 +26,7 @@
 #define P9XXX_GPIO_CPOUT_EN             1
 #define P9412_GPIO_CPOUT21_EN           2
 #define P9XXX_GPIO_CPOUT_CTL_EN         3
+#define P9XXX_GPIO_DC_SW_EN             4
 #define P9XXX_GPIO_VBUS_EN              15
 
 /* Simple Chip Specific Accessors */
@@ -1901,6 +1902,10 @@ static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 		value = (!!value) ^ charger->pdata->wlc_en_act_low;
 		gpio_direction_output(charger->pdata->wlc_en, value);
 		break;
+	case P9XXX_GPIO_DC_SW_EN:
+		if (charger->pdata->dc_switch_gpio < 0)
+			break;
+		gpio_set_value_cansleep(charger->pdata->dc_switch_gpio, value);
 	default:
 		ret = -EINVAL;
 		break;
