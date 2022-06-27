@@ -314,6 +314,10 @@ struct chg_drv {
 	/* dock_defend */
 	struct delayed_work bd_dd_work;
 	bool ext_volt_complete;
+
+	struct mutex stats_lock;
+	struct gbms_ce_tier_stats dd_stats;
+	ktime_t last_update;
 };
 
 static void reschedule_chg_work(struct chg_drv *chg_drv)
@@ -399,6 +403,60 @@ static char *psy_usbc_type_str[] = {
 	"Unknown", "SDP", "DCP", "CDP", "ACA", "C",
 	"PD", "PD_DRP", "PD_PPS", "BrickID"
 };
+
+static int chg_work_read_soc(struct power_supply *bat_psy, int *soc);
+
+static void chg_stats_init(struct chg_drv *chg_drv, struct gbms_ce_tier_stats *tier, int8_t idx)
+{
+	ktime_t now = get_boot_sec();
+
+	mutex_lock(&chg_drv->stats_lock);
+	gbms_tier_stats_init(tier, idx);
+	chg_drv->last_update = now;
+	mutex_unlock(&chg_drv->stats_lock);
+}
+
+static void chg_stats_update(struct chg_drv *chg_drv, struct gbms_ce_tier_stats *tier)
+{
+	int ibatt_ma, temp;
+	int cc, soc_in;
+	ktime_t elap, now = get_boot_sec();
+	int ioerr;
+
+	mutex_lock(&chg_drv->stats_lock);
+	if (tier->soc_in == -1)
+		elap = 0;
+	else
+		elap = now - chg_drv->last_update;
+	chg_drv->last_update = now;
+
+	ibatt_ma = GPSY_GET_INT_PROP(chg_drv->bat_psy, POWER_SUPPLY_PROP_CURRENT_NOW, &ioerr);
+	if (ioerr < 0) {
+		pr_err("%s: read ibatt_ma=%d, ioerr=%d\n", __func__, ibatt_ma, ioerr);
+		goto stats_update_unlock;
+	}
+	ibatt_ma /= 1000;
+
+	temp = GPSY_GET_INT_PROP(chg_drv->bat_psy, POWER_SUPPLY_PROP_TEMP, &ioerr);
+	if (ioerr < 0)
+		goto stats_update_unlock;
+
+	cc = GPSY_GET_INT_PROP(chg_drv->bat_psy, POWER_SUPPLY_PROP_CHARGE_COUNTER, &ioerr);
+	if (ioerr < 0)
+		goto stats_update_unlock;
+
+	cc /= 1000;
+
+	/* Ignore error in soc_in read */
+	ioerr = chg_work_read_soc(chg_drv->bat_psy, &soc_in);
+	if (ioerr != 0)
+		soc_in = -1;
+
+	gbms_stats_update_tier(0, ibatt_ma, temp, elap, cc, &chg_drv->chg_state, -1,
+				soc_in << 8, tier);
+stats_update_unlock:
+	mutex_unlock(&chg_drv->stats_lock);
+}
 
 /* called on google_charger_init_work() and on every disconnect */
 static inline void chg_init_state(struct chg_drv *chg_drv)
@@ -1394,7 +1452,6 @@ static void thermal_stats_init(struct thermal_stats_data *thermal_stats) {
 	thermal_stats->ibatt_sum = 0;
 }
 
-static int chg_work_read_soc(struct power_supply *bat_psy, int *soc);
 static void thermal_stats_work(struct chg_drv *chg_drv) {
 	struct thermal_stats_data *thermal_stats = &chg_drv->thermal_stats;
 	struct power_supply *bat_psy = chg_drv->bat_psy;
@@ -1920,6 +1977,10 @@ static void bd_dd_run_defender(struct chg_drv *chg_drv, int soc, int *disable_ch
 						bd_state->dd_triggered,
 						(soc >= lowerbd));
 
+	/* Start DD stats */
+	if (bd_state->dd_state == DOCK_DEFEND_ACTIVE)
+		chg_stats_update(chg_drv, &chg_drv->dd_stats);
+
 	/* need icl_ramp_work when disable_pwrsrc 1 -> 0 */
 	if (!*disable_pwrsrc && chg_drv->disable_pwrsrc) {
 		struct power_supply *dc_psy;
@@ -2267,6 +2328,14 @@ static void chg_work(struct work_struct *work)
 		const int upperbd = chg_drv->charge_stop_level;
 		const int lowerbd = chg_drv->charge_start_level;
 
+		/*
+		 * Update DD stats last time if DD is active.
+		 * NOTE: *** Ensure this is done before disconnect indication to google_battery
+		 */
+		if (chg_drv->dd_stats.vtier_idx == GBMS_STATS_BD_TI_DOCK &&
+			chg_drv->bd_state.dd_state == DOCK_DEFEND_ACTIVE)
+			chg_stats_update(chg_drv, &chg_drv->dd_stats);
+
 		/* reset dock_defend */
 		if (chg_drv->bd_state.dd_triggered) {
 			chg_update_charging_state(chg_drv, false, false);
@@ -2321,7 +2390,7 @@ static void chg_work(struct work_struct *work)
 
 		goto exit_chg_work;
 	} else {
-		// Run thermal stats when connected to power (preset || online)
+		/* Run thermal stats when connected to power (preset || online) */
 		thermal_stats_work(chg_drv);
 
 		if (chg_drv->stop_charging != 0 && present) {
@@ -2362,6 +2431,11 @@ static void chg_work(struct work_struct *work)
 		/* clear rc for exit_chg_work: update correct data */
 		rc = 0;
 	}
+
+	/* Book dd stats to correct charging type if DD active */
+	if (chg_drv->dd_stats.vtier_idx == GBMS_STATS_BD_TI_DOCK &&
+			chg_drv->bd_state.dd_state == DOCK_DEFEND_ACTIVE)
+			chg_stats_update(chg_drv, &chg_drv->dd_stats);
 
 	/*
 	 * chg_drv->disable_pwrsrc -> chg_drv->disable_charging
@@ -3150,6 +3224,13 @@ static ssize_t set_dd_settings(struct device *dev, struct device_attribute *attr
 
 	if (chg_drv->bd_state.dd_settings != val) {
 		chg_drv->bd_state.dd_settings = val;
+
+		/* Update DD stats tier. Book stats till now to DOCK tier */
+		if (DOCK_DEFEND_USER_CLEARED == chg_drv->bd_state.dd_settings) {
+			chg_stats_update(chg_drv, &chg_drv->dd_stats);
+			chg_drv->dd_stats.vtier_idx = GBMS_STATS_BD_TI_DOCK_CLEARED;
+		}
+
 		if (chg_drv->bat_psy)
 			power_supply_changed(chg_drv->bat_psy);
 	}
@@ -3662,6 +3743,40 @@ static ssize_t thermal_stats_store(struct device *dev,
 
 static DEVICE_ATTR_RW(thermal_stats);
 
+static ssize_t
+charge_stats_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct chg_drv *chg_drv = dev_get_drvdata(dev);
+	struct gbms_ce_tier_stats *dd_stats = &chg_drv->dd_stats;
+	ssize_t len;
+
+	mutex_lock(&chg_drv->stats_lock);
+	len = gbms_tier_stats_cstr(buf, PAGE_SIZE, dd_stats, false);
+	mutex_unlock(&chg_drv->stats_lock);
+
+	return len;
+}
+
+static ssize_t charge_stats_store(struct device *dev,
+				   struct device_attribute *attr,
+				   const char *buf, size_t count)
+{
+	struct chg_drv *chg_drv = dev_get_drvdata(dev);
+
+	if (count < 1)
+		return -ENODATA;
+
+	switch (buf[0]) {
+	case '0':
+		chg_stats_init(chg_drv, &chg_drv->dd_stats, GBMS_STATS_BD_TI_DOCK);
+		break;
+	}
+
+	return count;
+}
+
+static DEVICE_ATTR_RW(charge_stats);
+
 static int chg_init_fs(struct chg_drv *chg_drv)
 {
 	int ret;
@@ -3780,6 +3895,12 @@ static int chg_init_fs(struct chg_drv *chg_drv)
 	ret = device_create_file(chg_drv->device, &dev_attr_thermal_stats);
 	if (ret != 0) {
 		pr_err("Failed to create thermal_stats, ret=%d\n", ret);
+		return ret;
+	}
+
+	ret = device_create_file(chg_drv->device, &dev_attr_charge_stats);
+	if (ret != 0) {
+		pr_err("Failed to create charge_stats files, ret=%d\n", ret);
 		return ret;
 	}
 
@@ -4953,14 +5074,17 @@ static void google_charger_init_work(struct work_struct *work)
 	chg_drv->charge_start_level = DEFAULT_CHARGE_START_LEVEL;
 	mutex_init(&chg_drv->thermal_stats.lock);
 	thermal_stats_init(&chg_drv->thermal_stats);
+	mutex_init(&chg_drv->stats_lock);
 
 	/* reset override charging parameters */
 	chg_drv->user_fv_uv = -1;
 	chg_drv->user_cc_max = -1;
 
 	/* dock_defend */
-	if (chg_drv->ext_psy)
+	if (chg_drv->ext_psy) {
 		bd_dd_init(chg_drv);
+		chg_stats_init(chg_drv, &chg_drv->dd_stats, GBMS_STATS_BD_TI_DOCK);
+	}
 
 	chg_drv->psy_nb.notifier_call = chg_psy_changed;
 	ret = power_supply_reg_notifier(&chg_drv->psy_nb);
