@@ -578,6 +578,13 @@ static inline int reg_to_capacity_uah(u16 val, struct max1720x_chip *chip)
 	return reg_to_micro_amp_h(val, chip->RSense, lsb);
 }
 
+static inline int reg_to_time_hr(u16 val, struct max1720x_chip *chip)
+{
+	const int lsb = max_m5_cap_lsb(chip->model_data);
+
+	return (val * 32 * lsb) / 10;
+}
+
 #if 0
 /* TODO: will need in outliers */
 static inline int capacity_uah_to_reg(int capacity, struct max1720x_chip *chip)
@@ -2083,7 +2090,7 @@ static int max1720x_health_read_impedance(struct max1720x_chip *chip)
 	return max17x0x_read_resistance(chip);
 }
 
-/* in hours (3.2 hours resolution) */
+/* in hours */
 static int max1720x_get_age(struct max1720x_chip *chip)
 {
 	u16 timerh;
@@ -2093,7 +2100,7 @@ static int max1720x_get_age(struct max1720x_chip *chip)
 	if (ret < 0 || timerh == 0)
 		return -ENODATA;
 
-	return (timerh * 32) / 10;
+	return reg_to_time_hr(timerh, chip);
 }
 
 static int max1720x_get_fade_rate(struct max1720x_chip *chip)
