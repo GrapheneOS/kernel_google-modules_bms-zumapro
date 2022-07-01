@@ -178,7 +178,7 @@ static int ttf_pwr_equiv_icl(const struct gbms_charging_event *ce_data,
 	}
 
 	/* scale icl (at adapter voltage) to vtier */
-	equiv_icl = (act_icl * aratio * 100) / efficiency;
+	equiv_icl = (act_icl * aratio * efficiency) / 10000;
 	pr_debug("%s: act_icl=%d aratio=%d equiv_icl=%d\n",
 		 __func__, act_icl, aratio, equiv_icl);
 
