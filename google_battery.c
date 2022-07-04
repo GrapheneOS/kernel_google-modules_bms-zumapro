@@ -1097,15 +1097,19 @@ static int fan_level_cb(struct gvotable_election *el,
 		pr_debug("FAN_LEVEL %d->%d reason=%s\n",
 			 batt_drv->fan_last_level, lvl, reason ? reason : "<>");
 
-		if (!chg_state_is_disconnected(&batt_drv->chg_state))
+		if (!chg_state_is_disconnected(&batt_drv->chg_state)) {
 			logbuffer_log(batt_drv->ttf_stats.ttf_log,
 				      "FAN_LEVEL %d->%d reason=%s",
 				      batt_drv->fan_last_level, lvl,
 				      reason ? reason : "<>");
 
-		batt_drv->fan_last_level = lvl;
-		if (batt_drv->psy)
-			power_supply_changed(batt_drv->psy);
+			batt_drv->fan_last_level = lvl;
+			if (batt_drv->psy)
+				power_supply_changed(batt_drv->psy);
+		} else {
+			/* Disconnected */
+			batt_drv->fan_last_level = lvl;
+		}
 	}
 
 	return 0;
@@ -4419,15 +4423,6 @@ msc_logic_done:
 		batt_drv->cc_max = 0;
 	}
 
-	/* Fan level can be updated only during power transfer */
-	if (batt_drv->fan_level_votable) {
-		int level = fan_calculate_level(batt_drv);
-
-		gvotable_cast_int_vote(batt_drv->fan_level_votable,
-				       "MSC_BATT", level, true);
-		pr_debug("MSC_FAN_LVL: level=%d\n", level);
-	}
-
 	if (changed)
 		log_vote_level = BATT_PRLOG_ALWAYS;
 	batt_prlog(log_vote_level,
@@ -4507,6 +4502,15 @@ msc_logic_done:
 					       !disable_votes &&
 					       (bpst_cc_max != -1));
 		}
+	}
+
+	/* Fan level can be updated only during power transfer */
+	if (batt_drv->fan_level_votable) {
+		int level = fan_calculate_level(batt_drv);
+
+		gvotable_cast_int_vote(batt_drv->fan_level_votable,
+				       "MSC_BATT", level, true);
+		pr_debug("MSC_FAN_LVL: level=%d\n", level);
 	}
 
 	if (!batt_drv->msc_interval_votable)
