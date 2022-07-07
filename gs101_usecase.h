@@ -18,6 +18,7 @@ struct max77759_usecase_data {
 	bool ext_otg_only;	/* use external OTG only */
 	int pogo_ovp_en;	/* pogo ovp */
 	int pogo_ovp_en_act_low;	/* pogo ovp flags */
+	int pogo_vout_en;	/* pogo 5V vout */
 
 	int ls2_en;		/* OVP LS2, rtx case */
 	int sw_en;		/* OVP SW Enable, rtx+otg case */
@@ -72,6 +73,9 @@ enum gsu_usecases {
 	GSU_MODE_USB_WLC_RX	= 13,
 
 	GSU_MODE_DOCK		= 14,
+	GSU_MODE_POGO_VOUT	= 15,
+	GSU_MODE_USB_CHG_POGO_VOUT	= 16,
+	GSU_MODE_USB_OTG_POGO_VOUT	= 17,
 };
 
 extern int gs101_wlc_en(struct max77759_usecase_data *uc_data, bool wlc_on);
