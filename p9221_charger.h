@@ -298,6 +298,7 @@
 #define P9222RE_FOD_REG				0x84
 #define P9222RE_EPP_REQ_NEGOTIATED_POWER_REG	0xBD
 #define P9222RE_TX_MFG_CODE_REG			0x106
+#define P9222RE_PROP_TX_ID_REG			0x118
 
 /*
  * P9222 SYSTEM_MODE_REG bits
@@ -610,6 +611,8 @@ struct p9221_charger_platform_data {
 	bool				feat_compat_mode;
 	bool				apbst_en;
 	bool				has_sw_ramp;
+	/* phone type for tx_id*/
+	u8				phone_type;
 };
 
 struct p9221_charger_ints_bit {
@@ -686,6 +689,7 @@ struct p9221_charger_data {
 	struct dentry			*debug_entry;
 	struct p9221_charger_feature	chg_features;
 	struct p9221_charger_cc_data_lock	cc_data_lock;
+	struct wakeup_source		*align_ws;
 	u16				chip_id;
 	int				online;
 	bool				enabled;

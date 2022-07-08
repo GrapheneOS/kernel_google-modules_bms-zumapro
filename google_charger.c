@@ -310,6 +310,10 @@ struct chg_drv {
 
 	/* debug */
 	struct dentry *debug_entry;
+
+	/* dock_defend */
+	struct delayed_work bd_dd_work;
+	bool ext_volt_complete;
 };
 
 static void reschedule_chg_work(struct chg_drv *chg_drv)
@@ -1023,6 +1027,19 @@ static bool chg_work_check_wlc_state(struct power_supply *wlc_psy)
 	return wlc_online == 1 || wlc_present == 1;
 }
 
+static bool chg_work_check_usb_state(struct chg_drv *chg_drv)
+{
+	struct power_supply *usb_psy = chg_drv->tcpm_psy ? chg_drv->tcpm_psy : chg_drv->usb_psy;
+	int usb_online = 0, usb_present = 0;
+
+	usb_online = chg_usb_online(usb_psy);
+
+	if (chg_drv->usb_psy)
+		usb_present = GPSY_GET_PROP(chg_drv->usb_psy, POWER_SUPPLY_PROP_PRESENT);
+
+	return usb_online > 0 || usb_present == 1;
+}
+
 /* not executed when battery is NOT present */
 static int chg_work_roundtrip(struct chg_drv *chg_drv,
 			      union gbms_charger_state *chg_state)
@@ -1034,7 +1051,7 @@ static int chg_work_roundtrip(struct chg_drv *chg_drv,
 	const int lowerbd = chg_drv->charge_start_level;
 	int fv_uv = -1, cc_max = -1;
 	int update_interval, rc;
-	bool wlc_on = 0;
+	bool wlc_on = 0, usb_on = 0;
 
 	rc = gbms_read_charger_state(chg_state, chg_psy);
 	if (rc < 0)
@@ -1058,16 +1075,19 @@ static int chg_work_roundtrip(struct chg_drv *chg_drv,
 	/*
 	 * Sending _NOT_CHARGING down to the battery (with buck_en=0) while on
 	 * WLC will keep dream defend stats in the same charging session.
+	 * Add usb_state to prevent disconnection false positives, which may
+	 * log data incorrectly
 	 */
 	wlc_on = chg_work_check_wlc_state(wlc_psy);
-	if (wlc_on && batt_chg_state.f.chg_status == POWER_SUPPLY_STATUS_DISCHARGING) {
+	usb_on = chg_work_check_usb_state(chg_drv);
+	if ((wlc_on | usb_on) && batt_chg_state.f.chg_status == POWER_SUPPLY_STATUS_DISCHARGING) {
 		batt_chg_state.f.chg_status = POWER_SUPPLY_STATUS_NOT_CHARGING;
 		batt_chg_state.f.flags = gbms_gen_chg_flags(chg_state->f.chg_status,
 							    chg_state->f.chg_type);
 	}
 
-	pr_debug("%s: wlc_on=%d chg_state=%llx batt_chg_state=%llx\n", __func__,
-		 wlc_on, chg_state->v, batt_chg_state.v);
+	pr_debug("%s: wlc_on=%d usb_on=%d chg_state=%llx batt_chg_state=%llx\n", __func__,
+		 wlc_on, usb_on, chg_state->v, batt_chg_state.v);
 
 	/* might return negative values in fv_uv and cc_max */
 	rc = chg_work_batt_roundtrip(&batt_chg_state, chg_drv->bat_psy,
@@ -1822,6 +1842,61 @@ static void bd_dd_init(struct chg_drv *chg_drv)
 		bd_state->dd_state, bd_state->dd_settings);
 }
 
+static int bd_dd_state_update(const int dd_state, const bool dd_triggered, const bool change)
+{
+	int new_state = dd_state;
+
+	switch (new_state) {
+	case DOCK_DEFEND_ENABLED:
+		if (dd_triggered && change)
+			new_state = DOCK_DEFEND_ACTIVE;
+		break;
+	case DOCK_DEFEND_ACTIVE:
+		if (!dd_triggered)
+			new_state = DOCK_DEFEND_ENABLED;
+		break;
+	default:
+		break;
+	}
+
+	return new_state;
+}
+
+static void bd_dd_work(struct work_struct *work)
+{
+	struct chg_drv *chg_drv =
+		container_of(work, struct chg_drv, bd_dd_work.work);
+	struct power_supply *ext_psy = chg_drv->ext_psy;
+	int ext_present = GPSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_PRESENT);
+	int ext_online = GPSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_ONLINE);
+
+	if (!ext_present)
+		chg_drv->bd_state.dd_enabled = 0;
+	else if (ext_present && ext_online)
+		chg_drv->bd_state.dd_enabled = 1;
+
+	pr_info("MSC_BD dd_enabled:%d\n", chg_drv->bd_state.dd_enabled);
+}
+
+/*
+ * When ext_present && ext_online, debounce dd_enabled with one second
+ */
+#define DD_DEBOUNCE_MS	1000
+static void bd_dd_set_enabled(struct chg_drv *chg_drv, const int ext_present, const int ext_online)
+{
+	if (!ext_present) {
+		chg_drv->bd_state.dd_enabled = 0;
+		chg_drv->ext_volt_complete = false;
+	} else if (ext_present && ext_online && !chg_drv->ext_volt_complete) {
+		cancel_delayed_work_sync(&chg_drv->bd_dd_work);
+		schedule_delayed_work(&chg_drv->bd_dd_work,
+				      msecs_to_jiffies(DD_DEBOUNCE_MS));
+		chg_drv->ext_volt_complete = true;
+
+		pr_info("MSC_BD debounce %dms for dock_defend\n", DD_DEBOUNCE_MS);
+	}
+}
+
 #define dd_is_enabled(bd_state) \
 	((bd_state)->dd_state != DOCK_DEFEND_DISABLED && \
 	(bd_state)->dd_settings == DOCK_DEFEND_USER_ENABLED)
@@ -1829,8 +1904,8 @@ static void bd_dd_run_defender(struct chg_drv *chg_drv, int soc, int *disable_ch
 {
 	struct bd_data *bd_state = &chg_drv->bd_state;
 	const bool was_triggered = bd_state->dd_triggered;
-	const int upperbd = chg_drv->bd_state.dd_charge_stop_level;
-	const int lowerbd = chg_drv->bd_state.dd_charge_start_level;
+	const int upperbd = bd_state->dd_charge_stop_level;
+	const int lowerbd = bd_state->dd_charge_start_level;
 
 	bd_state->dd_triggered = dd_is_enabled(bd_state) ?
 				 chg_is_custom_enabled(upperbd, lowerbd) : false;
@@ -1839,6 +1914,11 @@ static void bd_dd_run_defender(struct chg_drv *chg_drv, int soc, int *disable_ch
 		*disable_charging = bd_recharge_logic(bd_state, soc);
 	if (*disable_charging)
 		*disable_pwrsrc = soc > bd_state->dd_charge_stop_level;
+
+	/* update dd_state to user space */
+	bd_state->dd_state = bd_dd_state_update(bd_state->dd_state,
+						bd_state->dd_triggered,
+						(soc >= lowerbd));
 
 	/* need icl_ramp_work when disable_pwrsrc 1 -> 0 */
 	if (!*disable_pwrsrc && chg_drv->disable_pwrsrc) {
@@ -2167,7 +2247,9 @@ static void chg_work(struct work_struct *work)
 	if (ext_psy) {
 		ext_online = GPSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_ONLINE);
 		ext_present = GPSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_PRESENT);
-		chg_drv->bd_state.dd_enabled = ext_present;
+
+		/* set dd_enabled for dock_defend */
+		bd_dd_set_enabled(chg_drv, ext_present, ext_online);
 	}
 
 	/* ICL=0 on discharge will (might) cause usb online to go to 0 */
@@ -2190,6 +2272,10 @@ static void chg_work(struct work_struct *work)
 			chg_update_charging_state(chg_drv, false, false);
 			chg_drv->bd_state.dd_triggered = 0;
 		}
+		if (chg_drv->bd_state.dd_settings == DOCK_DEFEND_USER_CLEARED)
+			chg_drv->bd_state.dd_settings = DOCK_DEFEND_USER_ENABLED;
+		if (chg_drv->bd_state.dd_state == DOCK_DEFEND_ACTIVE)
+			chg_drv->bd_state.dd_state = DOCK_DEFEND_ENABLED;
 
 		rc = chg_start_bd_work(chg_drv);
 		if (rc < 0)
@@ -2270,9 +2356,12 @@ static void chg_work(struct work_struct *work)
 		goto rerun_error;
 
 	update_interval = rc;
-	if (update_interval >= 0)
+	if (update_interval >= 0) {
 		chg_done = (chg_drv->chg_state.f.flags &
 			    GBMS_CS_FLAG_DONE) != 0;
+		/* clear rc for exit_chg_work: update correct data */
+		rc = 0;
+	}
 
 	/*
 	 * chg_drv->disable_pwrsrc -> chg_drv->disable_charging
@@ -3009,10 +3098,8 @@ static ssize_t show_dd_state(struct device *dev, struct device_attribute *attr,
 			     char *buf)
 {
 	struct chg_drv *chg_drv = dev_get_drvdata(dev);
-	const int dd_state = chg_drv->bd_state.dd_triggered ?
-			     DOCK_DEFEND_ACTIVE : chg_drv->bd_state.dd_state;
 
-	return scnprintf(buf, PAGE_SIZE, "%d\n", dd_state);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", chg_drv->bd_state.dd_state);
 }
 
 static ssize_t set_dd_state(struct device *dev, struct device_attribute *attr,
@@ -4054,6 +4141,7 @@ static int chg_create_votables(struct chg_drv *chg_drv)
 	}
 
 	gvotable_set_vote2str(chg_drv->msc_fv_votable, gvotable_v2s_int);
+	gvotable_disable_force_int_entry(chg_drv->msc_fv_votable);
 	gvotable_election_set_name(chg_drv->msc_fv_votable, VOTABLE_MSC_FV);
 
 	chg_drv->msc_fcc_votable =
@@ -4066,6 +4154,7 @@ static int chg_create_votables(struct chg_drv *chg_drv)
 	}
 
 	gvotable_set_vote2str(chg_drv->msc_fcc_votable, gvotable_v2s_int);
+	gvotable_disable_force_int_entry(chg_drv->msc_fcc_votable);
 	gvotable_election_set_name(chg_drv->msc_fcc_votable, VOTABLE_MSC_FCC);
 
 	chg_drv->msc_interval_votable =
@@ -4254,8 +4343,12 @@ static int chg_therm_update_fcc(struct chg_drv *chg_drv)
 
 	/* restore the thermal vote FCC level (if enabled) */
 	override_fcc = chg_therm_override_fcc(chg_drv);
-	if (!override_fcc && tdev->current_level > 0)
-		fcc = tdev->thermal_mitigation[tdev->current_level];
+	if (!override_fcc && tdev->current_level > 0) {
+		if (tdev->current_level < tdev->thermal_levels)
+			fcc = tdev->thermal_mitigation[tdev->current_level];
+		else
+			fcc = 0;
+	}
 
 	/* !override_fcc will restore the fcc thermal limit when set */
 	ret = gvotable_cast_int_vote(chg_drv->msc_fcc_votable,
@@ -5033,6 +5126,7 @@ static int google_charger_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 	INIT_DELAYED_WORK(&chg_drv->bd_work, bd_work);
+	INIT_DELAYED_WORK(&chg_drv->bd_dd_work, bd_dd_work);
 	bd_init(&chg_drv->bd_state, chg_drv->device);
 
 	INIT_DELAYED_WORK(&chg_drv->init_work, google_charger_init_work);

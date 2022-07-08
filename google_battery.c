@@ -215,6 +215,13 @@ struct batt_res {
 };
 
 /* TODO: move single cell disconnect to bhi_data */
+enum bpst_batt_status {
+	BPST_BATT_UNKNOWN = 0,
+	BPST_BATT_CONNECT = 1,
+	BPST_BATT_DISCONNECT = 2,
+	BPST_BATT_CELL_FAULT = 3,
+};
+
 struct batt_bpst {
 	struct mutex lock;
 	bool bpst_enable;
@@ -1797,6 +1804,22 @@ static int batt_chg_vbat2tier(const int vbatt_idx)
 {
 	return vbatt_idx < GBMS_STATS_TIER_COUNT ?
 		vbatt_idx : GBMS_STATS_TIER_COUNT - 1;
+}
+
+static int batt_bpst_stats_update(struct batt_drv *batt_drv)
+{
+	struct batt_bpst *bpst_state = &batt_drv->bpst_state;
+
+	if (!bpst_state->bpst_enable)
+		return BPST_BATT_UNKNOWN;
+
+	if (bpst_state->bpst_cell_fault)
+		return BPST_BATT_CELL_FAULT;
+
+	if (bpst_state->bpst_sbd_status)
+		return BPST_BATT_DISCONNECT;
+
+	return BPST_BATT_CONNECT;
 }
 
 /* Only the qualified copy gets the timestamp and the exit voltage. */
@@ -4127,7 +4150,6 @@ static bool batt_cell_fault_detect(struct batt_bpst *bpst_state)
 	 * TODO: will implement the code from the algo in b/203019566
 	 */
 	bpst_sbd_status = bpst_state->bpst_sbd_status;
-	bpst_state->bpst_sbd_status = 0;
 
 	return !!bpst_sbd_status && !bpst_state->bpst_detect_disable;
 }
@@ -4157,6 +4179,9 @@ static int batt_bpst_detect_begin(struct batt_bpst *bpst_state)
 		pr_debug("%s: MSC_BPST: single battery disconnect %d\n",
 			 __func__, bpst_state->bpst_cell_fault);
 	}
+
+	/* reset detection status */
+	bpst_state->bpst_sbd_status = 0;
 
 	pr_debug("%s: MSC_BPST: %d in connected\n", __func__, data);
 	return 0;
@@ -4235,6 +4260,18 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 		if (batt_drv->ssoc_state.buck_enabled == 0)
 			goto msc_logic_exit;
 
+		/* update bpst */
+		mutex_lock(&batt_drv->bpst_state.lock);
+		if (batt_drv->bpst_state.bpst_enable) {
+			bool cell_fault_detect = batt_cell_fault_detect(&batt_drv->bpst_state);
+
+			if (cell_fault_detect) {
+				rc = batt_bpst_detect_update(batt_drv);
+				pr_info("MSC_BPST: cell_fault_detect in disconnected(%d)\n", rc);
+			}
+		}
+		mutex_unlock(&batt_drv->bpst_state.lock);
+
 		/* here on: disconnect */
 		batt_log_csi_info(batt_drv);
 		batt_chg_stats_pub(batt_drv, "disconnect", false, false);
@@ -4258,18 +4295,6 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 		/* TODO: move earlier and include the change to the curve */
 		ssoc_change_state(&batt_drv->ssoc_state, 0);
 		changed = true;
-
-		/* update bpst */
-		mutex_lock(&batt_drv->bpst_state.lock);
-		if (batt_drv->bpst_state.bpst_enable) {
-			bool cell_fault_detect = batt_cell_fault_detect(&batt_drv->bpst_state);
-
-			if (cell_fault_detect) {
-				rc = batt_bpst_detect_update(batt_drv);
-				pr_info("MSC_BPST: cell_fault_detect in disconnected(%d)\n", rc);
-			}
-		}
-		mutex_unlock(&batt_drv->bpst_state.lock);
 
 		/* google_resistance: update and stop accumulation. */
 		batt_res_work(batt_drv);
@@ -6401,7 +6426,7 @@ static ssize_t health_index_stats_show(struct device *dev,
 		health_status = bhi_calc_health_status(i, BHI_ROUND_INDEX(health_index), health_data);
 
 		len += scnprintf(&buf[len], PAGE_SIZE - len,
-				 "%d: %d, %d,%d,%d %d,%d,%d %d,%d\n",
+				 "%d: %d, %d,%d,%d %d,%d,%d %d,%d, %d\n",
 				 i, health_status,
 				 BHI_ROUND_INDEX(health_index),
 				 BHI_ROUND_INDEX(cap_index),
@@ -6410,7 +6435,8 @@ static ssize_t health_index_stats_show(struct device *dev,
 				 bhi_health_get_capacity(i, bhi_data),
 				 bhi_health_get_impedance(i, bhi_data),
 				 bhi_data->battery_age,
-				 bhi_data->cycle_count);
+				 bhi_data->cycle_count,
+				 batt_bpst_stats_update(batt_drv));
 	}
 
 	mutex_unlock(&batt_drv->chg_lock);
@@ -6708,7 +6734,6 @@ static const DEVICE_ATTR_RW(dev_sn);
 
 static int batt_init_fs(struct batt_drv *batt_drv)
 {
-	struct dentry *de = NULL;
 	int ret;
 
 	/* stats */
@@ -6881,6 +6906,14 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create dev sn\n");
 
+	return 0;
+
+}
+
+static int batt_init_debugfs(struct batt_drv *batt_drv)
+{
+	struct dentry *de = NULL;
+
 	de = debugfs_create_dir("google_battery", 0);
 	if (IS_ERR_OR_NULL(de))
 		return 0;
@@ -6954,7 +6987,6 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 /* bpst detection */
 static int batt_bpst_init_fs(struct batt_drv *batt_drv)
 {
-	struct dentry *de = NULL;
 	int ret;
 
 	if (!batt_drv->bpst_state.bpst_enable)
@@ -6966,6 +6998,14 @@ static int batt_bpst_init_fs(struct batt_drv *batt_drv)
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_bpst_detect_disable);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create bpst_detect_disable\n");
+
+	return 0;
+
+}
+
+static int batt_bpst_init_debugfs(struct batt_drv *batt_drv)
+{
+	struct dentry *de = NULL;
 
 	de = debugfs_create_dir("bpst", 0);
 	if (IS_ERR_OR_NULL(de))
@@ -8533,10 +8573,10 @@ static void google_battery_init_work(struct work_struct *work)
 	}
 
 	/* debugfs */
-	(void)batt_init_fs(batt_drv);
+	(void)batt_init_debugfs(batt_drv);
 
 	/* single battery disconnect */
-	(void)batt_bpst_init_fs(batt_drv);
+	(void)batt_bpst_init_debugfs(batt_drv);
 
 	/* these don't require nvm storage */
 	ret = gbms_storage_register(&batt_prop_dsc, "battery", batt_drv);
@@ -8749,6 +8789,10 @@ static int google_battery_probe(struct platform_device *pdev)
 	batt_drv->aacr_cycle_grace = AACR_START_CYCLE_DEFAULT;
 	batt_drv->aacr_cycle_max = AACR_MAX_CYCLE_DEFAULT;
 	batt_drv->aacr_state = BATT_AACR_DISABLED;
+
+	/* create the sysfs node */
+	batt_init_fs(batt_drv);
+	batt_bpst_init_fs(batt_drv);
 
 	/* give time to fg driver to start */
 	schedule_delayed_work(&batt_drv->init_work,
