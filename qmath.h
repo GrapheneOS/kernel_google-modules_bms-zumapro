@@ -16,6 +16,7 @@
 #define QMATH_H_
 
 #include <linux/types.h>
+#include <linux/math64.h>
 
 typedef s32 qnum_t;
 typedef	s64 qnumd_t;
@@ -51,7 +52,8 @@ static inline qnum_t qnum_mul(qnum_t A, qnum_t B)
 
 static inline qnum_t qnum_div(qnum_t A, qnum_t B)
 {
-	return (((qnumd_t)A << QNUM_FBITS) / (qnumd_t)B);
+
+	return div64_s64(((qnumd_t)A << QNUM_FBITS), (qnumd_t)B);
 }
 
 

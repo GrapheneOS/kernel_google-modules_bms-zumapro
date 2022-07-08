@@ -48,7 +48,7 @@ static int ttf_pwr_icl(const struct gbms_ce_tier_stats *ts,
 	if (elap <= ELAP_LIMIT_S)
 		amperage = ad->ad_amperage * 100;
 	else
-		amperage = ts->icl_sum / (elap + ts->time_other);
+		amperage = div_u64(ts->icl_sum, (elap + ts->time_other));
 
 	return amperage;
 }
@@ -68,7 +68,7 @@ int ttf_pwr_ibatt(const struct gbms_ce_tier_stats *ts)
 	}
 
 	/* actual, called only when avg_ibatt in tier indicates charging */
-	avg_ibatt = ts->ibatt_sum / (elap + ts->time_other);
+	avg_ibatt = div_u64(ts->ibatt_sum, (elap + ts->time_other));
 	if (avg_ibatt < 0)
 		sign = -1;
 
@@ -119,7 +119,7 @@ int ttf_ref_cc(const struct batt_ttf_stats *stats, int soc)
 	pr_debug("%s %d: delta_cc=%d elap=%ld\n", __func__, soc,
 		delta_cc, sstat->elap[soc]);
 
-	return (delta_cc * 3600) / sstat->elap[soc];
+	return div64_u64((delta_cc * 3600), sstat->elap[soc]);
 }
 
 /* assumes that health is active for any soc greater than CHG_HEALTH_REST_SOC */
@@ -373,7 +373,7 @@ int ttf_soc_estimate(ktime_t *res, const struct batt_ttf_stats *stats,
 
 		ratio = ttf_elap(&elap, stats, ce_data, qnum_toint(soc));
 		if (ratio >= 0)
-			estimate += (elap * (100 - frac)) / 100;
+			estimate += ktime_divns((elap * (100 - frac)), 100);
 
 		i += 1;
 	}
@@ -401,10 +401,10 @@ int ttf_soc_estimate(ktime_t *res, const struct batt_ttf_stats *stats,
 	if (frac) {
 		ratio = ttf_elap(&elap, stats, ce_data, qnum_toint(last));
 		if (ratio >= 0)
-			estimate += (elap * frac) / 100;
+			estimate += ktime_divns((elap * frac), 100);
 	}
 
-	*res = estimate / 100;
+	*res = ktime_divns(estimate, 100);
 	return max_ratio;
 }
 
@@ -483,10 +483,10 @@ static ktime_t ttf_soc_qual_elap(const struct batt_ttf_stats *stats,
 	const struct ttf_soc_stats *src = &ce_data->soc_stats;
 	const struct ttf_soc_stats *dst = &stats->soc_stats;
 	const int limit = TTF_SOC_QUAL_ELAP_RATIO_MAX;
-	const int max_elap = ((100 + TTF_SOC_QUAL_ELAP_DELTA_REF_PCT_MAX) *
-			     stats->soc_ref.elap[i]) / 100;
-	const int min_elap = ((100 - TTF_SOC_QUAL_ELAP_DELTA_REF_PCT_MAX) *
-			     stats->soc_ref.elap[i]) / 100;
+	const int max_elap = ktime_divns(((100 + TTF_SOC_QUAL_ELAP_DELTA_REF_PCT_MAX) *
+			     stats->soc_ref.elap[i]), 100);
+	const int min_elap = ktime_divns(((100 - TTF_SOC_QUAL_ELAP_DELTA_REF_PCT_MAX) *
+			     stats->soc_ref.elap[i]), 100);
 	ktime_t elap, elap_new, elap_cur;
 	int ratio;
 
@@ -500,11 +500,11 @@ static ktime_t ttf_soc_qual_elap(const struct batt_ttf_stats *stats,
 		return 0;
 	}
 
-	elap_new = (src->elap[i] * 100) / ratio;
+	elap_new = ktime_divns((src->elap[i] * 100), ratio);
 	elap_cur = dst->elap[i];
 	if (!elap_cur)
 		elap_cur = stats->soc_ref.elap[i];
-	elap = (elap_cur + elap_new) / 2;
+	elap = ktime_divns((elap_cur + elap_new), 2);
 
 	/* bounds check to previous */
 	if (elap > (elap_cur + TTF_SOC_QUAL_ELAP_DELTA_CUR_ABS_MAX))

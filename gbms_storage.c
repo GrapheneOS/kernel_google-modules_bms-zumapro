@@ -566,7 +566,7 @@ static int gbms_storage_show_cache(struct seq_file *m, void *data)
 			   slot->name, tag2cstr(tname, ce->tag));
 
 		if (ce->count != 0)
-			seq_printf(m, "[%lu:%lu]", ce->addr, ce->count);
+			seq_printf(m, "[%zu:%zu]", ce->addr, ce->count);
 		seq_printf(m, "\n");
 	}
 
@@ -613,7 +613,8 @@ static void gbms_show_storage_provider(struct seq_file *m,
 			if (ret < 0)
 				continue;
 
-			seq_printf(m, "[%lu,%lu] ", addr, count);
+			seq_printf(m, "[%zu,%zu] ", addr, count);
+
 		}
 	}
 }

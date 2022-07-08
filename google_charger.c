@@ -1345,7 +1345,7 @@ static void bd_fan_vote(struct chg_drv *chg_drv, bool enable, int level)
 			gvotable_election_get_handle("FAN_LEVEL");
 	if (chg_drv->fan_level_votable)
 		gvotable_cast_int_vote(chg_drv->fan_level_votable,
-				       "MSC_BD", level, enable);
+					"MSC_BD", level, enable);
 }
 
 #define FAN_BD_LIMIT_ALARM	75
@@ -1364,7 +1364,7 @@ static int bd_fan_calculate_level(struct bd_data *bd_state)
 		return FAN_LVL_NOT_CARE;
 
 	if (bd_state->time_sum)
-		temp_avg = bd_state->temp_sum / bd_state->time_sum;
+		temp_avg = div64_u64(bd_state->temp_sum, bd_state->time_sum);
 
 	if (temp_avg < bd_state->bd_trigger_temp)
 		bd_fan_level = FAN_LVL_NOT_CARE;
@@ -1539,7 +1539,7 @@ static int bd_update_stats(struct bd_data *bd_state,
 		return 0;
 
 	/* exit and entry criteria on temperature while connected */
-	temp_avg = bd_state->temp_sum / bd_state->time_sum;
+	temp_avg = div64_u64(bd_state->temp_sum, bd_state->time_sum);
 	if (triggered && temp <= bd_state->bd_resume_abs_temp) {
 		pr_info("MSC_BD: resume time_sum=%lld, temp_sum=%lld, temp_avg=%lld\n",
 			bd_state->time_sum, bd_state->temp_sum, temp_avg);
@@ -1751,7 +1751,7 @@ static void bd_work(struct work_struct *work)
 		soc,
 		delta_time, bd_state->bd_resume_time,
 		bd_state->last_temp, bd_state->bd_resume_abs_temp,
-		bd_state->temp_sum / bd_state->time_sum);
+		div64_u64(bd_state->temp_sum, bd_state->time_sum));
 
 bd_rerun:
 	if (!bd_state->triggered) {
@@ -3079,7 +3079,7 @@ bd_state_show(struct device *dev, struct device_attribute *attr, char *buf)
 
 	mutex_lock(&chg_drv->bd_lock);
 
-	temp_avg = bd_state->temp_sum / bd_state->time_sum;
+	temp_avg = div64_u64(bd_state->temp_sum, bd_state->time_sum);
 	len = scnprintf(buf, PAGE_SIZE,
 		       "t_sum=%lld, time_sum=%lld t_avg=%lld lst_v=%d lst_t=%d lst_u=%lld, dt=%lld, t=%d e=%d\n",
 		       bd_state->temp_sum, bd_state->time_sum, temp_avg,
@@ -3614,8 +3614,8 @@ thermal_stats_show(struct device *dev, struct device_attribute *attr, char *buf)
 		int ibatt_avg, icl_avg;
 
 		if (elap) {
-			ibatt_avg = thermal_stats->ibatt_sum / elap;
-			icl_avg = thermal_stats->icl_sum / elap;
+			ibatt_avg = div_u64(thermal_stats->ibatt_sum, elap);
+			icl_avg = div_u64(thermal_stats->icl_sum, elap);
 		} else {
 			ibatt_avg = 0;
 			icl_avg = 0;
@@ -3867,7 +3867,7 @@ static int pps_policy(struct chg_drv *chg_drv, int fv_uv, int cc_max,
 	const int ratio = 100 - chg_drv->pps_cc_tolerance_pct;
 	const uint8_t flags = chg_drv->chg_state.f.flags;
 	int ibatt, vbatt, ioerr;
-	unsigned long exp_mw;
+	uint64_t exp_mw;
 	int ret = 0;
 
 	/* TODO: policy for negative/invalid targets? */
@@ -3896,12 +3896,12 @@ static int pps_policy(struct chg_drv *chg_drv, int fv_uv, int cc_max,
 	}
 
 	/* TODO: should we compensate for the round down here? */
-	exp_mw = ((unsigned long)vbatt * (unsigned long)cc_max) * 11 /
-		 10000000000;
+	exp_mw = div64_u64(((uint64_t)vbatt * (uint64_t)cc_max) * 11,
+		 10000000000);
 
 	logbuffer_log(pps_data->log,
 		"ibatt %d, vbatt %d, vbatt*cc_max*1.1 %lu mw, adapter %ld, keep_alive_cnt %d",
-		ibatt, vbatt, exp_mw,
+		ibatt, vbatt, (unsigned long)exp_mw,
 		(long)pps_data->out_uv * (long)pps_data->op_ua / 1000000000,
 		pps_data->keep_alive_cnt);
 

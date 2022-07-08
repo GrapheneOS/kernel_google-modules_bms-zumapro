@@ -577,7 +577,7 @@ static int batt_vs_tz_get(struct thermal_zone_device *tzd, int *batt_vs)
 	if (rc)
 		return -EINVAL;
 
-	vs_tmp = mul_u32_u32(ibat, ibat) * batt_drv->batt_vs_w / 1000000000000;
+	vs_tmp = div64_u64(mul_u32_u32(ibat, ibat) * batt_drv->batt_vs_w, 1000000000000);
 
 	*batt_vs = temp - vs_tmp;
 
@@ -758,8 +758,8 @@ static qnum_t ssoc_rl_max_delta(const struct batt_ssoc_rl_state *rls,
 				int bucken, ktime_t delta_time)
 {
 	int i;
-	const qnum_t max_delta = ((qnumd_t)rls->rl_delta_max_soc * delta_time) /
-				  (rls->rl_delta_max_time ? rls->rl_delta_max_time : 1);
+	const qnum_t max_delta = div_u64(((qnumd_t)rls->rl_delta_max_soc * delta_time),
+				  (rls->rl_delta_max_time ? rls->rl_delta_max_time : 1));
 
 	if (rls->rl_fast_track)
 		return max_delta;
@@ -770,8 +770,8 @@ static qnum_t ssoc_rl_max_delta(const struct batt_ssoc_rl_state *rls,
 			break;
 
 		if (rls->rl_ssoc_target < rls->rl_delta_soc_limit[i])
-			return ((qnumd_t)max_delta * 10) /
-				rls->rl_delta_soc_ratio[i];
+			return div_u64(((qnumd_t)max_delta * 10),
+				rls->rl_delta_soc_ratio[i]);
 	}
 
 	return max_delta;
@@ -1341,15 +1341,16 @@ static void bat_log_ttf_change(ktime_t estimate, int max_ratio, struct batt_drv 
 	int i, len = 0;
 
 	len += scnprintf(&buff[len], sizeof(buff) - len,
-			 "MSC_TTF: est:%lldmin, max_ratio:%d ", estimate / 60, max_ratio);
+			 "MSC_TTF: est:%lldmin, max_ratio:%d ", ktime_divns(estimate, 60),
+				max_ratio);
 
 	for (i = 0; i < GBMS_STATS_TIER_COUNT; i++) {
 		elap = ce_data->tier_stats[i].time_fast +
 				  ce_data->tier_stats[i].time_taper +
 				  ce_data->tier_stats[i].time_other;
 		if (elap) {
-			ibatt_avg = ce_data->tier_stats[i].ibatt_sum / elap;
-			icl_avg = ce_data->tier_stats[i].icl_sum / elap;
+			ibatt_avg = div64_u64(ce_data->tier_stats[i].ibatt_sum, elap);
+			icl_avg = div64_u64(ce_data->tier_stats[i].icl_sum, elap);
 		} else {
 			ibatt_avg = 0;
 			icl_avg = 0;
@@ -2026,9 +2027,9 @@ static int batt_chg_tier_stats_cstr(char *buff, int size,
 	int j, len = 0;
 
 	if (elap) {
-		temp_avg = tier_stat->temp_sum / elap;
-		ibatt_avg = tier_stat->ibatt_sum / elap;
-		icl_avg = tier_stat->icl_sum / elap;
+		temp_avg = div_u64(tier_stat->temp_sum, elap);
+		ibatt_avg = div_u64(tier_stat->ibatt_sum, elap);
+		icl_avg = div_u64(tier_stat->icl_sum, elap);
 	} else {
 		temp_avg = 0;
 		ibatt_avg = 0;
@@ -7169,6 +7170,8 @@ static void bat_log_ttf_estimate(const char *label, int ssoc,
 {
 	int cc, err;
 	ktime_t res = 0;
+	u64 hours;
+	int remaining_sec;
 
 	err = batt_ttf_estimate(&res, batt_drv);
 	if (err < 0) {
@@ -7178,11 +7181,13 @@ static void bat_log_ttf_estimate(const char *label, int ssoc,
 		return;
 	}
 
+	hours = div_u64_rem(res, 3600, &remaining_sec);
+
 	cc = GPSY_GET_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_CHARGE_COUNTER);
 	logbuffer_log(batt_drv->ttf_stats.ttf_log,
 		      "%s ssoc=%d cc=%d time=%ld %d:%d:%d (est=%ld, max_ratio=%d)",
 		      (label) ? label : "", ssoc, cc / 1000, get_boot_sec(),
-		      res / 3600, (res % 3600) / 60, (res % 3600) % 60,
+		      hours, remaining_sec / 60, remaining_sec % 60,
 		      res, err);
 }
 
@@ -7300,11 +7305,11 @@ static void gbatt_save_sd(struct swelling_data *sd)
 	for (i = 0; i < BATT_TEMP_RECORD_THR; i++) {
 		j = i + SD_DISCHG_START;
 
-		sd_saved[i] = sd->chg[i] / SAVE_UNIT < BATT_SD_MAX_HOURS ?
-			      sd->chg[i] / SAVE_UNIT : BATT_SD_MAX_HOURS;
+		sd_saved[i] = ktime_divns(sd->chg[i], SAVE_UNIT) < BATT_SD_MAX_HOURS ?
+			      ktime_divns(sd->chg[i], SAVE_UNIT) : BATT_SD_MAX_HOURS;
 
-		sd_saved[j] = sd->dischg[i] / SAVE_UNIT < BATT_SD_MAX_HOURS ?
-			      sd->dischg[i] / SAVE_UNIT : BATT_SD_MAX_HOURS;
+		sd_saved[j] = ktime_divns(sd->dischg[i], SAVE_UNIT) < BATT_SD_MAX_HOURS ?
+			      ktime_divns(sd->dischg[i], SAVE_UNIT) : BATT_SD_MAX_HOURS;
 
 		if (sd_saved[i] > sd->saved[i] ||
 		    sd_saved[j] > sd->saved[j]) {
