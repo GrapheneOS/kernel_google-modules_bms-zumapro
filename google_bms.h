@@ -82,10 +82,23 @@ struct gbms_chg_profile {
 	S(USB_BRICKID),	\
 	S(USB_HVDCP),	\
 	S(USB_HVDCP3),	\
+	S(FLOAT),	\
 	S(WLC),		\
 	S(WLC_EPP),	\
 	S(WLC_SPP),	\
-	S(POGO),	\
+	S(GPP),		\
+	S(10W),		\
+	S(L7),		\
+	S(DL),		\
+	S(WPC_EPP),	\
+	S(WPC_GPP),	\
+	S(WPC_10W),	\
+	S(WPC_BPP),	\
+	S(WPC_L7),	\
+	S(EXT),	\
+	S(EXT1),	\
+	S(EXT2),	\
+	S(EXT_UNKNOWN), \
 
 #define CHG_EV_ADAPTER_STRING(s)	#s
 #define _CHG_EV_ADAPTER_PRIMITIVE_CAT(a, ...) a ## __VA_ARGS__
