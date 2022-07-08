@@ -4,7 +4,9 @@
  *
  */
 
+#if IS_ENABLED(CONFIG_GOOGLE_BCL)
 #include <soc/google/bcl.h>
+#endif
 #include "gs101_usecase.h"
 
 #ifndef MAX77759_CHARGER_H_

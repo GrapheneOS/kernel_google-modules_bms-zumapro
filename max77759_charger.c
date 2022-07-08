@@ -117,6 +117,7 @@ static int max77759_resume_check(struct max77759_chgr_data *data)
 	return ret;
 }
 
+#if IS_ENABLED(CONFIG_GOOGLE_BCL)
 static int max77759_get_vdroop_ok(struct i2c_client *client, bool *state)
 {
 	struct max77759_chgr_data *data;
@@ -245,6 +246,7 @@ static const struct bcl_ifpmic_ops bcl_ifpmic_ops = {
 	max77759_set_batoilo_lvl,
 	max77759_get_batoilo_lvl,
 };
+#endif /* CONFIG_GOOGLE_BCL */
 
 /* ----------------------------------------------------------------------- */
 
