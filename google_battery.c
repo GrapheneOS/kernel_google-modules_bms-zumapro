@@ -83,8 +83,10 @@
 #define BHI_NEED_REP_THRESHOLD_DEFAULT	70
 #define BHI_CCBIN_INDEX_LIMIT		90
 #define BHI_ALGO_FULL_HEALTH		10000
-#define BHI_ROUND_INDEX(index) \
-	(((index) + BHI_ALGO_FULL_HEALTH / 2) / BHI_ALGO_FULL_HEALTH * 100)
+#define BHI_ALGO_ROUND_INDEX		50
+
+#define BHI_ROUND_INDEX(index) 		\
+	(((index) + BHI_ALGO_ROUND_INDEX) / 100)
 
 
 /* TODO: this is for Adaptive charging, rename */
@@ -3394,11 +3396,10 @@ static int bhi_cap_data_update(struct bhi_data *bhi_data, struct batt_drv *batt_
 /*
  * NOTE: make sure that the FG and this code use the same reference value for
  * capacity. Also GBMS_PROP_CAPACITY_FADE_RATE is in percent.
- *
  */
 static int bhi_health_get_capacity(int algo, const struct bhi_data *bhi_data)
 {
-	return bhi_data->capacity_design * (100 - bhi_data->capacity_fade);
+	return bhi_data->capacity_design * (100 - bhi_data->capacity_fade) / 100;
 }
 
 /* The limit for capacity is 80% of design */
@@ -3422,11 +3423,11 @@ static int bhi_calc_cap_index(int algo, const struct bhi_data *bhi_data)
 	 * ret = gbms_storage_read(GBMS_TAG_GCFE, &gcap sizeof(gcap));
 	 */
 
-	if (capacity_health > bhi_data->capacity_design)
-		capacity_health = bhi_data->capacity_design;
-
 	index = (capacity_health * BHI_ALGO_FULL_HEALTH) / bhi_data->capacity_design;
-	pr_debug("%s: algo=%d index=%d ch=%d, cd=%d, cf=%d\n", __func__,
+	if (index > BHI_ALGO_FULL_HEALTH)
+		index = BHI_ALGO_FULL_HEALTH;
+
+	pr_debug("%s: algo=%d index=%d ch=%d, cd=%d, fr=%d\n", __func__,
 		algo, index, capacity_health, bhi_data->capacity_design,
 		bhi_data->capacity_fade);
 
@@ -6395,10 +6396,18 @@ static ssize_t health_index_stats_show(struct device *dev,
 		imp_index = bhi_calc_imp_index(i, bhi_data);
 		sd_index = bhi_calc_sd_index(i, bhi_data);
 		health_index = bhi_calc_health_index(i, cap_index, imp_index, sd_index);
+		health_status = bhi_calc_health_status(i, BHI_ROUND_INDEX(health_index), health_data);
 		if (health_index < 0)
 			continue;
 
-		health_status = bhi_calc_health_status(i, BHI_ROUND_INDEX(health_index), health_data);
+		pr_debug("bhi: %d: %d, %d,%d,%d %d,%d,%d %d,%d\n", i,
+			 health_status, health_index, cap_index, imp_index,
+			 bhi_data->swell_cumulative,
+			 bhi_health_get_capacity(i, bhi_data),
+			 bhi_health_get_impedance(i, bhi_data),
+			 bhi_data->battery_age,
+			 bhi_data->cycle_count);
+
 
 		len += scnprintf(&buf[len], PAGE_SIZE - len,
 				 "%d: %d, %d,%d,%d %d,%d,%d %d,%d\n",
