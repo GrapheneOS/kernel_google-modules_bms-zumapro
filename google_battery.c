@@ -4749,9 +4749,11 @@ static ssize_t resistance_show(struct device *dev,
 {
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
-	int value;
+	int value = -1;
 
-	value = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_RESISTANCE);
+	if (batt_drv->fg_psy)
+		value = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_RESISTANCE);
+
 	return scnprintf(buff, PAGE_SIZE, "%d\n", value);
 }
 
@@ -4777,9 +4779,11 @@ static ssize_t charge_full_estimate_show(struct device *dev,
 {
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
-	int value;
+	int value = -1;
 
-	value = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_CHARGE_FULL_ESTIMATE);
+	if (batt_drv->fg_psy)
+		value = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_CHARGE_FULL_ESTIMATE);
+
 	return scnprintf(buff, PAGE_SIZE, "%d\n", value);
 }
 
