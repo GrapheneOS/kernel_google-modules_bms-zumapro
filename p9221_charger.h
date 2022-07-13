@@ -300,6 +300,8 @@
 #define P9222RE_TX_MFG_CODE_REG			0x106
 #define P9222RE_PROP_TX_ID_REG			0x118
 
+#define P9222_EPT_REG				0x4F
+
 /*
  * P9222 SYSTEM_MODE_REG bits
  */

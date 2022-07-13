@@ -896,6 +896,23 @@ static int p9221_send_eop(struct p9221_charger_data *chgr, u8 reason)
 	mutex_unlock(&chgr->cmd_lock);
 	return ret;
 }
+/* send eop */
+static int p9222_send_eop(struct p9221_charger_data *chgr, u8 reason)
+{
+	int ret;
+
+	dev_info(&chgr->client->dev, "Send P9222 EOP reason=%d\n", reason);
+
+	mutex_lock(&chgr->cmd_lock);
+
+	ret = chgr->reg_write_8(chgr, P9222_EPT_REG, reason);
+	if (ret == 0)
+		ret = chgr->chip_set_cmd(chgr, P9221R5_COM_SENDEPT);
+
+	mutex_unlock(&chgr->cmd_lock);
+	return ret;
+}
+
 /* 3 times to make sure it works */
 static int p9412_send_3eop(struct p9221_charger_data *chgr, u8 reason)
 {
@@ -1790,7 +1807,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->chip_get_align_x = p9221_get_align_x;
 		chgr->chip_get_align_y = p9221_get_align_y;
 		chgr->chip_send_ccreset = p9221_send_ccreset;
-		chgr->chip_send_eop = p9221_send_eop;
+		chgr->chip_send_eop = p9222_send_eop;
 		chgr->chip_get_sys_mode = p9222_chip_get_sys_mode;
 		chgr->chip_renegotiate_pwr = p9222_chip_renegotiate_pwr;
 		chgr->chip_prop_mode_en = p9221_prop_mode_enable;
