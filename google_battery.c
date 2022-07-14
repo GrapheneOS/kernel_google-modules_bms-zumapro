@@ -259,6 +259,8 @@ enum batt_aacr_state {
 	BATT_AACR_UNDER_CYCLES = -1,
 	BATT_AACR_DISABLED = 0,
 	BATT_AACR_ENABLED = 1,
+	BATT_AACR_ALGO_DEFAULT = BATT_AACR_ENABLED,
+	BATT_AACR_ALGO_LOW_B, /* lower bound */
 	BATT_AACR_MAX,
 };
 
@@ -504,6 +506,7 @@ struct batt_drv {
 	enum batt_aacr_state aacr_state;
 	int aacr_cycle_grace;
 	int aacr_cycle_max;
+	int aacr_algo;
 
 	/* BHI: updated on disconnect, EOC */
 	struct health_data health_data;
@@ -3344,13 +3347,19 @@ static int aacr_get_capacity_at_cycle(const struct batt_drv *batt_drv, int cycle
 	if (full_cap_nom < 0)
 		return full_cap_nom;
 
-	full_capacity = min(min(full_cap_nom / 1000, design_capacity), reference_capacity);
+	full_cap_nom /= 1000;
+
+	if (batt_drv->aacr_algo == BATT_AACR_ALGO_LOW_B)
+		full_capacity = min(min(full_cap_nom, design_capacity), reference_capacity);
+	else
+		full_capacity = max(min(full_cap_nom, design_capacity), reference_capacity);
+
 	aacr_capacity = max(full_capacity, min_capacity);
 	aacr_capacity = (aacr_capacity / 50) * 50; /* 50mAh, ~1% capacity */
 
-	pr_debug("%s: design=%d reference=%d full_cap_nom=%d, full=%d aacr=%d\n",
+	pr_debug("%s: design=%d reference=%d full_cap_nom=%d full=%d aacr=%d algo=%d\n",
 		 __func__, design_capacity, reference_capacity, full_cap_nom,
-		 full_capacity, aacr_capacity);
+		 full_capacity, aacr_capacity, batt_drv->aacr_algo);
 
 	return aacr_capacity;
 }
@@ -4637,6 +4646,10 @@ static int batt_init_chg_profile(struct batt_drv *batt_drv)
 	ret = of_property_read_bool(node, "google,aacr-disable");
 	if (!ret && profile->aacr_nb_limits)
 		batt_drv->aacr_state = BATT_AACR_ENABLED;
+
+	ret = of_property_read_u32(node, "google,aacr-algo", &batt_drv->aacr_algo);
+	if (ret < 0)
+		batt_drv->aacr_algo = BATT_AACR_ALGO_DEFAULT;
 
 	/* NOTE: with NG charger tolerance is applied from "charger" */
 	gbms_init_chg_table(profile, node, aacr_get_capacity(batt_drv));
@@ -6265,19 +6278,38 @@ static ssize_t aacr_state_store(struct device *dev,
 			       const char *buf, size_t count) {
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
-	int state, ret = 0;
+	int val, state, algo, ret = 0;
 
-	ret = kstrtoint(buf, 0, &state);
+	ret = kstrtoint(buf, 0, &val);
 	if (ret < 0)
 		return ret;
 
-	if ((state != BATT_AACR_DISABLED) && (state != BATT_AACR_ENABLED))
+	if (val < BATT_AACR_DISABLED) /* not allow minus value */
 		return -ERANGE;
 
-	if (batt_drv->aacr_state == state)
+	switch (val) {
+	case BATT_AACR_DISABLED:
+		state = BATT_AACR_DISABLED;
+		break;
+	case BATT_AACR_ENABLED:
+		state = BATT_AACR_ENABLED;
+		algo = BATT_AACR_ALGO_DEFAULT;
+		break;
+	case BATT_AACR_ALGO_LOW_B:
+		state = BATT_AACR_ENABLED;
+		algo = BATT_AACR_ALGO_LOW_B;
+		break;
+	default:
+		return -ERANGE;
+	}
+
+	if (batt_drv->aacr_state == state && batt_drv->aacr_algo == algo)
 		return count;
 
+	pr_info("aacr_state: %d -> %d, aacr_algo: %d -> %d\n",
+		batt_drv->aacr_state, state, batt_drv->aacr_algo, algo);
 	batt_drv->aacr_state = state;
+	batt_drv->aacr_algo = algo;
 	return count;
 }
 
@@ -6347,6 +6379,17 @@ static ssize_t aacr_cycle_max_show(struct device *dev,
 }
 
 static const DEVICE_ATTR_RW(aacr_cycle_max);
+
+static ssize_t aacr_algo_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->aacr_algo);
+}
+
+static const DEVICE_ATTR_RO(aacr_algo);
 
 /* Swelling  --------------------------------------------------------------- */
 
@@ -6889,6 +6932,9 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_aacr_cycle_max);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create aacr cycle max\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_aacr_algo);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create aacr algo\n");
 
 	/* health and health index */
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_swelling_data);
