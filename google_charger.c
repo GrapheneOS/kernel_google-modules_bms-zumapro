@@ -133,6 +133,7 @@ struct chg_thermal_device {
 
 	struct thermal_cooling_device *tcd;
 	int *thermal_mitigation;
+	int *thermal_budgets;
 	int thermal_levels;
 	int current_level;
 };
@@ -4664,6 +4665,101 @@ static int chg_set_wlc_fcc_charge_cntl_limit(struct thermal_cooling_device *tcd,
 	return 0;
 }
 
+static ssize_t
+state2power_table_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct thermal_cooling_device *tdev = to_cooling_device(dev);
+	struct chg_thermal_device *mdev = tdev->devdata;
+	ssize_t count = 0;
+	int i;
+
+	for (i = 0; i < mdev->thermal_levels; i++) {
+		const int budgetMw = mdev->thermal_budgets[i] / 1000;
+
+		count += sysfs_emit_at(buf, count, "%u ", budgetMw);
+	}
+
+	/* b/231599097 add the implicit 0 at the end of the table */
+	count += sysfs_emit_at(buf, count, "0\n");
+
+	return count;
+}
+
+static DEVICE_ATTR_RO(state2power_table);
+
+#ifdef CONFIG_DEBUG_FS
+
+static ssize_t tm_store(struct chg_thermal_device *tdev,
+			const char __user *user_buf,
+			size_t count, loff_t *ppos)
+{
+	const int thermal_levels = tdev->thermal_levels;
+	const int mem_size = count + 1;
+	char *str, *tmp, *saved_ptr;
+	unsigned long long value;
+	int ret, i;
+
+	tmp = kzalloc(mem_size, GFP_KERNEL);
+	if (!tmp)
+		return -ENOMEM;
+
+	ret = simple_write_to_buffer(tmp, mem_size, ppos, user_buf, count);
+	if (!ret)
+		goto error_done;
+
+	for (saved_ptr = tmp, i = 0; i < thermal_levels; i++) {
+		str = strsep(&saved_ptr, " ");
+		if (!str)
+			goto error_done;
+
+		ret = kstrtoull(str, 10, &value);
+		if (ret < 0)
+			goto error_done;
+
+		tdev->thermal_budgets[i] = value * 1000;
+	}
+
+error_done:
+	kfree(tmp);
+	return count;
+}
+
+static ssize_t fcc_tm_store(struct file *filp, const char __user *user_buf,
+			    size_t count, loff_t *ppos)
+{
+	struct chg_drv *chg_drv = filp->private_data;
+	struct chg_thermal_device *tdev =
+			&chg_drv->thermal_devices[CHG_TERMAL_DEVICE_FCC];
+	int ret;
+
+	ret = tm_store(tdev, user_buf, count, ppos);
+	if (ret < 0)
+		count = ret;
+
+	return count;
+}
+
+DEBUG_ATTRIBUTE_WO(fcc_tm);
+
+static ssize_t dc_tm_store(struct file *filp, const char __user *user_buf,
+			   size_t count, loff_t *ppos)
+{
+	struct chg_drv *chg_drv = filp->private_data;
+	struct chg_thermal_device *tdev =
+			&chg_drv->thermal_devices[CHG_TERMAL_DEVICE_DC_IN];
+	int ret;
+
+	ret = tm_store(tdev, user_buf, count, ppos);
+	if (ret < 0)
+		count = ret;
+
+	return count;
+}
+
+DEBUG_ATTRIBUTE_WO(dc_tm);
+
+#endif // CONFIG_DEBUG_FS
+
 static int chg_tdev_init(struct chg_thermal_device *tdev, const char *name,
 			 struct chg_drv *chg_drv)
 {
@@ -4690,6 +4786,44 @@ static int chg_tdev_init(struct chg_thermal_device *tdev, const char *name,
 			"Couldn't read limits for %s rc = %d\n", name, rc);
 		devm_kfree(chg_drv->device, tdev->thermal_mitigation);
 		tdev->thermal_mitigation = NULL;
+		return -ENODATA;
+	}
+
+	tdev->chg_drv = chg_drv;
+
+	return 0;
+}
+
+static int chg_tdev_budgets_init(struct chg_thermal_device *tdev, const char *name,
+				 struct chg_drv *chg_drv)
+{
+	int rc, byte_len, thermal_levels;
+
+	if (!of_find_property(chg_drv->device->of_node, name, &byte_len)) {
+		dev_err(chg_drv->device, "No budgets table for %s\n", name);
+		return -ENOENT;
+	}
+
+	thermal_levels = byte_len / sizeof(u32);
+	if (tdev->thermal_levels != thermal_levels) {
+		dev_err(chg_drv->device, "Length of budgets table is incorrect\n");
+		return -ENOENT;
+	}
+
+	tdev->thermal_budgets = devm_kzalloc(chg_drv->device, byte_len,
+						GFP_KERNEL);
+	if (!tdev->thermal_budgets)
+		return -ENOMEM;
+
+	rc = of_property_read_u32_array(chg_drv->device->of_node,
+			name,
+			tdev->thermal_budgets,
+			tdev->thermal_levels);
+	if (rc < 0) {
+		dev_err(chg_drv->device,
+			"Couldn't read limits for %s rc = %d\n", name, rc);
+		devm_kfree(chg_drv->device, tdev->thermal_budgets);
+		tdev->thermal_budgets = NULL;
 		return -ENODATA;
 	}
 
@@ -4745,6 +4879,32 @@ chg_thermal_device_register(const char *of_name,
 	return 0;
 }
 
+static int chg_thermal_state2power(struct chg_thermal_device *tdev,
+				   struct chg_drv *chg_drv,
+				   enum chg_thermal_devices device)
+{
+	int ret;
+
+	/* state and debug */
+	ret = device_create_file(&tdev->tcd->device, &dev_attr_state2power_table);
+	if (ret)
+		pr_info("cound not create state table *(%d)\n", ret);
+
+	if (!chg_drv->debug_entry)
+		return 0;
+
+	if (device == CHG_TERMAL_DEVICE_FCC)
+		debugfs_create_file("fcc_state2power_table", 0644,
+				    chg_drv->debug_entry, chg_drv,
+				    &fcc_tm_fops);
+	if (device == CHG_TERMAL_DEVICE_DC_IN)
+		debugfs_create_file("dc_state2power_table", 0644,
+				    chg_drv->debug_entry, chg_drv,
+				    &dc_tm_fops);
+
+	return 0;
+}
+
 /* ls /dev/thermal/cdev-by-name/ */
 static int chg_thermal_device_init(struct chg_drv *chg_drv)
 {
@@ -4754,6 +4914,11 @@ static int chg_thermal_device_init(struct chg_drv *chg_drv)
 	ctdev_fcc = &chg_drv->thermal_devices[CHG_TERMAL_DEVICE_FCC];
 	rfcc = chg_tdev_init(ctdev_fcc, "google,thermal-mitigation", chg_drv);
 	if (rfcc == 0) {
+		int ret;
+
+		ret = chg_tdev_budgets_init(ctdev_fcc,
+					    "google,thermal-mitigation-budgets",
+					    chg_drv);
 		rfcc = chg_thermal_device_register(FCC_OF_CDEV_NAME,
 						   FCC_CDEV_NAME,
 						   ctdev_fcc,
@@ -4762,12 +4927,26 @@ static int chg_thermal_device_init(struct chg_drv *chg_drv)
 			devm_kfree(chg_drv->device,
 				   ctdev_fcc->thermal_mitigation);
 			ctdev_fcc->thermal_mitigation = NULL;
+			if (ret == 0) {
+				devm_kfree(chg_drv->device,
+					   ctdev_fcc->thermal_budgets);
+				ctdev_fcc->thermal_budgets = NULL;
+			}
 		}
+
+		if (ctdev_fcc->thermal_budgets)
+			chg_thermal_state2power(ctdev_fcc, chg_drv,
+						CHG_TERMAL_DEVICE_FCC);
 	}
 
 	ctdev_dc = &chg_drv->thermal_devices[CHG_TERMAL_DEVICE_DC_IN];
 	rdc = chg_tdev_init(ctdev_dc, "google,wlc-thermal-mitigation", chg_drv);
 	if (rdc == 0) {
+		int ret;
+
+		ret = chg_tdev_budgets_init(ctdev_dc,
+					    "google,wlc-thermal-mitigation-budgets",
+					    chg_drv);
 		rdc = chg_thermal_device_register(WLC_OF_CDEV_NAME,
 						  WLC_CDEV_NAME,
 						  ctdev_dc,
@@ -4776,7 +4955,16 @@ static int chg_thermal_device_init(struct chg_drv *chg_drv)
 			devm_kfree(chg_drv->device,
 				   ctdev_dc->thermal_mitigation);
 			ctdev_dc->thermal_mitigation = NULL;
+			if (ret == 0) {
+				devm_kfree(chg_drv->device,
+					   ctdev_dc->thermal_budgets);
+				ctdev_dc->thermal_budgets = NULL;
+			}
 		}
+
+		if (ctdev_dc->thermal_budgets)
+			chg_thermal_state2power(ctdev_dc, chg_drv,
+						CHG_TERMAL_DEVICE_DC_IN);
 	}
 
 	ctdev_wlcfcc = &chg_drv->thermal_devices[CHG_TERMAL_DEVICE_WLC_FCC];

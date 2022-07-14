@@ -2608,9 +2608,6 @@ static int gcpm_set_mdis_charge_cntl_limit(struct thermal_cooling_device *tcd,
 	return 0;
 }
 
-#define to_cooling_device(_dev)	\
-	container_of(_dev, struct thermal_cooling_device, device)
-
 static ssize_t
 state2power_table_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
@@ -2668,13 +2665,6 @@ static const struct thermal_cooling_device_ops chg_mdis_tcd_ops = {
 };
 
 #ifdef CONFIG_DEBUG_FS
-
-#define DEBUG_ATTRIBUTE_WO(name) \
-static const struct file_operations name ## _fops = {	\
-	.open	= simple_open,			\
-	.llseek	= no_llseek,			\
-	.write	= name ## _store,			\
-}
 
 static ssize_t mdis_tm_store(struct file *filp, const char __user *user_buf,
 			     size_t count, loff_t *ppos)

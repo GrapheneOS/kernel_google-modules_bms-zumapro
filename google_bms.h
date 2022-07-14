@@ -592,6 +592,15 @@ enum csi_status {
 	CSI_STATUS_Charging = 200,	// All good
 };
 
+#define to_cooling_device(_dev)	\
+	container_of(_dev, struct thermal_cooling_device, device)
+
+#define DEBUG_ATTRIBUTE_WO(name) \
+static const struct file_operations name ## _fops = {	\
+	.open	= simple_open,			\
+	.llseek	= no_llseek,			\
+	.write	= name ## _store,			\
+}
 
 
 #endif  /* __GOOGLE_BMS_H_ */
