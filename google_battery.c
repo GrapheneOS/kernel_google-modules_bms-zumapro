@@ -3430,9 +3430,11 @@ static int bhi_health_get_capacity(int algo, const struct bhi_data *bhi_data)
 }
 
 /* The limit for capacity is 80% of design */
-static int bhi_calc_cap_index(int algo, const struct bhi_data *bhi_data)
+static int bhi_calc_cap_index(int algo, struct batt_drv *batt_drv)
 {
-	int capacity_health, index;
+	const struct health_data *health_data = &batt_drv->health_data;
+	const struct bhi_data *bhi_data = &health_data->bhi_data;
+	int capacity_health, index, capacity_aacr;
 
 	if (algo == BHI_ALGO_DISABLED)
 		return BHI_ALGO_FULL_HEALTH;
@@ -3442,10 +3444,15 @@ static int bhi_calc_cap_index(int algo, const struct bhi_data *bhi_data)
 
 	capacity_health = bhi_health_get_capacity(algo, bhi_data);
 
+	/* for BHI_ALGO_ACHI_B compare to aacr capacity */
+	if (algo == BHI_ALGO_ACHI_B || algo == BHI_ALGO_ACHI_RAVG_B) {
+		capacity_aacr = aacr_get_capacity(batt_drv);
+
+		if (capacity_health < capacity_aacr)
+			capacity_health = capacity_aacr;
+	}
+
 	/*
-	 * TODO: for BHI_ALGO_ACHI_B compare to aacr capacity
-	 * aacr_capacity = aacr_get_capacity_at_cycle(batt_drv, cycle_count);
-	 *
 	 * TODO: compare to google_capacity?
 	 * ret = gbms_storage_read(GBMS_TAG_GCFE, &gcap sizeof(gcap));
 	 */
@@ -3454,8 +3461,8 @@ static int bhi_calc_cap_index(int algo, const struct bhi_data *bhi_data)
 	if (index > BHI_ALGO_FULL_HEALTH)
 		index = BHI_ALGO_FULL_HEALTH;
 
-	pr_debug("%s: algo=%d index=%d ch=%d, cd=%d, fr=%d\n", __func__,
-		algo, index, capacity_health, bhi_data->capacity_design,
+	pr_debug("%s: algo=%d index=%d ch=%d, ca=%d, cd=%d, fr=%d\n", __func__,
+		algo, index, capacity_health, capacity_aacr, bhi_data->capacity_design,
 		bhi_data->capacity_fade);
 
 	return index;
@@ -3713,7 +3720,7 @@ static int batt_bhi_stats_update(struct batt_drv *batt_drv)
 	/* cycle count is cached */
 	health_data->bhi_data.cycle_count = batt_drv->cycle_count;
 
-	index = bhi_calc_cap_index(bhi_algo, &health_data->bhi_data);
+	index = bhi_calc_cap_index(bhi_algo, batt_drv);
 	if (index < 0)
 		index = BHI_ALGO_FULL_HEALTH;
 	changed |= health_data->bhi_cap_index != index;
@@ -6425,7 +6432,7 @@ static ssize_t health_index_stats_show(struct device *dev,
 	for (i = 0; i < BHI_ALGO_MAX; i++) {
 		int health_index, health_status, cap_index, imp_index, sd_index;
 
-		cap_index = bhi_calc_cap_index(i, bhi_data);
+		cap_index = bhi_calc_cap_index(i, batt_drv);
 		imp_index = bhi_calc_imp_index(i, bhi_data);
 		sd_index = bhi_calc_sd_index(i, bhi_data);
 		health_index = bhi_calc_health_index(i, cap_index, imp_index, sd_index);
