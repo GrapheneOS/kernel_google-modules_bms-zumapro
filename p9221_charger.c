@@ -6282,7 +6282,7 @@ static void p9221_fg_work(struct work_struct *work)
 		err = power_supply_get_by_phandle_array(charger->dev->of_node,
 							"idt,fuel-gauge",
 							psy, ARRAY_SIZE(psy));
-		if (err < 0) {
+		if (err < 0 || IS_ERR_OR_NULL(psy[0])) {
 			schedule_delayed_work(&charger->fg_work, msecs_to_jiffies(1000));
 			pr_info("%s: wait for fg err=%d\n", __func__, err);
 			return;
@@ -6771,7 +6771,6 @@ static struct i2c_driver p9221_charger_driver = {
 	.id_table	= p9221_charger_id_table,
 };
 module_i2c_driver(p9221_charger_driver);
-MODULE_SOFTDEP("pre: max1720x_battery");
 MODULE_DESCRIPTION("IDT P9221 Wireless Power Receiver Driver");
 MODULE_AUTHOR("Patrick Tjin <pattjin@google.com>");
 MODULE_LICENSE("GPL");
