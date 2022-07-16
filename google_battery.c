@@ -217,6 +217,13 @@ struct batt_res {
 };
 
 /* TODO: move single cell disconnect to bhi_data */
+enum bpst_batt_status {
+	BPST_BATT_UNKNOWN = 0,
+	BPST_BATT_CONNECT = 1,
+	BPST_BATT_DISCONNECT = 2,
+	BPST_BATT_CELL_FAULT = 3,
+};
+
 struct batt_bpst {
 	struct mutex lock;
 	bool bpst_enable;
@@ -1092,15 +1099,19 @@ static int fan_level_cb(struct gvotable_election *el,
 		pr_debug("FAN_LEVEL %d->%d reason=%s\n",
 			 batt_drv->fan_last_level, lvl, reason ? reason : "<>");
 
-		if (!chg_state_is_disconnected(&batt_drv->chg_state))
+		if (!chg_state_is_disconnected(&batt_drv->chg_state)) {
 			logbuffer_log(batt_drv->ttf_stats.ttf_log,
 				      "FAN_LEVEL %d->%d reason=%s",
 				      batt_drv->fan_last_level, lvl,
 				      reason ? reason : "<>");
 
-		batt_drv->fan_last_level = lvl;
-		if (batt_drv->psy)
-			power_supply_changed(batt_drv->psy);
+			batt_drv->fan_last_level = lvl;
+			if (batt_drv->psy)
+				power_supply_changed(batt_drv->psy);
+		} else {
+			/* Disconnected */
+			batt_drv->fan_last_level = lvl;
+		}
 	}
 
 	return 0;
@@ -1799,6 +1810,22 @@ static int batt_chg_vbat2tier(const int vbatt_idx)
 {
 	return vbatt_idx < GBMS_STATS_TIER_COUNT ?
 		vbatt_idx : GBMS_STATS_TIER_COUNT - 1;
+}
+
+static int batt_bpst_stats_update(struct batt_drv *batt_drv)
+{
+	struct batt_bpst *bpst_state = &batt_drv->bpst_state;
+
+	if (!bpst_state->bpst_enable)
+		return BPST_BATT_UNKNOWN;
+
+	if (bpst_state->bpst_cell_fault)
+		return BPST_BATT_CELL_FAULT;
+
+	if (bpst_state->bpst_sbd_status)
+		return BPST_BATT_DISCONNECT;
+
+	return BPST_BATT_CONNECT;
 }
 
 /* Only the qualified copy gets the timestamp and the exit voltage. */
@@ -4128,7 +4155,6 @@ static bool batt_cell_fault_detect(struct batt_bpst *bpst_state)
 	 * TODO: will implement the code from the algo in b/203019566
 	 */
 	bpst_sbd_status = bpst_state->bpst_sbd_status;
-	bpst_state->bpst_sbd_status = 0;
 
 	return !!bpst_sbd_status && !bpst_state->bpst_detect_disable;
 }
@@ -4158,6 +4184,9 @@ static int batt_bpst_detect_begin(struct batt_bpst *bpst_state)
 		pr_debug("%s: MSC_BPST: single battery disconnect %d\n",
 			 __func__, bpst_state->bpst_cell_fault);
 	}
+
+	/* reset detection status */
+	bpst_state->bpst_sbd_status = 0;
 
 	pr_debug("%s: MSC_BPST: %d in connected\n", __func__, data);
 	return 0;
@@ -4236,6 +4265,18 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 		if (batt_drv->ssoc_state.buck_enabled == 0)
 			goto msc_logic_exit;
 
+		/* update bpst */
+		mutex_lock(&batt_drv->bpst_state.lock);
+		if (batt_drv->bpst_state.bpst_enable) {
+			bool cell_fault_detect = batt_cell_fault_detect(&batt_drv->bpst_state);
+
+			if (cell_fault_detect) {
+				rc = batt_bpst_detect_update(batt_drv);
+				pr_info("MSC_BPST: cell_fault_detect in disconnected(%d)\n", rc);
+			}
+		}
+		mutex_unlock(&batt_drv->bpst_state.lock);
+
 		/* here on: disconnect */
 		batt_log_csi_info(batt_drv);
 		batt_chg_stats_pub(batt_drv, "disconnect", false, false);
@@ -4259,18 +4300,6 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 		/* TODO: move earlier and include the change to the curve */
 		ssoc_change_state(&batt_drv->ssoc_state, 0);
 		changed = true;
-
-		/* update bpst */
-		mutex_lock(&batt_drv->bpst_state.lock);
-		if (batt_drv->bpst_state.bpst_enable) {
-			bool cell_fault_detect = batt_cell_fault_detect(&batt_drv->bpst_state);
-
-			if (cell_fault_detect) {
-				rc = batt_bpst_detect_update(batt_drv);
-				pr_info("MSC_BPST: cell_fault_detect in disconnected(%d)\n", rc);
-			}
-		}
-		mutex_unlock(&batt_drv->bpst_state.lock);
 
 		/* google_resistance: update and stop accumulation. */
 		batt_res_work(batt_drv);
@@ -4395,15 +4424,6 @@ msc_logic_done:
 		batt_drv->cc_max = 0;
 	}
 
-	/* Fan level can be updated only during power transfer */
-	if (batt_drv->fan_level_votable) {
-		int level = fan_calculate_level(batt_drv);
-
-		gvotable_cast_int_vote(batt_drv->fan_level_votable,
-				       "MSC_BATT", level, true);
-		pr_debug("MSC_FAN_LVL: level=%d\n", level);
-	}
-
 	if (changed)
 		log_vote_level = BATT_PRLOG_ALWAYS;
 	batt_prlog(log_vote_level,
@@ -4483,6 +4503,15 @@ msc_logic_done:
 					       !disable_votes &&
 					       (bpst_cc_max != -1));
 		}
+	}
+
+	/* Fan level can be updated only during power transfer */
+	if (batt_drv->fan_level_votable) {
+		int level = fan_calculate_level(batt_drv);
+
+		gvotable_cast_int_vote(batt_drv->fan_level_votable,
+				       "MSC_BATT", level, true);
+		pr_debug("MSC_FAN_LVL: level=%d\n", level);
 	}
 
 	if (!batt_drv->msc_interval_votable)
@@ -4720,9 +4749,11 @@ static ssize_t resistance_show(struct device *dev,
 {
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
-	int value;
+	int value = -1;
 
-	value = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_RESISTANCE);
+	if (batt_drv->fg_psy)
+		value = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_RESISTANCE);
+
 	return scnprintf(buff, PAGE_SIZE, "%d\n", value);
 }
 
@@ -4748,9 +4779,11 @@ static ssize_t charge_full_estimate_show(struct device *dev,
 {
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
-	int value;
+	int value = -1;
 
-	value = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_CHARGE_FULL_ESTIMATE);
+	if (batt_drv->fg_psy)
+		value = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_CHARGE_FULL_ESTIMATE);
+
 	return scnprintf(buff, PAGE_SIZE, "%d\n", value);
 }
 
@@ -6410,7 +6443,7 @@ static ssize_t health_index_stats_show(struct device *dev,
 
 
 		len += scnprintf(&buf[len], PAGE_SIZE - len,
-				 "%d: %d, %d,%d,%d %d,%d,%d %d,%d\n",
+				 "%d: %d, %d,%d,%d %d,%d,%d %d,%d, %d\n",
 				 i, health_status,
 				 BHI_ROUND_INDEX(health_index),
 				 BHI_ROUND_INDEX(cap_index),
@@ -6419,7 +6452,8 @@ static ssize_t health_index_stats_show(struct device *dev,
 				 bhi_health_get_capacity(i, bhi_data),
 				 bhi_health_get_impedance(i, bhi_data),
 				 bhi_data->battery_age,
-				 bhi_data->cycle_count);
+				 bhi_data->cycle_count,
+				 batt_bpst_stats_update(batt_drv));
 	}
 
 	mutex_unlock(&batt_drv->chg_lock);

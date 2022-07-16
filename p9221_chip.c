@@ -1677,7 +1677,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_set_fod_addr = P9221R5_FOD_REG;
 		break;
 	case P9222_CHIP_ID:
-		chgr->reg_tx_id_addr = P9221R5_PROP_TX_ID_REG;
+		chgr->reg_tx_id_addr = P9222RE_PROP_TX_ID_REG;
 		chgr->reg_tx_mfg_code_addr = P9222RE_TX_MFG_CODE_REG;
 		chgr->reg_packet_type_addr = 0;
 		chgr->reg_set_pp_buf_addr = P9221R5_DATA_SEND_BUF_START;
@@ -1889,6 +1889,9 @@ static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 		break;
 	case P9XXX_GPIO_CPOUT_CTL_EN:
 		if (p9221_is_epp(charger))
+			break;
+		/* No need if DD is triggered */
+		if (charger->trigger_power_mitigation)
 			break;
 		/* b/174068520: set vout to 5.2 for BPP_WLC_RX+OTG */
 		if (value)

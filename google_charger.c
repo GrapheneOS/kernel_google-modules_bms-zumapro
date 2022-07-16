@@ -1027,6 +1027,19 @@ static bool chg_work_check_wlc_state(struct power_supply *wlc_psy)
 	return wlc_online == 1 || wlc_present == 1;
 }
 
+static bool chg_work_check_usb_state(struct chg_drv *chg_drv)
+{
+	struct power_supply *usb_psy = chg_drv->tcpm_psy ? chg_drv->tcpm_psy : chg_drv->usb_psy;
+	int usb_online = 0, usb_present = 0;
+
+	usb_online = chg_usb_online(usb_psy);
+
+	if (chg_drv->usb_psy)
+		usb_present = GPSY_GET_PROP(chg_drv->usb_psy, POWER_SUPPLY_PROP_PRESENT);
+
+	return usb_online > 0 || usb_present == 1;
+}
+
 /* not executed when battery is NOT present */
 static int chg_work_roundtrip(struct chg_drv *chg_drv,
 			      union gbms_charger_state *chg_state)
@@ -1038,7 +1051,7 @@ static int chg_work_roundtrip(struct chg_drv *chg_drv,
 	const int lowerbd = chg_drv->charge_start_level;
 	int fv_uv = -1, cc_max = -1;
 	int update_interval, rc;
-	bool wlc_on = 0;
+	bool wlc_on = 0, usb_on = 0;
 
 	rc = gbms_read_charger_state(chg_state, chg_psy);
 	if (rc < 0)
@@ -1062,16 +1075,19 @@ static int chg_work_roundtrip(struct chg_drv *chg_drv,
 	/*
 	 * Sending _NOT_CHARGING down to the battery (with buck_en=0) while on
 	 * WLC will keep dream defend stats in the same charging session.
+	 * Add usb_state to prevent disconnection false positives, which may
+	 * log data incorrectly
 	 */
 	wlc_on = chg_work_check_wlc_state(wlc_psy);
-	if (wlc_on && batt_chg_state.f.chg_status == POWER_SUPPLY_STATUS_DISCHARGING) {
+	usb_on = chg_work_check_usb_state(chg_drv);
+	if ((wlc_on | usb_on) && batt_chg_state.f.chg_status == POWER_SUPPLY_STATUS_DISCHARGING) {
 		batt_chg_state.f.chg_status = POWER_SUPPLY_STATUS_NOT_CHARGING;
 		batt_chg_state.f.flags = gbms_gen_chg_flags(chg_state->f.chg_status,
 							    chg_state->f.chg_type);
 	}
 
-	pr_debug("%s: wlc_on=%d chg_state=%llx batt_chg_state=%llx\n", __func__,
-		 wlc_on, chg_state->v, batt_chg_state.v);
+	pr_debug("%s: wlc_on=%d usb_on=%d chg_state=%llx batt_chg_state=%llx\n", __func__,
+		 wlc_on, usb_on, chg_state->v, batt_chg_state.v);
 
 	/* might return negative values in fv_uv and cc_max */
 	rc = chg_work_batt_roundtrip(&batt_chg_state, chg_drv->bat_psy,
@@ -3167,8 +3183,10 @@ static ssize_t set_dd_charge_stop_level(struct device *dev, struct device_attrib
 		return -ENODATA;
 	}
 
-	if ((val == chg_drv->bd_state.dd_charge_stop_level) ||
-	    (val <= chg_drv->bd_state.dd_charge_start_level) ||
+	if (val == chg_drv->bd_state.dd_charge_stop_level)
+		return count;
+
+	if ((val <= chg_drv->bd_state.dd_charge_start_level) ||
 	    (val > DEFAULT_CHARGE_STOP_LEVEL))
 		return -EINVAL;
 
@@ -3205,8 +3223,10 @@ static ssize_t set_dd_charge_start_level(struct device *dev, struct device_attri
 		return -ENODATA;
 	}
 
-	if ((val == chg_drv->bd_state.dd_charge_start_level) ||
-	    (val >= chg_drv->bd_state.dd_charge_stop_level) ||
+	if (val == chg_drv->bd_state.dd_charge_start_level)
+		return count;
+
+	if ((val >= chg_drv->bd_state.dd_charge_stop_level) ||
 	    (val < DEFAULT_CHARGE_START_LEVEL))
 		return -EINVAL;
 
