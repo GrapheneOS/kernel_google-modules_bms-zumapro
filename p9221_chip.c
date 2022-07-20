@@ -1227,7 +1227,7 @@ static void p9xxx_check_neg_power(struct p9221_charger_data *chgr)
 
 static void p9222_check_neg_power(struct p9221_charger_data *chgr)
 {
-	chgr->dc_icl_epp_neg = P9XXX_DC_ICL_EPP_750;
+
 }
 
 static int p9221_capdiv_en(struct p9221_charger_data *chgr, u8 mode)

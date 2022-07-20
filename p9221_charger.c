@@ -6131,6 +6131,12 @@ static int p9221_parse_dt(struct device *dev,
 	if (ret < 0)
 		pdata->phone_type = 0;
 
+	ret = of_property_read_u32(node, "google,epp_dcicl_default_ma", &data);
+	if (ret < 0)
+		pdata->epp_icl = 0;
+	else
+		pdata->epp_icl = data;
+
 	return 0;
 }
 
@@ -6523,7 +6529,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 
 	charger->dc_icl_bpp = 0;
 	charger->dc_icl_epp = 0;
-	charger->dc_icl_epp_neg = P9221_DC_ICL_EPP_UA;
+	charger->dc_icl_epp_neg = charger->pdata->epp_icl > 0 ? charger->pdata->epp_icl : P9221_DC_ICL_EPP_UA;
 	charger->aicl_icl_ua = 0;
 	charger->aicl_delay_ms = 0;
 

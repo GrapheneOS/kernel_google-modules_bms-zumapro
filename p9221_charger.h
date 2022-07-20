@@ -615,6 +615,7 @@ struct p9221_charger_platform_data {
 	bool				has_sw_ramp;
 	/* phone type for tx_id*/
 	u8				phone_type;
+	u32				epp_icl;
 };
 
 struct p9221_charger_ints_bit {
