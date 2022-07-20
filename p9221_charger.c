@@ -1137,19 +1137,20 @@ static void p9221_init_align(struct p9221_charger_data *charger)
 static void p9xxx_align_check(struct p9221_charger_data *charger)
 {
 	int res, wlc_freq_threshold;
-	u32 wlc_freq, current_scaling = 0;
+	u32 wlc_freq, current_scaling = 0, current_temp;
 
+	current_temp = (charger->current_filtered > 100) ? (charger->current_filtered - 100) : 0;
 	if (charger->current_filtered <= charger->pdata->alignment_current_threshold) {
 		current_scaling =
 			charger->pdata->alignment_scalar_low_current *
-			charger->current_filtered / 10;
+			current_temp / 10;
 		wlc_freq_threshold =
 			charger->pdata->alignment_offset_low_current +
 			current_scaling;
 	} else {
 		current_scaling =
 			charger->pdata->alignment_scalar_high_current *
-			charger->current_filtered / 10;
+			current_temp / 10;
 		wlc_freq_threshold =
 			charger->pdata->alignment_offset_high_current -
 			current_scaling;
