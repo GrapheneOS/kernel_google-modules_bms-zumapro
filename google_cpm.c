@@ -2514,28 +2514,33 @@ static int gcpm_set_mdis_charge_cntl_limit(struct thermal_cooling_device *tcd,
 		 * to determine when to swich source.
 		 */
 		in_idx = gcpm_mdis_match_cp_source(gcpm, &online);
-		if (in_idx < 0) {
+		if (in_idx < 0 || online != PPS_PSY_PROG_ONLINE) {
 			/*
-			 * this happens when none of the sources are online.
-			 * and CAN happen when we resume after the thermal
-			 * engine has shut this down. Forces cp_fcc to 0
-			 * to apply dc_icl and msc_fcc.
+			 * this happens when none of the sources are online
+			 * or when not using the CP. It CAN happen when we
+			 * resume after the thermal engine has shut this down.
+			 * Forces cp_fcc to 0 to apply dc_icl and msc_fcc.
 			 */
 			cp_fcc = 0;
+
+			/* forces wlc-overrides-fcc when wireless charging */
+			if (online && gcpm_mdis_in_is_wireless(gcpm, in_idx))
+				msc_fcc = -1;
 		} else if (gcpm_mdis_in_is_wireless(gcpm, in_idx)) {
 			/* WLC_CP use the charge pump with wireless charging */
 			cp_fcc = gcpm->mdis_out_limits[1][lvl + tdev->thermal_levels];
+
 			if (gcpm->dc_limit_cc_min_wlc >= 0)
 				cp_min = gcpm->dc_limit_cc_min_wlc;
 			else if (gcpm->dc_limit_cc_min >= 0)
 				cp_min = gcpm->dc_limit_cc_min;
 
 			/*
-			* forces wlc-overrides-fcc when wireless charging
-			* Reset only in PROG_ONLINE to allow transitioning
-			* OUT of WLC_DC when the charging current falls
-			* under the DC limit.
-			*/
+			 * forces wlc-overrides-fcc when wireless charging
+			 * Reset only in PROG_ONLINE to allow transitioning
+			 * OUT of WLC_DC when the charging current falls
+			 * under the DC limit.
+			 */
 			msc_fcc = -1;
 		} else {
 			/* PPS_CP use the charge pump with TCPM */
