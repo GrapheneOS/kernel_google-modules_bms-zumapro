@@ -1120,28 +1120,32 @@ static int fan_level_cb(struct gvotable_election *el,
 			const char *reason, void *vote)
 {
 	struct batt_drv *batt_drv = gvotable_get_data(el);
+	const int last_lvl = batt_drv->fan_last_level;
 	int lvl = GVOTABLE_PTR_TO_INT(vote);
 
 	if (!batt_drv)
 		return 0;
 
-	if (batt_drv->fan_last_level != lvl) {
-		pr_debug("FAN_LEVEL %d->%d reason=%s\n",
-			 batt_drv->fan_last_level, lvl, reason ? reason : "<>");
+	if (batt_drv->fan_last_level == lvl)
+		return 0;
 
-		if (!chg_state_is_disconnected(&batt_drv->chg_state)) {
-			logbuffer_log(batt_drv->ttf_stats.ttf_log,
-				      "FAN_LEVEL %d->%d reason=%s",
-				      batt_drv->fan_last_level, lvl,
-				      reason ? reason : "<>");
+	pr_debug("FAN_LEVEL %d->%d reason=%s\n",
+		batt_drv->fan_last_level, lvl, reason ? reason : "<>");
 
-			batt_drv->fan_last_level = lvl;
-			if (batt_drv->psy)
-				power_supply_changed(batt_drv->psy);
-		} else {
-			/* Disconnected */
-			batt_drv->fan_last_level = lvl;
-		}
+	batt_drv->fan_last_level = lvl;
+
+	if (!chg_state_is_disconnected(&batt_drv->chg_state)) {
+
+		logbuffer_log(batt_drv->ttf_stats.ttf_log,
+			"FAN_LEVEL %d->%d reason=%s",
+			last_lvl, lvl,
+			reason ? reason : "<>");
+
+		/*
+		 * Send the uevent by kobject API to distinguish the uevent sent by
+                 * power_supply_changed() since fan_level is not a standard power_supply_property
+		 */
+		kobject_uevent(&batt_drv->device->kobj, KOBJ_CHANGE);
 	}
 
 	return 0;
