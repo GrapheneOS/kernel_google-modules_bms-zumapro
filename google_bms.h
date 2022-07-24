@@ -507,6 +507,8 @@ int ttf_ref_cc(const struct batt_ttf_stats *stats, int soc);
 
 int ttf_pwr_ibatt(const struct gbms_ce_tier_stats *ts);
 
+void ttf_tier_reset(struct batt_ttf_stats *stats);
+
 int gbms_read_aacr_limits(struct gbms_chg_profile *profile,
 			  struct device_node *node);
 

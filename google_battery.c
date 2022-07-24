@@ -4370,6 +4370,9 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 				pr_err("MSC_BPST: Cannot start bpst detect\n");
 		}
 		mutex_unlock(&batt_drv->bpst_state.lock);
+
+		/* reset ttf tier */
+		ttf_tier_reset(&batt_drv->ttf_stats);
 	}
 
 	/*
