@@ -27,7 +27,6 @@
 #include <linux/thermal.h>
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
-#include <misc/gvotable.h>
 #include <linux/platform_device.h>
 #include "gbms_power_supply.h"
 #include "google_bms.h"

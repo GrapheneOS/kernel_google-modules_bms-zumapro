@@ -31,7 +31,6 @@
 #include "google_bms.h"
 #include "google_psy.h"
 #include "qmath.h"
-#include <misc/gvotable.h>
 #include <crypto/hash.h>
 
 #include <linux/debugfs.h>

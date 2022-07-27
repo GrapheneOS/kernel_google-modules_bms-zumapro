@@ -20,6 +20,7 @@
 #include <linux/minmax.h>
 #include <linux/types.h>
 #include <linux/usb/pd.h>
+#include <misc/gvotable.h>
 #include <misc/logbuffer.h>
 #include "gbms_power_supply.h"
 #include "qmath.h"

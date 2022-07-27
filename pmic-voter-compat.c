@@ -17,7 +17,7 @@
 #include <linux/kernel.h>
 #include <linux/list.h>
 #include "linux/slab.h"
-#include <misc/gvotable.h>
+#include <misc/logbuffer.h>
 #include "pmic-voter.h"
 
 #define V2EL(x) ((struct gvotable_election *)(v))

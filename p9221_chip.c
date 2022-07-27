@@ -16,7 +16,6 @@
 #include <linux/delay.h>
 #include <linux/kernel.h>
 #include <linux/alarmtimer.h>
-#include <misc/logbuffer.h>
 #include "p9221_charger.h"
 #include "google_bms.h"
 

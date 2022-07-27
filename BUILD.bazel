@@ -25,6 +25,7 @@ kernel_module(
         "**/*.h",
         "Kbuild",
     ]) + [
+        "//private/google-modules/bms/misc:headers",
         "//private/google-modules/soc/gs:gs101_soc_headers",
     ],
     outs = [
@@ -50,6 +51,7 @@ kernel_module(
     ],
     kernel_build = "//private/google-modules/soc/gs:slider",
     kernel_module_deps = [
+        "//private/google-modules/bms/misc:bms-misc.slider",
         "//private/google-modules/soc/gs:gs101_soc",
     ],
     visibility = [
