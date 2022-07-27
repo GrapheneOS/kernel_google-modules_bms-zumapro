@@ -2637,7 +2637,7 @@ mdis_out_table_show(struct device *dev, struct device_attribute *attr, char *buf
 	struct thermal_cooling_device *tdev = to_cooling_device(dev);
 	struct mdis_thermal_device *mdev = tdev->devdata;
 	struct gcpm_drv *gcpm = mdev->gcpm;
-	const int entries = mdev->thermal_levels * gcpm->mdis_out_count;
+	const int entries = mdev->thermal_levels * gcpm->mdis_in_count;
 	ssize_t count = 0;
 	int i, j;
 
@@ -2735,7 +2735,7 @@ static ssize_t mdis_out_store(struct file *filp, const char __user *user_buf,
 		if (index < 0 || index >= levels)
 			break;
 
-		for (i = 0; i < levels * gcpm->mdis_out_count; i++) {
+		for (i = 0; i < levels * gcpm->mdis_in_count; i++) {
 			str = strsep(&saved_ptr, " ");
 			if (!str)
 				goto error_done;
@@ -3009,7 +3009,7 @@ static int gcpm_init_mdis(struct gcpm_drv *gcpm)
 	 * mdis_out_sel mode.
 	 */
 	for (i = 0; i < gcpm->mdis_out_count; i++) {
-		int len = tdev->thermal_levels * gcpm->mdis_out_count;
+		int len = tdev->thermal_levels * gcpm->mdis_in_count;
 		char of_name[36];
 		u32 *limits;
 
