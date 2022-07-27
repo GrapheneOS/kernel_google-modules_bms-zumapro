@@ -3088,7 +3088,7 @@ static void p9221_notifier_check_dc(struct p9221_charger_data *charger)
 {
 	int ret, dc_in;
 
-	if ((charger->chip_id < P9382A_CHIP_ID) && charger->check_np) {
+	if ((charger->chip_id == P9221_CHIP_ID) && charger->check_np) {
 
 		ret = p9221_notifier_check_neg_power(charger);
 		if (ret > 0) {
