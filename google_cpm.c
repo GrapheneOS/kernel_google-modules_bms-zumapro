@@ -602,7 +602,8 @@ static int gcpm_dc_fcc_update(struct gcpm_drv *gcpm, int value)
 		goto error_exit;
 
 	/* apply/enable DC_FCC only when a WLC_DC source is selected */
-	if (gcpm->pps_index != PPS_INDEX_WLC || limit < 0)
+	if ((gcpm->pps_index != PPS_INDEX_WLC) ||
+	    (gcpm->dc_index <= GCPM_DEFAULT_CHARGER) || limit < 0)
 		limit = -1;
 
 	/*
