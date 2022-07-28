@@ -1857,6 +1857,21 @@ static int gcpm_dc_fcc_callback(struct gvotable_election *el,
 	return 0;
 }
 
+static int gcpm_dc_chg_avail_callback(struct gvotable_election *el,
+				      const char *reason, void *value)
+{
+	struct gcpm_drv *gcpm = gvotable_get_data(el);
+	const int dc_chg_avail = GVOTABLE_PTR_TO_INT(value);
+
+	if (!gcpm->init_complete)
+		return 0;
+
+	mod_delayed_work(system_wq, &gcpm->select_work, 0);
+	pr_debug("DC_CHG_AVAIL: dc_avail=%d, reason=%s\n", dc_chg_avail, reason);
+
+	return 0;
+}
+
 /* --------------------------------------------------------------------- */
 
 
@@ -4023,7 +4038,8 @@ static int google_cpm_probe(struct platform_device *pdev)
 	gvotable_election_set_name(gcpm->dc_fcc_votable, "DC_FCC");
 
 	gcpm->dc_chg_avail_votable = gvotable_create_int_election(
-			NULL, gvotable_comparator_int_min, NULL, NULL);
+			NULL, gvotable_comparator_int_min,
+			gcpm_dc_chg_avail_callback, gcpm);
 
 	if (IS_ERR_OR_NULL(gcpm->dc_chg_avail_votable)) {
 		ret = PTR_ERR(gcpm->dc_chg_avail_votable);
