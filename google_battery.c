@@ -3783,7 +3783,7 @@ static int bhi_cycle_count_residency(struct gbatt_ccbin_data *ccd , int soc_limi
 	for (i = 0; i < GBMS_CCBIN_BUCKET_COUNT; i++) {
 		if (ccd->count[i] == 0xFFFF)
 			continue;
-		if (i < soc_limit)
+		if ((i * 10) < soc_limit)
 			under += ccd->count[i];
 		else
 			over += ccd->count[i];
