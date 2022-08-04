@@ -638,12 +638,18 @@ static int p9221_set_switch_reg(struct p9221_charger_data *charger, bool enable)
 
 #define EPP_MODE_REQ_PWR		15
 #define EPP_MODE_REQ_VOUT		12000
+#define WLC_VOUT_RAMP_DOWN_MV		15300
+#define WLC_VOUT_CFG_STEP		40		/* b/194346461 ramp down VOUT */
 static int p9xxx_set_bypass_mode(struct p9221_charger_data *charger)
 {
 	const int req_pwr = EPP_MODE_REQ_PWR;
+	const int vout_target = WLC_VOUT_RAMP_DOWN_MV;
 	int i, count, ret;
 	u8 cdmode, currpwr;
 	u32 vout_mv;
+
+	if (!charger->online)
+		return 0;
 
 	/* Check it's in Cap Div mode */
 	ret = charger->reg_read_8(charger, P9412_CDMODE_STS_REG, &cdmode);
@@ -651,6 +657,37 @@ static int p9xxx_set_bypass_mode(struct p9221_charger_data *charger)
 		return ret;
 	dev_info(&charger->client->dev, "cdmode_reg=%02x\n", cdmode);
 
+	usleep_range(500 * USEC_PER_MSEC, 510 * USEC_PER_MSEC);
+	/* Ramp down WLC Vout to 15.3V */
+	while (true) {
+		ret = charger->chip_get_vout(charger, &vout_mv);
+		if (ret < 0 || vout_mv == 0) {
+			dev_err(&charger->client->dev, "%s: invalid vout %d\n", __func__, ret);
+			return ret;
+		}
+
+		if (vout_mv < vout_target) {
+			dev_info(&charger->client->dev, "%s: underflow vout=%d, (target=%d)\n",
+				 __func__, vout_mv, vout_target);
+			break;
+		}
+
+		vout_mv -= WLC_VOUT_CFG_STEP;
+
+		ret = charger->chip_set_vout_max(charger, vout_mv);
+		if (ret < 0) {
+			dev_err(&charger->client->dev, "%s: cannot set vout %d\n", __func__, ret);
+			return ret;
+		} else {
+			dev_info(&charger->client->dev, "%s: vout set to %d\n", __func__, vout_mv);
+			usleep_range(250 * USEC_PER_MSEC, 260 * USEC_PER_MSEC);
+		}
+	}
+
+	if (!charger->online)
+		return 0;
+
+	usleep_range(500 * USEC_PER_MSEC, 510 * USEC_PER_MSEC);
 	for (count = 0; count < 3; count++) {
 		/* Change the Requested Power to 15W */
 		ret = charger->reg_write_8(charger, P9412_PROP_REQ_PWR_REG, req_pwr * 2);
@@ -707,8 +744,12 @@ static int p9221_reset_wlc_dc(struct p9221_charger_data *charger)
 	const int extben_gpio = charger->pdata->ext_ben_gpio;
 	int ret;
 
+	if (!charger->pdata->has_wlc_dc)
+		return -EOPNOTSUPP;
+
 	charger->wlc_dc_enabled = false;
 
+	usleep_range(500 * USEC_PER_MSEC, 510 * USEC_PER_MSEC);
 	p9xxx_gpio_set_value(charger, dc_sw_gpio, 0);
 	p9xxx_gpio_set_value(charger, extben_gpio, 0);
 

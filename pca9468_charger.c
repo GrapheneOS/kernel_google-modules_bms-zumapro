@@ -5019,7 +5019,7 @@ static int pca9468_probe(struct i2c_client *client,
 	pca9468_chg->pdata = pdata;
 	pca9468_chg->charging_state = DC_STATE_NO_CHARGING;
 	pca9468_chg->wlc_ramp_out_iin = true;
-	pca9468_chg->wlc_ramp_out_vout_target = 15300000; /* 15.3V as default */
+	pca9468_chg->wlc_ramp_out_vout_target = 0; /* use Vbatt*4 as default */
 	pca9468_chg->wlc_ramp_out_delay = 250; /* 250 ms default */
 
 	/* Create a work queue for the direct charger */
