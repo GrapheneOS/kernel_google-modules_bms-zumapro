@@ -296,6 +296,7 @@
 #define P9222RE_ILIM_SET_REG			0x60
 #define P9222_COM_REG				0x62
 #define P9222RE_FOD_REG				0x84
+#define P9222RE_EPP_TX_GUARANTEED_POWER_REG	0xB4
 #define P9222RE_EPP_REQ_NEGOTIATED_POWER_REG	0xBD
 #define P9222RE_EPP_Q_FACTOR_REG		0xD2
 #define P9222RE_TX_MFG_CODE_REG			0x106
@@ -311,7 +312,7 @@
 
 #define P9222_VOUT_SET_MIN_MV			3500
 #define P9222_VOUT_SET_MAX_MV			12500
-
+#define P9222_NEG_POWER_10W			10000
 
 /*
  * Interrupt/Status flags for P9222
@@ -320,6 +321,7 @@
 #define P9222_STAT_OVT				BIT(2)
 #define P9222_STAT_OVC				BIT(3)
 #define P9222_STAT_OVV				BIT(4)
+#define P9222_EXTENDED_MODE			BIT(12)
 #define P9222_STAT_PPRCVD			BIT(15)
 
 /*
@@ -513,6 +515,12 @@ enum p9221_align_mfg_chk_state {
 	ALIGN_MFG_PASSED,
 };
 
+enum p9xxx_chk_rp {
+	RP_NOTSET = -1,
+	RP_CHECKING,
+	RP_DONE,
+};
+
 #define WLC_SOC_STATS_LEN      101
 
 struct p9221_soc_data {
@@ -596,6 +604,7 @@ struct p9221_charger_platform_data {
 	int				q_value;
 	int				tx_4191q;
 	int				epp_rp_value;
+	int				epp_rp_low_value;
 	int				needs_dcin_reset;
 	int				nb_alignment_freq;
 	int				*alignment_freq;
@@ -639,6 +648,7 @@ struct p9221_charger_ints_bit {
 	u16				stat_limit_mask;
 	u16				stat_cc_mask;
 	u16				prop_mode_mask;
+	u16				extended_mode_bit;
 	/* Tx mode */
 	u16				hard_ocp_bit;
 	u16				tx_conflict_bit;
@@ -680,6 +690,7 @@ struct p9221_charger_data {
 	struct delayed_work		power_mitigation_work;
 	struct delayed_work		auth_dc_icl_work;
 	struct delayed_work		fg_work;
+	struct delayed_work		chk_rp_work;
 	struct work_struct		uevent_work;
 	struct work_struct		rtx_disable_work;
 	struct work_struct		rtx_reset_work;
@@ -783,6 +794,7 @@ struct p9221_charger_data {
 	bool				sw_ramp_done;
 	bool				hpp_hv;
 	int				fod_mode;
+	enum p9xxx_chk_rp		check_rp;
 
 #if IS_ENABLED(CONFIG_GPIOLIB)
 	struct gpio_chip gpio;

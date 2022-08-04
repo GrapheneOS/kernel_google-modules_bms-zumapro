@@ -1079,16 +1079,41 @@ static int p9221_chip_renegotiate_pwr(struct p9221_charger_data *chgr)
 
 static int p9222_chip_renegotiate_pwr(struct p9221_charger_data *chgr)
 {
-	int ret;
-	int val8 = P9412_MW_TO_HW(chgr->pdata->epp_rp_value);
+	int ret = 0, guar_pwr_mw, cnt;
+	u8 val8, rp8;
 
-	/* units 0.5 W*/
-	ret = chgr->reg_write_8(chgr,
-				P9222RE_EPP_REQ_NEGOTIATED_POWER_REG, val8);
-	if (ret < 0)
-		dev_err(&chgr->client->dev,
-			"cannot write to EPP_NEG_POWER=%d (%d)\n",
-			val8, ret);
+	if (chgr->check_rp != RP_CHECKING)
+		return ret;
+
+	ret = chgr->reg_read_8(chgr, P9222RE_EPP_TX_GUARANTEED_POWER_REG, &val8);
+	if (ret)
+		return ret;
+	guar_pwr_mw = P9412_HW_TO_MW(val8);
+
+	/* write renegotiated power to 11W(>10W) or 10W(<=10W) */
+	if (chgr->pdata->epp_rp_low_value != -1 && guar_pwr_mw <= P9222_NEG_POWER_10W)
+		rp8 = P9412_MW_TO_HW(chgr->pdata->epp_rp_low_value);
+	else
+		rp8 = P9412_MW_TO_HW(chgr->pdata->epp_rp_value);
+
+	/*
+	 * The neg_pwr write window is 200ms to 340ms, write every 20ms to make
+	 * sure it works
+	 */
+	for (cnt = 0; cnt < 7 ; cnt++) {
+		/* units 0.5 W */
+		ret = chgr->reg_write_8(chgr, P9222RE_EPP_REQ_NEGOTIATED_POWER_REG, rp8);
+
+		usleep_range(20 * USEC_PER_MSEC, 22 * USEC_PER_MSEC);
+		if (!chgr->online)
+			return -ENODEV;
+	}
+	if (ret == 0)
+		logbuffer_log(chgr->log, "read neg_pwr=0x%x, write neg_pwr=0x%x(guar_pwr=%dW)",
+			      val8, rp8, guar_pwr_mw/1000);
+
+	chgr->check_rp = RP_DONE;
+
 	return ret;
 }
 
@@ -1564,6 +1589,7 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 		chgr->ints.propmode_stat_bit = P9412_PROP_MODE_STAT_INT;
 		chgr->ints.cdmode_change_bit = P9412_CDMODE_CHANGE_INT;
 		chgr->ints.cdmode_err_bit = P9412_CDMODE_ERROR_INT;
+		chgr->ints.extended_mode_bit = 0;
 
 		chgr->ints.hard_ocp_bit = P9412_STAT_OVC;
 		chgr->ints.tx_conflict_bit = P9412_STAT_TXCONFLICT;
@@ -1587,6 +1613,7 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 		chgr->ints.propmode_stat_bit = 0;
 		chgr->ints.cdmode_change_bit = 0;
 		chgr->ints.cdmode_err_bit = 0;
+		chgr->ints.extended_mode_bit = 0;
 
 		chgr->ints.hard_ocp_bit = P9382_STAT_HARD_OCP;
 		chgr->ints.tx_conflict_bit = P9382_STAT_TXCONFLICT;
@@ -1610,6 +1637,7 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 		chgr->ints.propmode_stat_bit = 0;
 		chgr->ints.cdmode_change_bit = 0;
 		chgr->ints.cdmode_err_bit = 0;
+		chgr->ints.extended_mode_bit = P9222_EXTENDED_MODE;
 
 		chgr->ints.hard_ocp_bit = 0;
 		chgr->ints.tx_conflict_bit = 0;
@@ -1633,6 +1661,7 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 		chgr->ints.propmode_stat_bit = 0;
 		chgr->ints.cdmode_change_bit = 0;
 		chgr->ints.cdmode_err_bit = 0;
+		chgr->ints.extended_mode_bit = 0;
 
 		chgr->ints.hard_ocp_bit = 0;
 		chgr->ints.tx_conflict_bit = 0;

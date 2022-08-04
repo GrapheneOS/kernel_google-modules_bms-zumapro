@@ -53,6 +53,7 @@
 #define RTX_BEN_ENABLED		2
 
 #define REENABLE_RTX_DELAY	3000
+#define P9XXX_CHK_RP_DELAY_MS	200
 
 #define P9XXX_VOUT_5480MV	5480
 
@@ -874,6 +875,7 @@ static void p9221_set_offline(struct p9221_charger_data *charger)
 	mutex_lock(&charger->stats_lock);
 	charger->online = false;
 	charger->online_at = 0;
+	charger->check_rp = RP_NOTSET;
 	cancel_delayed_work(&charger->charge_stats_work);
 	p9221_dump_charge_stats(charger);
 	mutex_unlock(&charger->stats_lock);
@@ -2644,7 +2646,8 @@ static int p9221_enable_interrupts(struct p9221_charger_data *charger)
 		mask = charger->ints.stat_rtx_mask;
 	} else {
 		mask = charger->ints.stat_limit_mask | charger->ints.stat_cc_mask |
-		       charger->ints.vrecton_bit | charger->ints.prop_mode_mask;
+		       charger->ints.vrecton_bit | charger->ints.prop_mode_mask |
+		       charger->ints.extended_mode_bit;
 
 		if (charger->pdata->needs_dcin_reset ==
 						P9221_WC_DC_RESET_VOUTCHANGED)
@@ -5576,6 +5579,18 @@ static void p9221_irq_handler(struct p9221_charger_data *charger, u16 irq_src)
 
 		/* charger->prop_mode_en is reset on disconnect */
 	}
+
+	/* This only necessary for P9222 */
+	if (irq_src & charger->ints.extended_mode_bit) {
+		if (charger->check_rp == RP_NOTSET &&
+		    charger->pdata->epp_rp_value != -1) {
+			pm_stay_awake(charger->dev);
+			charger->check_rp = RP_CHECKING;
+			cancel_delayed_work_sync(&charger->chk_rp_work);
+			schedule_delayed_work(&charger->chk_rp_work,
+					      msecs_to_jiffies(P9XXX_CHK_RP_DELAY_MS));
+		}
+	}
 }
 
 #define IRQ_DEBOUNCE_TIME_MS		4
@@ -5691,6 +5706,16 @@ static irqreturn_t p9221_irq_det_thread(int irq, void *irq_data)
 
 	return IRQ_HANDLED;
 }
+
+static void p9xxx_chk_rp_work(struct work_struct *work)
+{
+	struct p9221_charger_data *charger = container_of(work,
+			struct p9221_charger_data, chk_rp_work.work);
+
+	charger->chip_renegotiate_pwr(charger);
+	pm_relax(charger->dev);
+}
+
 
 static void p9382_rtx_disable_work(struct work_struct *work)
 {
@@ -6026,6 +6051,14 @@ static int p9221_parse_dt(struct device *dev,
 	} else {
 		pdata->epp_rp_value = data;
 		dev_info(dev, "dt epp_rp_value: %d\n", pdata->epp_rp_value);
+	}
+
+	ret = of_property_read_u32(node, "google,epp_rp_low_value", &data);
+	if (ret < 0) {
+		pdata->epp_rp_low_value = -1;
+	} else {
+		pdata->epp_rp_low_value = data;
+		dev_info(dev, "dt epp_rp_low_value: %d\n", pdata->epp_rp_low_value);
 	}
 
 	pdata->epp_vout_mv = P9221_MAX_VOUT_SET_MV_DEFAULT;
@@ -6403,6 +6436,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	charger->last_disable = -1;
 	charger->irq_at = 0;
 	charger->ll_bpp_cep = -EINVAL;
+	charger->check_rp = RP_NOTSET;
 	mutex_init(&charger->io_lock);
 	mutex_init(&charger->cmd_lock);
 	mutex_init(&charger->stats_lock);
@@ -6422,6 +6456,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	INIT_DELAYED_WORK(&charger->rtx_work, p9382_rtx_work);
 	INIT_DELAYED_WORK(&charger->auth_dc_icl_work, p9221_auth_dc_icl_work);
 	INIT_DELAYED_WORK(&charger->fg_work, p9221_fg_work);
+	INIT_DELAYED_WORK(&charger->chk_rp_work, p9xxx_chk_rp_work);
 	INIT_WORK(&charger->uevent_work, p9221_uevent_work);
 	INIT_WORK(&charger->rtx_disable_work, p9382_rtx_disable_work);
 	INIT_WORK(&charger->rtx_reset_work, p9xxx_rtx_reset_work);
@@ -6726,6 +6761,7 @@ static int p9221_charger_remove(struct i2c_client *client)
 	cancel_delayed_work_sync(&charger->align_work);
 	cancel_delayed_work_sync(&charger->rtx_work);
 	cancel_delayed_work_sync(&charger->auth_dc_icl_work);
+	cancel_delayed_work_sync(&charger->chk_rp_work);
 	cancel_work_sync(&charger->uevent_work);
 	cancel_work_sync(&charger->rtx_disable_work);
 	cancel_work_sync(&charger->rtx_reset_work);
