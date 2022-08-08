@@ -857,6 +857,7 @@ static int max77759_set_insel(struct max77759_chgr_data *data,
 		 * input_suspend masks both inputs but must still allow
 		 * TODO: use a separate use case for usb + wlc
 		 */
+		 force_wlc = true;
 	} else if (cb_data->buck_on && !cb_data->chgin_off) {
 		insel_value |= MAX77759_CHG_CNFG_12_CHGINSEL;
 	} else if (cb_data->wlc_rx && !cb_data->wlcin_off) {
