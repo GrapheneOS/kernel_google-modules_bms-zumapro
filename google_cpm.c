@@ -602,7 +602,8 @@ static int gcpm_dc_fcc_update(struct gcpm_drv *gcpm, int value)
 		goto error_exit;
 
 	/* apply/enable DC_FCC only when a WLC_DC source is selected */
-	if (gcpm->pps_index != PPS_INDEX_WLC || limit < 0)
+	if ((gcpm->pps_index != PPS_INDEX_WLC) ||
+	    (gcpm->dc_index <= GCPM_DEFAULT_CHARGER) || limit < 0)
 		limit = -1;
 
 	/*
@@ -2608,9 +2609,6 @@ static int gcpm_set_mdis_charge_cntl_limit(struct thermal_cooling_device *tcd,
 	return 0;
 }
 
-#define to_cooling_device(_dev)	\
-	container_of(_dev, struct thermal_cooling_device, device)
-
 static ssize_t
 state2power_table_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
@@ -2639,7 +2637,7 @@ mdis_out_table_show(struct device *dev, struct device_attribute *attr, char *buf
 	struct thermal_cooling_device *tdev = to_cooling_device(dev);
 	struct mdis_thermal_device *mdev = tdev->devdata;
 	struct gcpm_drv *gcpm = mdev->gcpm;
-	const int entries = mdev->thermal_levels * gcpm->mdis_out_count;
+	const int entries = mdev->thermal_levels * gcpm->mdis_in_count;
 	ssize_t count = 0;
 	int i, j;
 
@@ -2668,13 +2666,6 @@ static const struct thermal_cooling_device_ops chg_mdis_tcd_ops = {
 };
 
 #ifdef CONFIG_DEBUG_FS
-
-#define DEBUG_ATTRIBUTE_WO(name) \
-static const struct file_operations name ## _fops = {	\
-	.open	= simple_open,			\
-	.llseek	= no_llseek,			\
-	.write	= name ## _store,			\
-}
 
 static ssize_t mdis_tm_store(struct file *filp, const char __user *user_buf,
 			     size_t count, loff_t *ppos)
@@ -2744,7 +2735,7 @@ static ssize_t mdis_out_store(struct file *filp, const char __user *user_buf,
 		if (index < 0 || index >= levels)
 			break;
 
-		for (i = 0; i < levels * gcpm->mdis_out_count; i++) {
+		for (i = 0; i < levels * gcpm->mdis_in_count; i++) {
 			str = strsep(&saved_ptr, " ");
 			if (!str)
 				goto error_done;
@@ -3018,7 +3009,7 @@ static int gcpm_init_mdis(struct gcpm_drv *gcpm)
 	 * mdis_out_sel mode.
 	 */
 	for (i = 0; i < gcpm->mdis_out_count; i++) {
-		int len = tdev->thermal_levels * gcpm->mdis_out_count;
+		int len = tdev->thermal_levels * gcpm->mdis_in_count;
 		char of_name[36];
 		u32 *limits;
 
