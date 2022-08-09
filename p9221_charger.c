@@ -3218,9 +3218,7 @@ static void p9xxx_write_q_factor(struct p9221_charger_data *charger)
 	q_factor = (charger->de_q_value > 0) ?
 		   charger->de_q_value : charger->pdata->q_value;
 
-	ret = p9221_reg_write_8(charger,
-				P9221R5_EPP_Q_FACTOR_REG,
-				q_factor);
+	ret = p9xxx_chip_set_q_factor_reg(charger, q_factor);
 	if (ret < 0)
 		dev_err(&charger->client->dev,
 			"cannot write Q=%d (%d)\n",
@@ -3239,9 +3237,7 @@ static void p9xxx_update_q_factor(struct p9221_charger_data *charger)
 	}
 
 	if (charger->mfg == P9221_PTMC_EPP_TX_4191) {
-		ret = p9221_reg_write_8(charger,
-					P9221R5_EPP_Q_FACTOR_REG,
-					charger->pdata->tx_4191q);
+		ret = p9xxx_chip_set_q_factor_reg(charger, charger->pdata->tx_4191q);
 		if (ret == 0)
 			dev_info(&charger->client->dev,
 				 "update Q factor=%d(mfg=%x)\n",

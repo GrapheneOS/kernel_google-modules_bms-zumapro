@@ -297,6 +297,7 @@
 #define P9222_COM_REG				0x62
 #define P9222RE_FOD_REG				0x84
 #define P9222RE_EPP_REQ_NEGOTIATED_POWER_REG	0xBD
+#define P9222RE_EPP_Q_FACTOR_REG		0xD2
 #define P9222RE_TX_MFG_CODE_REG			0x106
 #define P9222RE_PROP_TX_ID_REG			0x118
 
@@ -799,6 +800,7 @@ struct p9221_charger_data {
 	u16				reg_set_pp_buf_addr;
 	u16				reg_get_pp_buf_addr;
 	u16				reg_set_fod_addr;
+	u16				reg_q_factor_addr;
 
 	int (*reg_read_n)(struct p9221_charger_data *chgr, u16 reg,
 			  void *buf, size_t n);
@@ -912,5 +914,6 @@ enum p9xxx_renego_state {
       -ENOTSUPP : chgr->reg_write_n(chgr, chgr->reg_set_fod_addr, data, len))
 #define p9xxx_chip_get_fod_reg(chgr, data, len) (chgr->reg_set_fod_addr == 0 ? \
       -ENOTSUPP : chgr->reg_read_n(chgr, chgr->reg_set_fod_addr, data, len))
-
+#define p9xxx_chip_set_q_factor_reg(chgr, data) (chgr->reg_q_factor_addr == 0 ? \
+      -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_q_factor_addr, data))
 #endif /* __P9221_CHARGER_H__ */
