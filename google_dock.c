@@ -15,6 +15,7 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
+#include <linux/debugfs.h>
 #include <linux/kernel.h>
 #include <linux/printk.h>
 #include <linux/module.h>
@@ -32,6 +33,7 @@
 
 #define DOCK_USER_VOTER			"DOCK_USER_VOTER"
 #define DOCK_AICL_VOTER			"DOCK_AICL_VOTER"
+#define DOCK_VOUT_VOTER			"DOCK_VOUT_VOTER"
 
 #define DOCK_DELAY_INIT_MS		500
 #define DOCK_NOTIFIER_DELAY_MS		100
@@ -53,6 +55,7 @@ struct dock_drv {
 	struct alarm icl_ramp_alarm;
 	struct notifier_block nb;
 	struct gvotable_election *dc_icl_votable;
+	struct gvotable_election *chg_mode_votable;
 
 	bool init_complete;
 	bool check_dc;
@@ -61,12 +64,15 @@ struct dock_drv {
 	u32 icl_ramp_delay_ms;
 	int online;
 	int pogo_ovp_en;
+	int pogo_acc_gpio;
+	int pogo_acc_irq;
 };
 
+static bool google_dock_find_mode_votable(struct dock_drv *dock);
 
 /* ------------------------------------------------------------------------- */
 static ssize_t is_dock_show(struct device *dev,
-			   struct device_attribute *attr, char *buf)
+			    struct device_attribute *attr, char *buf)
 {
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct dock_drv *dock = power_supply_get_drvdata(psy);
@@ -79,6 +85,25 @@ static ssize_t is_dock_show(struct device *dev,
 
 static DEVICE_ATTR_RO(is_dock);
 
+static int debug_pogo_vout_write(void *data, u64 val)
+{
+	struct dock_drv *dock = (struct dock_drv *)data;
+
+	if (val < 0 || val > 1)
+		return -EINVAL;
+
+	if (google_dock_find_mode_votable(dock))
+		gvotable_cast_long_vote(dock->chg_mode_votable,
+					DOCK_VOUT_VOTER,
+					GBMS_CHGR_MODE_VOUT,
+					val != 0);
+
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(debug_pogo_vout_fops, NULL,
+			debug_pogo_vout_write, "%llu\n");
+
 static int dock_init_fs(struct dock_drv *dock)
 {
 	int ret;
@@ -89,6 +114,21 @@ static int dock_init_fs(struct dock_drv *dock)
 		dev_err(&dock->psy->dev, "Failed to create is_dock\n");
 
 	return ret;
+}
+
+static int dock_init_debugfs(struct dock_drv *dock)
+{
+	struct dentry *de = NULL;
+
+	de = debugfs_create_dir("google_dock", 0);
+	if (IS_ERR_OR_NULL(de))
+		return 0;
+
+	/* pogo_vout */
+	debugfs_create_file("pogo_vout", 0600, de, dock,
+			    &debug_pogo_vout_fops);
+
+	return 0;
 }
 /* ------------------------------------------------------------------------- */
 
@@ -272,7 +312,7 @@ out:
 }
 
 static int google_dock_parse_dt(struct device *dev,
-			  struct dock_drv *dock)
+				struct dock_drv *dock)
 {
 	int ret = 0;
 	struct device_node *node = dev->of_node;
@@ -287,6 +327,99 @@ static int google_dock_parse_dt(struct device *dev,
 		dev_info(dev, "POGO_OVP_EN gpio:%d", dock->pogo_ovp_en);
 
 	return 0;
+}
+
+static bool google_dock_find_mode_votable(struct dock_drv *dock)
+{
+	if (!dock->chg_mode_votable) {
+		dock->chg_mode_votable = gvotable_election_get_handle(GBMS_MODE_VOTABLE);
+		if (!dock->chg_mode_votable) {
+			dev_err(dock->device, "Could not get CHARGER_MODE votable\n");
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static irqreturn_t pogo_acc_irq(int irq, void *irq_data)
+{
+	struct dock_drv *dock = irq_data;
+
+	dev_info(dock->device, "POGO IRQ triggered\n");
+
+	/*
+	 * TODO: b/237977206, rework board doesn't have accessory circuit.
+	 *       use /d/google_dock/pogo_vout as WA instead when accessory
+	 *       is attached/detected.
+	 */
+	if (google_dock_find_mode_votable(dock)) {
+		int gpio_en;
+
+		gpio_en = gpio_get_value_cansleep(dock->pogo_acc_gpio);
+		gvotable_cast_long_vote(dock->chg_mode_votable,
+					DOCK_VOUT_VOTER,
+					GBMS_CHGR_MODE_VOUT,
+					gpio_en != 0);
+	}
+
+	return IRQ_HANDLED;
+}
+
+static int google_dock_power_out_init(struct device *dev,
+				      struct dock_drv *dock)
+{
+	int ret;
+	struct device_node *node = dev->of_node;
+
+	/* Accessory Detect IRQ */
+	dock->pogo_acc_gpio = of_get_named_gpio(node, "google,pogo-accessory-detect", 0);
+	if (dock->pogo_acc_gpio < 0) {
+		dev_warn(dev, "pogo accessory detect gpio not found ret:%d\n",
+			dock->pogo_acc_gpio);
+		return dock->pogo_acc_gpio;
+	}
+
+	ret = devm_gpio_request(dev, dock->pogo_acc_gpio, "google,pogo-accessory-detect");
+	if (ret) {
+		dev_err(dev, "failed to request pogo-accessory-detect gpio, ret:%d\n", ret);
+		return ret;
+	}
+
+	ret = gpio_direction_input(dock->pogo_acc_gpio);
+	if (ret) {
+		dev_err(dev, "failed set pogo-accessory-detect as input, ret:%d\n", ret);
+		return ret;
+	}
+
+	dock->pogo_acc_irq = gpio_to_irq(dock->pogo_acc_gpio);
+	if (dock->pogo_acc_irq <= 0) {
+		dev_err(dev, "Pogo irq not found\n");
+		return -ENODEV;
+	}
+
+	ret = devm_request_threaded_irq(dev, dock->pogo_acc_irq,
+					NULL, pogo_acc_irq,
+					(IRQF_SHARED | IRQF_ONESHOT |
+					IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING),
+					dev_name(dev), dock);
+	if (ret < 0) {
+		dev_err(dev, "pogo-accessory-detect request irq failed ret:%d\n", ret);
+		return ret;
+	}
+
+	ret = enable_irq_wake(dock->pogo_acc_irq);
+	if (ret) {
+		dev_err(dev, "Enable irq wake failed ret:%d\n", ret);
+		goto free_irq;
+	}
+
+	return 0;
+
+free_irq:
+	devm_free_irq(dev, dock->pogo_acc_irq, dock);
+
+	return ret;
 }
 
 static enum power_supply_property dock_props[] = {
@@ -438,6 +571,7 @@ static void google_dock_init_work(struct work_struct *work)
 	}
 
 	(void)dock_init_fs(dock);
+	(void)dock_init_debugfs(dock);
 
 	dock->init_complete = true;
 	dev_info(dock->device, "google_dock_init_work done\n");
@@ -519,6 +653,10 @@ static int google_dock_probe(struct platform_device *pdev)
 		devm_kfree(&pdev->dev, dock);
 		return ret;
 	}
+
+	ret = google_dock_power_out_init(dock->device, dock);
+	if (ret)
+		dev_warn(dock->device, "Fail to init pogo power out: %d\n", ret);
 
 	if (dock->pogo_ovp_en >= 0)
 		gpio_direction_output(dock->pogo_ovp_en, 1);

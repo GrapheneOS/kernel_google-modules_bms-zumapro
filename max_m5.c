@@ -285,7 +285,7 @@ static int max_m5_update_custom_parameters(struct max_m5_data *m5_data)
 		ret = REGMAP_WRITE_VERIFY(regmap, MAX_M5_VFSOC0, vfsoc);
 
 	if (ret == 0)
-		ret = REGMAP_WRITE(regmap, MAX_M5_LEARNCFG, cp->learncfg);
+		ret = REGMAP_WRITE_VERIFY(regmap, MAX_M5_LEARNCFG, cp->learncfg);
 	if (ret == 0)
 		ret = REGMAP_WRITE(regmap, MAX_M5_CONFIG, cp->config);
 	if (ret == 0)

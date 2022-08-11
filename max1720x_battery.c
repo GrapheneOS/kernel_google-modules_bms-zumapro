@@ -2825,15 +2825,17 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 	fg_status_clr = fg_status;
 
 	if (fg_status & MAX1720X_STATUS_POR) {
-		dev_warn(chip->dev, "POR is set\n");
+		dev_warn(chip->dev, "POR is set, model reload:%d\n", chip->model_reload);
 
-		/* trigger model load */
-		mutex_lock(&chip->model_lock);
-		err = max1720x_model_reload(chip, true);
-		if (err < 0)
-			fg_status_clr &= ~MAX1720X_STATUS_POR;
+		/* trigger model load if not on-going */
+		if (chip->model_reload != MAX_M5_LOAD_MODEL_REQUEST) {
+			mutex_lock(&chip->model_lock);
+			err = max1720x_model_reload(chip, true);
+			if (err < 0)
+				fg_status_clr &= ~MAX1720X_STATUS_POR;
 
-		mutex_unlock(&chip->model_lock);
+			mutex_unlock(&chip->model_lock);
+		}
 	}
 
 	if (fg_status & MAX1720X_STATUS_IMN)
