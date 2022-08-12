@@ -83,8 +83,10 @@
 #define BHI_NEED_REP_THRESHOLD_DEFAULT	70
 #define BHI_CCBIN_INDEX_LIMIT		90
 #define BHI_ALGO_FULL_HEALTH		10000
-#define BHI_ROUND_INDEX(index) \
-	(((index) + BHI_ALGO_FULL_HEALTH / 2) / BHI_ALGO_FULL_HEALTH * 100)
+#define BHI_ALGO_ROUND_INDEX		50
+
+#define BHI_ROUND_INDEX(index) 		\
+	(((index) + BHI_ALGO_ROUND_INDEX) / 100)
 
 
 /* TODO: this is for Adaptive charging, rename */
@@ -257,6 +259,8 @@ enum batt_aacr_state {
 	BATT_AACR_UNDER_CYCLES = -1,
 	BATT_AACR_DISABLED = 0,
 	BATT_AACR_ENABLED = 1,
+	BATT_AACR_ALGO_DEFAULT = BATT_AACR_ENABLED,
+	BATT_AACR_ALGO_LOW_B, /* lower bound */
 	BATT_AACR_MAX,
 };
 
@@ -502,6 +506,7 @@ struct batt_drv {
 	enum batt_aacr_state aacr_state;
 	int aacr_cycle_grace;
 	int aacr_cycle_max;
+	int aacr_algo;
 
 	/* BHI: updated on disconnect, EOC */
 	struct health_data health_data;
@@ -1097,15 +1102,19 @@ static int fan_level_cb(struct gvotable_election *el,
 		pr_debug("FAN_LEVEL %d->%d reason=%s\n",
 			 batt_drv->fan_last_level, lvl, reason ? reason : "<>");
 
-		if (!chg_state_is_disconnected(&batt_drv->chg_state))
+		if (!chg_state_is_disconnected(&batt_drv->chg_state)) {
 			logbuffer_log(batt_drv->ttf_stats.ttf_log,
 				      "FAN_LEVEL %d->%d reason=%s",
 				      batt_drv->fan_last_level, lvl,
 				      reason ? reason : "<>");
 
-		batt_drv->fan_last_level = lvl;
-		if (batt_drv->psy)
-			power_supply_changed(batt_drv->psy);
+			batt_drv->fan_last_level = lvl;
+			if (batt_drv->psy)
+				power_supply_changed(batt_drv->psy);
+		} else {
+			/* Disconnected */
+			batt_drv->fan_last_level = lvl;
+		}
 	}
 
 	return 0;
@@ -3338,13 +3347,19 @@ static int aacr_get_capacity_at_cycle(const struct batt_drv *batt_drv, int cycle
 	if (full_cap_nom < 0)
 		return full_cap_nom;
 
-	full_capacity = min(min(full_cap_nom / 1000, design_capacity), reference_capacity);
+	full_cap_nom /= 1000;
+
+	if (batt_drv->aacr_algo == BATT_AACR_ALGO_LOW_B)
+		full_capacity = min(min(full_cap_nom, design_capacity), reference_capacity);
+	else
+		full_capacity = max(min(full_cap_nom, design_capacity), reference_capacity);
+
 	aacr_capacity = max(full_capacity, min_capacity);
 	aacr_capacity = (aacr_capacity / 50) * 50; /* 50mAh, ~1% capacity */
 
-	pr_debug("%s: design=%d reference=%d full_cap_nom=%d, full=%d aacr=%d\n",
+	pr_debug("%s: design=%d reference=%d full_cap_nom=%d full=%d aacr=%d algo=%d\n",
 		 __func__, design_capacity, reference_capacity, full_cap_nom,
-		 full_capacity, aacr_capacity);
+		 full_capacity, aacr_capacity, batt_drv->aacr_algo);
 
 	return aacr_capacity;
 }
@@ -3417,17 +3432,18 @@ static int bhi_cap_data_update(struct bhi_data *bhi_data, struct batt_drv *batt_
 /*
  * NOTE: make sure that the FG and this code use the same reference value for
  * capacity. Also GBMS_PROP_CAPACITY_FADE_RATE is in percent.
- *
  */
 static int bhi_health_get_capacity(int algo, const struct bhi_data *bhi_data)
 {
-	return bhi_data->capacity_design * (100 - bhi_data->capacity_fade);
+	return bhi_data->capacity_design * (100 - bhi_data->capacity_fade) / 100;
 }
 
 /* The limit for capacity is 80% of design */
-static int bhi_calc_cap_index(int algo, const struct bhi_data *bhi_data)
+static int bhi_calc_cap_index(int algo, struct batt_drv *batt_drv)
 {
-	int capacity_health, index;
+	const struct health_data *health_data = &batt_drv->health_data;
+	const struct bhi_data *bhi_data = &health_data->bhi_data;
+	int capacity_health, index, capacity_aacr = 0;
 
 	if (algo == BHI_ALGO_DISABLED)
 		return BHI_ALGO_FULL_HEALTH;
@@ -3437,20 +3453,25 @@ static int bhi_calc_cap_index(int algo, const struct bhi_data *bhi_data)
 
 	capacity_health = bhi_health_get_capacity(algo, bhi_data);
 
+	/* for BHI_ALGO_ACHI_B compare to aacr capacity */
+	if (algo == BHI_ALGO_ACHI_B || algo == BHI_ALGO_ACHI_RAVG_B) {
+		capacity_aacr = aacr_get_capacity(batt_drv);
+
+		if (capacity_health < capacity_aacr)
+			capacity_health = capacity_aacr;
+	}
+
 	/*
-	 * TODO: for BHI_ALGO_ACHI_B compare to aacr capacity
-	 * aacr_capacity = aacr_get_capacity_at_cycle(batt_drv, cycle_count);
-	 *
 	 * TODO: compare to google_capacity?
 	 * ret = gbms_storage_read(GBMS_TAG_GCFE, &gcap sizeof(gcap));
 	 */
 
-	if (capacity_health > bhi_data->capacity_design)
-		capacity_health = bhi_data->capacity_design;
-
 	index = (capacity_health * BHI_ALGO_FULL_HEALTH) / bhi_data->capacity_design;
-	pr_debug("%s: algo=%d index=%d ch=%d, cd=%d, cf=%d\n", __func__,
-		algo, index, capacity_health, bhi_data->capacity_design,
+	if (index > BHI_ALGO_FULL_HEALTH)
+		index = BHI_ALGO_FULL_HEALTH;
+
+	pr_debug("%s: algo=%d index=%d ch=%d, ca=%d, cd=%d, fr=%d\n", __func__,
+		algo, index, capacity_health, capacity_aacr, bhi_data->capacity_design,
 		bhi_data->capacity_fade);
 
 	return index;
@@ -3708,7 +3729,7 @@ static int batt_bhi_stats_update(struct batt_drv *batt_drv)
 	/* cycle count is cached */
 	health_data->bhi_data.cycle_count = batt_drv->cycle_count;
 
-	index = bhi_calc_cap_index(bhi_algo, &health_data->bhi_data);
+	index = bhi_calc_cap_index(bhi_algo, batt_drv);
 	if (index < 0)
 		index = BHI_ALGO_FULL_HEALTH;
 	changed |= health_data->bhi_cap_index != index;
@@ -3771,7 +3792,7 @@ static int bhi_cycle_count_residency(struct gbatt_ccbin_data *ccd , int soc_limi
 	for (i = 0; i < GBMS_CCBIN_BUCKET_COUNT; i++) {
 		if (ccd->count[i] == 0xFFFF)
 			continue;
-		if (i < soc_limit)
+		if ((i * 10) < soc_limit)
 			under += ccd->count[i];
 		else
 			over += ccd->count[i];
@@ -4358,6 +4379,9 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 				pr_err("MSC_BPST: Cannot start bpst detect\n");
 		}
 		mutex_unlock(&batt_drv->bpst_state.lock);
+
+		/* reset ttf tier */
+		ttf_tier_reset(&batt_drv->ttf_stats);
 	}
 
 	/*
@@ -4417,15 +4441,6 @@ msc_logic_done:
 	if (jeita_stop) {
 		log_vote_level = batt_prlog_level(batt_drv->cc_max != 0);
 		batt_drv->cc_max = 0;
-	}
-
-	/* Fan level can be updated only during power transfer */
-	if (batt_drv->fan_level_votable) {
-		int level = fan_calculate_level(batt_drv);
-
-		gvotable_cast_int_vote(batt_drv->fan_level_votable,
-				       "MSC_BATT", level, true);
-		pr_debug("MSC_FAN_LVL: level=%d\n", level);
 	}
 
 	if (changed)
@@ -4507,6 +4522,15 @@ msc_logic_done:
 					       !disable_votes &&
 					       (bpst_cc_max != -1));
 		}
+	}
+
+	/* Fan level can be updated only during power transfer */
+	if (batt_drv->fan_level_votable) {
+		int level = fan_calculate_level(batt_drv);
+
+		gvotable_cast_int_vote(batt_drv->fan_level_votable,
+				       "MSC_BATT", level, true);
+		pr_debug("MSC_FAN_LVL: level=%d\n", level);
 	}
 
 	if (!batt_drv->msc_interval_votable)
@@ -4622,6 +4646,10 @@ static int batt_init_chg_profile(struct batt_drv *batt_drv)
 	ret = of_property_read_bool(node, "google,aacr-disable");
 	if (!ret && profile->aacr_nb_limits)
 		batt_drv->aacr_state = BATT_AACR_ENABLED;
+
+	ret = of_property_read_u32(node, "google,aacr-algo", &batt_drv->aacr_algo);
+	if (ret < 0)
+		batt_drv->aacr_algo = BATT_AACR_ALGO_DEFAULT;
 
 	/* NOTE: with NG charger tolerance is applied from "charger" */
 	gbms_init_chg_table(profile, node, aacr_get_capacity(batt_drv));
@@ -4744,9 +4772,11 @@ static ssize_t resistance_show(struct device *dev,
 {
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
-	int value;
+	int value = -1;
 
-	value = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_RESISTANCE);
+	if (batt_drv->fg_psy)
+		value = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_RESISTANCE);
+
 	return scnprintf(buff, PAGE_SIZE, "%d\n", value);
 }
 
@@ -4772,9 +4802,11 @@ static ssize_t charge_full_estimate_show(struct device *dev,
 {
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
-	int value;
+	int value = -1;
 
-	value = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_CHARGE_FULL_ESTIMATE);
+	if (batt_drv->fg_psy)
+		value = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_CHARGE_FULL_ESTIMATE);
+
 	return scnprintf(buff, PAGE_SIZE, "%d\n", value);
 }
 
@@ -6246,19 +6278,38 @@ static ssize_t aacr_state_store(struct device *dev,
 			       const char *buf, size_t count) {
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
-	int state, ret = 0;
+	int val, state, algo, ret = 0;
 
-	ret = kstrtoint(buf, 0, &state);
+	ret = kstrtoint(buf, 0, &val);
 	if (ret < 0)
 		return ret;
 
-	if ((state != BATT_AACR_DISABLED) && (state != BATT_AACR_ENABLED))
+	if (val < BATT_AACR_DISABLED) /* not allow minus value */
 		return -ERANGE;
 
-	if (batt_drv->aacr_state == state)
+	switch (val) {
+	case BATT_AACR_DISABLED:
+		state = BATT_AACR_DISABLED;
+		break;
+	case BATT_AACR_ENABLED:
+		state = BATT_AACR_ENABLED;
+		algo = BATT_AACR_ALGO_DEFAULT;
+		break;
+	case BATT_AACR_ALGO_LOW_B:
+		state = BATT_AACR_ENABLED;
+		algo = BATT_AACR_ALGO_LOW_B;
+		break;
+	default:
+		return -ERANGE;
+	}
+
+	if (batt_drv->aacr_state == state && batt_drv->aacr_algo == algo)
 		return count;
 
+	pr_info("aacr_state: %d -> %d, aacr_algo: %d -> %d\n",
+		batt_drv->aacr_state, state, batt_drv->aacr_algo, algo);
 	batt_drv->aacr_state = state;
+	batt_drv->aacr_algo = algo;
 	return count;
 }
 
@@ -6328,6 +6379,17 @@ static ssize_t aacr_cycle_max_show(struct device *dev,
 }
 
 static const DEVICE_ATTR_RW(aacr_cycle_max);
+
+static ssize_t aacr_algo_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->aacr_algo);
+}
+
+static const DEVICE_ATTR_RO(aacr_algo);
 
 /* Swelling  --------------------------------------------------------------- */
 
@@ -6416,14 +6478,22 @@ static ssize_t health_index_stats_show(struct device *dev,
 	for (i = 0; i < BHI_ALGO_MAX; i++) {
 		int health_index, health_status, cap_index, imp_index, sd_index;
 
-		cap_index = bhi_calc_cap_index(i, bhi_data);
+		cap_index = bhi_calc_cap_index(i, batt_drv);
 		imp_index = bhi_calc_imp_index(i, bhi_data);
 		sd_index = bhi_calc_sd_index(i, bhi_data);
 		health_index = bhi_calc_health_index(i, cap_index, imp_index, sd_index);
+		health_status = bhi_calc_health_status(i, BHI_ROUND_INDEX(health_index), health_data);
 		if (health_index < 0)
 			continue;
 
-		health_status = bhi_calc_health_status(i, BHI_ROUND_INDEX(health_index), health_data);
+		pr_debug("bhi: %d: %d, %d,%d,%d %d,%d,%d %d,%d\n", i,
+			 health_status, health_index, cap_index, imp_index,
+			 bhi_data->swell_cumulative,
+			 bhi_health_get_capacity(i, bhi_data),
+			 bhi_health_get_impedance(i, bhi_data),
+			 bhi_data->battery_age,
+			 bhi_data->cycle_count);
+
 
 		len += scnprintf(&buf[len], PAGE_SIZE - len,
 				 "%d: %d, %d,%d,%d %d,%d,%d %d,%d, %d\n",
@@ -6862,6 +6932,9 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_aacr_cycle_max);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create aacr cycle max\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_aacr_algo);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create aacr algo\n");
 
 	/* health and health index */
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_swelling_data);
