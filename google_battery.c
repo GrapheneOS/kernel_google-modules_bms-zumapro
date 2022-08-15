@@ -1345,7 +1345,8 @@ static void bat_log_ttf_change(ktime_t estimate, int max_ratio, struct batt_drv 
 	int i, len = 0;
 
 	len += scnprintf(&buff[len], sizeof(buff) - len,
-			 "MSC_TTF: est:%lldmin, max_ratio:%d ", estimate / 60, max_ratio);
+			 "MSC_TTF: est:%lld(%lldmin), max_ratio:%d ",
+			 estimate, estimate / 60, max_ratio);
 
 	for (i = 0; i < GBMS_STATS_TIER_COUNT; i++) {
 		elap = ce_data->tier_stats[i].time_fast +
