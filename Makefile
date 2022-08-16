@@ -19,7 +19,8 @@ GBMS_MODULES =	GOOGLE_BMS \
 		MAX1720X_BATTERY \
 		MAX_M5 \
 		PCA9468 \
-		MAX20339
+		MAX20339 \
+		STWLC98
 
 
 obj-$(CONFIG_GOOGLE_BMS)	+= google-bms.o
@@ -106,6 +107,9 @@ max1720x-battery-objs += max_m5.o
 # OVP
 obj-$(CONFIG_MAX20339)	+= max20339.o
 
+# WLC98 Wireless charging
+obj-$(CONFIG_STWLC98)	+= wlc98_driver.o
+
 # prevent warnings
 WENUMS=-Wno-enum-conversion -Wno-switch
 
@@ -122,6 +126,7 @@ CFLAGS_google_bms.o += -Wno-enum-conversion
 CFLAGS_google_cpm.o += $(WENUMS)
 CFLAGS_google_dual_batt_gauge.o += $(WENUMS)
 CFLAGS_google_dock.o += $(WENUMS)
+CFLAGS_wlc98_driver.o += $(WENUMS)
 
 KERNEL_SRC ?= /lib/modules/$(shell uname -r)/build
 M ?= $(shell pwd)

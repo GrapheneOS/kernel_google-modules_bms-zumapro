@@ -119,3 +119,9 @@ config MAXQ_MAX77759
 	depends on I2C && PMIC_MAX77729
 	help
 	  Say Y to enable support for MAX77759 MAXQ support.
+
+config STWLC98
+	tristate "ST WLC98 wireless power receiver driver"
+	depends on I2C && OF
+	help
+	  Say Y to enable support for the ST WLC98 wireless power receiver

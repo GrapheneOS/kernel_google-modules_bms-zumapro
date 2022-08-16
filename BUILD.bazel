@@ -44,6 +44,7 @@ kernel_module(
         "overheat_mitigation.ko",
         "p9221.ko",
         "pca9468.ko",
+        "wlc98_driver.ko",
 
         # "max77729.ko",
         # "max77759.ko",
