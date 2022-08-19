@@ -20,8 +20,8 @@ GBMS_MODULES =	GOOGLE_BMS \
 		MAX_M5 \
 		PCA9468 \
 		MAX20339 \
-		STWLC98
-
+		STWLC98 \
+		STWC68
 
 obj-$(CONFIG_GOOGLE_BMS)	+= google-bms.o
 google-bms-objs += google_bms.o
@@ -109,6 +109,9 @@ obj-$(CONFIG_MAX20339)	+= max20339.o
 
 # WLC98 Wireless charging
 obj-$(CONFIG_STWLC98)	+= wlc98_driver.o
+
+# WC68 DC Charge pump
+obj-$(CONFIG_STWC68)	+= wc68_driver.o
 
 # prevent warnings
 WENUMS=-Wno-enum-conversion -Wno-switch
