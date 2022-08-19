@@ -363,10 +363,10 @@ struct gbms_charging_event {
 };
 
 #define GBMS_CCCM_LIMITS_SET(profile, ti, vi) \
-	profile->cccm_limits[(ti * profile->volt_nb_limits) + vi]
+	profile->cccm_limits[((ti) * profile->volt_nb_limits) + (vi)]
 
 #define GBMS_CCCM_LIMITS(profile, ti, vi) \
-	(ti >= 0 && vi >= 0) ? profile->cccm_limits[(ti * profile->volt_nb_limits) + vi] : 0
+	(((ti) >= 0 && (vi) >= 0) ? profile->cccm_limits[((ti) * profile->volt_nb_limits) + (vi)] : 0)
 
 /* newgen charging */
 #define GBMS_CS_FLAG_BUCK_EN	BIT(0)
@@ -507,6 +507,8 @@ int ttf_ref_cc(const struct batt_ttf_stats *stats, int soc);
 
 int ttf_pwr_ibatt(const struct gbms_ce_tier_stats *ts);
 
+void ttf_tier_reset(struct batt_ttf_stats *stats);
+
 int gbms_read_aacr_limits(struct gbms_chg_profile *profile,
 			  struct device_node *node);
 
@@ -525,6 +527,8 @@ enum gbms_charger_modes {
 	GBMS_USB_OTG_FRS_ON	= 0x32,
 
 	GBMS_CHGR_MODE_WLC_TX	= 0x40,
+
+	GBMS_CHGR_MODE_VOUT	= 0x50,
 };
 
 #define GBMS_MODE_VOTABLE "CHARGER_MODE"
@@ -602,5 +606,16 @@ static inline int tcpm_update_sink_capabilities(struct tcpm_port *port,
 {
 	return 0;
 }
+
+#define to_cooling_device(_dev)	\
+	container_of(_dev, struct thermal_cooling_device, device)
+
+#define DEBUG_ATTRIBUTE_WO(name) \
+static const struct file_operations name ## _fops = {	\
+	.open	= simple_open,			\
+	.llseek	= no_llseek,			\
+	.write	= name ## _store,			\
+}
+
 
 #endif  /* __GOOGLE_BMS_H_ */

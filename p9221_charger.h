@@ -297,7 +297,11 @@
 #define P9222_COM_REG				0x62
 #define P9222RE_FOD_REG				0x84
 #define P9222RE_EPP_REQ_NEGOTIATED_POWER_REG	0xBD
+#define P9222RE_EPP_Q_FACTOR_REG		0xD2
 #define P9222RE_TX_MFG_CODE_REG			0x106
+#define P9222RE_PROP_TX_ID_REG			0x118
+
+#define P9222_EPT_REG				0x4F
 
 /*
  * P9222 SYSTEM_MODE_REG bits
@@ -610,6 +614,9 @@ struct p9221_charger_platform_data {
 	bool				feat_compat_mode;
 	bool				apbst_en;
 	bool				has_sw_ramp;
+	/* phone type for tx_id*/
+	u8				phone_type;
+	u32				epp_icl;
 };
 
 struct p9221_charger_ints_bit {
@@ -686,6 +693,7 @@ struct p9221_charger_data {
 	struct dentry			*debug_entry;
 	struct p9221_charger_feature	chg_features;
 	struct p9221_charger_cc_data_lock	cc_data_lock;
+	struct wakeup_source		*align_ws;
 	u16				chip_id;
 	int				online;
 	bool				enabled;
@@ -792,6 +800,7 @@ struct p9221_charger_data {
 	u16				reg_set_pp_buf_addr;
 	u16				reg_get_pp_buf_addr;
 	u16				reg_set_fod_addr;
+	u16				reg_q_factor_addr;
 
 	int (*reg_read_n)(struct p9221_charger_data *chgr, u16 reg,
 			  void *buf, size_t n);
@@ -848,6 +857,7 @@ bool p9xxx_is_capdiv_en(struct p9221_charger_data *charger);
 int p9221_wlc_disable(struct p9221_charger_data *charger, int disable, u8 reason);
 int p9221_set_auth_dc_icl(struct p9221_charger_data *charger, bool enable);
 int p9xxx_sw_ramp_icl(struct p9221_charger_data *charger, const int icl_target);
+int p9xxx_gpio_set_value(struct p9221_charger_data *charger, unsigned gpio, int value);
 
 void p9xxx_gpio_init(struct p9221_charger_data *charger);
 extern int p9221_chip_init_funcs(struct p9221_charger_data *charger,
@@ -904,5 +914,6 @@ enum p9xxx_renego_state {
       -ENOTSUPP : chgr->reg_write_n(chgr, chgr->reg_set_fod_addr, data, len))
 #define p9xxx_chip_get_fod_reg(chgr, data, len) (chgr->reg_set_fod_addr == 0 ? \
       -ENOTSUPP : chgr->reg_read_n(chgr, chgr->reg_set_fod_addr, data, len))
-
+#define p9xxx_chip_set_q_factor_reg(chgr, data) (chgr->reg_q_factor_addr == 0 ? \
+      -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_q_factor_addr, data))
 #endif /* __P9221_CHARGER_H__ */

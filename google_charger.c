@@ -133,6 +133,7 @@ struct chg_thermal_device {
 
 	struct thermal_cooling_device *tcd;
 	int *thermal_mitigation;
+	int *thermal_budgets;
 	int thermal_levels;
 	int current_level;
 };
@@ -310,6 +311,10 @@ struct chg_drv {
 
 	/* debug */
 	struct dentry *debug_entry;
+
+	/* dock_defend */
+	struct delayed_work bd_dd_work;
+	bool ext_volt_complete;
 };
 
 static void reschedule_chg_work(struct chg_drv *chg_drv)
@@ -1023,6 +1028,19 @@ static bool chg_work_check_wlc_state(struct power_supply *wlc_psy)
 	return wlc_online == 1 || wlc_present == 1;
 }
 
+static bool chg_work_check_usb_state(struct chg_drv *chg_drv)
+{
+	struct power_supply *usb_psy = chg_drv->tcpm_psy ? chg_drv->tcpm_psy : chg_drv->usb_psy;
+	int usb_online = 0, usb_present = 0;
+
+	usb_online = chg_usb_online(usb_psy);
+
+	if (chg_drv->usb_psy)
+		usb_present = GPSY_GET_PROP(chg_drv->usb_psy, POWER_SUPPLY_PROP_PRESENT);
+
+	return usb_online > 0 || usb_present == 1;
+}
+
 /* not executed when battery is NOT present */
 static int chg_work_roundtrip(struct chg_drv *chg_drv,
 			      union gbms_charger_state *chg_state)
@@ -1034,7 +1052,7 @@ static int chg_work_roundtrip(struct chg_drv *chg_drv,
 	const int lowerbd = chg_drv->charge_start_level;
 	int fv_uv = -1, cc_max = -1;
 	int update_interval, rc;
-	bool wlc_on = 0;
+	bool wlc_on = 0, usb_on = 0;
 
 	rc = gbms_read_charger_state(chg_state, chg_psy);
 	if (rc < 0)
@@ -1058,16 +1076,19 @@ static int chg_work_roundtrip(struct chg_drv *chg_drv,
 	/*
 	 * Sending _NOT_CHARGING down to the battery (with buck_en=0) while on
 	 * WLC will keep dream defend stats in the same charging session.
+	 * Add usb_state to prevent disconnection false positives, which may
+	 * log data incorrectly
 	 */
 	wlc_on = chg_work_check_wlc_state(wlc_psy);
-	if (wlc_on && batt_chg_state.f.chg_status == POWER_SUPPLY_STATUS_DISCHARGING) {
+	usb_on = chg_work_check_usb_state(chg_drv);
+	if ((wlc_on | usb_on) && batt_chg_state.f.chg_status == POWER_SUPPLY_STATUS_DISCHARGING) {
 		batt_chg_state.f.chg_status = POWER_SUPPLY_STATUS_NOT_CHARGING;
 		batt_chg_state.f.flags = gbms_gen_chg_flags(chg_state->f.chg_status,
 							    chg_state->f.chg_type);
 	}
 
-	pr_debug("%s: wlc_on=%d chg_state=%llx batt_chg_state=%llx\n", __func__,
-		 wlc_on, chg_state->v, batt_chg_state.v);
+	pr_debug("%s: wlc_on=%d usb_on=%d chg_state=%llx batt_chg_state=%llx\n", __func__,
+		 wlc_on, usb_on, chg_state->v, batt_chg_state.v);
 
 	/* might return negative values in fv_uv and cc_max */
 	rc = chg_work_batt_roundtrip(&batt_chg_state, chg_drv->bat_psy,
@@ -1822,6 +1843,61 @@ static void bd_dd_init(struct chg_drv *chg_drv)
 		bd_state->dd_state, bd_state->dd_settings);
 }
 
+static int bd_dd_state_update(const int dd_state, const bool dd_triggered, const bool change)
+{
+	int new_state = dd_state;
+
+	switch (new_state) {
+	case DOCK_DEFEND_ENABLED:
+		if (dd_triggered && change)
+			new_state = DOCK_DEFEND_ACTIVE;
+		break;
+	case DOCK_DEFEND_ACTIVE:
+		if (!dd_triggered)
+			new_state = DOCK_DEFEND_ENABLED;
+		break;
+	default:
+		break;
+	}
+
+	return new_state;
+}
+
+static void bd_dd_work(struct work_struct *work)
+{
+	struct chg_drv *chg_drv =
+		container_of(work, struct chg_drv, bd_dd_work.work);
+	struct power_supply *ext_psy = chg_drv->ext_psy;
+	int ext_present = GPSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_PRESENT);
+	int ext_online = GPSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_ONLINE);
+
+	if (!ext_present)
+		chg_drv->bd_state.dd_enabled = 0;
+	else if (ext_present && ext_online)
+		chg_drv->bd_state.dd_enabled = 1;
+
+	pr_info("MSC_BD dd_enabled:%d\n", chg_drv->bd_state.dd_enabled);
+}
+
+/*
+ * When ext_present && ext_online, debounce dd_enabled with one second
+ */
+#define DD_DEBOUNCE_MS	1000
+static void bd_dd_set_enabled(struct chg_drv *chg_drv, const int ext_present, const int ext_online)
+{
+	if (!ext_present) {
+		chg_drv->bd_state.dd_enabled = 0;
+		chg_drv->ext_volt_complete = false;
+	} else if (ext_present && ext_online && !chg_drv->ext_volt_complete) {
+		cancel_delayed_work_sync(&chg_drv->bd_dd_work);
+		schedule_delayed_work(&chg_drv->bd_dd_work,
+				      msecs_to_jiffies(DD_DEBOUNCE_MS));
+		chg_drv->ext_volt_complete = true;
+
+		pr_info("MSC_BD debounce %dms for dock_defend\n", DD_DEBOUNCE_MS);
+	}
+}
+
 #define dd_is_enabled(bd_state) \
 	((bd_state)->dd_state != DOCK_DEFEND_DISABLED && \
 	(bd_state)->dd_settings == DOCK_DEFEND_USER_ENABLED)
@@ -1829,8 +1905,8 @@ static void bd_dd_run_defender(struct chg_drv *chg_drv, int soc, int *disable_ch
 {
 	struct bd_data *bd_state = &chg_drv->bd_state;
 	const bool was_triggered = bd_state->dd_triggered;
-	const int upperbd = chg_drv->bd_state.dd_charge_stop_level;
-	const int lowerbd = chg_drv->bd_state.dd_charge_start_level;
+	const int upperbd = bd_state->dd_charge_stop_level;
+	const int lowerbd = bd_state->dd_charge_start_level;
 
 	bd_state->dd_triggered = dd_is_enabled(bd_state) ?
 				 chg_is_custom_enabled(upperbd, lowerbd) : false;
@@ -1839,6 +1915,11 @@ static void bd_dd_run_defender(struct chg_drv *chg_drv, int soc, int *disable_ch
 		*disable_charging = bd_recharge_logic(bd_state, soc);
 	if (*disable_charging)
 		*disable_pwrsrc = soc > bd_state->dd_charge_stop_level;
+
+	/* update dd_state to user space */
+	bd_state->dd_state = bd_dd_state_update(bd_state->dd_state,
+						bd_state->dd_triggered,
+						(soc >= lowerbd));
 
 	/* need icl_ramp_work when disable_pwrsrc 1 -> 0 */
 	if (!*disable_pwrsrc && chg_drv->disable_pwrsrc) {
@@ -2167,7 +2248,9 @@ static void chg_work(struct work_struct *work)
 	if (ext_psy) {
 		ext_online = GPSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_ONLINE);
 		ext_present = GPSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_PRESENT);
-		chg_drv->bd_state.dd_enabled = ext_present;
+
+		/* set dd_enabled for dock_defend */
+		bd_dd_set_enabled(chg_drv, ext_present, ext_online);
 	}
 
 	/* ICL=0 on discharge will (might) cause usb online to go to 0 */
@@ -2190,6 +2273,10 @@ static void chg_work(struct work_struct *work)
 			chg_update_charging_state(chg_drv, false, false);
 			chg_drv->bd_state.dd_triggered = 0;
 		}
+		if (chg_drv->bd_state.dd_settings == DOCK_DEFEND_USER_CLEARED)
+			chg_drv->bd_state.dd_settings = DOCK_DEFEND_USER_ENABLED;
+		if (chg_drv->bd_state.dd_state == DOCK_DEFEND_ACTIVE)
+			chg_drv->bd_state.dd_state = DOCK_DEFEND_ENABLED;
 
 		rc = chg_start_bd_work(chg_drv);
 		if (rc < 0)
@@ -2270,9 +2357,12 @@ static void chg_work(struct work_struct *work)
 		goto rerun_error;
 
 	update_interval = rc;
-	if (update_interval >= 0)
+	if (update_interval >= 0) {
 		chg_done = (chg_drv->chg_state.f.flags &
 			    GBMS_CS_FLAG_DONE) != 0;
+		/* clear rc for exit_chg_work: update correct data */
+		rc = 0;
+	}
 
 	/*
 	 * chg_drv->disable_pwrsrc -> chg_drv->disable_charging
@@ -3009,10 +3099,8 @@ static ssize_t show_dd_state(struct device *dev, struct device_attribute *attr,
 			     char *buf)
 {
 	struct chg_drv *chg_drv = dev_get_drvdata(dev);
-	const int dd_state = chg_drv->bd_state.dd_triggered ?
-			     DOCK_DEFEND_ACTIVE : chg_drv->bd_state.dd_state;
 
-	return scnprintf(buf, PAGE_SIZE, "%d\n", dd_state);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", chg_drv->bd_state.dd_state);
 }
 
 static ssize_t set_dd_state(struct device *dev, struct device_attribute *attr,
@@ -3096,8 +3184,10 @@ static ssize_t set_dd_charge_stop_level(struct device *dev, struct device_attrib
 		return -ENODATA;
 	}
 
-	if ((val == chg_drv->bd_state.dd_charge_stop_level) ||
-	    (val <= chg_drv->bd_state.dd_charge_start_level) ||
+	if (val == chg_drv->bd_state.dd_charge_stop_level)
+		return count;
+
+	if ((val <= chg_drv->bd_state.dd_charge_start_level) ||
 	    (val > DEFAULT_CHARGE_STOP_LEVEL))
 		return -EINVAL;
 
@@ -3134,8 +3224,10 @@ static ssize_t set_dd_charge_start_level(struct device *dev, struct device_attri
 		return -ENODATA;
 	}
 
-	if ((val == chg_drv->bd_state.dd_charge_start_level) ||
-	    (val >= chg_drv->bd_state.dd_charge_stop_level) ||
+	if (val == chg_drv->bd_state.dd_charge_start_level)
+		return count;
+
+	if ((val >= chg_drv->bd_state.dd_charge_stop_level) ||
 	    (val < DEFAULT_CHARGE_START_LEVEL))
 		return -EINVAL;
 
@@ -4054,6 +4146,7 @@ static int chg_create_votables(struct chg_drv *chg_drv)
 	}
 
 	gvotable_set_vote2str(chg_drv->msc_fv_votable, gvotable_v2s_int);
+	gvotable_disable_force_int_entry(chg_drv->msc_fv_votable);
 	gvotable_election_set_name(chg_drv->msc_fv_votable, VOTABLE_MSC_FV);
 
 	chg_drv->msc_fcc_votable =
@@ -4066,6 +4159,7 @@ static int chg_create_votables(struct chg_drv *chg_drv)
 	}
 
 	gvotable_set_vote2str(chg_drv->msc_fcc_votable, gvotable_v2s_int);
+	gvotable_disable_force_int_entry(chg_drv->msc_fcc_votable);
 	gvotable_election_set_name(chg_drv->msc_fcc_votable, VOTABLE_MSC_FCC);
 
 	chg_drv->msc_interval_votable =
@@ -4254,8 +4348,12 @@ static int chg_therm_update_fcc(struct chg_drv *chg_drv)
 
 	/* restore the thermal vote FCC level (if enabled) */
 	override_fcc = chg_therm_override_fcc(chg_drv);
-	if (!override_fcc && tdev->current_level > 0)
-		fcc = tdev->thermal_mitigation[tdev->current_level];
+	if (!override_fcc && tdev->current_level > 0) {
+		if (tdev->current_level < tdev->thermal_levels)
+			fcc = tdev->thermal_mitigation[tdev->current_level];
+		else
+			fcc = 0;
+	}
 
 	/* !override_fcc will restore the fcc thermal limit when set */
 	ret = gvotable_cast_int_vote(chg_drv->msc_fcc_votable,
@@ -4567,6 +4665,101 @@ static int chg_set_wlc_fcc_charge_cntl_limit(struct thermal_cooling_device *tcd,
 	return 0;
 }
 
+static ssize_t
+state2power_table_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct thermal_cooling_device *tdev = to_cooling_device(dev);
+	struct chg_thermal_device *mdev = tdev->devdata;
+	ssize_t count = 0;
+	int i;
+
+	for (i = 0; i < mdev->thermal_levels; i++) {
+		const int budgetMw = mdev->thermal_budgets[i] / 1000;
+
+		count += sysfs_emit_at(buf, count, "%u ", budgetMw);
+	}
+
+	/* b/231599097 add the implicit 0 at the end of the table */
+	count += sysfs_emit_at(buf, count, "0\n");
+
+	return count;
+}
+
+static DEVICE_ATTR_RO(state2power_table);
+
+#ifdef CONFIG_DEBUG_FS
+
+static ssize_t tm_store(struct chg_thermal_device *tdev,
+			const char __user *user_buf,
+			size_t count, loff_t *ppos)
+{
+	const int thermal_levels = tdev->thermal_levels;
+	const int mem_size = count + 1;
+	char *str, *tmp, *saved_ptr;
+	unsigned long long value;
+	int ret, i;
+
+	tmp = kzalloc(mem_size, GFP_KERNEL);
+	if (!tmp)
+		return -ENOMEM;
+
+	ret = simple_write_to_buffer(tmp, mem_size, ppos, user_buf, count);
+	if (!ret)
+		goto error_done;
+
+	for (saved_ptr = tmp, i = 0; i < thermal_levels; i++) {
+		str = strsep(&saved_ptr, " ");
+		if (!str)
+			goto error_done;
+
+		ret = kstrtoull(str, 10, &value);
+		if (ret < 0)
+			goto error_done;
+
+		tdev->thermal_budgets[i] = value * 1000;
+	}
+
+error_done:
+	kfree(tmp);
+	return count;
+}
+
+static ssize_t fcc_tm_store(struct file *filp, const char __user *user_buf,
+			    size_t count, loff_t *ppos)
+{
+	struct chg_drv *chg_drv = filp->private_data;
+	struct chg_thermal_device *tdev =
+			&chg_drv->thermal_devices[CHG_TERMAL_DEVICE_FCC];
+	int ret;
+
+	ret = tm_store(tdev, user_buf, count, ppos);
+	if (ret < 0)
+		count = ret;
+
+	return count;
+}
+
+DEBUG_ATTRIBUTE_WO(fcc_tm);
+
+static ssize_t dc_tm_store(struct file *filp, const char __user *user_buf,
+			   size_t count, loff_t *ppos)
+{
+	struct chg_drv *chg_drv = filp->private_data;
+	struct chg_thermal_device *tdev =
+			&chg_drv->thermal_devices[CHG_TERMAL_DEVICE_DC_IN];
+	int ret;
+
+	ret = tm_store(tdev, user_buf, count, ppos);
+	if (ret < 0)
+		count = ret;
+
+	return count;
+}
+
+DEBUG_ATTRIBUTE_WO(dc_tm);
+
+#endif // CONFIG_DEBUG_FS
+
 static int chg_tdev_init(struct chg_thermal_device *tdev, const char *name,
 			 struct chg_drv *chg_drv)
 {
@@ -4593,6 +4786,44 @@ static int chg_tdev_init(struct chg_thermal_device *tdev, const char *name,
 			"Couldn't read limits for %s rc = %d\n", name, rc);
 		devm_kfree(chg_drv->device, tdev->thermal_mitigation);
 		tdev->thermal_mitigation = NULL;
+		return -ENODATA;
+	}
+
+	tdev->chg_drv = chg_drv;
+
+	return 0;
+}
+
+static int chg_tdev_budgets_init(struct chg_thermal_device *tdev, const char *name,
+				 struct chg_drv *chg_drv)
+{
+	int rc, byte_len, thermal_levels;
+
+	if (!of_find_property(chg_drv->device->of_node, name, &byte_len)) {
+		dev_err(chg_drv->device, "No budgets table for %s\n", name);
+		return -ENOENT;
+	}
+
+	thermal_levels = byte_len / sizeof(u32);
+	if (tdev->thermal_levels != thermal_levels) {
+		dev_err(chg_drv->device, "Length of budgets table is incorrect\n");
+		return -ENOENT;
+	}
+
+	tdev->thermal_budgets = devm_kzalloc(chg_drv->device, byte_len,
+						GFP_KERNEL);
+	if (!tdev->thermal_budgets)
+		return -ENOMEM;
+
+	rc = of_property_read_u32_array(chg_drv->device->of_node,
+			name,
+			tdev->thermal_budgets,
+			tdev->thermal_levels);
+	if (rc < 0) {
+		dev_err(chg_drv->device,
+			"Couldn't read limits for %s rc = %d\n", name, rc);
+		devm_kfree(chg_drv->device, tdev->thermal_budgets);
+		tdev->thermal_budgets = NULL;
 		return -ENODATA;
 	}
 
@@ -4648,6 +4879,32 @@ chg_thermal_device_register(const char *of_name,
 	return 0;
 }
 
+static int chg_thermal_state2power(struct chg_thermal_device *tdev,
+				   struct chg_drv *chg_drv,
+				   enum chg_thermal_devices device)
+{
+	int ret;
+
+	/* state and debug */
+	ret = device_create_file(&tdev->tcd->device, &dev_attr_state2power_table);
+	if (ret)
+		pr_info("cound not create state table *(%d)\n", ret);
+
+	if (!chg_drv->debug_entry)
+		return 0;
+
+	if (device == CHG_TERMAL_DEVICE_FCC)
+		debugfs_create_file("fcc_state2power_table", 0644,
+				    chg_drv->debug_entry, chg_drv,
+				    &fcc_tm_fops);
+	if (device == CHG_TERMAL_DEVICE_DC_IN)
+		debugfs_create_file("dc_state2power_table", 0644,
+				    chg_drv->debug_entry, chg_drv,
+				    &dc_tm_fops);
+
+	return 0;
+}
+
 /* ls /dev/thermal/cdev-by-name/ */
 static int chg_thermal_device_init(struct chg_drv *chg_drv)
 {
@@ -4657,6 +4914,11 @@ static int chg_thermal_device_init(struct chg_drv *chg_drv)
 	ctdev_fcc = &chg_drv->thermal_devices[CHG_TERMAL_DEVICE_FCC];
 	rfcc = chg_tdev_init(ctdev_fcc, "google,thermal-mitigation", chg_drv);
 	if (rfcc == 0) {
+		int ret;
+
+		ret = chg_tdev_budgets_init(ctdev_fcc,
+					    "google,thermal-mitigation-budgets",
+					    chg_drv);
 		rfcc = chg_thermal_device_register(FCC_OF_CDEV_NAME,
 						   FCC_CDEV_NAME,
 						   ctdev_fcc,
@@ -4665,12 +4927,26 @@ static int chg_thermal_device_init(struct chg_drv *chg_drv)
 			devm_kfree(chg_drv->device,
 				   ctdev_fcc->thermal_mitigation);
 			ctdev_fcc->thermal_mitigation = NULL;
+			if (ret == 0) {
+				devm_kfree(chg_drv->device,
+					   ctdev_fcc->thermal_budgets);
+				ctdev_fcc->thermal_budgets = NULL;
+			}
 		}
+
+		if (ctdev_fcc->thermal_budgets)
+			chg_thermal_state2power(ctdev_fcc, chg_drv,
+						CHG_TERMAL_DEVICE_FCC);
 	}
 
 	ctdev_dc = &chg_drv->thermal_devices[CHG_TERMAL_DEVICE_DC_IN];
 	rdc = chg_tdev_init(ctdev_dc, "google,wlc-thermal-mitigation", chg_drv);
 	if (rdc == 0) {
+		int ret;
+
+		ret = chg_tdev_budgets_init(ctdev_dc,
+					    "google,wlc-thermal-mitigation-budgets",
+					    chg_drv);
 		rdc = chg_thermal_device_register(WLC_OF_CDEV_NAME,
 						  WLC_CDEV_NAME,
 						  ctdev_dc,
@@ -4679,7 +4955,16 @@ static int chg_thermal_device_init(struct chg_drv *chg_drv)
 			devm_kfree(chg_drv->device,
 				   ctdev_dc->thermal_mitigation);
 			ctdev_dc->thermal_mitigation = NULL;
+			if (ret == 0) {
+				devm_kfree(chg_drv->device,
+					   ctdev_dc->thermal_budgets);
+				ctdev_dc->thermal_budgets = NULL;
+			}
 		}
+
+		if (ctdev_dc->thermal_budgets)
+			chg_thermal_state2power(ctdev_dc, chg_drv,
+						CHG_TERMAL_DEVICE_DC_IN);
 	}
 
 	ctdev_wlcfcc = &chg_drv->thermal_devices[CHG_TERMAL_DEVICE_WLC_FCC];
@@ -5033,6 +5318,7 @@ static int google_charger_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 	INIT_DELAYED_WORK(&chg_drv->bd_work, bd_work);
+	INIT_DELAYED_WORK(&chg_drv->bd_dd_work, bd_dd_work);
 	bd_init(&chg_drv->bd_state, chg_drv->device);
 
 	INIT_DELAYED_WORK(&chg_drv->init_work, google_charger_init_work);

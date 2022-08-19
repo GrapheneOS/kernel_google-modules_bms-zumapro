@@ -26,6 +26,7 @@
 #define P9XXX_GPIO_CPOUT_EN             1
 #define P9412_GPIO_CPOUT21_EN           2
 #define P9XXX_GPIO_CPOUT_CTL_EN         3
+#define P9XXX_GPIO_DC_SW_EN             4
 #define P9XXX_GPIO_VBUS_EN              15
 
 /* Simple Chip Specific Accessors */
@@ -895,6 +896,23 @@ static int p9221_send_eop(struct p9221_charger_data *chgr, u8 reason)
 	mutex_unlock(&chgr->cmd_lock);
 	return ret;
 }
+/* send eop */
+static int p9222_send_eop(struct p9221_charger_data *chgr, u8 reason)
+{
+	int ret;
+
+	dev_info(&chgr->client->dev, "Send P9222 EOP reason=%d\n", reason);
+
+	mutex_lock(&chgr->cmd_lock);
+
+	ret = chgr->reg_write_8(chgr, P9222_EPT_REG, reason);
+	if (ret == 0)
+		ret = chgr->chip_set_cmd(chgr, P9221R5_COM_SENDEPT);
+
+	mutex_unlock(&chgr->cmd_lock);
+	return ret;
+}
+
 /* 3 times to make sure it works */
 static int p9412_send_3eop(struct p9221_charger_data *chgr, u8 reason)
 {
@@ -970,6 +988,9 @@ static int p9xxx_send_txid(struct p9221_charger_data *chgr)
 
 	/* TODO: write txid to bit(23, 0) */
 	memset(&chgr->tx_buf[1], 0x12, FAST_SERIAL_ID_SIZE - 1);
+
+        /* write phone type to bit(23, 17) */
+        chgr->tx_buf[3] = chgr->pdata->phone_type << 1;
 
 	/* write accessory type to bit(31, 24) */
 	chgr->tx_buf[4] = TX_ACCESSORY_TYPE;
@@ -1206,7 +1227,7 @@ static void p9xxx_check_neg_power(struct p9221_charger_data *chgr)
 
 static void p9222_check_neg_power(struct p9221_charger_data *chgr)
 {
-	chgr->dc_icl_epp_neg = P9XXX_DC_ICL_EPP_750;
+
 }
 
 static int p9221_capdiv_en(struct p9221_charger_data *chgr, u8 mode)
@@ -1268,20 +1289,6 @@ static int p9412_prop_mode_capdiv_enable(struct p9221_charger_data *chgr)
 {
 	int ret, i;
 
-	if (chgr->pdata->has_sw_ramp) {
-		dev_dbg(&chgr->client->dev, "%s: voter=%s, icl=%d\n",
-			__func__, P9221_HPP_VOTER, P9XXX_CDMODE_ENABLE_ICL_UA);
-		ret = p9xxx_sw_ramp_icl(chgr, P9XXX_CDMODE_ENABLE_ICL_UA);
-		if (ret < 0)
-			return ret;
-
-		ret = gvotable_cast_int_vote(chgr->dc_icl_votable,
-					     P9221_HPP_VOTER,
-					     P9XXX_CDMODE_ENABLE_ICL_UA, true);
-		if (ret == 0)
-			gvotable_cast_int_vote(chgr->dc_icl_votable,
-					       P9221_RAMP_VOTER, 0, false);
-	}
 
 	/* TODO: need to become a fake GPIO in the max77759 charger */
 	if (!chgr->chg_mode_votable)
@@ -1392,6 +1399,24 @@ static int p9412_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 	msleep(50);
 
 enable_capdiv:
+	if (chgr->pdata->has_sw_ramp) {
+		dev_dbg(&chgr->client->dev, "%s: voter=%s, icl=%d\n",
+			__func__, P9221_HPP_VOTER, P9XXX_CDMODE_ENABLE_ICL_UA);
+		ret = p9xxx_sw_ramp_icl(chgr, P9XXX_CDMODE_ENABLE_ICL_UA);
+		if (ret < 0)
+			return ret;
+
+		ret = gvotable_cast_int_vote(chgr->dc_icl_votable, P9221_HPP_VOTER,
+					     P9XXX_CDMODE_ENABLE_ICL_UA, true);
+		if (ret == 0)
+			ret = gvotable_cast_int_vote(chgr->dc_icl_votable,
+						     P9221_RAMP_VOTER, 0, false);
+		if (ret < 0)
+			dev_err(&chgr->client->dev, "%s: cannot setup sw ramp (%d)\n",
+				__func__, ret);
+
+	}
+
 	/*
 	 * Step 2: enable Cap Divider configuration:
 	 * write 0x02 to 0x101 then write 0x40 to 0x4E
@@ -1503,6 +1528,17 @@ err_exit:
 			 "req_pwr=%02x,prop_cur_pwr=%02x",
 			 chgr->prop_mode_en, val8, mode_sts, err_sts,
 			 cdmode, pwr_stp, prop_req_pwr, prop_cur_pwr);
+	}
+
+
+	if (!chgr->prop_mode_en) {
+		int rc;
+
+		rc = gvotable_cast_int_vote(chgr->dc_icl_votable, P9221_HPP_VOTER,
+					    P9XXX_CDMODE_ENABLE_ICL_UA, false);
+		if (rc <0)
+			dev_err(&chgr->client->dev, "%s: cannot remove HPP voter (%d)\n",
+				__func__, ret);
 	}
 
 	return chgr->prop_mode_en;
@@ -1647,6 +1683,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_get_pp_buf_addr = P9412_PP_RECV_BUF_START;
 		chgr->set_cmd_ccactivate_bit = P9412_COM_CCACTIVATE;
 		chgr->reg_set_fod_addr = P9221R5_FOD_REG;
+		chgr->reg_q_factor_addr = P9221R5_EPP_Q_FACTOR_REG;
 		break;
 	case P9382A_CHIP_ID:
 		chgr->reg_tx_id_addr = P9382_PROP_TX_ID_REG;
@@ -1656,15 +1693,17 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_get_pp_buf_addr = P9382A_DATA_RECV_BUF_START;
 		chgr->set_cmd_ccactivate_bit = P9221R5_COM_CCACTIVATE;
 		chgr->reg_set_fod_addr = P9221R5_FOD_REG;
+		chgr->reg_q_factor_addr = P9221R5_EPP_Q_FACTOR_REG;
 		break;
 	case P9222_CHIP_ID:
-		chgr->reg_tx_id_addr = P9221R5_PROP_TX_ID_REG;
+		chgr->reg_tx_id_addr = P9222RE_PROP_TX_ID_REG;
 		chgr->reg_tx_mfg_code_addr = P9222RE_TX_MFG_CODE_REG;
 		chgr->reg_packet_type_addr = 0;
 		chgr->reg_set_pp_buf_addr = P9221R5_DATA_SEND_BUF_START;
 		chgr->reg_get_pp_buf_addr = P9221R5_DATA_RECV_BUF_START;
 		chgr->set_cmd_ccactivate_bit = P9221R5_COM_CCACTIVATE;
 		chgr->reg_set_fod_addr = P9222RE_FOD_REG;
+		chgr->reg_q_factor_addr = P9222RE_EPP_Q_FACTOR_REG;
 		break;
 	default:
 		chgr->reg_tx_id_addr = P9221R5_PROP_TX_ID_REG;
@@ -1674,6 +1713,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_get_pp_buf_addr = P9221R5_DATA_RECV_BUF_START;
 		chgr->set_cmd_ccactivate_bit = P9221R5_COM_CCACTIVATE;
 		chgr->reg_set_fod_addr = P9221R5_FOD_REG;
+		chgr->reg_q_factor_addr = P9221R5_EPP_Q_FACTOR_REG;
 		break;
 	}
 }
@@ -1771,7 +1811,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->chip_get_align_x = p9221_get_align_x;
 		chgr->chip_get_align_y = p9221_get_align_y;
 		chgr->chip_send_ccreset = p9221_send_ccreset;
-		chgr->chip_send_eop = p9221_send_eop;
+		chgr->chip_send_eop = p9222_send_eop;
 		chgr->chip_get_sys_mode = p9222_chip_get_sys_mode;
 		chgr->chip_renegotiate_pwr = p9222_chip_renegotiate_pwr;
 		chgr->chip_prop_mode_en = p9221_prop_mode_enable;
@@ -1823,6 +1863,17 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 }
 
 #if IS_ENABLED(CONFIG_GPIOLIB)
+int p9xxx_gpio_set_value(struct p9221_charger_data *chgr, unsigned gpio, int value)
+{
+	if (gpio <= 0)
+		return -EINVAL;
+
+	logbuffer_log(chgr->log, "%s: set gpio %d to %d\n", __func__, gpio, value);
+	gpio_set_value_cansleep(gpio, value);
+
+	return 0;
+}
+
 static int p9xxx_gpio_get_direction(struct gpio_chip *chip,
 				    unsigned int offset)
 {
@@ -1871,6 +1922,9 @@ static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 	case P9XXX_GPIO_CPOUT_CTL_EN:
 		if (p9221_is_epp(charger))
 			break;
+		/* No need if DD is triggered */
+		if (charger->trigger_power_mitigation)
+			break;
 		/* b/174068520: set vout to 5.2 for BPP_WLC_RX+OTG */
 		if (value)
 			ret = charger->chip_set_vout_max(charger, P9412_BPP_WLC_OTG_VOUT);
@@ -1882,6 +1936,9 @@ static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 			break;
 		value = (!!value) ^ charger->pdata->wlc_en_act_low;
 		gpio_direction_output(charger->pdata->wlc_en, value);
+		break;
+	case P9XXX_GPIO_DC_SW_EN:
+		ret = p9xxx_gpio_set_value(charger, charger->pdata->dc_switch_gpio, value);
 		break;
 	default:
 		ret = -EINVAL;
