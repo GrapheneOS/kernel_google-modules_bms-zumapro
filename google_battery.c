@@ -6803,6 +6803,41 @@ static ssize_t dev_sn_show(struct device *dev,
 
 static const DEVICE_ATTR_RW(dev_sn);
 
+#define USER_SHUTDOWN_FLAG 0x01
+static int batt_set_charger_mode(bool enable)
+{
+	u8 data;
+	int ret;
+
+	data = enable ? USER_SHUTDOWN_FLAG : 0;
+	ret = gbms_storage_write(GBMS_TAG_SUFG, &data, sizeof(data));
+	if (ret < 0)
+		return -EIO;
+
+	return 0;
+}
+
+static ssize_t charger_mode_store(struct device *dev,
+				  struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	int ret = 0, val = 0;
+
+	ret = kstrtoint(buf, 0, &val);
+	if (ret < 0)
+		return ret;
+
+	if (val >= 0) {
+		ret = batt_set_charger_mode((val > 0));
+		if (ret < 0)
+			pr_err("Cannot set charger mode, ret=%d\n", ret);
+	}
+
+	return count;
+}
+
+static DEVICE_ATTR_WO(charger_mode);
+
 /* ------------------------------------------------------------------------- */
 
 static int batt_init_fs(struct batt_drv *batt_drv)
@@ -6981,6 +7016,9 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_dev_sn);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create dev sn\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_charger_mode);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create charger_mode\n");
 
 	return 0;
 
