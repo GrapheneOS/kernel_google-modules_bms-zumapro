@@ -551,6 +551,7 @@ enum bhi_algo {
 	 */
 
 	BHI_ALGO_MIX_N_MATCH 	= 6,
+	BHI_ALGO_DEBUG		= 7,
 	BHI_ALGO_MAX,
 };
 
@@ -560,6 +561,12 @@ enum bhi_status {
 	BH_MARGINAL,
 	BH_NEEDS_REPLACEMENT,
 	BH_FAILED,
+};
+
+struct bhi_weight {
+	int w_ci;
+	int w_ii;
+	int w_sd;
 };
 
 /* Charging Speed */

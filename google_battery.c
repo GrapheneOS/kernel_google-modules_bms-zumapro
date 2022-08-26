@@ -293,6 +293,15 @@ struct swelling_data {
 	ktime_t last_update;
 };
 
+
+struct bhi_weight bhi_w[] = {
+	[BHI_ALGO_ACHI] = {100, 0, 0},
+	[BHI_ALGO_ACHI_B] = {100, 0, 0},
+	[BHI_ALGO_ACHI_RAVG] = {95, 5, 0},
+	[BHI_ALGO_ACHI_RAVG_B] = {95, 5, 0},
+	[BHI_ALGO_MIX_N_MATCH] = {90, 10, 5},
+};
+
 struct bhi_data
 {
 	/* context */
@@ -330,6 +339,11 @@ struct health_data
 	int bhi_cap_index;
 	int bhi_imp_index;
 	int bhi_sd_index;
+	/* debug health metrics */
+	int bhi_debug_cap_index;
+	int bhi_debug_imp_index;
+	int bhi_debug_sd_index;
+	int bhi_debug_health_index;
 
 	/* current battery state */
 	struct bhi_data bhi_data;
@@ -3627,7 +3641,8 @@ static int bhi_calc_sd_index(int algo, const struct bhi_data *bhi_data)
 	return bhi_data->ccbin_index;
 }
 
-static int bhi_calc_health_index(int algo, int cap_index, int imp_index, int sd_index)
+static int bhi_calc_health_index(int algo, const struct health_data *health_data,
+				 int cap_index, int imp_index, int sd_index)
 {
 	int ratio, index;
 	int w_ci = 0;
@@ -3642,21 +3657,17 @@ static int bhi_calc_health_index(int algo, int cap_index, int imp_index, int sd_
 		return BHI_ALGO_FULL_HEALTH;
 	case BHI_ALGO_ACHI:
 	case BHI_ALGO_ACHI_B:
-		w_ci = 100;
-		w_ii = 0;
-		w_sd = 0;
-		break;
 	case BHI_ALGO_ACHI_RAVG:
 	case BHI_ALGO_ACHI_RAVG_B:
-		w_ci = 95;
-		w_ii = 5;
-		w_sd = 0;
-		break;
 	case BHI_ALGO_MIX_N_MATCH:
-		/* TODO: use the weights in health_data */
-		w_ci = 90;
-		w_ii = 10;
-		w_sd = 5;
+		w_ci = bhi_w[algo].w_ci;
+		w_ii = bhi_w[algo].w_ii;
+		w_sd = bhi_w[algo].w_sd;
+		break;
+	case BHI_ALGO_DEBUG:
+		w_ci = health_data->bhi_w_ci;
+		w_ii = health_data->bhi_w_pi;
+		w_sd = health_data->bhi_w_sd;
 		break;
 	default:
 		return -EINVAL;
@@ -3759,7 +3770,7 @@ static int batt_bhi_stats_update(struct batt_drv *batt_drv)
 	changed |= health_data->bhi_sd_index != index;
 	health_data->bhi_sd_index = index;
 
-	index = bhi_calc_health_index(bhi_algo,
+	index = bhi_calc_health_index(bhi_algo, health_data,
 				      health_data->bhi_cap_index,
 				      health_data->bhi_imp_index,
 				      health_data->bhi_sd_index);
@@ -3769,7 +3780,7 @@ static int batt_bhi_stats_update(struct batt_drv *batt_drv)
 	changed |= health_data->bhi_index != index;
 	health_data->bhi_index = index;
 
-	status = bhi_calc_health_status(bhi_algo, index, health_data);
+	status = bhi_calc_health_status(bhi_algo, BHI_ROUND_INDEX(index), health_data);
 	changed |= health_data->bhi_status != status;
 	health_data->bhi_status = status;
 
@@ -5327,6 +5338,42 @@ static ssize_t debug_get_blf_state(struct file *filp, char __user *buf,
 }
 BATTERY_DEBUG_ATTRIBUTE(debug_blf_state_fops, debug_get_blf_state, 0);
 
+static ssize_t debug_get_bhi_status(struct file *filp, char __user *buf,
+				   size_t count, loff_t *ppos)
+{
+	struct batt_drv *batt_drv = (struct batt_drv *)filp->private_data;
+	struct health_data *health_data = &batt_drv->health_data;
+	const int cap_idx = health_data->bhi_debug_cap_index;
+	const int imp_idx = health_data->bhi_debug_imp_index;
+	const int sd_idx = health_data->bhi_debug_sd_index;
+	const int algo = BHI_ALGO_DEBUG;
+	int health_idx = health_data->bhi_debug_health_index;
+	int health_status, len;
+	char *tmp;
+
+	tmp = kzalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!tmp)
+		return -ENOMEM;
+
+	if (health_idx == 0)
+		health_idx = bhi_calc_health_index(algo, health_data, cap_idx, imp_idx, sd_idx);
+
+	health_status = bhi_calc_health_status(algo, BHI_ROUND_INDEX(health_idx), health_data);
+
+	if (health_data->bhi_debug_health_index != 0)
+		scnprintf(tmp, PAGE_SIZE, "%d, %d\n", health_status, health_idx);
+	else
+		scnprintf(tmp, PAGE_SIZE, "%d, %d [%d/%d %d/%d %d/%d]\n", health_status,
+			  health_idx, cap_idx, health_data->bhi_w_ci, imp_idx,
+			  health_data->bhi_w_pi, sd_idx, health_data->bhi_w_sd);
+
+	len = simple_read_from_buffer(buf, count, ppos, tmp, strlen(tmp));
+	kfree(tmp);
+
+	return len;
+}
+BATTERY_DEBUG_ATTRIBUTE(debug_bhi_status_fops, debug_get_bhi_status, 0);
+
 /* TODO: add writes to restart pairing (i.e. provide key) */
 static ssize_t batt_pairing_state_show(struct device *dev,
 				       struct device_attribute *attr,
@@ -6482,7 +6529,7 @@ static ssize_t health_index_stats_show(struct device *dev,
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
 	struct bhi_data *bhi_data = &batt_drv->health_data.bhi_data;
-	struct health_data  *health_data = &batt_drv->health_data;
+	struct health_data *health_data = &batt_drv->health_data;
 	int len = 0, i;
 
 	mutex_lock(&batt_drv->chg_lock);
@@ -6493,7 +6540,7 @@ static ssize_t health_index_stats_show(struct device *dev,
 		cap_index = bhi_calc_cap_index(i, batt_drv);
 		imp_index = bhi_calc_imp_index(i, bhi_data);
 		sd_index = bhi_calc_sd_index(i, bhi_data);
-		health_index = bhi_calc_health_index(i, cap_index, imp_index, sd_index);
+		health_index = bhi_calc_health_index(i, health_data, cap_index, imp_index, sd_index);
 		health_status = bhi_calc_health_status(i, BHI_ROUND_INDEX(health_index), health_data);
 		if (health_index < 0)
 			continue;
@@ -7050,10 +7097,20 @@ static int batt_init_debugfs(struct batt_drv *batt_drv)
 
 	/* bhi fullcapnom count */
 	debugfs_create_u32("bhi_w_ci", 0644, de, &batt_drv->health_data.bhi_w_ci);
-	debugfs_create_u32("bhi_w_pi", 0644, de, &batt_drv->health_data.bhi_w_ci);
-	debugfs_create_u32("bhi_w_sd", 0644, de, &batt_drv->health_data.bhi_w_ci);
+	debugfs_create_u32("bhi_w_pi", 0644, de, &batt_drv->health_data.bhi_w_pi);
+	debugfs_create_u32("bhi_w_sd", 0644, de, &batt_drv->health_data.bhi_w_sd);
 	debugfs_create_u32("act_impedance", 0644, de,
 			   &batt_drv->health_data.bhi_data.act_impedance);
+	debugfs_create_u32("bhi_debug_cap_idx", 0644, de,
+			   &batt_drv->health_data.bhi_debug_cap_index);
+	debugfs_create_u32("bhi_debug_imp_idx", 0644, de,
+			   &batt_drv->health_data.bhi_debug_imp_index);
+	debugfs_create_u32("bhi_debug_sd_idx", 0644, de,
+			   &batt_drv->health_data.bhi_debug_sd_index);
+	debugfs_create_u32("bhi_debug_health_idx", 0644, de,
+			   &batt_drv->health_data.bhi_debug_health_index);
+	debugfs_create_file("bhi_debug_status", 0644, de, batt_drv,
+			   &debug_bhi_status_fops);
 
 	/* google_resistance, tuning */
 	debugfs_create_u32("ravg_temp_low", 0644, de,
@@ -8331,6 +8388,12 @@ static int batt_bhi_init(struct batt_drv *batt_drv)
 
 	/* design is the value used to build the charge table */
 	health_data->bhi_data.capacity_design = batt_drv->battery_capacity;
+
+	/* debug data initialization */
+	health_data->bhi_debug_cap_index = 0;
+	health_data->bhi_debug_imp_index = 0;
+	health_data->bhi_debug_sd_index = 0;
+	health_data->bhi_debug_health_index = 0;
 
 	return 0;
 }
