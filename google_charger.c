@@ -4530,7 +4530,7 @@ static int chg_set_fcc_charge_cntl_limit(struct thermal_cooling_device *tcd,
 					CSI_STATUS_System_Thermals,
 					fcc != 0);
 
-	return ret;
+	return 0;
 }
 
 
