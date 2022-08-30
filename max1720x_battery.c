@@ -2254,10 +2254,10 @@ static int max1720x_get_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_PRESENT:
 
-		if (chip->gauge_type == -1) {
-			val->intval = 0;
-		} else if (chip->fake_battery != -1) {
+		if (chip->fake_battery != -1) {
 			val->intval = chip->fake_battery;
+		} else if (chip->gauge_type == -1) {
+			val->intval = 0;
 		} else {
 
 			err = REGMAP_READ(map, MAX1720X_STATUS, &data);
@@ -5843,7 +5843,7 @@ static int max1720x_probe(struct i2c_client *client,
 		return -ENOMEM;
 
 	chip->dev = dev;
-	chip->fake_battery = -1;
+	chip->fake_battery = of_property_read_bool(dev->of_node, "maxim,no-battery") ? 0 : -1;
 	chip->primary = client;
 	chip->batt_id_defer_cnt = DEFAULT_BATTERY_ID_RETRIES;
 	i2c_set_clientdata(client, chip);
