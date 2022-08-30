@@ -2367,7 +2367,7 @@ static void batt_res_work(struct batt_drv *batt_drv)
 
 /* ------------------------------------------------------------------------- */
 
-static void batt_log_csi_info(struct batt_drv *batt_drv)
+static void batt_log_csi_ttf_info(struct batt_drv *batt_drv)
 {
 	struct csi_stats *csi_stats = &batt_drv->csi_stats;
 	const bool same_type_and_status =
@@ -2377,6 +2377,9 @@ static void batt_log_csi_info(struct batt_drv *batt_drv)
 			    batt_drv->csi_current_speed;
 	const ktime_t right_now = get_boot_sec();
 	int ssoc = -1;
+
+	if (!batt_drv->init_complete)
+		return;
 
 	if (chg_state_is_disconnected(&batt_drv->chg_state))
 		goto log_and_done;
@@ -2409,14 +2412,21 @@ log_and_done:
 		const int csi_speed_avg = csi_stats->csi_time_sum == 0 ?
 					  csi_stats->speed_sum :
 					  (csi_stats->speed_sum / csi_stats->csi_time_sum);
+		const int cc = GPSY_GET_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_CHARGE_COUNTER);
+		ktime_t res = 0;
+		const int max_ratio = batt_ttf_estimate(&res, batt_drv);
+
+		if (max_ratio < 0)
+			res = 0;
 
 		gbms_logbuffer_prlog(batt_drv->ttf_stats.ttf_log, LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG,
-				     "CSI ssoc=%d min=%d max=%d avg=%d type=%d status=%d",
-				     csi_stats->ssoc,
-				     csi_stats->csi_speed_min, csi_stats->csi_speed_max,
-				     csi_speed_avg,
-				     csi_stats->csi_current_type,
-				     csi_stats->csi_current_status);
+				     "ssoc=%d CSI[min=%d max=%d avg=%d type=%d status=%d] "
+				     "TTF[cc=%d time=%lld %lld:%lld:%lld (est=%lld max_ratio=%d)]",
+				     csi_stats->ssoc, csi_stats->csi_speed_min,
+				     csi_stats->csi_speed_max, csi_speed_avg,
+				     csi_stats->csi_current_type, csi_stats->csi_current_status,
+				     cc / 1000, right_now, res / 3600, (res % 3600) / 60, (res % 3600) % 60,
+				     res, max_ratio);
 	}
 
 	/* ssoc == -1 on disconnect */
@@ -2442,7 +2452,7 @@ static int csi_status_cb(struct gvotable_election *el, const char *reason,
 		return 0;
 
 	batt_drv->csi_current_status = status;
-	batt_log_csi_info(batt_drv);
+	batt_log_csi_ttf_info(batt_drv);
 
 	if (batt_drv->psy)
 		power_supply_changed(batt_drv->psy);
@@ -2460,7 +2470,7 @@ static int csi_type_cb(struct gvotable_election *el, const char *reason,
 		return 0;
 
 	batt_drv->csi_current_type = type;
-	batt_log_csi_info(batt_drv);
+	batt_log_csi_ttf_info(batt_drv);
 
 	if (batt_drv->psy)
 		power_supply_changed(batt_drv->psy);
@@ -2569,21 +2579,21 @@ static void batt_update_csi_status(struct batt_drv *batt_drv)
 			return;
 	}
 
-	gvotable_cast_long_vote(batt_drv->csi_status_votable, "CSI_STATUS_CHG",
-				CSI_STATUS_Charging, !is_disconnected);
-
 	/*
 	 * discharging when the battery current is negative. There will likely
 	 * be a more specific reason (e.g System_* or Adapter_* or one of
 	 * Defender_*).
 	 */
-	gvotable_cast_long_vote(batt_drv->csi_status_votable, "CSI_STATUS_DSG",
-				CSI_STATUS_NotCharging,
-				!is_disconnected && batt_drv->msc_state == MSC_DSG);
 
-	gvotable_cast_long_vote(batt_drv->csi_status_votable, "CSI_STATUS_100",
-				CSI_STATUS_Charging,
-				!is_disconnected && batt_drv->chg_done);
+	/* Charging Status Health_Cold */
+	gvotable_cast_long_vote(batt_drv->csi_status_votable, "CSI_STATUS_COLD",
+				CSI_STATUS_Health_Cold,
+				!is_disconnected && is_cold);
+
+	/* Charging Status Health_Hot */
+	gvotable_cast_long_vote(batt_drv->csi_status_votable, "CSI_STATUS_HOT",
+				CSI_STATUS_Health_Hot,
+				!is_disconnected && is_hot);
 
 	/* looks at absolute power, it could look also look at golden adapter */
 	gvotable_cast_long_vote(batt_drv->csi_status_votable, "CSI_STATUS_ADA_POWR",
@@ -2596,20 +2606,21 @@ static void batt_update_csi_status(struct batt_drv *batt_drv)
 				CSI_STATUS_Adapter_Quality,
 				!is_disconnected && batt_csi_check_ad_qual(batt_drv));
 
-	/* Charging Status Health_Cold */
-	gvotable_cast_long_vote(batt_drv->csi_status_votable, "CSI_STATUS_COLD",
-				CSI_STATUS_Health_Cold,
-				!is_disconnected && is_cold);
-
-	/* Charging Status Health_Hot */
-	gvotable_cast_long_vote(batt_drv->csi_status_votable, "CSI_STATUS_HOT",
-				CSI_STATUS_Health_Hot,
-				!is_disconnected && is_hot);
-
 	/* Charging Status Defender_Trickle */
 	gvotable_cast_long_vote(batt_drv->csi_status_votable, "CSI_STATUS_DEFEND_TRICKLE",
 				CSI_STATUS_Defender_Trickle,
 				!is_disconnected && is_trickle);
+
+	gvotable_cast_long_vote(batt_drv->csi_status_votable, "CSI_STATUS_DSG",
+				CSI_STATUS_NotCharging,
+				!is_disconnected && batt_drv->msc_state == MSC_DSG);
+
+	gvotable_cast_long_vote(batt_drv->csi_status_votable, "CSI_STATUS_100",
+				CSI_STATUS_Charging,
+				!is_disconnected && batt_drv->chg_done);
+
+	gvotable_cast_long_vote(batt_drv->csi_status_votable, "CSI_STATUS_CHG",
+					CSI_STATUS_Charging, !is_disconnected);
 }
 
 #define CSI_CHG_SPEED_MAX 100
@@ -2684,7 +2695,7 @@ static void batt_update_csi_info(struct batt_drv *batt_drv)
 	charging_speed = batt_calc_charging_speed(batt_drv);
 	if (batt_drv->csi_current_speed != charging_speed) {
 		batt_drv->csi_current_speed = charging_speed;
-		batt_log_csi_info(batt_drv);
+		batt_log_csi_ttf_info(batt_drv);
 	}
 }
 
@@ -4295,7 +4306,7 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 		mutex_unlock(&batt_drv->bpst_state.lock);
 
 		/* here on: disconnect */
-		batt_log_csi_info(batt_drv);
+		batt_log_csi_ttf_info(batt_drv);
 		batt_chg_stats_pub(batt_drv, "disconnect", false, false);
 
 		/* change curve before changing the state. */
@@ -7163,28 +7174,6 @@ static int gbatt_get_temp(const struct batt_drv *batt_drv, int *temp)
 	return err;
 }
 
-static void bat_log_ttf_estimate(const char *label, int ssoc,
-				 struct batt_drv *batt_drv)
-{
-	int cc, err;
-	ktime_t res = 0;
-
-	err = batt_ttf_estimate(&res, batt_drv);
-	if (err < 0) {
-		logbuffer_log(batt_drv->ttf_stats.ttf_log,
-			      "%s ssoc=%d time=%ld err=%d",
-			      (label) ? label : "", ssoc, get_boot_sec(), err);
-		return;
-	}
-
-	cc = GPSY_GET_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_CHARGE_COUNTER);
-	logbuffer_log(batt_drv->ttf_stats.ttf_log,
-		      "%s ssoc=%d cc=%d time=%ld %d:%d:%d (est=%ld, max_ratio=%d)",
-		      (label) ? label : "", ssoc, cc / 1000, get_boot_sec(),
-		      res / 3600, (res % 3600) / 60, (res % 3600) % 60,
-		      res, err);
-}
-
 static int batt_do_md5(const u8 *data, unsigned int len, u8 *result)
 {
 	struct crypto_shash *tfm;
@@ -7536,10 +7525,10 @@ static void google_battery_work(struct work_struct *work)
 				 prev_ssoc, ssoc);
 
 			if (ssoc > prev_ssoc)
-				bat_log_ttf_estimate("SSOC", ssoc, batt_drv);
+				batt_log_csi_ttf_info(batt_drv);
 
 			dump_ssoc_state(ssoc_state, batt_drv->ssoc_log);
-			batt_log_csi_info(batt_drv);
+			batt_log_csi_ttf_info(batt_drv);
 			notify_psy_changed = true;
 		}
 
@@ -7569,7 +7558,7 @@ static void google_battery_work(struct work_struct *work)
 		/* fuel gauge triggered recharge logic. */
 		full = (ssoc == SSOC_FULL);
 		if (full && !batt_drv->batt_full) {
-			bat_log_ttf_estimate("Full", ssoc, batt_drv);
+			batt_log_csi_ttf_info(batt_drv);
 			batt_chg_stats_pub(batt_drv, "100%", false, true);
 		}
 		batt_drv->batt_full = full;
@@ -7639,7 +7628,7 @@ static void google_battery_work(struct work_struct *work)
 		}
 	} else if (batt_drv->ttf_debounce) {
 		batt_drv->ttf_debounce = 0;
-		bat_log_ttf_estimate("Start", prev_ssoc, batt_drv);
+		batt_log_csi_ttf_info(batt_drv);
 	}
 
 	/* acquired in msc_logic */
