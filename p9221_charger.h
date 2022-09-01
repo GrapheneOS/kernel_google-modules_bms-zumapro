@@ -615,12 +615,17 @@ struct p9221_charger_platform_data {
 	int				epp_vout_mv;
 	u8				fod[P9221R5_NUM_FOD];
 	u8				fod_epp[P9221R5_NUM_FOD];
+	u8				fod_epp_comp[P9221R5_NUM_FOD];
 	u8				fod_hpp[P9221R5_NUM_FOD];
 	u8				fod_hpp_hv[P9221R5_NUM_FOD];
 	int				fod_num;
 	int				fod_epp_num;
+	int				fod_epp_comp_num;
 	int				fod_hpp_num;
 	int				fod_hpp_hv_num;
+	bool				fod_fsw;
+	int				fod_fsw_high;
+	int				fod_fsw_low;
 	int				q_value;
 	int				tx_4191q;
 	int				epp_rp_value;
@@ -714,6 +719,7 @@ struct p9221_charger_data {
 	struct delayed_work		fg_work;
 	struct delayed_work		chk_rp_work;
 	struct delayed_work		chk_rtx_ocp_work;
+	struct delayed_work		chk_fod_work;
 	struct work_struct		uevent_work;
 	struct work_struct		rtx_disable_work;
 	struct work_struct		rtx_reset_work;
