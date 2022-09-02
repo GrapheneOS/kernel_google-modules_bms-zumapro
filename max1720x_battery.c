@@ -1457,14 +1457,7 @@ static void max1720x_handle_update_filtercfg(struct max1720x_chip *chip,
 	if ((filtercfg_val != filtercfg->curr_val) &&
 	    (filtercfg->curr_val == 0 || temp < filtercfg->temp ||
 	     temp >= hysteresis_temp)) {
-		struct max17x0x_regmap *regmap;
-
-		if (chip->gauge_type == MAX_M5_GAUGE_TYPE)
-			regmap = &chip->regmap;
-		else
-			regmap = &chip->regmap_nvram;
-
-		REGMAP_WRITE(regmap, MAX1720X_FILTERCFG, filtercfg_val);
+		REGMAP_WRITE(&chip->regmap, MAX1720X_FILTERCFG, filtercfg_val);
 		dev_info(chip->dev, "updating filtercfg to 0x%04x as temp is %d\n",
 			 filtercfg_val, temp);
 		filtercfg->curr_val = filtercfg_val;
@@ -2545,7 +2538,7 @@ static int max1720x_monitor_log_data(struct max1720x_chip *chip)
 {
 	u16 data, repsoc, vfsoc, avcap, repcap, fullcap, fullcaprep;
 	u16 fullcapnom, qh0, qh, dqacc, dpacc, qresidual, fstat;
-	u16 learncfg, tempco;
+	u16 learncfg, tempco, filtercfg;
 	int ret = 0, charge_counter = -1;
 
 	ret = REGMAP_READ(&chip->regmap, MAX1720X_REPSOC, &data);
@@ -2612,13 +2605,17 @@ static int max1720x_monitor_log_data(struct max1720x_chip *chip)
 	if (ret < 0)
 		return ret;
 
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_FILTERCFG, &filtercfg);
+	if (ret < 0)
+		return ret;
+
 	ret = max1720x_update_battery_qh_based_capacity(chip);
 	if (ret == 0)
 		charge_counter = reg_to_capacity_uah(chip->current_capacity, chip);
 
 	gbms_logbuffer_prlog(chip->monitor_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
 			     "%s %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
-			     " %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
+			     " %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
 			     " %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X CC:%d",
 			     chip->max1720x_psy_desc.name, MAX1720X_REPSOC, data, MAX1720X_VFSOC,
 			     vfsoc, MAX1720X_AVCAP, avcap, MAX1720X_REPCAP, repcap,
@@ -2627,7 +2624,7 @@ static int max1720x_monitor_log_data(struct max1720x_chip *chip)
 			     MAX1720X_QH, qh, MAX1720X_DQACC, dqacc, MAX1720X_DPACC, dpacc,
 			     MAX1720X_QRESIDUAL, qresidual, MAX1720X_FSTAT, fstat,
 			     MAX1720X_LEARNCFG, learncfg, MAX1720X_TEMPCO, tempco,
-			     charge_counter);
+			     MAX1720X_FILTERCFG, filtercfg, charge_counter);
 
 	chip->pre_repsoc = repsoc;
 
