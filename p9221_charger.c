@@ -2180,7 +2180,8 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 		}
 
 		/* not there, must return not supp */
-		if (!charger->pdata->has_wlc_dc || !p9221_is_online(charger))
+		if (!charger->pdata->has_wlc_dc || !p9221_is_online(charger)
+		    || !p9221_is_epp(charger))
 			return -EOPNOTSUPP;
 
 		if (charger->last_capacity > WLC_HPP_SOC_LIMIT)
@@ -3892,6 +3893,10 @@ static ssize_t p9221_store_txlen(struct device *dev,
 	if (!charger->online)
 		return -ENODEV;
 
+	/* Don't send bidi data in cases of BPP and NOT dream-defend */
+	if (!p9221_is_epp(charger) && !charger->trigger_power_mitigation)
+		return -EINVAL;
+
 	charger->tx_len = len;
 
 	ret = set_renego_state(charger, P9XXX_SEND_DATA);
@@ -4259,6 +4264,10 @@ static ssize_t wpc_ready_show(struct device *dev,
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct p9221_charger_data *charger = i2c_get_clientdata(client);
+
+	/* Skip it on BPP */
+	if (!p9221_is_epp(charger))
+		return scnprintf(buf, PAGE_SIZE, "N\n");
 
 	return scnprintf(buf, PAGE_SIZE, "%c\n",
 			 p9412_is_calibration_done(charger) ? 'Y' : 'N');
