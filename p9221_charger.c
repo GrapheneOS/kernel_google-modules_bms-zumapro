@@ -986,7 +986,7 @@ static void p9221_dcin_pon_work(struct work_struct *work)
 					POWER_SUPPLY_PROP_DC_RESET, &prop);
 	if (ret < 0) {
 		dev_err(&charger->client->dev,
-			"Error getting charging status: %d\n", ret);
+			"unable to get DC_RESET, ret=%d\n", ret);
 		return;
 	}
 
