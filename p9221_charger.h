@@ -287,22 +287,32 @@
  */
 #define P9222_CHIP_ID				0x9222
 #define P9222RE_SYSTEM_MODE_REG			0x3F
+#define P9222RE_CHARGE_STAT_REG			0x4E
+#define P9222RE_EPT_REG				0x4F
 #define P9222RE_VOUT_REG			0x50
 #define P9222RE_VOUT_SET_REG			0x52
 #define P9222RE_VRECT_REG			0x54
 #define P9222RE_IOUT_REG			0x58
 #define P9222RE_DIE_TEMP_REG			0x5A
 #define P9222RE_OP_FREQ_REG			0x5C
+#define P9222RE_TX_PINGFREQ_REG			0x5E
 #define P9222RE_ILIM_SET_REG			0x60
-#define P9222_COM_REG				0x62
+#define P9222RE_COM_REG				0x62
 #define P9222RE_FOD_REG				0x84
+#define P9222RE_COM_CHAN_RECV_SIZE_REG		0x98
 #define P9222RE_EPP_TX_GUARANTEED_POWER_REG	0xB4
 #define P9222RE_EPP_REQ_NEGOTIATED_POWER_REG	0xBD
+#define P9222RE_EPP_REQ_MAXIMUM_POWER_REG	0xBE
 #define P9222RE_EPP_Q_FACTOR_REG		0xD2
 #define P9222RE_TX_MFG_CODE_REG			0x106
 #define P9222RE_PROP_TX_ID_REG			0x118
+#define P9222RE_DIE_TEMP_ADC_REG		0x12A
+#define P9222RE_COM_PACKET_TYPE_ADDR		0x600
+#define P9222RE_COM_CHAN_SEND_SIZE_REG		0x601
+#define P9222RE_DATA_BUF_START			0x604
+#define P9222RE_DATA_BUF_SIZE			0x100
 
-#define P9222_EPT_REG				0x4F
+#define P9222RE_COM_CCACTIVATE			BIT(9)
 
 /*
  * P9222 SYSTEM_MODE_REG bits
@@ -813,6 +823,7 @@ struct p9221_charger_data {
 	u16				reg_get_pp_buf_addr;
 	u16				reg_set_fod_addr;
 	u16				reg_q_factor_addr;
+	u16				reg_csp_addr;
 
 	int (*reg_read_n)(struct p9221_charger_data *chgr, u16 reg,
 			  void *buf, size_t n);

@@ -460,7 +460,7 @@ static int p9221_send_csp(struct p9221_charger_data *charger, u8 stat)
 	}
 
 	if (charger->online) {
-		ret = p9221_reg_write_8(charger, P9221R5_CHARGE_STAT_REG, stat);
+		ret = p9221_reg_write_8(charger, charger->reg_csp_addr, stat);
 		if (ret == 0)
 			ret = charger->chip_set_cmd(charger, P9221R5_COM_SENDCSP);
 		if (ret < 0)
@@ -5329,12 +5329,9 @@ static void rtx_irq_handler(struct p9221_charger_data *charger, u16 irq_src)
 	}
 
 	if (irq_src & csp_bit) {
-		ret = p9221_reg_read_8(charger, P9382A_CHARGE_STAT_REG,
-				       &csp_reg);
+		ret = p9221_reg_read_8(charger, charger->reg_csp_addr, &csp_reg);
 		if (ret) {
-			logbuffer_log(charger->rtx_log,
-				      "failed to read CSP_REG reg: %d",
-				      ret);
+			logbuffer_log(charger->rtx_log, "failed to read CSP_REG reg: %d", ret);
 		} else {
 			charger->rtx_csp = csp_reg;
 			schedule_work(&charger->uevent_work);
