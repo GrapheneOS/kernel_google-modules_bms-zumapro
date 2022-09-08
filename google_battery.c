@@ -2549,7 +2549,7 @@ static bool batt_csi_check_ad_power(const union gbms_ce_adapter_details *ad)
 		case CHG_EV_ADAPTER_TYPE_WLC:
 		case CHG_EV_ADAPTER_TYPE_WLC_EPP:
 		case CHG_EV_ADAPTER_TYPE_WLC_SPP:
-			limit_mw = 7500;
+			limit_mw = 7500000;
 			break;
 		default:
 			break;
