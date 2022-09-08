@@ -1544,10 +1544,12 @@ static u16 max1720x_save_battery_cycle(const struct max1720x_chip *chip,
 
 	ret = gbms_storage_write(GBMS_TAG_CNHS, &reg_cycle,
 				sizeof(reg_cycle));
-	if (ret < 0)
+	if (ret < 0) {
 		dev_info(chip->dev, "Fail to write %d eeprom cycle count (%d)", reg_cycle, ret);
-	else
+	} else {
+		dev_info(chip->dev, "update saved cycle:%d -> %d\n", eeprom_cycle, reg_cycle);
 		eeprom_cycle = reg_cycle;
+	}
 
 	return eeprom_cycle;
 }
@@ -2254,10 +2256,10 @@ static int max1720x_get_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_PRESENT:
 
-		if (chip->gauge_type == -1) {
-			val->intval = 0;
-		} else if (chip->fake_battery != -1) {
+		if (chip->fake_battery != -1) {
 			val->intval = chip->fake_battery;
+		} else if (chip->gauge_type == -1) {
+			val->intval = 0;
 		} else {
 
 			err = REGMAP_READ(map, MAX1720X_STATUS, &data);
@@ -2270,8 +2272,9 @@ static int max1720x_get_property(struct power_supply *psy,
 				break;
 
 			/* chip->por prevent garbage in cycle count */
-			chip->por = data & MAX1720X_STATUS_POR;
-			if (chip->por && chip->model_ok) {
+			chip->por = (data & MAX1720X_STATUS_POR) != 0;
+			if (chip->por && chip->model_ok &&
+			    chip->model_reload != MAX_M5_LOAD_MODEL_REQUEST) {
 				/* trigger reload model and clear of POR */
 				mutex_unlock(&chip->model_lock);
 				max1720x_fg_irq_thread_fn(-1, chip);
@@ -2825,17 +2828,17 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 	fg_status_clr = fg_status;
 
 	if (fg_status & MAX1720X_STATUS_POR) {
-		dev_warn(chip->dev, "POR is set, model reload:%d\n", chip->model_reload);
-
+		mutex_lock(&chip->model_lock);
+		chip->por = true;
+		dev_warn(chip->dev, "POR is set(%04x), model reload:%d\n",
+			 fg_status, chip->model_reload);
 		/* trigger model load if not on-going */
 		if (chip->model_reload != MAX_M5_LOAD_MODEL_REQUEST) {
-			mutex_lock(&chip->model_lock);
 			err = max1720x_model_reload(chip, true);
 			if (err < 0)
 				fg_status_clr &= ~MAX1720X_STATUS_POR;
-
-			mutex_unlock(&chip->model_lock);
 		}
+		mutex_unlock(&chip->model_lock);
 	}
 
 	if (fg_status & MAX1720X_STATUS_IMN)
@@ -4755,7 +4758,7 @@ static int max1720x_init_chip(struct max1720x_chip *chip)
 	int ret;
 	u8 vreg, vpor;
 	u16 data = 0, tmp;
-	bool por = false, force_recall = false;
+	bool force_recall = false;
 
 	if (of_property_read_bool(chip->dev->of_node, "maxim,force-hard-reset"))
 		max1720x_full_reset(chip);
@@ -4763,8 +4766,8 @@ static int max1720x_init_chip(struct max1720x_chip *chip)
 	ret = REGMAP_READ(&chip->regmap, MAX1720X_STATUS, &data);
 	if (ret < 0)
 		return -EPROBE_DEFER;
-	por = (data & MAX1720X_STATUS_POR) != 0;
-	if (por && chip->regmap_nvram.regmap) {
+	chip->por = (data & MAX1720X_STATUS_POR) != 0;
+	if (chip->por && chip->regmap_nvram.regmap) {
 		dev_err(chip->dev, "Recall: POR bit is set\n");
 		force_recall = true;
 	}
@@ -4924,11 +4927,11 @@ static int max1720x_init_chip(struct max1720x_chip *chip)
 	max1720x_restore_battery_cycle(chip);
 
 	/* max_m5 triggers loading of the model in the irq handler on POR */
-	if (!por && chip->gauge_type == MAX_M5_GAUGE_TYPE) {
+	if (!chip->por && chip->gauge_type == MAX_M5_GAUGE_TYPE) {
 		ret = max1720x_init_max_m5(chip);
 		if (ret < 0)
 			return ret;
-	} else if (por && chip->gauge_type != MAX_M5_GAUGE_TYPE) {
+	} else if (chip->por && chip->gauge_type != MAX_M5_GAUGE_TYPE) {
 		ret = regmap_update_bits(chip->regmap.regmap,
 					 MAX1720X_STATUS,
 					 MAX1720X_STATUS_POR, 0x0);
@@ -5842,7 +5845,7 @@ static int max1720x_probe(struct i2c_client *client,
 		return -ENOMEM;
 
 	chip->dev = dev;
-	chip->fake_battery = -1;
+	chip->fake_battery = of_property_read_bool(dev->of_node, "maxim,no-battery") ? 0 : -1;
 	chip->primary = client;
 	chip->batt_id_defer_cnt = DEFAULT_BATTERY_ID_RETRIES;
 	i2c_set_clientdata(client, chip);
