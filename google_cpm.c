@@ -167,6 +167,7 @@ struct gcpm_drv  {
 	int chg_psy_retries;
 	struct power_supply *chg_psy_avail[GCPM_MAX_CHARGERS];
 	const char *chg_psy_names[GCPM_MAX_CHARGERS];
+	struct gvotable_election *dc_chg_avail_votable;
 	struct mutex chg_psy_lock;
 	int chg_psy_active;
 	int chg_psy_count;
@@ -1006,9 +1007,16 @@ exit_done:
 
 static bool gcpm_chg_dc_check_source(const struct gcpm_drv *gcpm, int index)
 {
+	int ret;
+
 	/* Will run detection only the first time */
 	if (gcpm->tcpm_pps_data.stage == PPS_NOTSUPP &&
 	    gcpm->wlc_pps_data.stage == PPS_NOTSUPP )
+		return false;
+
+	ret = gvotable_get_current_int_vote(gcpm->dc_chg_avail_votable);
+	dev_dbg(gcpm->device, "%s: dc_chg_avail vote: %d\n", __func__, ret);
+	if (ret <= 0)
 		return false;
 
 	return gcpm_is_dc(gcpm, index);
@@ -1637,7 +1645,6 @@ static void gcpm_pps_wlc_dc_work(struct work_struct *work)
 			pps_ui = DC_ERROR_RETRY_MS;
 		} else {
 			pr_err("PPS_Work: ping DC failed, elap=%lld (%d)\n", elap, ret);
-
 			ret = gcpm_chg_offline(gcpm, gcpm->dc_index);
 			if (ret == 0)
 				ret = gcpm_enable_default(gcpm);
@@ -2528,6 +2535,10 @@ static int gcpm_mdis_update_limits(struct gcpm_drv *gcpm, int msc_fcc,
 			dev_err(gcpm->device, "MDIS: vote %d on CP failed (%d)\n",
 				cp_fcc, ret);
 	}
+
+	ret = gvotable_cast_int_vote(gcpm->dc_chg_avail_votable, REASON_MDIS, cp_fcc != 0, 1);
+	if (ret < 0)
+		dev_err(gcpm->device, "Unable to cast vote for DC Chg avail (%d)\n", ret);
 
 	/* turning off wireless charging equires disabling the wireless IC */
 	if (dc_icl == 0 && dc_icl_votable) {
@@ -4010,6 +4021,20 @@ static int google_cpm_probe(struct platform_device *pdev)
 	gvotable_set_default(gcpm->dc_fcc_votable, (void *)-1);
 	gvotable_set_vote2str(gcpm->dc_fcc_votable, gvotable_v2s_int);
 	gvotable_election_set_name(gcpm->dc_fcc_votable, "DC_FCC");
+
+	gcpm->dc_chg_avail_votable = gvotable_create_int_election(
+			NULL, gvotable_comparator_int_min, NULL, NULL);
+
+	if (IS_ERR_OR_NULL(gcpm->dc_chg_avail_votable)) {
+		ret = PTR_ERR(gcpm->dc_chg_avail_votable);
+		dev_err(gcpm->device, "no DC chg avail votable %d\n", ret);
+		return ret;
+	}
+
+	gvotable_set_default(gcpm->dc_chg_avail_votable, (void *)1);
+	gvotable_set_vote2str(gcpm->dc_chg_avail_votable, gvotable_v2s_int);
+	gvotable_election_set_name(gcpm->dc_chg_avail_votable, VOTABLE_DC_CHG_AVAIL);
+	gvotable_use_default(gcpm->dc_chg_avail_votable, true);
 
 	/* sysfs & debug */
 	gcpm->debug_entry = gcpm_init_fs(gcpm);

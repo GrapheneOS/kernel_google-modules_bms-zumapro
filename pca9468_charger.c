@@ -20,6 +20,7 @@
 #include <linux/i2c.h>
 #include <linux/regmap.h>
 #include <linux/rtc.h>
+#include <misc/gvotable.h>
 
 #include "pca9468_regs.h"
 #include "pca9468_charger.h"
@@ -3860,6 +3861,16 @@ error:
 			"%s: timer_id=%d->%d, charging_state=%u->%u, period=%ld ret=%d",
 			__func__, timer_id, pca9468->timer_id, charging_state,
 			pca9468->charging_state, pca9468->timer_period, ret);
+
+	if (!pca9468->dc_avail)
+		pca9468->dc_avail = gvotable_election_get_handle(VOTABLE_DC_CHG_AVAIL);
+
+	if (pca9468->dc_avail) {
+		ret = gvotable_cast_int_vote(pca9468->dc_avail, REASON_DC_DRV, 0, 1);
+		if (ret < 0)
+			dev_err(pca9468->dev, "Unable to cast vote for DC Chg avail (%d)\n", ret);
+	}
+
 	pca9468_stop_charging(pca9468);
 }
 
@@ -5083,6 +5094,9 @@ static int pca9468_probe(struct i2c_client *client,
 		}
 	}
 #endif
+
+	pca9468_chg->dc_avail = NULL;
+
 	pca9468_chg->init_done = true;
 	pr_info("pca9468: probe_done\n");
 	pr_debug("%s: =========END=========\n", __func__);
