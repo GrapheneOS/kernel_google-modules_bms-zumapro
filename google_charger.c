@@ -1979,6 +1979,11 @@ static int chg_run_defender(struct chg_drv *chg_drv)
 		/* force TEMP-DEFEND off */
 		chg_drv->bd_state.enabled = 0;
 
+		/* set dd_state to inactive state (DOCK_DEFEND_ENABLED) */
+		if (chg_drv->bd_state.dd_enabled)
+			chg_drv->bd_state.dd_state = bd_dd_state_update(chg_drv->bd_state.dd_state,
+									false, false);
+
 	} else if (chg_drv->bd_state.enabled) {
 		const bool was_triggered = bd_state->triggered;
 
@@ -2020,6 +2025,11 @@ static int chg_run_defender(struct chg_drv *chg_drv)
 					was_triggered, chg_drv->stop_charging,
 					lock_soc);
 			}
+
+			/* set dd_state to inactive state (DOCK_DEFEND_ENABLED) */
+			if (bd_state->dd_enabled)
+				bd_state->dd_state = bd_dd_state_update(bd_state->dd_state,
+									false, false);
 		}
 		/* run dock_defend */
 		if (!bd_state->triggered && bd_state->dd_enabled)
