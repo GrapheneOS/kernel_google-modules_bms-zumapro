@@ -138,6 +138,7 @@ struct chg_thermal_device {
 	int *thermal_mitigation;
 	int thermal_levels;
 	int current_level;
+	int therm_fan_alarm_level;
 };
 
 struct chg_termination {
@@ -3785,6 +3786,37 @@ static ssize_t charge_stats_store(struct device *dev,
 
 static DEVICE_ATTR_RW(charge_stats);
 
+static ssize_t
+thermal_dc_fan_alarm_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct chg_drv *chg_drv = dev_get_drvdata(dev);
+	struct chg_thermal_device *ctdev_dcin = &chg_drv->thermal_devices[CHG_TERMAL_DEVICE_DC_IN];
+	int value = ctdev_dcin->therm_fan_alarm_level;
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", value);;
+}
+
+static ssize_t thermal_dc_fan_alarm_store(struct device *dev,
+				   struct device_attribute *attr,
+				   const char *buf, size_t count)
+{
+	struct chg_drv *chg_drv = dev_get_drvdata(dev);
+	struct chg_thermal_device *ctdev_dcin = &chg_drv->thermal_devices[CHG_TERMAL_DEVICE_DC_IN];
+	int ret = 0;
+	u32 value;
+
+	ret = kstrtou32(buf, 0, &value);
+	if (ret < 0)
+		return ret;
+
+	if (value <= ctdev_dcin->thermal_levels)
+		ctdev_dcin->therm_fan_alarm_level = value;
+
+	return count;
+}
+
+static DEVICE_ATTR_RW(thermal_dc_fan_alarm);
+
 static int chg_init_fs(struct chg_drv *chg_drv)
 {
 	int ret;
@@ -3909,6 +3941,12 @@ static int chg_init_fs(struct chg_drv *chg_drv)
 	ret = device_create_file(chg_drv->device, &dev_attr_charge_stats);
 	if (ret != 0) {
 		pr_err("Failed to create charge_stats files, ret=%d\n", ret);
+		return ret;
+	}
+
+	ret = device_create_file(chg_drv->device, &dev_attr_thermal_dc_fan_alarm);
+	if (ret != 0) {
+		pr_err("Failed to create thermal_dc_fan_alarm, ret=%d\n", ret);
 		return ret;
 	}
 
@@ -4371,10 +4409,11 @@ static void chg_init_votables(struct chg_drv *chg_drv)
 static int fan_get_level(struct chg_thermal_device *tdev)
 {
 	int level = FAN_LVL_UNKNOWN;
+	int alarm_level = tdev->therm_fan_alarm_level;
 
 	if (tdev->current_level == 0)
 		level = FAN_LVL_NOT_CARE;
-	else if (tdev->current_level == tdev->thermal_levels)
+	else if (tdev->current_level >= alarm_level)
 		level = FAN_LVL_ALARM;
 	else
 		level = FAN_LVL_MED;
@@ -4821,6 +4860,12 @@ static int chg_tdev_init(struct chg_thermal_device *tdev, const char *name,
 		tdev->thermal_mitigation = NULL;
 		return -ENODATA;
 	}
+
+	rc = of_property_read_u32(chg_drv->device->of_node,
+				   "google,wlc-thermal-dc-fan-alarm",
+				   &tdev->therm_fan_alarm_level);
+	if (rc < 0)
+		tdev->therm_fan_alarm_level = tdev->thermal_levels;
 
 	tdev->chg_drv = chg_drv;
 
