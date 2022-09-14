@@ -194,10 +194,45 @@ static void gdbatt_check_current(struct dual_fg_drv *dual_fg_drv, int temp_idx, 
 	}
 }
 
+static void gdbatt_ov_handler(struct dual_fg_drv *dual_fg_drv, int vbatt_idx, int temp_idx)
+{
+	struct gbms_chg_profile *profile = &dual_fg_drv->chg_profile;
+	const int cc_max = dual_fg_drv->cc_max;
+	int next_cc_max;
+	int next_vbatt_idx = vbatt_idx + 1;
+
+	if (next_vbatt_idx >= profile->volt_nb_limits)
+		next_vbatt_idx = vbatt_idx;
+	next_cc_max = GBMS_CCCM_LIMITS(profile, temp_idx, next_vbatt_idx);
+
+	if (next_cc_max == cc_max) {
+		pr_debug("%s: skip ov for tier %d/%d", __func__, vbatt_idx, next_vbatt_idx);
+		return;
+	}
+
+	if (!dual_fg_drv->fcc_votable)
+		dual_fg_drv->fcc_votable = gvotable_election_get_handle(VOTABLE_MSC_FCC);
+	if (dual_fg_drv->fcc_votable) {
+		const int cc_offset_max = cc_max - next_cc_max;
+		int cc_offset = dual_fg_drv->cc_balance_offset + DUAL_BATT_BALANCE_CC_ADJUST_STEP;
+
+		if (cc_offset > cc_offset_max)
+			cc_offset = cc_offset_max;
+
+		gvotable_cast_int_vote(dual_fg_drv->fcc_votable, DUAL_BATT_BALANCE_VOTER,
+				       cc_max - cc_offset, true);
+		pr_debug("%s: battery OV cc_max:%d->%d (%d)\n", __func__, cc_max,
+			 cc_max - cc_offset, next_cc_max);
+
+		dual_fg_drv->cc_balance_offset = cc_offset;
+		power_supply_changed(dual_fg_drv->psy);
+	}
+}
+
 static void gdbatt_select_cc_max(struct dual_fg_drv *dual_fg_drv)
 {
 	struct gbms_chg_profile *profile = &dual_fg_drv->chg_profile;
-	int base_temp, sec_temp, base_vbatt, sec_vbatt;
+	int base_temp, sec_temp, base_vbatt, sec_vbatt, dual_vbatt;
 	int base_temp_idx, sec_temp_idx, base_vbatt_idx, sec_vbatt_idx, temp_idx, vbatt_idx;
 	int base_cc_max, sec_cc_max, cc_max;
 	struct power_supply *base_psy = dual_fg_drv->first_fg_psy;
@@ -224,9 +259,12 @@ static void gdbatt_select_cc_max(struct dual_fg_drv *dual_fg_drv)
 	if (sec_vbatt < 0)
 		goto check_done;
 
+	dual_vbatt = (base_vbatt + sec_vbatt) / 2;
+
 	base_temp_idx = gdbatt_select_temp_idx(profile, base_temp);
 	sec_temp_idx = gdbatt_select_temp_idx(profile, sec_temp);
 
+	vbatt_idx = gdbatt_select_voltage_idx(profile, dual_vbatt);
 	base_vbatt_idx = gdbatt_select_voltage_idx(profile, base_vbatt);
 	sec_vbatt_idx = gdbatt_select_voltage_idx(profile,
 					  sec_vbatt - dual_fg_drv->vsec_offset);
@@ -235,19 +273,24 @@ static void gdbatt_select_cc_max(struct dual_fg_drv *dual_fg_drv)
 	if (sec_vbatt_idx > dual_fg_drv->vsec_offset_max_idx)
 		sec_vbatt_idx = gdbatt_select_voltage_idx(profile, sec_vbatt);
 
-	base_cc_max = GBMS_CCCM_LIMITS(profile, base_temp_idx, base_vbatt_idx);
-	sec_cc_max = GBMS_CCCM_LIMITS(profile, sec_temp_idx, sec_vbatt_idx);
+	base_cc_max = GBMS_CCCM_LIMITS(profile, base_temp_idx, vbatt_idx);
+	sec_cc_max = GBMS_CCCM_LIMITS(profile, sec_temp_idx, vbatt_idx);
 	if (base_cc_max <= sec_cc_max) {
 		cc_max = base_cc_max;
 		temp_idx = base_temp_idx;
-		vbatt_idx = base_vbatt_idx;
 	} else {
 		cc_max = sec_cc_max;
 		temp_idx = sec_temp_idx;
-		vbatt_idx = sec_vbatt_idx;
 	}
+
 	if (cc_max == dual_fg_drv->cc_max) {
-		check_current = true;
+		if ((base_vbatt_idx > vbatt_idx) || (sec_vbatt_idx > vbatt_idx)) {
+			pr_debug("%s: battery OV v_base:%d, v_sec:%d\n",
+				 __func__, base_vbatt, sec_vbatt);
+			gdbatt_ov_handler(dual_fg_drv, vbatt_idx, temp_idx);
+		} else {
+			check_current = true;
+		}
 		goto check_done;
 	}
 
@@ -260,7 +303,7 @@ static void gdbatt_select_cc_max(struct dual_fg_drv *dual_fg_drv)
 		gvotable_cast_int_vote(dual_fg_drv->fcc_votable, DUAL_BATT_BALANCE_VOTER, 0, false);
 
 		/* set new cc_max by temp */
-		pr_info("temp:%d/%d(%d/%d), vbatt:%d/%d(%d/%d), cc_max:%d/%d(%d)\n",
+		pr_info("%s: temp:%d/%d(%d/%d), vbatt:%d/%d(%d/%d), cc_max:%d/%d(%d)\n", __func__,
 			base_temp, sec_temp, base_temp_idx, sec_temp_idx, base_vbatt,
 			sec_vbatt, base_vbatt_idx, sec_vbatt_idx, base_cc_max,
 			sec_cc_max, cc_max);
