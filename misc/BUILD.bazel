@@ -21,6 +21,16 @@ filegroup(
     ],
 )
 
+filegroup(
+    name = "bms-misc.kconfig",
+    srcs = glob([
+        "Kconfig",
+    ]),
+    visibility = [
+        "//private/google-modules/soc/gs:__pkg__",
+    ],
+)
+
 [kernel_module(
     name = "bms-misc.{}".format(kernel_build),
     srcs = glob([
