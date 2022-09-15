@@ -765,35 +765,45 @@ static int p9412_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 
 	if (enable) {
 		if (chgr->pdata->apbst_en) {
-			ret = chgr->reg_write_8(chgr, P9412_APBSTPING_REG,
-						P9412_APBSTPING_7V);
+			ret = chgr->reg_write_8(chgr, P9412_APBSTPING_REG, 0);
+			ret |= chgr->reg_write_8(chgr, P9412_APBSTCONTROL_REG, P9412_APBSTPING_7V);
 			logbuffer_log(chgr->rtx_log,
-				"configure Ext-Boost Vout to 7V.(%d)\n", ret);
+				"configure Ext-Boost Vout to 5V.(%d)", ret);
 			if (ret < 0)
 				return ret;
 		}
-		ret = chgr->reg_write_8(chgr, P9412_TX_CMD_REG,
-					P9412_TX_CMD_TX_MODE_EN);
+		ret = chgr->reg_write_8(chgr, P9412_TX_CMD_REG, P9412_TX_CMD_TX_MODE_EN);
 		if (ret) {
 			logbuffer_log(chgr->rtx_log,
-				 "tx_cmd_reg write failed (%d)\n", ret);
+				 "tx_cmd_reg write failed (%d)", ret);
 			return ret;
 		}
 		ret = p9382_wait_for_mode(chgr, P9XXX_SYS_OP_MODE_TX_MODE);
-		if (ret)
+		if (ret) {
 			logbuffer_log(chgr->rtx_log,
 				      "error waiting for tx_mode (%d)", ret);
+			return ret;
+		}
+
+		ret = chgr->reg_write_16(chgr, P9412_TXOCP_REG, P9412_TXOCP_1400MA);
+		logbuffer_log(chgr->rtx_log, "configure TX OCP to %dMA", P9412_TXOCP_1400MA);
+		if (ret < 0)
+			return ret;
+
+		if (!chgr->pdata->apbst_en)
+			return ret;
+		mod_delayed_work(system_wq, &chgr->chk_rtx_ocp_work, 0);
 	} else {
 		ret = chgr->chip_set_cmd(chgr, P9412_CMD_TXMODE_EXIT);
 		if (ret == 0) {
 			ret = p9382_wait_for_mode(chgr, 0);
 			if (ret < 0)
-				pr_err("cannot exit rTX mode (%d)\n", ret);
+				pr_err("cannot exit rTX mode (%d)", ret);
 		}
 		if (chgr->pdata->apbst_en) {
 			ret = chgr->reg_write_8(chgr, P9412_APBSTPING_REG, 0);
 			logbuffer_log(chgr->rtx_log,
-				"configure Ext-Boost back to 5V.(%d)\n", ret);
+				"configure Ext-Boost back to 5V.(%d)", ret);
 		}
 	}
 

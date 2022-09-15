@@ -500,7 +500,10 @@
 
 /* p9412 AP BOOST PING register */
 #define P9412_APBSTPING_REG			0xF0
+#define P9412_APBSTCONTROL_REG			0xF1
 #define P9412_APBSTPING_7V			BIT(0)
+#define P9412_TXOCP_REG				0xA0
+#define P9412_TXOCP_1400MA			1400
 
 /* Features */
 typedef enum {
@@ -701,6 +704,7 @@ struct p9221_charger_data {
 	struct delayed_work		auth_dc_icl_work;
 	struct delayed_work		fg_work;
 	struct delayed_work		chk_rp_work;
+	struct delayed_work		chk_rtx_ocp_work;
 	struct work_struct		uevent_work;
 	struct work_struct		rtx_disable_work;
 	struct work_struct		rtx_reset_work;
@@ -774,6 +778,8 @@ struct p9221_charger_data {
 	u32				rtx_csp;
 	int				rtx_err;
 	int				rtx_reset_cnt;
+	int				rtx_ocp_chk_ms;
+	int				rtx_total_delay;
 	bool				chg_on_rtx;
 	bool				is_rtx_mode;
 	bool				prop_mode_en;

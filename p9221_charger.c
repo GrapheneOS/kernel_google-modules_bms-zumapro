@@ -4683,8 +4683,6 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 	mutex_lock(&charger->rtx_lock);
 
 	if (enable == 0) {
-		logbuffer_log(charger->rtx_log, "disable rtx\n");
-
 		if (charger->is_rtx_mode) {
 			ret = charger->chip_tx_mode_en(charger, false);
 			charger->is_rtx_mode = false;
@@ -4697,6 +4695,9 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 		if (ret)
 			dev_err(&charger->client->dev,
 				"fail to enable dcin, ret=%d\n", ret);
+
+		logbuffer_log(charger->rtx_log, "disable rtx\n");
+
 		goto done;
 	} else {
 		logbuffer_log(charger->rtx_log, "enable rtx");
@@ -4750,7 +4751,7 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 			dev_err(&charger->client->dev,
 				"cannot enter rTX mode (%d)\n", ret);
 			logbuffer_log(charger->rtx_log,
-				      "cannot enter rTX mode (%d)\n", ret);
+				      "cannot enter rTX mode (%d)", ret);
 			p9382_ben_cfg(charger, RTX_BEN_DISABLED);
 
 			ret = p9382_disable_dcin_en(charger, false);
@@ -4811,6 +4812,75 @@ done:
 	return ret;
 }
 
+#define P9412_RTX_OCP_THRES_MA		900
+static int p9412_check_rtx_ocp(struct p9221_charger_data *chgr)
+{
+	int ret, cnt, retry, ocp_count = 0, current_now, chk_ms, total_delay;
+	u16 status_reg;
+
+	total_delay = chgr->rtx_total_delay > 0 ? chgr->rtx_total_delay : 3000;
+	chk_ms = chgr->rtx_ocp_chk_ms > 0 ? chgr->rtx_ocp_chk_ms : 20;
+	retry = (total_delay / chk_ms > 0) ? (total_delay / chk_ms) : 1;
+
+	logbuffer_log(chgr->rtx_log, "use rtx_ocp_chk_ms=%d retry=%d", chk_ms, retry);
+
+	for (cnt = 0; cnt < retry; cnt++) {
+		/* check if rx_is_connected: if yes, goto 7V */
+		ret = chgr->reg_read_16(chgr, P9221_STATUS_REG, &status_reg);
+		if (ret < 0) {
+			logbuffer_log(chgr->rtx_log, "goto disable RTx(%d)", ret);
+			return -EIO;
+		}
+		if (status_reg & chgr->ints.rx_connected_bit) {
+			logbuffer_log(chgr->rtx_log, "rx is connected, goto 7V");
+			return 0;
+		}
+		/* check if (ocp_cnt > 2): if yes, disable rtx */
+		ret = chgr->chip_get_iout(chgr, &current_now);
+		if (ret == 0 && current_now > P9412_RTX_OCP_THRES_MA) {
+			ocp_count++;
+			logbuffer_log(chgr->rtx_log, "cnt=%d,current_now=%d,ocp_count=%d",
+				      cnt, current_now, ocp_count);
+		}
+		if (ret < 0) {
+			logbuffer_log(chgr->rtx_log, "iout disable RTx(%d)", ret);
+			return -EINVAL;
+		}
+		if (ocp_count > 2 || current_now == 0) {
+			logbuffer_log(chgr->rtx_log, "ocp_count=%d current_now=%d disable RTx",
+				      ocp_count, current_now);
+			return -EINVAL;
+		}
+		usleep_range(chk_ms * USEC_PER_MSEC, (chk_ms + 2) * USEC_PER_MSEC);
+	}
+
+	return 0;
+}
+
+static void p9412_chk_rtx_ocp_work(struct work_struct *work)
+{
+	struct p9221_charger_data *chgr = container_of(work,
+			struct p9221_charger_data, chk_rtx_ocp_work.work);
+	int ret;
+
+	/* check TX OCP before enable 7V */
+	ret = p9412_check_rtx_ocp(chgr);
+	if (ret < 0) {
+		p9382_set_rtx(chgr, false);
+		return;
+	}
+
+	ret = chgr->reg_write_8(chgr, P9412_APBSTPING_REG, P9412_APBSTPING_7V);
+	ret |= chgr->reg_write_8(chgr, P9412_APBSTCONTROL_REG, P9412_APBSTPING_7V);
+	if (ret == 0) {
+		schedule_delayed_work(&chgr->rtx_work, msecs_to_jiffies(P9382_RTX_TIMEOUT_MS));
+	} else {
+		logbuffer_log(chgr->rtx_log, "Failed to configure Ext-Boost Vout registers(%d)",
+			      ret);
+		p9382_set_rtx(chgr, false);
+	}
+}
+
 static ssize_t rtx_show(struct device *dev,
 			struct device_attribute *attr,
 			char *buf)
@@ -4836,6 +4906,8 @@ static ssize_t rtx_store(struct device *dev,
 		dev_info(&charger->client->dev, "battery share off\n");
 		logbuffer_log(charger->rtx_log, "battery share off");
 		cancel_delayed_work_sync(&charger->rtx_work);
+		if (charger->pdata->apbst_en)
+			cancel_delayed_work_sync(&charger->chk_rtx_ocp_work);
 		charger->rtx_reset_cnt = 0;
 		ret = p9382_set_rtx(charger, false);
 	} else if (buf[0] == '1') {
@@ -5191,12 +5263,9 @@ static void p9xxx_reset_rtx_for_ocp(struct p9221_charger_data *charger)
 {
 	int ext_bst_on = 0;
 
-	if (charger->pdata->ben_gpio > 0)
-		ext_bst_on = gpio_get_value_cansleep(charger->pdata->ben_gpio);
-
 	charger->rtx_reset_cnt += 1;
 
-	if ((charger->rtx_reset_cnt >= RTX_RESET_COUNT_MAX) || ext_bst_on) {
+	if (charger->rtx_reset_cnt >= RTX_RESET_COUNT_MAX) {
 		if (charger->rtx_reset_cnt == RTX_RESET_COUNT_MAX)
 			charger->rtx_err = RTX_HARD_OCP;
 		charger->rtx_reset_cnt = 0;
@@ -5206,6 +5275,11 @@ static void p9xxx_reset_rtx_for_ocp(struct p9221_charger_data *charger)
 	p9382_set_rtx(charger, false);
 
 	msleep(REENABLE_RTX_DELAY);
+
+	if (charger->pdata->ben_gpio > 0)
+		ext_bst_on = gpio_get_value_cansleep(charger->pdata->ben_gpio);
+	if (ext_bst_on)
+		return;
 
 	if (charger->rtx_reset_cnt) {
 		dev_info(&charger->client->dev, "re-enable RTx mode, cnt=%d\n", charger->rtx_reset_cnt);
@@ -5275,8 +5349,8 @@ static void rtx_irq_handler(struct p9221_charger_data *charger, u16 irq_src)
 		if (mode_reg == P9XXX_SYS_OP_MODE_TX_MODE) {
 			charger->is_rtx_mode = true;
 			cancel_delayed_work_sync(&charger->rtx_work);
-			schedule_delayed_work(&charger->rtx_work,
-				    msecs_to_jiffies(P9382_RTX_TIMEOUT_MS));
+			if (!charger->pdata->apbst_en)
+				schedule_delayed_work(&charger->rtx_work, msecs_to_jiffies(P9382_RTX_TIMEOUT_MS));
 		}
 		dev_info(&charger->client->dev,
 			 "P9221_SYSTEM_MODE_REG reg: %02x\n",
@@ -6463,6 +6537,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	INIT_DELAYED_WORK(&charger->auth_dc_icl_work, p9221_auth_dc_icl_work);
 	INIT_DELAYED_WORK(&charger->fg_work, p9221_fg_work);
 	INIT_DELAYED_WORK(&charger->chk_rp_work, p9xxx_chk_rp_work);
+	INIT_DELAYED_WORK(&charger->chk_rtx_ocp_work, p9412_chk_rtx_ocp_work);
 	INIT_WORK(&charger->uevent_work, p9221_uevent_work);
 	INIT_WORK(&charger->rtx_disable_work, p9382_rtx_disable_work);
 	INIT_WORK(&charger->rtx_reset_work, p9xxx_rtx_reset_work);
@@ -6688,6 +6763,8 @@ static int p9221_charger_probe(struct i2c_client *client,
 	} else {
 		debugfs_create_bool("no_fod", 0644, charger->debug_entry, &charger->no_fod);
 		debugfs_create_u32("de_q_value", 0644, charger->debug_entry, &charger->de_q_value);
+		debugfs_create_u32("de_chk_ocp_ms", 0644, charger->debug_entry, &charger->rtx_ocp_chk_ms);
+		debugfs_create_u32("de_rtx_delay_ms", 0644, charger->debug_entry, &charger->rtx_total_delay);
 	}
 
 	/* can independently read battery capacity */
@@ -6768,6 +6845,7 @@ static int p9221_charger_remove(struct i2c_client *client)
 	cancel_delayed_work_sync(&charger->rtx_work);
 	cancel_delayed_work_sync(&charger->auth_dc_icl_work);
 	cancel_delayed_work_sync(&charger->chk_rp_work);
+	cancel_delayed_work_sync(&charger->chk_rtx_ocp_work);
 	cancel_work_sync(&charger->uevent_work);
 	cancel_work_sync(&charger->rtx_disable_work);
 	cancel_work_sync(&charger->rtx_reset_work);
