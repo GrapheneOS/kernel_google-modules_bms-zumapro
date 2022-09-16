@@ -2912,13 +2912,7 @@ static bool batt_health_set_chg_deadline(struct batt_chg_health *chg_health,
 	return new_deadline || rest_state != chg_health->rest_state;
 }
 
-/* cc_max in ua: capacity in mAh, rest_rate in deciPct */
-static int msc_logic_health_get_rate(const struct batt_chg_health *rest,
-				     int capacity_ma)
-{
-	return capacity_ma * rest->rest_rate * 10;
-}
-
+#define HEALTH_CHG_RATE_BEFORE_TRIGGER 80
 /* health based charging trade charging speed for battery cycle life. */
 static bool msc_logic_health(struct batt_drv *batt_drv)
 {
@@ -2927,6 +2921,7 @@ static bool msc_logic_health(struct batt_drv *batt_drv)
 	const ktime_t deadline = rest->rest_deadline;
 	enum chg_health_state rest_state = rest->rest_state;
 	const bool aon_enabled = rest->always_on_soc != -1;
+	const int capacity_ma = batt_drv->battery_capacity;
 	const ktime_t now = get_boot_sec();
 	int fv_uv = -1, cc_max = -1;
 	bool changed = false;
@@ -3015,9 +3010,8 @@ static bool msc_logic_health(struct batt_drv *batt_drv)
 
 done_exit:
 	if (rest_state == CHG_HEALTH_ACTIVE || rest_state == CHG_HEALTH_DONE) {
-		const int capacity_ma = batt_drv->battery_capacity;
-
-		cc_max = msc_logic_health_get_rate(rest, capacity_ma);
+		/* cc_max in ua: capacity in mAh, rest_rate in deciPct */
+		cc_max = capacity_ma * rest->rest_rate * 10;
 
 		/*
 		 * default FV_UV to the last charge tier since fv_uv will be
@@ -3028,6 +3022,8 @@ done_exit:
 		fv_uv = profile->volt_limits[profile->volt_nb_limits - 1];
 
 		/* TODO: make sure that we wakeup when we are close to ttf */
+	} else if (rest_state == CHG_HEALTH_ENABLED) {
+		cc_max = capacity_ma * rest->rest_rate_before_trigger * 10;
 	} else if (rest_state == CHG_HEALTH_PAUSE) {
 		/*
 		 * pause charging behavior when the the deadline is longer than
@@ -4771,7 +4767,7 @@ DEFINE_SIMPLE_ATTRIBUTE(debug_force_psy_update_fops,
 /* Adaptive Charging */
 static int debug_chg_health_rest_rate_read(void *data, u64 *val)
 {
-	struct batt_drv *batt_drv = (struct batt_drv *)data;
+	struct batt_drv *batt_drv = data;
 
 	if (!batt_drv->psy)
 		return -EINVAL;
@@ -4783,7 +4779,7 @@ static int debug_chg_health_rest_rate_read(void *data, u64 *val)
 /* Adaptive Charging */
 static int debug_chg_health_rest_rate_write(void *data, u64 val)
 {
-	struct batt_drv *batt_drv = (struct batt_drv *)data;
+	struct batt_drv *batt_drv = data;
 
 	if (!batt_drv->psy)
 		return -EINVAL;
@@ -4796,6 +4792,36 @@ static int debug_chg_health_rest_rate_write(void *data, u64 val)
 DEFINE_SIMPLE_ATTRIBUTE(debug_chg_health_rest_rate_fops,
 			debug_chg_health_rest_rate_read,
 			debug_chg_health_rest_rate_write, "%llu\n");
+
+
+/* Adaptive Charging */
+static int debug_chg_health_rest_rate_before_trigger_read(void *data, u64 *val)
+{
+	struct batt_drv *batt_drv = data;
+
+	if (!batt_drv->psy)
+		return -EINVAL;
+
+	*val = batt_drv->chg_health.rest_rate_before_trigger;
+	return 0;
+}
+
+/* Adaptive Charging */
+static int debug_chg_health_rest_rate_before_trigger_write(void *data, u64 val)
+{
+	struct batt_drv *batt_drv = data;
+
+	if (!batt_drv->psy)
+		return -EINVAL;
+
+	batt_drv->chg_health.rest_rate_before_trigger = val;
+	return 0;
+}
+
+/* Adaptive Charging */
+DEFINE_SIMPLE_ATTRIBUTE(debug_chg_health_rest_rate_before_trigger_fops,
+			debug_chg_health_rest_rate_before_trigger_read,
+			debug_chg_health_rest_rate_before_trigger_write, "%llu\n");
 
 /* Adaptive Charging */
 static int debug_chg_health_thr_soc_read(void *data, u64 *val)
@@ -6828,6 +6854,8 @@ static int batt_init_debugfs(struct batt_drv *batt_drv)
 			    &debug_chg_health_thr_soc_fops);
 	debugfs_create_file("chg_health_rest_rate", 0600, de, batt_drv,
 			    &debug_chg_health_rest_rate_fops);
+	debugfs_create_file("chg_health_rest_rate_before_trigger", 0600, de, batt_drv,
+			    &debug_chg_health_rest_rate_before_trigger_fops);
 	debugfs_create_file("chg_health_stage", 0600, de, batt_drv,
 			    &debug_chg_health_stage_fops);
 
@@ -8410,6 +8438,12 @@ static void google_battery_init_work(struct work_struct *work)
 				   &batt_drv->chg_health.rest_rate);
 	if (ret < 0)
 		batt_drv->chg_health.rest_rate = 0;
+
+	ret = of_property_read_u32(batt_drv->device->of_node,
+				   "google,chg-rest-rate-before-trigger",
+				   &batt_drv->chg_health.rest_rate_before_trigger);
+	if (ret < 0)
+		batt_drv->chg_health.rest_rate_before_trigger = HEALTH_CHG_RATE_BEFORE_TRIGGER;
 
 	/* override setting google,battery-roundtrip = 0 in device tree */
 	batt_drv->disable_votes =
