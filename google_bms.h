@@ -307,6 +307,7 @@ struct batt_chg_health {
 	ktime_t rest_deadline;	/* full by this in seconds */
 	ktime_t dry_run_deadline; /* full by this in seconds (prediction) */
 	int rest_rate;		/* centirate once enter */
+	int rest_rate_before_trigger;
 
 	enum chg_health_state rest_state;
 	int rest_cc_max;
