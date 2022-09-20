@@ -73,6 +73,7 @@
 #define MSC_USER_VOTER			"msc_user"
 #define MSC_USER_CHG_LEVEL_VOTER	"msc_user_chg_level"
 #define MSC_CHG_TERM_VOTER		"msc_chg_term"
+#define MSC_PWR_VOTER			"msc_pwr_disable"
 
 #define CHG_TERM_LONG_DELAY_MS		300000	/* 5 min */
 #define CHG_TERM_SHORT_DELAY_MS		60000	/* 1 min */
@@ -4121,7 +4122,7 @@ static int msc_pwr_disable_cb(struct gvotable_election *el,
 	if (!chg_drv->chg_psy)
 		return 0;
 
-	chg_vote_input_suspend(chg_drv, MSC_CHG_VOTER, pwr_disable);
+	chg_vote_input_suspend(chg_drv, MSC_PWR_VOTER, pwr_disable);
 
 	return 0;
 }
