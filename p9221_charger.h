@@ -487,6 +487,10 @@
 #define P9412_APBSTPING_REG			0xF0
 #define P9412_APBSTPING_7V			BIT(0)
 
+#define P9412_MOT_REG				0xD0
+#define P9412_MOT_40PCT				0x10
+#define P9412_MOT_65PCT				0x1A
+
 /* Features */
 typedef enum {
     WLCF_DISABLE_ALL_FEATURE     = 0x00,

@@ -698,6 +698,10 @@ static int p9221_reset_wlc_dc(struct p9221_charger_data *charger)
 		p9221_write_fod(charger);
 	}
 
+	ret = p9221_reg_write_8(charger, P9412_MOT_REG, P9412_MOT_65PCT);
+	if (ret < 0)
+		dev_warn(&charger->client->dev, "Fail to set MOT register(%d)\n", ret);
+
 	return ret;
 }
 
@@ -2260,6 +2264,11 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 			p9xxx_gpio_set_value(charger, extben_gpio, 1);
 
 		p9221_set_switch_reg(charger, true);
+
+		/* Adjusting the minimum on time(MOT) for mitigate LC node voltage overshoot */
+		ret = p9221_reg_write_8(charger, P9412_MOT_REG, P9412_MOT_40PCT);
+		if (ret < 0)
+			dev_warn(&charger->client->dev, "Fail to adjust MOT(%d)\n", ret);
 
 		return 1;
 	} else if (wlc_dc_enabled) {
