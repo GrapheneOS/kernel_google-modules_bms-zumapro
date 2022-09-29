@@ -228,6 +228,26 @@ static bool p9221_is_hpp(struct p9221_charger_data *charger)
 	return ((ret == 0) && (reg == P9XXX_SYS_OP_MODE_PROPRIETARY));
 }
 
+static bool p9221_check_wpc_rev13(struct p9221_charger_data *charger)
+{
+	int ret;
+	u8 val8;
+
+	ret = p9221_reg_read_8(charger, P9412_WPC_SPEC_REV_REG, &val8);
+	if (ret < 0)
+		return false;
+
+	if (val8 == P9XXX_WPC_REV_13) {
+		logbuffer_log(charger->log, "WPC rev is %#02x", val8);
+		return true;
+	}
+
+	if (charger->is_mfg_google || charger->mfg == WLC_MFG_108_FOR_GOOGLE)
+		return true;
+
+	return false;
+}
+
 bool p9221_is_epp(struct p9221_charger_data *charger)
 {
 	int ret;
@@ -4339,7 +4359,7 @@ static ssize_t wpc_ready_show(struct device *dev,
 	struct p9221_charger_data *charger = i2c_get_clientdata(client);
 
 	/* Skip it on BPP */
-	if (!p9221_is_epp(charger) || !charger->pdata->has_wlc_dc)
+	if (!p9221_is_epp(charger) || !charger->pdata->has_wlc_dc || !p9221_check_wpc_rev13(charger))
 		return scnprintf(buf, PAGE_SIZE, "N\n");
 
 	return scnprintf(buf, PAGE_SIZE, "%c\n",

@@ -35,6 +35,7 @@
 #define P9221_RAMP_VOTER			"WLC_RAMP_VOTER"
 #define P9221_HPP_VOTER				"EPP_HPP_VOTER"
 #define WLC_MFG_GOOGLE				0x72
+#define WLC_MFG_108_FOR_GOOGLE			0x108
 #define P9221_DC_ICL_BPP_UA			700000
 #define P9221_DC_ICL_BPP_RAMP_DEFAULT_UA	900000
 #define P9221_DC_ICL_BPP_RAMP_DELAY_DEFAULT_MS	(7 * 60 * 1000)  /* 7 mins */
@@ -420,6 +421,7 @@
 #define P9412_ALIGN_X_REG			0xB0 /* 1 byte 8 bit raw */
 #define P9412_ALIGN_Y_REG			0xB1 /* 1 byte 8 bit raw */
 #define P9412_EPP_CAL_STATE_REG			0xB8
+#define P9412_WPC_SPEC_REV_REG			0xB9
 #define P9412_PROP_TX_POTEN_PWR_REG		0xC4
 #define P9412_PROP_REQ_PWR_REG			0xC5
 #define P9412_PROP_CURR_PWR_REG			0xC6
@@ -501,6 +503,7 @@
 #define HPP_MODE_PWR_REQUIRE			23
 
 #define RTX_RESET_COUNT_MAX			3
+#define P9XXX_WPC_REV_13			0x13
 
 /* p9412 AP BOOST PING register */
 #define P9412_APBSTPING_REG			0xF0
