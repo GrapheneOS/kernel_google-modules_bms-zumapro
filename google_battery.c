@@ -27,6 +27,7 @@
 #include <linux/platform_device.h>
 #include <linux/thermal.h>
 #include <linux/slab.h>
+#include <linux/rtc.h>
 #include "gbms_power_supply.h"
 #include "google_bms.h"
 #include "google_psy.h"
@@ -303,6 +304,13 @@ struct bhi_weight bhi_w[] = {
 	[BHI_ALGO_MIX_N_MATCH] = {90, 10, 5},
 };
 
+struct bm_date {
+	u8 bm_y;
+	u8 bm_m;
+	u8 bm_d;
+	u8 reserve;
+};
+
 struct bhi_data
 {
 	/* context */
@@ -321,6 +329,10 @@ struct bhi_data
 	/* swell probability */
 	int swell_cumulative;		/* from swell data */
 	int ccbin_index;		/* from SOC residency */
+
+	/* battery manufacture date */
+	struct bm_date bm_date;		/* from eeprom SN */
+	u8 act_date[BATT_EEPROM_TAG_XYMD_LEN];
 
 };
 
@@ -3264,6 +3276,79 @@ exit_done:
 }
 
 /* BHI -------------------------------------------------------------------- */
+
+/*
+ * Format of XYMD:
+ *   XYMD[0]: YEAR (1 CHARACTER, NUMERIC; LAST DIGIT OF YEAR)
+ *   XYMD[1]: Month(1 Character ASCII,Alphanumeric;1-9 For Han-Sept,A=Oct,B=Nov,C=Dec)
+ *   XYMD[2]: Day(1 Character ASCII,Alphanumeric;1-9 For 1st-9th, A=10th,B=11th,...X=31st;
+ *            skip the letter “I” and the letter”O”)
+ */
+static inline int date_to_xymd(u8 val)
+{
+	if (val >= 23)
+		return (val - 23) + 0x50; /* 0x50 = 'P', 23th */
+	else if (val >= 18)
+		return (val - 18) + 0x4a; /* 0x4a = 'J', 18th*/
+	else if (val >= 10)
+		return (val - 10) + 0x41; /* 0x41 = 'A', 10th*/
+	else
+		return (val + 0x30);
+}
+
+static inline int xymd_to_date(u8 val)
+{
+	if (val >= 0x50)
+		return (val - 0x50) + 23; /* 0x50 = 'P', 23th */
+	else if (val >= 0x4a)
+		return (val - 0x4a) + 18; /* 0x4a = 'J', 18th*/
+	else if (val >= 0x41)
+		return (val - 0x41) + 10; /* 0x41 = 'A', 10th*/
+	else
+		return (val - 0x30);
+}
+
+static int batt_get_manufacture_date(struct bhi_data *bhi_data)
+{
+	struct bm_date *date = &bhi_data->bm_date;
+	u8 data[BATT_EEPROM_TAG_XYMD_LEN];
+	int ret = 0;
+
+	ret = gbms_storage_read(GBMS_TAG_MYMD, data, sizeof(data));
+	if (ret < 0)
+		return ret;
+
+	/* format: YYMMDD */
+	date->bm_y = xymd_to_date(data[0]) + 20;
+	date->bm_m = xymd_to_date(data[1]);
+	date->bm_d = xymd_to_date(data[2]);
+	pr_debug("%s: battery manufacture date: 20%d-%d-%d\n",
+		 __func__, date->bm_y, date->bm_m, date->bm_d);
+
+	return 0;
+}
+
+static int batt_get_activation_date(struct bhi_data *bhi_data)
+{
+	int ret;
+
+	ret = gbms_storage_read(GBMS_TAG_AYMD, &bhi_data->act_date,
+				sizeof(bhi_data->act_date));
+	if (ret < 0)
+		return ret;
+
+	if (bhi_data->act_date[0] == 0xff) {
+		/*
+		 * TODO: set a default value
+		 * might to set by dev_act_date_show() from user space
+		 */
+		bhi_data->act_date[0] = 0x30; /* 0x30 = '0', 2020 */
+		bhi_data->act_date[1] = 0x43; /* 0x43 = 'C', 12th */
+		bhi_data->act_date[2] = 0x31; /* 0x31 = '1', 1st */
+	}
+
+	return 0;
+}
 
 /* GBMS_PROP_CAPACITY_FADE_RATE access this via GBMS_TAG_HCNT */
 static int hist_get_index(int cycle_count, const struct batt_drv *batt_drv)
@@ -6503,6 +6588,86 @@ static ssize_t health_algo_show(struct device *dev,
 
 static const DEVICE_ATTR_RW(health_algo);
 
+static ssize_t health_cycle_count_show(struct device *dev,
+				      struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	struct bhi_data *bhi_data = &batt_drv->health_data.bhi_data;
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", bhi_data->cycle_count);
+}
+
+static const DEVICE_ATTR_RO(health_cycle_count);
+
+static ssize_t dev_date_show(struct device *dev,
+				      struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	struct bm_date *date = &batt_drv->health_data.bhi_data.bm_date;
+	struct rtc_time tm;
+
+	tm.tm_year = date->bm_y + 100;	// base is 1900
+	tm.tm_mon = date->bm_m - 1;	// 0 is Jan ... 11 is Dec
+	tm.tm_mday = date->bm_d;	// 1st ... 31th
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n", rtc_tm_to_time64(&tm));
+}
+
+static const DEVICE_ATTR_RO(dev_date);
+
+static ssize_t dev_act_date_store(struct device *dev,
+				 struct device_attribute *attr,
+				 const char *buf, size_t count)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	struct bhi_data *bhi_data = &batt_drv->health_data.bhi_data;
+	int value, ret;
+
+	ret = kstrtoint(buf, 0, &value);
+	if (ret < 0)
+		return ret;
+
+	if (value >= 0) {
+		/* reset: 0, set: YYMMDD */
+		bhi_data->act_date[0] = (!value) ? 0xff : date_to_xymd((value >> 16) & 0xff - 20);
+		bhi_data->act_date[1] = (!value) ? 0xff : date_to_xymd((value >> 8) & 0xff);
+		bhi_data->act_date[2] = (!value) ? 0xff : date_to_xymd(value & 0xff);
+
+		ret = gbms_storage_write(GBMS_TAG_AYMD, &bhi_data->act_date,
+					 sizeof(bhi_data->act_date));
+		if (ret < 0)
+			return -EINVAL;
+	}
+
+	return count;
+}
+
+static ssize_t dev_act_date_show(struct device *dev,
+				      struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	struct bhi_data *bhi_data = &batt_drv->health_data.bhi_data;
+	struct bm_date date;
+	struct rtc_time tm;
+
+	/* format: YYMMDD */
+	date.bm_y = xymd_to_date(bhi_data->act_date[0]) + 20;
+	date.bm_m = xymd_to_date(bhi_data->act_date[1]);
+	date.bm_d = xymd_to_date(bhi_data->act_date[2]);
+
+	tm.tm_year = date.bm_y + 100;	// base is 1900
+	tm.tm_mon = date.bm_m - 1;	// 0 is Jan ... 11 is Dec
+	tm.tm_mday = date.bm_d;		// 1st ... 31th
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n", rtc_tm_to_time64(&tm));
+}
+
+static const DEVICE_ATTR_RW(dev_act_date);
+
 /* CSI --------------------------------------------------------------------- */
 
 static ssize_t charging_speed_store(struct device *dev,
@@ -6911,6 +7076,15 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_health_algo);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create health algo\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_health_cycle_count);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create health cycle count\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_dev_date);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create dev date\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_dev_act_date);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create dev activation date\n");
 
 	/* csi */
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_charging_speed);
@@ -7603,6 +7777,13 @@ static void google_battery_work(struct work_struct *work)
 				 __func__, ssoc, full, batt_drv->fg_status, fg_status);
 			if (!full)
 				notify_psy_changed = true;
+		}
+
+		/* update the date of first use of the battery */
+		if (!batt_drv->health_data.bhi_data.act_date[0]) {
+			ret = batt_get_activation_date(&batt_drv->health_data.bhi_data);
+			if (ret < 0)
+				pr_warn("cannot get battery activation date, ret=%d\n", ret);;
 		}
 
 		/* slow down the updates at full */
@@ -8924,6 +9105,11 @@ static int google_battery_probe(struct platform_device *pdev)
 	/* power metrics */
 	batt_drv->power_metrics.polling_rate = 30;
 	batt_drv->power_metrics.interval = 120;
+
+	/* Date of manufacturing of the battery */
+	ret = batt_get_manufacture_date(&batt_drv->health_data.bhi_data);
+	if (ret < 0)
+		pr_warn("cannot get battery manufacture date, ret=%d\n", ret);
 
 	return 0;
 }
