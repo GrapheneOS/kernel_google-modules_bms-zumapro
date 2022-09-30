@@ -200,6 +200,8 @@ struct bd_data {
 	int dd_charge_start_level;
 	int dd_trigger_time;
 	ktime_t dd_last_update;
+
+	struct logbuffer *bd_log;
 };
 
 struct thermal_stats_data {
@@ -1410,7 +1412,15 @@ static void bd_init(struct bd_data *bd_state, struct device *dev)
 	if (!bd_state->enabled)
 		dev_warn(dev, "TEMP-DEFEND not enabled\n");
 
-	pr_info("MSC_BD: trig volt=%d,%d temp=%d,time=%d drainto=%d,%d resume=%d,%d %d,%d\n",
+	bd_state->bd_log = logbuffer_register("bd");
+	if (IS_ERR(bd_state->bd_log)) {
+		ret = PTR_ERR(bd_state->bd_log);
+		dev_err(dev, "failed to obtain logbuffer, ret=%d\n", ret);
+		bd_state->bd_log = NULL;
+	}
+
+	gbms_logbuffer_prlog(bd_state->bd_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+		"MSC_BD: trig volt=%d,%d temp=%d,time=%d drainto=%d,%d resume=%d,%d %d,%d",
 		bd_state->bd_trigger_voltage, bd_state->bd_recharge_voltage,
 		bd_state->bd_trigger_temp, bd_state->bd_trigger_time,
 		bd_state->bd_drainto_soc, bd_state->bd_recharge_soc,
@@ -1620,11 +1630,13 @@ static int bd_update_stats(struct bd_data *bd_state,
 	/* exit and entry criteria on temperature while connected */
 	temp_avg = bd_state->temp_sum / bd_state->time_sum;
 	if (triggered && temp <= bd_state->bd_resume_abs_temp) {
-		pr_info("MSC_BD: resume time_sum=%lld, temp_sum=%lld, temp_avg=%lld\n",
+		gbms_logbuffer_prlog(bd_state->bd_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+			"MSC_BD: resume time_sum=%lld, temp_sum=%lld, temp_avg=%lld",
 			bd_state->time_sum, bd_state->temp_sum, temp_avg);
 		bd_reset(bd_state);
 	} else if (!triggered && temp_avg >= bd_state->bd_trigger_temp) {
-		pr_info("MSC_BD: trigger time_sum=%lld, temp_sum=%lld, temp_avg=%lld\n",
+		gbms_logbuffer_prlog(bd_state->bd_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+			"MSC_BD: trigger time_sum=%lld, temp_sum=%lld, temp_avg=%lld",
 			bd_state->time_sum, bd_state->temp_sum, temp_avg);
 		bd_state->triggered = 1;
 	}
@@ -1797,8 +1809,8 @@ static void bd_work(struct work_struct *work)
 	/* soc after disconnect (SSOC must not be locked) */
 	if (bd_state->bd_resume_soc &&
 	    soc < bd_state->bd_resume_soc) {
-		pr_info("MSC_BD_WORK: done soc=%d limit=%d\n",
-			soc, bd_state->bd_resume_soc);
+		gbms_logbuffer_prlog(bd_state->bd_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+			"MSC_BD_WORK: done soc=%d limit=%d", soc, bd_state->bd_resume_soc);
 
 		bd_reset(bd_state);
 		goto bd_rerun;
@@ -1822,7 +1834,8 @@ static void bd_work(struct work_struct *work)
 		triggered = bd_state->bd_resume_temp &&
 			    temp > bd_state->bd_resume_temp;
 		if (!triggered) {
-			pr_info("MSC_BD_WORK: done time=%lld limit=%d, temp=%d limit=%d\n",
+			gbms_logbuffer_prlog(bd_state->bd_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+				"MSC_BD_WORK: done time=%lld limit=%d, temp=%d limit=%d",
 				delta_time, bd_state->bd_resume_time,
 				temp, bd_state->bd_resume_temp);
 
@@ -1927,7 +1940,8 @@ static void bd_dd_init(struct chg_drv *chg_drv)
 	if (ret < 0)
 		bd_state->dd_trigger_time = 0;
 
-	pr_info("MSC_BD: dock_defend stop_level=%d start_level=%d state=%d settings=%d time=%d\n",
+	gbms_logbuffer_prlog(bd_state->bd_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+		"MSC_BD: dock_defend stop_level=%d start_level=%d state=%d settings=%d time=%d",
 		bd_state->dd_charge_stop_level, bd_state->dd_charge_start_level,
 		bd_state->dd_state, bd_state->dd_settings, bd_state->dd_trigger_time);
 }
@@ -2009,8 +2023,8 @@ static void bd_dd_run_defender(struct chg_drv *chg_drv, int soc, int *disable_ch
 	}
 
 	if (bd_state->dd_triggered != was_triggered)
-		pr_info("MSC_BD dd_triggered %d->%d\n",
-			was_triggered, bd_state->dd_triggered);
+		gbms_logbuffer_prlog(bd_state->bd_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+			"MSC_BD dd_triggered %d->%d", was_triggered, bd_state->dd_triggered);
 }
 
 static int chg_run_defender(struct chg_drv *chg_drv)
@@ -2086,7 +2100,8 @@ static int chg_run_defender(struct chg_drv *chg_drv)
 		/* thaw SOC, clear overheat */
 		if (!bd_state->triggered && was_triggered) {
 			rc = bd_batt_set_state(chg_drv, false, -1);
-			pr_info("MSC_BD resume (%d)\n", rc);
+			gbms_logbuffer_prlog(bd_state->bd_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+					     "MSC_BD resume (%d)", rc);
 		} else if (bd_state->triggered) {
 			const int lock_soc = soc; /* or set to 100 */
 
@@ -2110,9 +2125,10 @@ static int chg_run_defender(struct chg_drv *chg_drv)
 			if (!was_triggered || chg_drv->stop_charging) {
 				rc = bd_batt_set_state(chg_drv, true, lock_soc);
 
-				pr_info("MSC_BD triggered was=%d stop=%d lock_soc=%d\n",
-					was_triggered, chg_drv->stop_charging,
-					lock_soc);
+				gbms_logbuffer_prlog(bd_state->bd_log,
+					LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+					"MSC_BD triggered was=%d stop=%d lock_soc=%d",
+					was_triggered, chg_drv->stop_charging, lock_soc);
 			}
 
 			/* set dd_state to inactive state (DOCK_DEFEND_ENABLED) */
@@ -5584,6 +5600,9 @@ static int google_charger_remove(struct platform_device *pdev)
 
 		if (chg_drv->pps_data.log)
 			logbuffer_unregister(chg_drv->pps_data.log);
+
+		if (chg_drv->bd_state.bd_log)
+			logbuffer_unregister(chg_drv->bd_state.bd_log);
 	}
 
 	return 0;

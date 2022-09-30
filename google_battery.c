@@ -2243,13 +2243,13 @@ log_and_done:
 			res = 0;
 
 		gbms_logbuffer_prlog(batt_drv->ttf_stats.ttf_log, LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG,
-				     "ssoc=%d CSI[min=%d max=%d avg=%d type=%d status=%d] "
-				     "TTF[cc=%d time=%lld %lld:%lld:%lld (est=%lld max_ratio=%d)]",
-				     csi_stats->ssoc, csi_stats->csi_speed_min,
+				     "ssoc=%d temp=%d CSI[min=%d max=%d avg=%d type=%d status=%d TTF[cc=%d time=%lld %lld:%lld:%lld (est=%lld max_ratio=%d)]",
+				     csi_stats->ssoc, batt_drv->batt_temp, csi_stats->csi_speed_min,
 				     csi_stats->csi_speed_max, csi_speed_avg,
 				     csi_stats->csi_current_type, csi_stats->csi_current_status,
-				     cc / 1000, right_now, res / 3600, (res % 3600) / 60, (res % 3600) % 60,
-				     res, max_ratio);
+				     cc / 1000, right_now, res / 3600, (res % 3600) / 60,
+				     (res % 3600) % 60, res, max_ratio);
+
 	}
 
 	/* ssoc == -1 on disconnect */
@@ -3076,18 +3076,11 @@ done_no_op:
 	if (!changed)
 		return false;
 
-	batt_prlog(BATT_PRLOG_ALWAYS,
-		   "MSC_HEALTH: now=%lld deadline=%lld aon_soc=%d ttf=%lld state=%d->%d fv_uv=%d, cc_max=%d"
-		   " safety_margin=%d active_time:%lld\n",
-		   now, rest->rest_deadline, rest->always_on_soc, ttf,
-		   rest->rest_state, rest_state, fv_uv, cc_max,
-		   batt_drv->health_safety_margin, rest->active_time);
-	logbuffer_log(batt_drv->ttf_stats.ttf_log,
-		      "MSC_HEALTH: now=%lld deadline=%lld aon_soc=%d ttf=%lld state=%d->%d fv_uv=%d, cc_max=%d"
-		      " safety_margin=%d active_time:%lld",
-		      now, rest->rest_deadline, rest->always_on_soc,
-		      ttf, rest->rest_state, rest_state, fv_uv, cc_max,
-		      batt_drv->health_safety_margin, rest->active_time);
+	gbms_logbuffer_prlog(batt_drv->ttf_stats.ttf_log, LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG,
+			     "MSC_HEALTH: now=%lld deadline=%lld aon_soc=%d ttf=%lld state=%d->%d fv_uv=%d, cc_max=%d safety_margin=%d active_time:%lld",
+			     now, rest->rest_deadline, rest->always_on_soc, ttf, rest->rest_state,
+			     rest_state, fv_uv, cc_max, batt_drv->health_safety_margin,
+			     rest->active_time);
 
 	rest->rest_state = rest_state;
 	memcpy(&batt_drv->ce_data.ce_health, &batt_drv->chg_health,
@@ -5721,11 +5714,9 @@ static ssize_t batt_set_chg_deadline(struct device *dev,
 	if (changed)
 		power_supply_changed(batt_drv->psy);
 
-	pr_info("MSC_HEALTH deadline_s=%lld deadline at %lld\n",
-		deadline_s, batt_drv->chg_health.rest_deadline);
-	logbuffer_log(batt_drv->ttf_stats.ttf_log,
-		     "MSC_HEALTH: deadline_s=%ld deadline at %ld",
-		     deadline_s, batt_drv->chg_health.rest_deadline);
+	gbms_logbuffer_prlog(batt_drv->ttf_stats.ttf_log, LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG,
+			     "MSC_HEALTH: deadline_s=%lld deadline at %lld",
+			     deadline_s, batt_drv->chg_health.rest_deadline);
 
 	return count;
 }
