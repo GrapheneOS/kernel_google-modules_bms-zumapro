@@ -1344,6 +1344,8 @@ static void batt_rl_update_status(struct batt_drv *batt_drv)
 		power_supply_changed(batt_drv->psy);
 
 	ssoc_state->bd_trickle_cnt++;
+
+	dump_ssoc_state(&batt_drv->ssoc_state, batt_drv->ssoc_log);
 }
 
 /* ------------------------------------------------------------------------- */
