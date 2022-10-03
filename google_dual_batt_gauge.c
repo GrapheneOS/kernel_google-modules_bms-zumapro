@@ -329,6 +329,17 @@ static int gdbatt_get_property(struct power_supply *psy,
 		/* TODO: need hash SN */
 		val->strval = fg_1.strval;
 		break;
+	/* support bhi */
+	case GBMS_PROP_HEALTH_ACT_IMPEDANCE:
+	case GBMS_PROP_HEALTH_IMPEDANCE:
+	case GBMS_PROP_RESISTANCE:
+	case GBMS_PROP_RESISTANCE_RAW:
+	case GBMS_PROP_RESISTANCE_AVG:
+	case GBMS_PROP_BATTERY_AGE:
+	case GBMS_PROP_CHARGE_FULL_ESTIMATE:
+	case GBMS_PROP_CAPACITY_FADE_RATE:
+		val->intval = fg_1.intval;
+		break;
 	default:
 		pr_debug("getting unsupported property: %d\n", psp);
 		break;
@@ -377,6 +388,14 @@ static int gdbatt_set_property(struct power_supply *psy,
 				pr_err("Cannot set the second BATT_CE_CTRL, ret=%d\n", ret);
 		}
 		dual_fg_drv->cable_in = !!val->intval;
+		break;
+	case GBMS_PROP_HEALTH_ACT_IMPEDANCE:
+		/* TODO: discuss with BattEng to decide save data */
+		/* if (dual_fg_drv->first_fg_psy) {
+			ret = GPSY_SET_PROP(dual_fg_drv->first_fg_psy, psp, val->intval);
+			if (ret < 0)
+				pr_err("Cannot set the first HEALTH_ACT_IMPEDANCE, ret=%d\n", ret);
+		} */
 		break;
 	default:
 		return -EINVAL;
