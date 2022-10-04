@@ -34,6 +34,7 @@
 
 #define DUAL_BATT_BALANCE_VOTER	"dual_batt_balance"
 #define DUAL_BATT_BALANCE_CC_ADJUST_STEP	100000  /* 100mA */
+#define DUAL_BATT_BALANCE_FV_ADJUST_STEP	10000   /* 10mV */
 
 #define DUAL_BATT_VSEC_OFFSET		50000
 #define DUAL_BATT_VSEC_OFFSET_IDX	0
@@ -53,6 +54,7 @@ struct dual_fg_drv {
 	struct delayed_work init_work;
 	struct delayed_work gdbatt_work;
 	struct gvotable_election *fcc_votable;
+	struct gvotable_election *fv_votable;
 
 	struct gbms_chg_profile chg_profile;
 	struct gbms_chg_profile base_profile;
@@ -66,6 +68,7 @@ struct dual_fg_drv {
 	int cc_max;
 	int cc_balance_offset;
 	int cc_balance_ratio;
+	int fv_balance_offset;
 
 	int base_charge_full;
 	int sec_charge_full;
@@ -154,7 +157,10 @@ static void gdbatt_check_current(struct dual_fg_drv *dual_fg_drv, int temp_idx, 
 
 	if (!dual_fg_drv->cable_in) {
 		dual_fg_drv->cc_balance_offset = 0;
+		dual_fg_drv->fv_balance_offset = 0;
 		gvotable_cast_int_vote(dual_fg_drv->fcc_votable, DUAL_BATT_BALANCE_VOTER,
+				       0, false);
+		gvotable_cast_int_vote(dual_fg_drv->fv_votable, DUAL_BATT_BALANCE_VOTER,
 				       0, false);
 		return;
 	}
@@ -194,6 +200,22 @@ static void gdbatt_check_current(struct dual_fg_drv *dual_fg_drv, int temp_idx, 
 	}
 }
 
+static void gdbatt_ov_last_tier(struct dual_fg_drv *dual_fg_drv)
+{
+	if (!dual_fg_drv->fv_votable)
+		dual_fg_drv->fv_votable = gvotable_election_get_handle(VOTABLE_MSC_FV);
+	if (dual_fg_drv->fv_votable) {
+		struct gbms_chg_profile *profile = &dual_fg_drv->chg_profile;
+		const int fv = profile->volt_limits[profile->volt_nb_limits - 1];
+		int fv_offset = dual_fg_drv->fv_balance_offset + DUAL_BATT_BALANCE_FV_ADJUST_STEP;
+
+		gvotable_cast_int_vote(dual_fg_drv->fv_votable, DUAL_BATT_BALANCE_VOTER,
+				       fv - fv_offset, true);
+		pr_info("%s: battery over max fv:%d->%d\n", __func__, fv, fv - fv_offset);
+		dual_fg_drv->fv_balance_offset = fv_offset;
+	}
+}
+
 static void gdbatt_ov_handler(struct dual_fg_drv *dual_fg_drv, int vbatt_idx, int temp_idx)
 {
 	struct gbms_chg_profile *profile = &dual_fg_drv->chg_profile;
@@ -203,8 +225,8 @@ static void gdbatt_ov_handler(struct dual_fg_drv *dual_fg_drv, int vbatt_idx, in
 
 	if (next_vbatt_idx >= profile->volt_nb_limits)
 		next_vbatt_idx = vbatt_idx;
-	next_cc_max = GBMS_CCCM_LIMITS(profile, temp_idx, next_vbatt_idx);
 
+	next_cc_max = GBMS_CCCM_LIMITS(profile, temp_idx, next_vbatt_idx);
 	if (next_cc_max == cc_max) {
 		pr_debug("%s: skip ov for tier %d/%d", __func__, vbatt_idx, next_vbatt_idx);
 		return;
@@ -265,13 +287,21 @@ static void gdbatt_select_cc_max(struct dual_fg_drv *dual_fg_drv)
 	sec_temp_idx = gdbatt_select_temp_idx(profile, sec_temp);
 
 	vbatt_idx = gdbatt_select_voltage_idx(profile, dual_vbatt);
-	base_vbatt_idx = gdbatt_select_voltage_idx(profile, base_vbatt);
-	sec_vbatt_idx = gdbatt_select_voltage_idx(profile,
-					  sec_vbatt - dual_fg_drv->vsec_offset);
+	if (base_vbatt > profile->volt_limits[profile->volt_nb_limits - 1])
+		base_vbatt_idx = profile->volt_nb_limits;
+	else
+		base_vbatt_idx = gdbatt_select_voltage_idx(profile, base_vbatt);
 
-	/* only apply offset in allowed idx */
-	if (sec_vbatt_idx > dual_fg_drv->vsec_offset_max_idx)
-		sec_vbatt_idx = gdbatt_select_voltage_idx(profile, sec_vbatt);
+	if (sec_vbatt > profile->volt_limits[profile->volt_nb_limits - 1]) {
+		sec_vbatt_idx = profile->volt_nb_limits;
+	} else {
+		const int  sec_vbatt_offset = sec_vbatt - dual_fg_drv->vsec_offset;
+
+		sec_vbatt_idx = gdbatt_select_voltage_idx(profile, sec_vbatt_offset);
+		/* only apply offset in allowed idx */
+		if (sec_vbatt_idx > dual_fg_drv->vsec_offset_max_idx)
+			sec_vbatt_idx = gdbatt_select_voltage_idx(profile, sec_vbatt);
+	}
 
 	base_cc_max = GBMS_CCCM_LIMITS(profile, base_temp_idx, vbatt_idx);
 	sec_cc_max = GBMS_CCCM_LIMITS(profile, sec_temp_idx, vbatt_idx);
@@ -287,7 +317,10 @@ static void gdbatt_select_cc_max(struct dual_fg_drv *dual_fg_drv)
 		if ((base_vbatt_idx > vbatt_idx) || (sec_vbatt_idx > vbatt_idx)) {
 			pr_debug("%s: battery OV v_base:%d, v_sec:%d\n",
 				 __func__, base_vbatt, sec_vbatt);
-			gdbatt_ov_handler(dual_fg_drv, vbatt_idx, temp_idx);
+			if (vbatt_idx >= profile->volt_nb_limits)
+				gdbatt_ov_last_tier(dual_fg_drv);
+			else
+				gdbatt_ov_handler(dual_fg_drv, vbatt_idx, temp_idx);
 		} else {
 			check_current = true;
 		}
