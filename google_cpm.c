@@ -171,6 +171,9 @@ struct gcpm_drv  {
 	int chg_psy_active;
 	int chg_psy_count;
 
+	/* wakelock */
+	struct wakeup_source *gcpm_ws;
+
 	/* force a charger, this might have side effects */
 	int force_active;
 
@@ -1389,6 +1392,9 @@ static int gcpm_chg_select_logic(struct gcpm_drv *gcpm)
 		/* grace period of 500ms, PPS Work not called during grace */
 		gcpm->dc_start_time = dc_start_time;
 		schedule_pps_interval = DC_ENABLE_DELAY_MS;
+
+		__pm_stay_awake(gcpm->gcpm_ws);
+		pr_debug("%s: pm gcpm stay awake\n", __func__);
 	}
 
 	if (schedule_pps_interval >= 0) {
@@ -1552,8 +1558,8 @@ static void gcpm_pps_wlc_dc_work(struct work_struct *work)
 		 gcpm->dc_index, gcpm->dc_state, gcpm->dc_start_time);
 
 	if (!gcpm->resume_complete || !gcpm->init_complete) {
-		/* TODO: should probably reschedule */
-		goto pps_dc_done;
+		pps_ui = DC_ERROR_RETRY_MS;
+		goto pps_dc_reschedule;
 	}
 
 	/* disconnect, gcpm_chg_check() and most errors reset ->dc_index */
@@ -1585,6 +1591,9 @@ static void gcpm_pps_wlc_dc_work(struct work_struct *work)
 				     dc_disable ? "for the session " : " ",
 				     elap, gcpm->dc_state, active_index,
 				     gcpm->chg_psy_active);
+
+		pr_debug("%s: pm gcpm relax\n", __func__);
+		__pm_relax(gcpm->gcpm_ws);
 
 		/* TODO: send a ps event? */
 		goto pps_dc_done;
@@ -1649,6 +1658,9 @@ static void gcpm_pps_wlc_dc_work(struct work_struct *work)
 			 } else {
 				pr_err("PPS_Work: dc offline\n");
 				pps_ui = 0;
+
+				pr_debug("%s: pm gcpm relax\n", __func__);
+				__pm_relax(gcpm->gcpm_ws);
 			}
 		}
 
@@ -1755,6 +1767,9 @@ static void gcpm_pps_wlc_dc_work(struct work_struct *work)
 		} else if (pps_ui > DC_ERROR_RETRY_MS) {
 			pps_ui = DC_ERROR_RETRY_MS;
 		}
+
+		pr_debug("%s: pm gcpm relax\n", __func__);
+		__pm_relax(gcpm->gcpm_ws);
 	} else {
 		struct power_supply *pps_psy = pps_data->pps_psy;
 
@@ -3837,6 +3852,12 @@ static int google_cpm_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&gcpm->init_work, gcpm_init_work);
 	mutex_init(&gcpm->chg_psy_lock);
 
+	gcpm->gcpm_ws = wakeup_source_register(NULL, "gcpm");
+	if (!gcpm->gcpm_ws) {
+		dev_err(gcpm->device, "Failed to register wakeup source\n");
+		return -ENODEV;
+	}
+
 	/* this is my name */
 	ret = of_property_read_string(pdev->dev.of_node, "google,psy-name",
 				      &tmp_name);
@@ -4094,6 +4115,8 @@ static int google_cpm_remove(struct platform_device *pdev)
 
 	pps_free(&gcpm->wlc_pps_data);
 	pps_free(&gcpm->tcpm_pps_data);
+
+	wakeup_source_unregister(gcpm->gcpm_ws);
 
 	if (gcpm->wlc_dc_psy)
 		power_supply_put(gcpm->wlc_dc_psy);
