@@ -2258,7 +2258,7 @@ log_and_done:
 	csi_stats->csi_speed_max = current_speed;
 
 	csi_stats->csi_time_sum = 0;
-	csi_stats->speed_sum = current_speed;
+	csi_stats->speed_sum = 0;
 	csi_stats->last_update = right_now;
 }
 
@@ -7414,9 +7414,6 @@ static void google_battery_work(struct work_struct *work)
 		if (prev_ssoc != ssoc) {
 			pr_debug("%s: change of ssoc %d->%d\n", __func__,
 				 prev_ssoc, ssoc);
-
-			if (ssoc > prev_ssoc)
-				batt_log_csi_ttf_info(batt_drv);
 
 			dump_ssoc_state(ssoc_state, batt_drv->ssoc_log);
 			batt_log_csi_ttf_info(batt_drv);
