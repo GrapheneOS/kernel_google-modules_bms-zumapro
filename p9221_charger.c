@@ -4266,7 +4266,7 @@ static ssize_t wpc_ready_show(struct device *dev,
 	struct p9221_charger_data *charger = i2c_get_clientdata(client);
 
 	/* Skip it on BPP */
-	if (!p9221_is_epp(charger))
+	if (!p9221_is_epp(charger) || !charger->pdata->has_wlc_dc)
 		return scnprintf(buf, PAGE_SIZE, "N\n");
 
 	return scnprintf(buf, PAGE_SIZE, "%c\n",
