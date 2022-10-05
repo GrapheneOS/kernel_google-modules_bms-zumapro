@@ -4740,6 +4740,11 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 {
 	int ret = 0, tx_icl = -1;
 
+	if ((enable && charger->ben_state) || (!enable && !charger->ben_state)) {
+		logbuffer_prlog(charger->rtx_log, "RTx is %s\n", enable ? "enabled" : "disabled");
+		return 0;
+	}
+
 	mutex_lock(&charger->rtx_lock);
 
 	if (enable == 0) {
@@ -4885,6 +4890,8 @@ static int p9412_check_rtx_ocp(struct p9221_charger_data *chgr)
 	logbuffer_log(chgr->rtx_log, "use rtx_ocp_chk_ms=%d retry=%d", chk_ms, retry);
 
 	for (cnt = 0; cnt < retry; cnt++) {
+		if (!chgr->ben_state)
+			return -EIO;
 		/* check if rx_is_connected: if yes, goto 7V */
 		ret = chgr->reg_read_16(chgr, P9221_STATUS_REG, &status_reg);
 		if (ret < 0) {
@@ -4925,6 +4932,8 @@ static void p9412_chk_rtx_ocp_work(struct work_struct *work)
 
 	/* check TX OCP before enable 7V */
 	ret = p9412_check_rtx_ocp(chgr);
+	if (!chgr->ben_state)
+		return;
 	if (ret < 0) {
 		p9382_set_rtx(chgr, false);
 		return;
@@ -4963,17 +4972,19 @@ static ssize_t rtx_store(struct device *dev,
 	int ret;
 
 	if (buf[0] == '0') {
-		dev_info(&charger->client->dev, "battery share off\n");
-		logbuffer_log(charger->rtx_log, "battery share off");
+		logbuffer_prlog(charger->rtx_log, "battery share off");
+		mutex_lock(&charger->rtx_lock);
+		charger->rtx_reset_cnt = 0;
+		mutex_unlock(&charger->rtx_lock);
+		ret = p9382_set_rtx(charger, false);
 		cancel_delayed_work_sync(&charger->rtx_work);
 		if (charger->pdata->apbst_en)
 			cancel_delayed_work_sync(&charger->chk_rtx_ocp_work);
-		charger->rtx_reset_cnt = 0;
-		ret = p9382_set_rtx(charger, false);
 	} else if (buf[0] == '1') {
-		dev_info(&charger->client->dev, "battery share on\n");
-		logbuffer_log(charger->rtx_log, "battery share on");
+		logbuffer_prlog(charger->rtx_log, "battery share on");
+		mutex_lock(&charger->rtx_lock);
 		charger->rtx_reset_cnt = 0;
+		mutex_unlock(&charger->rtx_lock);
 		ret = p9382_set_rtx(charger, true);
 	} else {
 		return -EINVAL;
@@ -5323,6 +5334,7 @@ static void p9xxx_reset_rtx_for_ocp(struct p9221_charger_data *charger)
 {
 	int ext_bst_on = 0;
 
+	mutex_lock(&charger->rtx_lock);
 	charger->rtx_reset_cnt += 1;
 
 	if (charger->rtx_reset_cnt >= RTX_RESET_COUNT_MAX) {
@@ -5330,6 +5342,7 @@ static void p9xxx_reset_rtx_for_ocp(struct p9221_charger_data *charger)
 			charger->rtx_err = RTX_HARD_OCP;
 		charger->rtx_reset_cnt = 0;
 	}
+	mutex_unlock(&charger->rtx_lock);
 
 	charger->is_rtx_mode = false;
 	p9382_set_rtx(charger, false);

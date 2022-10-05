@@ -964,4 +964,6 @@ enum p9xxx_renego_state {
       -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_q_factor_addr, data))
 #define p9xxx_chip_set_light_load_reg(chgr, data) (chgr->reg_light_load_addr == 0 ? \
       -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_light_load_addr, data))
+#define logbuffer_prlog(p, fmt, ...)     \
+      gbms_logbuffer_prlog(p, LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG, fmt, ##__VA_ARGS__)
 #endif /* __P9221_CHARGER_H__ */
