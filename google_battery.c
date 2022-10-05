@@ -3978,9 +3978,9 @@ static void google_battery_dump_profile(const struct gbms_chg_profile *profile)
 {
 	char *buff;
 
-	buff = kzalloc(GBMS_CHG_ALG_BUF, GFP_KERNEL);
+	buff = kzalloc(GBMS_CHG_ALG_BUF_SZ, GFP_KERNEL);
 	if (buff) {
-		gbms_dump_chg_profile(buff, GBMS_CHG_ALG_BUF, profile);
+		gbms_dump_chg_profile(buff, GBMS_CHG_ALG_BUF_SZ, profile);
 		pr_info("%s", buff);
 		kfree(buff);
 	}
