@@ -2199,6 +2199,7 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 	if (online == PPS_PSY_PROG_ONLINE) {
 		const int extben_gpio = charger->pdata->ext_ben_gpio;
 		bool feat_enable;
+		u8 val8;
 
 		pr_info("%s: online=%d, enabled=%d wlc_dc_enabled=%d prop_mode_en=%d\n",
 			__func__, online, enabled, wlc_dc_enabled,
@@ -2235,6 +2236,15 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 		if (!p9412_is_calibration_done(charger)) {
 			dev_warn(&charger->client->dev, "Calibrating\n");
 			return -EAGAIN;
+		}
+
+		ret = charger->reg_read_8(charger, P9221R5_EPP_TX_GUARANTEED_POWER_REG, &val8);
+		if (ret < 0)
+			return -EINVAL;
+		if (val8 < P9XXX_TX_GUAR_PWR_15W) {
+			dev_warn(&charger->client->dev, "Tx guar_pwr=%dW\n", val8 / 2);
+			p9221_set_auth_dc_icl(charger, false);
+			return -EOPNOTSUPP;
 		}
 
 		/* will return -EAGAIN until the feature is supported */
