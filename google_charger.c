@@ -73,6 +73,7 @@
 #define MSC_USER_VOTER			"msc_user"
 #define MSC_USER_CHG_LEVEL_VOTER	"msc_user_chg_level"
 #define MSC_CHG_TERM_VOTER		"msc_chg_term"
+#define MSC_PWR_VOTER			"msc_pwr_disable"
 
 #define CHG_TERM_LONG_DELAY_MS		300000	/* 5 min */
 #define CHG_TERM_SHORT_DELAY_MS		60000	/* 1 min */
@@ -295,6 +296,7 @@ struct chg_drv {
 	int charge_start_level;		/* retail, userspace bd config */
 
 	/* pps charging */
+	bool pps_enable;
 	struct pd_pps_data pps_data;
 	unsigned int pps_cc_tolerance_pct;
 	union gbms_charger_state chg_state;
@@ -420,7 +422,9 @@ static inline void chg_init_state(struct chg_drv *chg_drv)
 
 	/* reset and re-enable PPS detection */
 	pps_init_state(&chg_drv->pps_data);
-	if (chg_drv->pps_data.nr_snk_pdo)
+	if (!chg_drv->pps_enable)
+		chg_drv->pps_data.stage = PPS_DISABLED;
+	else if (chg_drv->pps_data.nr_snk_pdo)
 		chg_drv->pps_data.stage = PPS_NONE;
 }
 
@@ -4118,7 +4122,7 @@ static int msc_pwr_disable_cb(struct gvotable_election *el,
 	if (!chg_drv->chg_psy)
 		return 0;
 
-	chg_vote_input_suspend(chg_drv, MSC_CHG_VOTER, pwr_disable);
+	chg_vote_input_suspend(chg_drv, MSC_PWR_VOTER, pwr_disable);
 
 	return 0;
 }
@@ -5109,7 +5113,6 @@ static void google_charger_init_work(struct work_struct *work)
 	struct power_supply *chg_psy = NULL, *usb_psy = NULL;
 	struct power_supply *wlc_psy = NULL, *bat_psy = NULL;
 	struct power_supply *ext_psy = NULL, *tcpm_psy = NULL;
-	bool pps_enable;
 	int ret = 0;
 
 	chg_psy = psy_get_by_name(chg_drv, chg_drv->chg_psy_name);
@@ -5159,22 +5162,25 @@ static void google_charger_init_work(struct work_struct *work)
 	chg_drv->tcpm_psy = tcpm_psy;
 
 	/* PPS negotiation handled in google_charger */
-	pps_enable = of_property_read_bool(chg_drv->device->of_node,
-					   "google,pps-enable");
 	if (!tcpm_psy) {
 		pr_info("PPS not available\n");
-	} else if (!pps_enable) {
-		pr_info("PPS not enabled\n");
 	} else {
 		const char *name = tcpm_psy->desc->name;
+		const bool pps_enable = of_property_read_bool(chg_drv->device->of_node,
+							      "google,pps-enable");
 
 		ret = pps_init(&chg_drv->pps_data, chg_drv->device, tcpm_psy);
-		if (ret == 0 && chg_drv->debug_entry)
-			pps_init_fs(&chg_drv->pps_data, chg_drv->debug_entry);
-		if (ret < 0)
+		if (ret < 0) {
 			pr_err("PPS init failure for %s (%d)\n", name, ret);
-		else
+		} else if (pps_enable) {
+			if (chg_drv->debug_entry)
+				pps_init_fs(&chg_drv->pps_data, chg_drv->debug_entry);
+			chg_drv->pps_enable = true;
 			pr_info("PPS available for %s\n", name);
+		} else {
+			chg_drv->pps_data.stage = PPS_DISABLED;
+			pr_info("PPS not enabled\n");
+		}
 	}
 
 	ret = chg_thermal_device_init(chg_drv);
