@@ -1430,11 +1430,11 @@ static int pca9468_set_ta_current_comp(struct pca9468_charger *pca9468)
 			}
 		} else {
 			/* Increase TA voltage (20mV) */
-			pca9468->ta_vol = pca9468->ta_vol + PD_MSG_TA_VOL_STEP;
-
 			logbuffer_prlog(pca9468, LOGLEVEL_DEBUG,
 					"Comp. Cont8: ta_vol=%u->%u",
-					pca9468->ta_vol, pca9468->ta_vol);
+					pca9468->ta_vol, pca9468->ta_vol + PD_MSG_TA_VOL_STEP);
+
+			pca9468->ta_vol += PD_MSG_TA_VOL_STEP;
 
 			/* Send PD Message */
 			pca9468->timer_id = TIMER_PDMSG_SEND;
