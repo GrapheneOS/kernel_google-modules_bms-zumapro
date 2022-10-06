@@ -1158,6 +1158,7 @@ static int p9222_chip_renegotiate_pwr(struct p9221_charger_data *chgr)
 	for (cnt = 0; cnt < 7 ; cnt++) {
 		/* units 0.5 W */
 		ret = chgr->reg_write_8(chgr, P9222RE_EPP_REQ_NEGOTIATED_POWER_REG, rp8);
+		ret |= chgr->reg_write_8(chgr, P9222RE_EPP_REQ_MAXIMUM_POWER_REG, rp8);
 
 		usleep_range(20 * USEC_PER_MSEC, 22 * USEC_PER_MSEC);
 		if (!chgr->online)
@@ -1955,7 +1956,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 }
 
 #if IS_ENABLED(CONFIG_GPIOLIB)
-int p9xxx_gpio_set_value(struct p9221_charger_data *chgr, unsigned gpio, int value)
+int p9xxx_gpio_set_value(struct p9221_charger_data *chgr, int gpio, int value)
 {
 	if (gpio <= 0)
 		return -EINVAL;
