@@ -77,6 +77,9 @@
 #define P9221_PTMC_EPP_TX_1912		0x32
 #define P9221_PTMC_EPP_TX_4191		0x50
 
+#define P9222_RX_CALIBRATION_LIGHT_LOAD	0x5831
+#define P9222_LIGHT_LOAD_VALUE		0x0C
+
 #define P9221_DCIN_RETRY_DELAY_MS	50
 
 #define P9XXX_DC_ICL_EPP_1000		1000000
@@ -643,6 +646,8 @@ struct p9221_charger_platform_data {
 	/* phone type for tx_id*/
 	u8				phone_type;
 	u32				epp_icl;
+	/* calibrate light load */
+	bool				light_load;
 };
 
 struct p9221_charger_ints_bit {
@@ -834,6 +839,7 @@ struct p9221_charger_data {
 	u16				reg_set_fod_addr;
 	u16				reg_q_factor_addr;
 	u16				reg_csp_addr;
+	u16				reg_light_load_addr;
 
 	int (*reg_read_n)(struct p9221_charger_data *chgr, u16 reg,
 			  void *buf, size_t n);
@@ -949,4 +955,6 @@ enum p9xxx_renego_state {
       -ENOTSUPP : chgr->reg_read_n(chgr, chgr->reg_set_fod_addr, data, len))
 #define p9xxx_chip_set_q_factor_reg(chgr, data) (chgr->reg_q_factor_addr == 0 ? \
       -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_q_factor_addr, data))
+#define p9xxx_chip_set_light_load_reg(chgr, data) (chgr->reg_light_load_addr == 0 ? \
+      -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_light_load_addr, data))
 #endif /* __P9221_CHARGER_H__ */

@@ -3333,6 +3333,10 @@ static void p9221_notifier_work(struct work_struct *work)
 		goto done_relax;
 	}
 
+	/* Calibrate light load */
+	if (charger->pdata->light_load)
+		p9xxx_chip_set_light_load_reg(charger, P9222_LIGHT_LOAD_VALUE);
+
 	p9xxx_write_q_factor(charger);
 	if (charger->pdata->tx_4191q > 0)
 		p9xxx_update_q_factor(charger);
@@ -6300,6 +6304,9 @@ static int p9221_parse_dt(struct device *dev,
 		pdata->epp_icl = 0;
 	else
 		pdata->epp_icl = data;
+
+	/* Calibrate light load */
+	pdata->light_load = of_property_read_bool(node, "google,light_load");
 
 	return 0;
 }
