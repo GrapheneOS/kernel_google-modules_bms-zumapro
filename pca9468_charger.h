@@ -40,7 +40,6 @@ struct pca9468_platform_data {
 	/* irdrop */
 	unsigned int	irdrop_limits[3];
 	int		irdrop_limit_cnt;
-	bool		irdrop_comp_ok;
 
 	/* Spread Spectrum settings */
 	unsigned int	sc_clk_dither_rate;
