@@ -4429,6 +4429,8 @@ static int pca9468_mains_get_property(struct power_supply *psy,
 		ret = pca9468_get_chg_chgr_state(pca9468, &chg_state);
 		if (ret < 0)
 			return ret;
+		if (pca9468->irdrop_comp_ok)
+			chg_state.f.flags &= ~GBMS_CS_FLAG_NOCOMP;
 		gbms_propval_int64val(val) = chg_state.v;
 		break;
 
