@@ -6002,7 +6002,7 @@ i2c_unregister:
 	return ret;
 }
 
-static int max1720x_remove(struct i2c_client *client)
+static void max1720x_remove(struct i2c_client *client)
 {
 	struct max1720x_chip *chip = i2c_get_clientdata(client);
 
@@ -6023,8 +6023,6 @@ static int max1720x_remove(struct i2c_client *client)
 
 	if (chip->secondary)
 		i2c_unregister_device(chip->secondary);
-
-	return 0;
 }
 
 static const struct of_device_id max1720x_of_match[] = {

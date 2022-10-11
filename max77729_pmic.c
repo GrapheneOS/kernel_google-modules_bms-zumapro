@@ -1339,12 +1339,11 @@ static int max77729_pmic_probe(struct i2c_client *client,
 	return ret;
 }
 
-static int max77729_pmic_remove(struct i2c_client *client)
+static void max77729_pmic_remove(struct i2c_client *client)
 {
 	struct max77729_pmic_data *data = i2c_get_clientdata(client);
 
 	maxq_remove(data->maxq);
-	return 0;
 }
 
 static const struct of_device_id max77729_pmic_of_match_table[] = {
