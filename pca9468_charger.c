@@ -5137,7 +5137,7 @@ error:
 	return ret;
 }
 
-static int pca9468_remove(struct i2c_client *client)
+static void pca9468_remove(struct i2c_client *client)
 {
 	struct pca9468_charger *pca9468_chg = i2c_get_clientdata(client);
 
@@ -5160,8 +5160,6 @@ static int pca9468_remove(struct i2c_client *client)
 	if (pca9468_chg->log)
 		logbuffer_unregister(pca9468_chg->log);
 	pps_free(&pca9468_chg->pps_data);
-
-	return 0;
 }
 
 static const struct i2c_device_id pca9468_id[] = {

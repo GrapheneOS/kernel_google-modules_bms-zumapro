@@ -1151,7 +1151,7 @@ exit:
 	return ret;
 }
 
-static int max77729_charger_remove(struct i2c_client *client)
+static void max77729_charger_remove(struct i2c_client *client)
 {
 	struct max77729_chgr_data *data = i2c_get_clientdata(client);
 
@@ -1161,8 +1161,6 @@ static int max77729_charger_remove(struct i2c_client *client)
 		power_supply_unregister(data->psy);
 
 	dbg_cleanup_fs(data);
-
-	return 0;
 }
 
 static const struct of_device_id max77729_charger_of_match_table[] = {

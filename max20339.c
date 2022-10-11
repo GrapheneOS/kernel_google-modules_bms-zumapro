@@ -440,11 +440,6 @@ static int max20339_probe(struct i2c_client *client,
 	return ret;
 }
 
-static int max20339_remove(struct i2c_client *client)
-{
-	return 0;
-}
-
 static const struct i2c_device_id max20339_id[] = {
 	{ "max20339ovp", 0 },
 	{ }
@@ -465,7 +460,6 @@ static struct i2c_driver max20339_i2c_driver = {
 		.of_match_table = of_match_ptr(max20339_of_match),
 	},
 	.probe = max20339_probe,
-	.remove = max20339_remove,
 	.id_table = max20339_id,
 };
 module_i2c_driver(max20339_i2c_driver);

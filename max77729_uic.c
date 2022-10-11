@@ -680,13 +680,11 @@ exit:
 	return ret;
 }
 
-static int max77729_uic_remove(struct i2c_client *client)
+static void max77729_uic_remove(struct i2c_client *client)
 {
 	struct max77729_uic_data *data = i2c_get_clientdata(client);
 
 	cancel_delayed_work(&data->noautoibus_work);
-
-	return 0;
 }
 
 static const struct of_device_id max77729_uic_of_match_table[] = {
