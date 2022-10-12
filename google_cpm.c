@@ -2559,7 +2559,7 @@ static int gcpm_set_mdis_charge_cntl_limit(struct thermal_cooling_device *tcd,
 {
 	struct mdis_thermal_device *tdev = tcd->devdata;
 	struct gcpm_drv *gcpm = tdev->gcpm;
-	int online = 0, budget = -1, in_idx = -1;
+	int online = 0, in_idx = -1;
 	int msc_fcc, dc_icl, cp_fcc, ret;
 
 	if (tdev->thermal_levels <= 0 || lvl < 0 || lvl > tdev->thermal_levels)
@@ -2571,18 +2571,15 @@ static int gcpm_set_mdis_charge_cntl_limit(struct thermal_cooling_device *tcd,
 
 	tdev->current_level = lvl;
 	if (lvl == tdev->thermal_levels || tdev->thermal_mitigation[lvl] == 0) {
-		budget = msc_fcc = dc_icl = cp_fcc = 0;
+		msc_fcc = dc_icl = cp_fcc = 0;
 		gcpm->cp_fcc_hold_limit = gcpm_chg_select_check_cp_limit(gcpm);
 		gcpm->cp_fcc_hold = true;
 	} else if (tdev->current_level == 0) {
-		budget = tdev->thermal_mitigation[0];
 		msc_fcc = dc_icl = cp_fcc = -1;
 		/* mdis callback will clear hold and re-evaluate PPS */
 		gcpm->cp_fcc_hold_limit = -1;
 	} else {
 		int cp_min = -1;
-
-		budget = tdev->thermal_mitigation[lvl];
 
 		/* 0 always is the main-charger */
 		dc_icl = gcpm->mdis_out_limits[0][lvl + tdev->thermal_levels];
@@ -2677,9 +2674,9 @@ static int gcpm_set_mdis_charge_cntl_limit(struct thermal_cooling_device *tcd,
 	/*  fix the disable, run another charging loop */
 	if (gcpm->mdis_votable) {
 		ret = gvotable_cast_int_vote(gcpm->mdis_votable, "MDIS",
-					     budget, budget >= 0);
+					     lvl, lvl >= 0);
 		if (ret < 0)
-			pr_err("%s: cannot update budget (%d)", __func__, ret);
+			pr_err("%s: cannot update MDIS level (%d)", __func__, ret);
 
 	}
 
@@ -3120,7 +3117,7 @@ static int gcpm_init_mdis(struct gcpm_drv *gcpm)
 
 	gvotable_set_default(gcpm->mdis_votable, (void *)-1);
 	gvotable_set_vote2str(gcpm->mdis_votable, gvotable_v2s_int);
-	gvotable_election_set_name(gcpm->mdis_votable, "CHG_MDIS");
+	gvotable_election_set_name(gcpm->mdis_votable, VOTABLE_MDIS);
 
 	/* race with above */
 	ret = mdis_tdev_register(MDIS_OF_CDEV_NAME, MDIS_CDEV_NAME,

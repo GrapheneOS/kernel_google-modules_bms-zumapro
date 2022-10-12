@@ -1574,7 +1574,8 @@ static void batt_chg_stats_update(struct batt_drv *batt_drv, int temp_idx,
 	soc_in = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_CAPACITY_RAW);
 	if (soc_in < 0) {
 		pr_info("MSC_STAT cannot read soc_in=%d\n", soc_in);
-		return;
+		/* We still want to update initialized tiers. */
+		soc_in = -1;
 	}
 
 	/* Note: To log new voltage tiers, add to list in go/pixel-vtier-defs */
