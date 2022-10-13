@@ -347,6 +347,7 @@ struct health_data
 	int bhi_imp_index;
 	int bhi_sd_index;
 	/* debug health metrics */
+	int bhi_debug_cycle_count;
 	int bhi_debug_cap_index;
 	int bhi_debug_imp_index;
 	int bhi_debug_sd_index;
@@ -3581,7 +3582,10 @@ static int batt_bhi_stats_update(struct batt_drv *batt_drv)
 	health_data->bhi_data.battery_age = age;
 
 	/* cycle count is cached */
-	health_data->bhi_data.cycle_count = batt_drv->cycle_count;
+	if (health_data->bhi_debug_cycle_count != 0)
+		health_data->bhi_data.cycle_count = health_data->bhi_debug_cycle_count;
+	else
+		health_data->bhi_data.cycle_count = batt_drv->cycle_count;
 
 	index = bhi_calc_cap_index(bhi_algo, batt_drv);
 	if (index < 0)
@@ -6968,6 +6972,8 @@ static int batt_init_debugfs(struct batt_drv *batt_drv)
 	debugfs_create_u32("bhi_w_sd", 0644, de, &batt_drv->health_data.bhi_w_sd);
 	debugfs_create_u32("act_impedance", 0644, de,
 			   &batt_drv->health_data.bhi_data.act_impedance);
+	debugfs_create_u32("bhi_debug_cycle_count", 0644, de,
+			   &batt_drv->health_data.bhi_debug_cycle_count);
 	debugfs_create_u32("bhi_debug_cap_idx", 0644, de,
 			   &batt_drv->health_data.bhi_debug_cap_index);
 	debugfs_create_u32("bhi_debug_imp_idx", 0644, de,
@@ -8264,6 +8270,7 @@ static int batt_bhi_init(struct batt_drv *batt_drv)
 	health_data->bhi_data.capacity_design = batt_drv->battery_capacity;
 
 	/* debug data initialization */
+	health_data->bhi_debug_cycle_count = 0;
 	health_data->bhi_debug_cap_index = 0;
 	health_data->bhi_debug_imp_index = 0;
 	health_data->bhi_debug_sd_index = 0;
