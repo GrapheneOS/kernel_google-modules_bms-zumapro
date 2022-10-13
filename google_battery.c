@@ -84,6 +84,8 @@
 #define BHI_CCBIN_INDEX_LIMIT		90
 #define BHI_ALGO_FULL_HEALTH		10000
 #define BHI_ALGO_ROUND_INDEX		50
+#define BHI_CC_MARGINAL_THRESHOLD_DEFAULT	800
+#define BHI_CC_NEED_REP_THRESHOLD_DEFAULT	1000
 
 #define BHI_ROUND_INDEX(index) 		\
 	(((index) + BHI_ALGO_ROUND_INDEX) / 100)
@@ -337,6 +339,9 @@ struct health_data
 	enum bhi_status bhi_status;
 	int marginal_threshold;
 	int need_rep_threshold;
+	/* cycle count threshold */
+	int cycle_count_marginal_threshold;
+	int cycle_count_need_rep_threshold;
 	/* current health metrics */
 	int bhi_cap_index;
 	int bhi_imp_index;
@@ -3442,6 +3447,32 @@ static int bhi_calc_sd_index(int algo, const struct bhi_data *bhi_data)
 	return bhi_data->ccbin_index;
 }
 
+static int bhi_cycle_count_index(const struct health_data *health_data)
+{
+	const int cc = health_data->bhi_data.cycle_count;
+	const int cc_mt = health_data->cycle_count_marginal_threshold;
+	const int cc_nrt = health_data->cycle_count_need_rep_threshold;
+	const int h_mt = health_data->marginal_threshold;
+	const int h_nrt = health_data->need_rep_threshold;
+	int cc_index;
+
+	/* threshold should be reasonable */
+	if (h_mt < h_nrt || cc_nrt <= cc_mt)
+		return BHI_ALGO_FULL_HEALTH;
+
+	/* use interpolation to get index via cycle count/health threshold */
+	cc_index = (h_mt - h_nrt) * (cc - cc_nrt) / (cc_mt - cc_nrt) + h_nrt;
+	cc_index = cc_index * 100; /* for BHI_ROUND_INDEX*/
+
+	if (cc_index > BHI_ALGO_FULL_HEALTH)
+		cc_index = BHI_ALGO_FULL_HEALTH;
+
+	if (cc_index < 0)
+		cc_index = 0;
+
+	return cc_index;
+}
+
 static int bhi_calc_health_index(int algo, const struct health_data *health_data,
 				 int cap_index, int imp_index, int sd_index)
 {
@@ -3454,8 +3485,7 @@ static int bhi_calc_health_index(int algo, const struct health_data *health_data
 	case BHI_ALGO_DISABLED:
 		return BHI_ALGO_FULL_HEALTH;
 	case BHI_ALGO_CYCLE_COUNT:
-		/* TODO: skip all, just look at cycle count */
-		return BHI_ALGO_FULL_HEALTH;
+		return bhi_cycle_count_index(health_data);
 	case BHI_ALGO_ACHI:
 	case BHI_ALGO_ACHI_B:
 	case BHI_ALGO_ACHI_RAVG:
@@ -8219,6 +8249,16 @@ static int batt_bhi_init(struct batt_drv *batt_drv)
 				   &health_data->need_rep_threshold);
 	if (ret < 0)
 		health_data->need_rep_threshold = BHI_NEED_REP_THRESHOLD_DEFAULT;
+	/* cycle count thresholds */
+	ret = of_property_read_u32(batt_drv->device->of_node, "google,bhi-cycle-count-marginal",
+				   &health_data->cycle_count_marginal_threshold);
+	if (ret < 0)
+		health_data->cycle_count_marginal_threshold = BHI_CC_MARGINAL_THRESHOLD_DEFAULT;
+
+	ret = of_property_read_u32(batt_drv->device->of_node, "google,bhi-cycle-count-need-rep",
+				   &health_data->cycle_count_need_rep_threshold);
+	if (ret < 0)
+		health_data->cycle_count_need_rep_threshold = BHI_CC_NEED_REP_THRESHOLD_DEFAULT;
 
 	/* design is the value used to build the charge table */
 	health_data->bhi_data.capacity_design = batt_drv->battery_capacity;
