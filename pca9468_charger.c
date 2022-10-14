@@ -4540,7 +4540,7 @@ static bool pca9468_is_reg(struct device *dev, unsigned int reg)
 }
 
 static struct regmap_config pca9468_regmap = {
-	.name		= "pca9468-mains",
+	.name		= "dc-mains",
 	.reg_bits	= 8,
 	.val_bits	= 8,
 	.max_register	= PCA9468_MAX_REGISTER,
