@@ -4586,7 +4586,7 @@ static int chg_set_fcc_charge_cntl_limit(struct thermal_cooling_device *tcd,
 		gvotable_cast_long_vote(chg_drv->csi_status_votable,
 					"CSI_STATUS_THERM_FCC",
 					CSI_STATUS_System_Thermals,
-					fcc != 0);
+					tdev->current_level != 0);
 
 	return 0;
 }
@@ -4758,7 +4758,7 @@ static int chg_set_dc_in_charge_cntl_limit(struct thermal_cooling_device *tcd,
 		gvotable_cast_long_vote(chg_drv->csi_status_votable,
 					"CSI_STATUS_THERM_DC_ICL",
 					CSI_STATUS_System_Thermals,
-					dc_icl != 0);
+					tdev->current_level != 0);
 
 	/* force to apply immediately */
 	reschedule_chg_work(chg_drv);
@@ -4844,7 +4844,7 @@ static int chg_set_wlc_fcc_charge_cntl_limit(struct thermal_cooling_device *tcd,
 		gvotable_cast_long_vote(chg_drv->csi_status_votable,
 					"CSI_STATUS_THERM_DC_FCC",
 					CSI_STATUS_System_Thermals,
-					dc_fcc != 0);
+					tdev->current_level != 0);
 
 	/* force to apply immediately */
 	reschedule_chg_work(chg_drv);
