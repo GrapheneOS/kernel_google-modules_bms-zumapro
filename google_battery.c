@@ -544,6 +544,9 @@ struct batt_drv {
 
 	/* irdrop for DC */
 	bool dc_irdrop;
+
+	/* shutdown flag */
+	int boot_to_os_attempts;
 };
 
 static int gbatt_get_temp(const struct batt_drv *batt_drv, int *temp);
@@ -6986,6 +6989,9 @@ static int batt_init_debugfs(struct batt_drv *batt_drv)
 			   &batt_drv->health_data.bhi_data.res_state.ravg_soc_high);
 	debugfs_create_file("ravg", 0400, de,  batt_drv, &debug_ravg_fops);
 
+	/* shutdown flag */
+	debugfs_create_u32("boot_to_os_attempts", 0660, de, &batt_drv->boot_to_os_attempts);
+
 	return 0;
 }
 
@@ -7372,6 +7378,38 @@ static int google_battery_init_hist_work(struct batt_drv *batt_drv )
 	return 0;
 }
 
+#define BOOT_TO_OS_ATTEMPTS 3
+
+static int batt_init_shutdown_flag(struct batt_drv *batt_drv)
+{
+	u8 data;
+	int ret;
+
+	ret = gbms_storage_read(GBMS_TAG_SUFG, &data, sizeof(data));
+	if (ret < 0)
+		return -EIO;
+
+	batt_drv->boot_to_os_attempts = data;
+
+	/* reset battery shutdown flag */
+	data = 0;
+	ret = gbms_storage_write(GBMS_TAG_SUFG, &data, sizeof(data));
+
+	return (ret < 0) ? -EIO : 0;
+}
+
+static int batt_set_shutdown_flag(struct batt_drv *batt_drv)
+{
+	u8 data = batt_drv->boot_to_os_attempts;
+	int ret;
+
+	if (data == 0)
+		data = BOOT_TO_OS_ATTEMPTS;
+
+	ret = gbms_storage_write(GBMS_TAG_SUFG, &data, sizeof(data));
+
+	return (ret < 0) ? -EIO : 0;
+}
 
 /*
  * poll the battery, run SOC%, dead battery, critical.
@@ -7459,6 +7497,13 @@ static void google_battery_work(struct work_struct *work)
 			pr_debug("%s: change of capacity level %d->%d\n",
 				 __func__, batt_drv->capacity_level,
 				 level);
+
+			/* set battery critical shutdown */
+			if (level == POWER_SUPPLY_CAPACITY_LEVEL_CRITICAL) {
+				ret = batt_set_shutdown_flag(batt_drv);
+				if (ret < 0)
+					pr_warn("failed to write shutdown flag, ret=%d\n", ret);
+			}
 
 			batt_drv->capacity_level = level;
 			notify_psy_changed = true;
@@ -8317,6 +8362,7 @@ static void google_battery_init_work(struct work_struct *work)
 	batt_drv->hold_taper_ws = false;
 	batt_drv->fake_temp = 0;
 	batt_drv->fake_battery_present = -1;
+	batt_drv->boot_to_os_attempts = 0;
 	batt_reset_chg_drv_state(batt_drv);
 
 	mutex_init(&batt_drv->chg_lock);
@@ -8401,6 +8447,11 @@ static void google_battery_init_work(struct work_struct *work)
 	ret = batt_init_bpst_profile(batt_drv);
 	if (ret < 0)
 		pr_err("bpst profile disabled, ret=%d\n", ret);
+
+	/* init shutdown flag */
+	ret = batt_init_shutdown_flag(batt_drv);
+	if (ret < 0)
+		pr_err("failed to init shutdown flag, ret=%d\n", ret);
 
 	/* cycle count is cached: read here bc SSOC, chg_profile might use it */
 	batt_update_cycle_count(batt_drv);
