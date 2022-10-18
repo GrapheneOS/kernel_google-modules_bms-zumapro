@@ -408,6 +408,8 @@ int gbms_msc_temp_idx(const struct gbms_chg_profile *profile, int temp);
 int gbms_msc_voltage_idx(const struct gbms_chg_profile *profile, int vbatt);
 int gbms_msc_round_fv_uv(const struct gbms_chg_profile *profile,
 			   int vtier, int fv_uv);
+int gbms_msc_merge_tiers(const struct gbms_chg_profile *profile,
+			  int vbatt_idx, int temp_idx);
 
 /* newgen charging: charger flags  */
 uint8_t gbms_gen_chg_flags(int chg_status, int chg_type);
