@@ -3281,6 +3281,9 @@ static int bhi_calc_cap_index(int algo, struct batt_drv *batt_drv)
 	if (algo == BHI_ALGO_DISABLED)
 		return BHI_ALGO_FULL_HEALTH;
 
+	if (health_data->bhi_debug_cap_index)
+		return health_data->bhi_debug_cap_index;
+
 	if (!bhi_data->capacity_design)
 		return -ENODATA;
 
@@ -3397,13 +3400,17 @@ static int bhi_health_get_impedance(int algo, const struct bhi_data *bhi_data)
 	return cur_impedance;
 }
 
-static int bhi_calc_imp_index(int algo, const struct bhi_data *bhi_data)
+static int bhi_calc_imp_index(int algo, const struct health_data *health_data)
 {
+	const struct bhi_data *bhi_data = &health_data->bhi_data;
 	u32 cur_impedance;
 	int imp_index;
 
 	if (!bhi_data->act_impedance)
 		return BHI_ALGO_FULL_HEALTH;
+
+	if (health_data->bhi_debug_imp_index)
+		return health_data->bhi_debug_imp_index;
 
 	cur_impedance = bhi_health_get_impedance(algo, bhi_data);
 	if (cur_impedance == 0)
@@ -3442,8 +3449,13 @@ static int bhi_calc_sd_total(const struct swelling_data *sd)
 	return swell_total;
 }
 
-static int bhi_calc_sd_index(int algo, const struct bhi_data *bhi_data)
+static int bhi_calc_sd_index(int algo, const struct health_data *health_data)
 {
+	const struct bhi_data *bhi_data = &health_data->bhi_data;
+
+	if (health_data->bhi_debug_sd_index)
+		return health_data->bhi_debug_sd_index;
+
 	pr_debug("%s: algo=%d index=%d\n", __func__, algo, bhi_data->ccbin_index);
 	return bhi_data->ccbin_index;
 }
@@ -3481,6 +3493,9 @@ static int bhi_calc_health_index(int algo, const struct health_data *health_data
 	int w_ci = 0;
 	int w_ii = 0;
 	int w_sd = 0;
+
+	if (health_data->bhi_debug_health_index)
+		return health_data->bhi_debug_health_index;
 
 	switch (algo) {
 	case BHI_ALGO_DISABLED:
@@ -3593,13 +3608,13 @@ static int batt_bhi_stats_update(struct batt_drv *batt_drv)
 	changed |= health_data->bhi_cap_index != index;
 	health_data->bhi_cap_index = index;
 
-	index = bhi_calc_imp_index(bhi_algo, &health_data->bhi_data);
+	index = bhi_calc_imp_index(bhi_algo, health_data);
 	if (index < 0)
 		index = BHI_ALGO_FULL_HEALTH;
 	changed |= health_data->bhi_imp_index != index;
 	health_data->bhi_imp_index = index;
 
-	index = bhi_calc_sd_index(bhi_algo, &health_data->bhi_data);
+	index = bhi_calc_sd_index(bhi_algo, health_data);
 	if (index < 0)
 		index = BHI_ALGO_FULL_HEALTH;
 	changed |= health_data->bhi_sd_index != index;
@@ -6407,8 +6422,8 @@ static ssize_t health_index_stats_show(struct device *dev,
 		int health_index, health_status, cap_index, imp_index, sd_index;
 
 		cap_index = bhi_calc_cap_index(i, batt_drv);
-		imp_index = bhi_calc_imp_index(i, bhi_data);
-		sd_index = bhi_calc_sd_index(i, bhi_data);
+		imp_index = bhi_calc_imp_index(i, health_data);
+		sd_index = bhi_calc_sd_index(i, health_data);
 		health_index = bhi_calc_health_index(i, health_data, cap_index, imp_index, sd_index);
 		health_status = bhi_calc_health_status(i, BHI_ROUND_INDEX(health_index), health_data);
 		if (health_index < 0)
