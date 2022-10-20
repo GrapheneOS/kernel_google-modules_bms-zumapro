@@ -1827,7 +1827,7 @@ static void p9221_check_adapter_type(struct p9221_charger_data *charger)
 		u8 id_type = (charger->tx_id & TXID_TYPE_MASK) >> TXID_TYPE_SHIFT;
 
 		if (id_type != charger->chg_data.adapter_type)
-			pr_debug("%s: tx_id=%08x, adapter_type=%x->%x\n", __func__,
+			pr_info("%s: tx_id=%08x, adapter_type=%x->%x\n", __func__,
 				 charger->tx_id, charger->chg_data.adapter_type,
 				 id_type);
 
@@ -2023,6 +2023,26 @@ static int p9221_get_property(struct power_supply *psy,
 
 		if (rc)
 			val->intval = rc;
+		break;
+	case GBMS_PROP_WLC_OP_FREQ:
+		rc = p9221_ready_to_read(charger);
+		if (!rc) {
+			rc = charger->chip_get_op_freq(charger, &temp);
+			if (!rc)
+				val->intval = P9221_KHZ_TO_HZ(temp);
+		}
+		if (rc)
+			val->intval = 0;
+		break;
+	case GBMS_PROP_WLC_VRECT:
+		rc = p9221_ready_to_read(charger);
+		if (!rc) {
+			rc = charger->chip_get_vrect(charger, &temp);
+			if (!rc)
+				val->intval = P9221_MV_TO_UV(temp);
+		}
+		if (rc)
+			val->intval = 0;
 		break;
 
 	default:
@@ -6510,13 +6530,6 @@ int p9221_wlc_disable(struct p9221_charger_data *charger, int disable, u8 reason
 	pr_debug("%s: disable=%d, ept_reason=%d ret=%d\n", __func__,
 		 disable, disable ? reason : -1, ret);
 
-	if (charger->last_disable != disable) {
-		pr_info("%s[%d]: disable=%d, ept_reason=%d ret=%d\n", __func__,
-			charger->online, disable, reason, ret);
-		logbuffer_log(charger->log, "Set wlc_disable=%d", disable);
-	}
-
-	charger->last_disable = disable;
 	return ret;
 }
 
@@ -6526,6 +6539,11 @@ static int p9221_wlc_disable_callback(struct gvotable_election *el,
 	struct p9221_charger_data *charger = gvotable_get_data(el);
 	int disable = GVOTABLE_PTR_TO_INT(vote);
 	u8 val = P9221_EOP_UNKNOWN;
+
+	if (charger->last_disable != disable)
+		logbuffer_prlog(charger->log, "set wlc %s, vote=%s",
+				disable ? "disable" : "enable", reason);
+	charger->last_disable = disable;
 
 	if (charger->pdata->wlc_en == charger->pdata->qien_gpio) {
 		int value;
