@@ -3224,6 +3224,22 @@ exit_done:
 
 /* BHI -------------------------------------------------------------------- */
 
+#define ONE_YEAR_HRS	(24 * 365)
+#define BHI_INDI_CAP	85
+static int bhi_individual_conditions_index(const struct health_data *health_data)
+{
+	const struct bhi_data *bhi_data = &health_data->bhi_data;
+	const int cur_impedance = batt_ravg_value(&bhi_data->res_state);
+	const int age_impedance_max = bhi_data->act_impedance * 2;
+	const int cur_capacity_pct = 100 - bhi_data->capacity_fade;
+
+	if (health_data->bhi_data.battery_age >= ONE_YEAR_HRS ||
+	    cur_impedance >= age_impedance_max || cur_capacity_pct <= BHI_INDI_CAP)
+		return health_data->need_rep_threshold * 100;
+
+	return BHI_ALGO_FULL_HEALTH;
+}
+
 /* GBMS_PROP_CAPACITY_FADE_RATE access this via GBMS_TAG_HCNT */
 static int hist_get_index(int cycle_count, const struct batt_drv *batt_drv)
 {
@@ -3509,6 +3525,8 @@ static int bhi_calc_health_index(int algo, const struct health_data *health_data
 		w_ii = health_data->bhi_w_pi;
 		w_sd = health_data->bhi_w_sd;
 		break;
+	case BHI_ALGO_INDI:
+		return bhi_individual_conditions_index(health_data);
 	default:
 		return -EINVAL;
 	}
