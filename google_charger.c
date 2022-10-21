@@ -105,6 +105,10 @@
 #define PD_SNK_MAX_MA_9V		2200
 #define OP_SNK_MW			7600 /* see b/159863291 */
 
+/* type detection */
+#define EXT1_DETECT_THRESHOLD_UV	(10500000)
+#define EXT2_DETECT_THRESHOLD_UV	(5000000)
+
 #define usb_pd_is_high_volt(ad) \
 	((ad)->ad_type == CHG_EV_ADAPTER_TYPE_USB_PD && \
 	(ad)->ad_voltage * 100 > PD_SNK_MIN_MV)
@@ -685,13 +689,18 @@ static int info_ext_state(union gbms_ce_adapter_details *ad,
 		return 0;
 
 	if (voltage_max < 0 || amperage_max < 0) {
-		ad->ad_type = CHG_EV_ADAPTER_TYPE_UNKNOWN;
+		ad->ad_type = CHG_EV_ADAPTER_TYPE_EXT_UNKNOWN;
 		ad->ad_voltage = voltage_max;
 		ad->ad_amperage = amperage_max;
 		return -EINVAL;
+	} else if (voltage_max > EXT1_DETECT_THRESHOLD_UV) {
+		ad->ad_type = CHG_EV_ADAPTER_TYPE_EXT1;
+	} else if (voltage_max > EXT2_DETECT_THRESHOLD_UV) {
+		ad->ad_type = CHG_EV_ADAPTER_TYPE_EXT2;
+	} else {
+		ad->ad_type = CHG_EV_ADAPTER_TYPE_EXT;
 	}
 
-	ad->ad_type = CHG_EV_ADAPTER_TYPE_POGO;
 	ad->ad_voltage = voltage_max / 100000;
 	ad->ad_amperage = amperage_max / 100000;
 

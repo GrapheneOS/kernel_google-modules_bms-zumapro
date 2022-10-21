@@ -59,6 +59,8 @@
 #define P9XXX_VOUT_5000MV	5000
 #define P9XXX_FOD_CHK_DELAY_MS	2000
 
+#define P9XXX_VOUT_5480MV	5480
+
 enum wlc_align_codes {
 	WLC_ALIGN_CHECKING = 0,
 	WLC_ALIGN_MOVE,

@@ -1961,7 +1961,7 @@ int p9xxx_gpio_set_value(struct p9221_charger_data *chgr, int gpio, int value)
 	if (gpio <= 0)
 		return -EINVAL;
 
-	logbuffer_log(chgr->log, "%s: set gpio %d to %d", __func__, gpio, value);
+	logbuffer_log(chgr->log, "%s: set gpio %d to %d\n", __func__, gpio, value);
 	gpio_set_value_cansleep(gpio, value);
 
 	return 0;
