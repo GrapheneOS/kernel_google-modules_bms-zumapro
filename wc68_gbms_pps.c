@@ -565,7 +565,7 @@ int wc68_get_chg_chgr_state(struct wc68_charger *wc68,
 	chg_state->f.chg_type = wc68_get_charge_type(wc68);
 	chg_state->f.flags = gbms_gen_chg_flags(chg_state->f.chg_status,
 						chg_state->f.chg_type);
-	chg_state->f.flags |= GBMS_CS_FLAG_NOCOMP;
+	chg_state->f.flags |= GBMS_CS_FLAG_DIRECT_CHG;
 
 	vchrg = wc68_read_adc(wc68, ADCCH_VBAT);
 	if (vchrg > 0)

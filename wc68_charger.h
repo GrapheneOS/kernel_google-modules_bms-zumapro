@@ -31,6 +31,7 @@ struct wc68_platform_data {
 	/* irdrop */
 	s32		irdrop_limits[3];
 	s32		irdrop_limit_cnt;
+	u8		wc68_irdrop;
 
 #if IS_ENABLED(CONFIG_THERMAL)
 	const char *usb_tz_name;
@@ -162,7 +163,6 @@ static inline void wc68_chg_stats_inc_ovcf(struct wc68_chg_stats *chg_data,
  * @debug_adc_channel: ADC channel to read
  * @init_done: true when initialization is complete
  * @dc_start_time: start time (sec since boot) of the DC session
- * @irdrop_comp_ok: when true clear GBMS_CS_FLAG_NOCOMP in flags
  */
 struct wc68_charger {
 	struct wakeup_source	*monitor_wake_lock;
@@ -237,7 +237,6 @@ struct wc68_charger {
 	s32			fv_uv;
 	s32			cc_max;
 	ktime_t			dc_start_time;
-	bool			irdrop_comp_ok;
 
 	/* monitoring */
 	struct power_supply	*batt_psy;

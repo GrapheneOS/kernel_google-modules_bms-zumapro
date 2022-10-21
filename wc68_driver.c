@@ -936,7 +936,7 @@ static int wc68_apply_irdrop(struct wc68_charger *wc68, int fv_uv)
 	const bool adaptive = false;
 
 	/* use classic irdrop */
-	if (wc68->irdrop_comp_ok)
+	if (!wc68->pdata->wc68_irdrop)
 		goto error_done;
 
 	ret = wc68_get_batt_info(wc68, BATT_VOLTAGE, &vbat);
@@ -2266,10 +2266,15 @@ static int wc68_apply_new_vfloat(struct wc68_charger *wc68)
 	if (fv_uv < 0)
 		return fv_uv;
 
+	if (wc68->fv_uv == fv_uv)
+		goto error_done;
+
 	/* actually change the hardware */
 	ret = wc68_set_vfloat(wc68, fv_uv);
 	if (ret < 0)
 		goto error_done;
+
+	wc68->fv_uv = fv_uv;
 
 	/* Restart the process (TODO: optimize this) */
 	ret = wc68_reset_dcmode(wc68);
@@ -2305,18 +2310,20 @@ static int wc68_set_new_vfloat(struct wc68_charger *wc68, int vfloat)
 	}
 
 	mutex_lock(&wc68->lock);
-	if (wc68->fv_uv == vfloat)
+	if (wc68->new_vfloat == vfloat)
 		goto done;
 
-	/* this is what is requested */
-	wc68->fv_uv = vfloat;
-
 	/* use fv_uv at start in wc68_preset_config() */
-	if (wc68->charging_state != DC_STATE_NO_CHARGING &&
-	    wc68->charging_state != DC_STATE_CHECK_VBAT)
+	if (wc68->charging_state == DC_STATE_NO_CHARGING ||
+	    wc68->charging_state == DC_STATE_CHECK_VBAT) {
+		wc68->fv_uv = vfloat;
+	} else {
 		/* applied in wc68_apply_new_vfloat() from CC or in CV loop */
 		wc68->new_vfloat = vfloat;
+		pr_debug("%s: new_vfloat=%d\n", __func__, wc68->new_vfloat);
+
 		/* might want to tickle the cycle */
+	}
 
 done:
 	mutex_unlock(&wc68->lock);
@@ -2634,7 +2641,7 @@ static int wc68_charge_adjust_ccmode(struct wc68_charger *wc68)
 		goto error;
 	}
 
-	if (!wc68->irdrop_comp_ok && apply_ircomp) {
+	if (wc68->pdata->wc68_irdrop && apply_ircomp) {
 		int rc;
 
 		rc = wc68_comp_irdrop(wc68);
@@ -2809,7 +2816,7 @@ static int wc68_charge_ccmode(struct wc68_charger *wc68)
 		break;
 	}
 
-	if (!wc68->irdrop_comp_ok && apply_ircomp) {
+	if (wc68->pdata->wc68_irdrop && apply_ircomp) {
 		int rc;
 
 		rc = wc68_comp_irdrop(wc68);
@@ -4119,7 +4126,6 @@ static int wc68_set_charging_enabled(struct wc68_charger *wc68, int index)
 		/* Start Direct Charging on Index */
 		wc68->dc_start_time = get_boot_sec();
 		wc68_chg_stats_init(&wc68->chg_data);
-		wc68->irdrop_comp_ok = false;
 		wc68->pps_index = index;
 
 		dev_info(wc68->dev, "%s: charging_state=%u->%u\n", __func__,
@@ -4282,8 +4288,6 @@ static int wc68_mains_get_property(struct power_supply *psy,
 		ret = wc68_get_chg_chgr_state(wc68, &chg_state);
 		if (ret < 0)
 			return ret;
-		if (wc68->irdrop_comp_ok)
-			chg_state.f.flags &= ~GBMS_CS_FLAG_NOCOMP;
 		gbms_propval_int64val(val) = chg_state.v;
 		break;
 
@@ -4453,6 +4457,10 @@ static int of_wc68_dt(struct device *dev,
 		pdata->irdrop_limits[1] = WC68_IRDROP_LIMIT_TIER2;
 		pdata->irdrop_limits[2] = WC68_IRDROP_LIMIT_TIER3;
 	}
+
+	pdata->wc68_irdrop = of_property_read_bool(np_wc68, "google,wc68-irdrop");
+	if (pdata->wc68_irdrop)
+		pr_info("google,wc68-irdrop is set, run irdrop in wc68\n");
 
 #if IS_ENABLED(CONFIG_THERMAL)
 	/* USBC thermal zone */
@@ -4669,8 +4677,6 @@ static int wc68_create_fs_entries(struct wc68_charger *chip)
 			    &debug_adc_chan_ops);
 	debugfs_create_file("pps_index", 0644, chip->debug_root, chip,
 			    &debug_pps_index_ops);
-	debugfs_create_bool("irdrop_comp", 0644, chip->debug_root,
-			    &chip->irdrop_comp_ok);
 
 	return 0;
 }
