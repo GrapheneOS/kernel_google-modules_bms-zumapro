@@ -35,6 +35,7 @@
 
 #define GBMS_DEFAULT_FV_UV_RESOLUTION   25000
 #define GBMS_DEFAULT_FV_UV_MARGIN_DPCT  1020
+#define GBMS_DEFAULT_FV_DC_RATIO        20
 #define GBMS_DEFAULT_CV_DEBOUNCE_CNT    3
 #define GBMS_DEFAULT_CV_UPDATE_INTERVAL 2000
 #define GBMS_DEFAULT_CV_TIER_OV_CNT     10
@@ -328,6 +329,11 @@ int gbms_init_chg_profile_internal(struct gbms_chg_profile *profile,
 	if (ret < 0)
 		profile->fv_uv_margin_dpct = GBMS_DEFAULT_FV_UV_MARGIN_DPCT;
 
+	ret = of_property_read_u32(node, "google,fv-dc-ratio",
+				   &profile->fv_dc_ratio);
+	if (ret < 0)
+		profile->fv_dc_ratio = GBMS_DEFAULT_FV_DC_RATIO;
+
 	/* debounce tier switch */
 	ret = of_property_read_u32(node, "google,cv-debounce-cnt",
 				   &profile->cv_debounce_cnt);
@@ -402,25 +408,60 @@ void gbms_dump_raw_profile(char *buff, size_t len, const struct gbms_chg_profile
 }
 EXPORT_SYMBOL_GPL(gbms_dump_raw_profile);
 
+/*
+ * When charging in DC, the fv_max will be (FV + cc_max * fv_dc_ratio).
+ * DC can be detected by cc_ua non-zero.
+ * The gap between Vchg and Vbat is caused by the ibat and the impedance.
+ * The fv_dc_ratio is used to simulate the impedance to get the proper fv, so
+ * the vbat will not over the otv threshold.
+ */
 int gbms_msc_round_fv_uv(const struct gbms_chg_profile *profile,
-			   int vtier, int fv_uv)
+			   int vtier, int fv_uv, int cc_ua)
 {
 	int result;
-	const unsigned int fv_uv_max = (vtier / 1000)
-					* profile->fv_uv_margin_dpct;
+	const unsigned int fv_uv_max = (vtier / 1000) * profile->fv_uv_margin_dpct;
+	const unsigned int dc_fv_uv_max = vtier + (cc_ua / 1000) * profile->fv_dc_ratio;
+	const unsigned int last_fv = profile->volt_limits[profile->volt_nb_limits - 1];
+	unsigned int fv_max;
 
-	if (fv_uv_max != 0 && fv_uv > fv_uv_max)
-		fv_uv = fv_uv_max;
+	if (cc_ua == 0)
+		fv_max = fv_uv_max;
+	else if (dc_fv_uv_max >= last_fv)
+		fv_max = last_fv - profile->fv_uv_resolution;
+	else
+		fv_max = dc_fv_uv_max;
+
+	if (fv_max != 0 && fv_uv > fv_max)
+		fv_uv = fv_max;
 
 	result = fv_uv - (fv_uv % profile->fv_uv_resolution);
 
-	if (fv_uv_max != 0)
+	if (fv_max != 0)
 		gbms_info(profile, "MSC_ROUND: fv_uv=%d vtier=%d fv_uv_max=%d -> %d\n",
-			fv_uv, vtier, fv_uv_max, result);
+			  fv_uv, vtier, fv_max, result);
 
 	return result;
 }
 EXPORT_SYMBOL_GPL(gbms_msc_round_fv_uv);
+
+/* skip tiers that have same c-rate */
+int gbms_msc_merge_tiers(const struct gbms_chg_profile *profile,
+			  int vbatt_idx, int temp_idx)
+{
+	int cc_max;
+
+	if (!profile || vbatt_idx < 0 || vbatt_idx >= profile->volt_nb_limits
+	    || temp_idx < 0 || temp_idx >= profile->temp_nb_limits)
+		return -EINVAL;
+
+	cc_max = GBMS_CCCM_LIMITS(profile, temp_idx, vbatt_idx);
+	while (vbatt_idx < profile->volt_nb_limits - 1 &&
+		cc_max == GBMS_CCCM_LIMITS(profile, temp_idx, vbatt_idx + 1))
+			vbatt_idx++;
+
+	return vbatt_idx;
+}
+EXPORT_SYMBOL_GPL(gbms_msc_merge_tiers);
 
 /* charge profile idx based on the battery temperature
  * TODO: return -1 when temperature is lower than profile->temp_limits[0] or

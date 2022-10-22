@@ -111,7 +111,10 @@ obj-$(CONFIG_MAX20339)	+= max20339.o
 obj-$(CONFIG_STWLC98)	+= wlc98_driver.o
 
 # WC68 DC Charge pump
-obj-$(CONFIG_STWC68)	+= wc68_driver.o
+obj-$(CONFIG_STWC68)	+= wc68.o
+wc68-objs += wc68_driver.o
+wc68-objs += wc68_gbms_pps.o
+wc68-objs += google_dc_pps.o
 
 # prevent warnings
 WENUMS=-Wno-enum-conversion -Wno-switch
@@ -129,7 +132,8 @@ CFLAGS_google_bms.o += -Wno-enum-conversion
 CFLAGS_google_cpm.o += $(WENUMS)
 CFLAGS_google_dual_batt_gauge.o += $(WENUMS)
 CFLAGS_google_dock.o += $(WENUMS)
-CFLAGS_wlc98_driver.o += $(WENUMS)
+CFLAGS_wc68_driver.o += $(WENUMS)
+CFLAGS_wc68_gbms_pps.o += $(WENUMS)
 
 KERNEL_SRC ?= /lib/modules/$(shell uname -r)/build
 M ?= $(shell pwd)
