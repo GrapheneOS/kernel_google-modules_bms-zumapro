@@ -2451,8 +2451,20 @@ static void p9221_dream_defend(struct p9221_charger_data *charger)
 		return;
 	}
 
-	threshold = charger->mitigate_threshold > 0 ? charger->mitigate_threshold :
-		    charger->pdata->power_mitigate_threshold;
+	if (!charger->csi_type_votable)
+		charger->csi_type_votable = gvotable_election_get_handle(VOTABLE_CSI_TYPE);
+
+	if (charger->mitigate_threshold > 0)
+		threshold = charger->mitigate_threshold;
+	else if (charger->csi_type_votable &&
+		 charger->pdata->power_mitigate_threshold > 0 &&
+		 gvotable_get_current_int_vote(charger->csi_type_votable) == CSI_TYPE_Adaptive)
+		threshold = charger->last_capacity - 1; /* Run dream defend when AC trigger */
+	else
+		threshold = charger->pdata->power_mitigate_threshold;
+
+	pr_debug("dream_defend soc:%d threshold:%d\n", charger->last_capacity, threshold);
+
 	if (!threshold)
 		return;
 
