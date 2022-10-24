@@ -254,6 +254,8 @@ struct gcpm_drv  {
 
 	/* debug fs */
 	struct dentry *debug_entry;
+
+	int wlc_dc_fcc;
 };
 
 #define gcpm_psy_name(psy) \
@@ -697,6 +699,12 @@ static int gcpm_dc_start(struct gcpm_drv *gcpm, int index)
 	ret = gcpm_update_votes(gcpm, gcpm->cp_fcc_hold_limit);
 	if (ret < 0)
 		pr_debug("PPS_DC: start cannot update votes (%d)\n", ret);
+
+	if (gcpm->pps_index == PPS_INDEX_WLC) {
+		gcpm_update_gcpm_fcc(gcpm, "WLC_FCC", gcpm->wlc_dc_fcc, gcpm->wlc_dc_fcc > 0);
+		pr_info("PPS_DC: index=%d vote gcpm_fcc to %d\n",
+			 gcpm->pps_index, gcpm->wlc_dc_fcc);
+	}
 
 	/* this is the CP */
 	dc_psy = gcpm_chg_get_active_cp(gcpm);
@@ -1469,6 +1477,9 @@ static int gcpm_pps_wlc_dc_restart_default(struct gcpm_drv *gcpm)
 	ret = gcpm_update_votes(gcpm, 0);
 	if (ret < 0)
 		pr_err("PPS_DC: wlc_dc_rd cannot update votes (%d)\n", ret);
+
+	pr_debug("PPS_DC: gcpm_update_gcpm_fcc unvote\n");
+	gcpm_update_gcpm_fcc(gcpm, "WLC_FCC", 0, false);
 
 	/* Clear taper count if not complete */
 	gcpm_taper_ctl(gcpm, 0);
@@ -3964,6 +3975,10 @@ static int google_cpm_probe(struct platform_device *pdev)
 				   &gcpm->taper_step_current);
 	if (ret < 0)
 		gcpm->taper_step_current = GCPM_TAPER_STEP_CURRENT;
+	ret = of_property_read_u32(pdev->dev.of_node, "google,wlc-dc-fcc-ua",
+				   &gcpm->wlc_dc_fcc);
+	if (ret < 0)
+		gcpm->wlc_dc_fcc = 0;
 
 	dev_info(gcpm->device, "taper ts_m=%d ts_ccs=%d ts_i=%d ts_cnt=%d ts_g=%d ts_v=%d ts_c=%d\n",
 		 gcpm->taper_step_fv_margin, gcpm->taper_step_cc_step,
