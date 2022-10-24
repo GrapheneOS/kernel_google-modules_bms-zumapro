@@ -174,6 +174,8 @@ struct batt_ssoc_state {
 	int bd_trickle_recharge_soc;
 	int bd_trickle_cnt;
 	bool bd_trickle_dry_run;
+	bool bd_trickle_full;
+	bool bd_trickle_eoc;
 	u32 bd_trickle_reset_sec;
 
 	/* buff */
@@ -544,9 +546,6 @@ struct batt_drv {
 
 static int gbatt_get_temp(const struct batt_drv *batt_drv, int *temp);
 
-static int batt_chg_tier_stats_cstr(char *buff, int size,
-				    const struct gbms_ce_tier_stats *tier_stat,
-				    bool verbose);
 static int gbatt_get_capacity(struct batt_drv *batt_drv);
 
 static inline void batt_update_cycle_count(struct batt_drv *batt_drv)
@@ -1159,15 +1158,6 @@ static bool batt_rl_enter(struct batt_ssoc_state *ssoc_state,
 	if (rl_current == rl_status || rl_current == BATT_RL_STATUS_DISCHARGE)
 		return false;
 
-	/* bd_trickle_cnt -1 if the rl_status change does not happen at 100% */
-	if (rl_current == BATT_RL_STATUS_RECHARGE &&
-	    rl_status == BATT_RL_STATUS_DISCHARGE) {
-		if (ssoc_get_real(ssoc_state) != SSOC_FULL) {
-			if (ssoc_state->bd_trickle_cnt > 0)
-				ssoc_state->bd_trickle_cnt--;
-		}
-	}
-
 	/*
 	 * NOTE: rl_status transition from *->DISCHARGE on charger FULL (during
 	 * charge or at the end of recharge) and transition from
@@ -1346,7 +1336,13 @@ static void batt_rl_update_status(struct batt_drv *batt_drv)
 	if (batt_drv->psy)
 		power_supply_changed(batt_drv->psy);
 
-	ssoc_state->bd_trickle_cnt++;
+	if (ssoc_state->bd_trickle_full && ssoc_state->bd_trickle_eoc) {
+		ssoc_state->bd_trickle_cnt++;
+		ssoc_state->bd_trickle_full = false;
+		ssoc_state->bd_trickle_eoc = false;
+	}
+
+	dump_ssoc_state(&batt_drv->ssoc_state, batt_drv->ssoc_log);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -1447,14 +1443,6 @@ done:
 }
 
 /* ------------------------------------------------------------------------- */
-
-static void cev_ts_init(struct gbms_ce_tier_stats *stats, int8_t idx)
-{
-	stats->vtier_idx = idx;
-	stats->temp_idx = -1;
-	stats->soc_in = -1;
-}
-
 /* CEV = Charging EVent */
 static void cev_stats_init(struct gbms_charging_event *ce_data,
 			   const struct gbms_chg_profile *profile)
@@ -1473,18 +1461,18 @@ static void cev_stats_init(struct gbms_charging_event *ce_data,
 	ce_data->last_soc = -1;
 
 	for (i = 0; i < GBMS_STATS_TIER_COUNT ; i++)
-		cev_ts_init(&ce_data->tier_stats[i], i);
+		gbms_tier_stats_init(&ce_data->tier_stats[i], i);
 
 	/* batt_chg_health_stats_close() will fix this */
-	cev_ts_init(&ce_data->health_stats, GBMS_STATS_AC_TI_INVALID);
-	cev_ts_init(&ce_data->health_pause_stats, GBMS_STATS_AC_TI_PAUSE);
-	cev_ts_init(&ce_data->health_dryrun_stats, GBMS_STATS_AC_TI_V2_PREDICT);
+	gbms_tier_stats_init(&ce_data->health_stats, GBMS_STATS_AC_TI_INVALID);
+	gbms_tier_stats_init(&ce_data->health_pause_stats, GBMS_STATS_AC_TI_PAUSE);
+	gbms_tier_stats_init(&ce_data->health_dryrun_stats, GBMS_STATS_AC_TI_V2_PREDICT);
 
-	cev_ts_init(&ce_data->full_charge_stats, GBMS_STATS_AC_TI_FULL_CHARGE);
-	cev_ts_init(&ce_data->high_soc_stats, GBMS_STATS_AC_TI_HIGH_SOC);
-	cev_ts_init(&ce_data->overheat_stats, GBMS_STATS_BD_TI_OVERHEAT_TEMP);
-	cev_ts_init(&ce_data->cc_lvl_stats, GBMS_STATS_BD_TI_CUSTOM_LEVELS);
-	cev_ts_init(&ce_data->trickle_stats, GBMS_STATS_BD_TI_TRICKLE_CLEARED);
+	gbms_tier_stats_init(&ce_data->full_charge_stats, GBMS_STATS_AC_TI_FULL_CHARGE);
+	gbms_tier_stats_init(&ce_data->high_soc_stats, GBMS_STATS_AC_TI_HIGH_SOC);
+	gbms_tier_stats_init(&ce_data->overheat_stats, GBMS_STATS_BD_TI_OVERHEAT_TEMP);
+	gbms_tier_stats_init(&ce_data->cc_lvl_stats, GBMS_STATS_BD_TI_CUSTOM_LEVELS);
+	gbms_tier_stats_init(&ce_data->trickle_stats, GBMS_STATS_BD_TI_TRICKLE_CLEARED);
 }
 
 static void batt_chg_stats_start(struct batt_drv *batt_drv)
@@ -1529,18 +1517,6 @@ static bool batt_chg_stats_qual(const struct batt_drv *batt_drv)
 }
 
 /* call holding stats_lock */
-static void batt_chg_stats_tier(struct gbms_ce_tier_stats *tier,
-				int msc_state,
-				ktime_t elap)
-{
-	if (msc_state < 0 || msc_state >= MSC_STATES_COUNT)
-		return;
-
-	tier->msc_cnt[msc_state] += 1;
-	tier->msc_elap[msc_state] += elap;
-}
-
-/* call holding stats_lock */
 static void batt_chg_stats_soc_update(struct gbms_charging_event *ce_data,
 				      qnum_t soc, ktime_t elap, int tier_index,
 				      int cc)
@@ -1567,90 +1543,6 @@ static void batt_chg_stats_soc_update(struct gbms_charging_event *ce_data,
 	ce_data->last_soc = index;
 }
 
-static void batt_chg_stats_update_tier(const struct batt_drv *const batt_drv,
-				       int temp_idx, int ibatt_ma, int temp,
-				       ktime_t elap, int cc,
-				       struct gbms_ce_tier_stats *tier)
-{
-	const uint16_t icl_settled = batt_drv->chg_state.f.icl;
-
-	/*
-	 * book time to previous msc_state for this tier, there is an
-	 * interesting wrinkle here since some tiers (health, full, etc)
-	 * might be entered and exited multiple times.
-	 */
-	batt_chg_stats_tier(tier, batt_drv->msc_state, elap);
-
-	if (tier->soc_in == -1) {
-		int soc_in;
-
-		soc_in = GPSY_GET_PROP(batt_drv->fg_psy,
-				       GBMS_PROP_CAPACITY_RAW);
-		if (soc_in < 0) {
-			pr_info("MSC_STAT cannot read soc_in=%d\n", soc_in);
-			return;
-		}
-
-		tier->temp_idx = temp_idx;
-
-		tier->temp_in = temp;
-		tier->temp_min = temp;
-		tier->temp_max = temp;
-
-		tier->ibatt_min = ibatt_ma;
-		tier->ibatt_max = ibatt_ma;
-
-		tier->icl_min = icl_settled;
-		tier->icl_max = icl_settled;
-
-		tier->soc_in = soc_in;
-		tier->cc_in = cc;
-		tier->cc_total = 0;
-	} else {
-		const u8 flags = batt_drv->chg_state.f.flags;
-
-		/* crossed temperature tier */
-		if (temp_idx != tier->temp_idx)
-			tier->temp_idx = -1;
-
-		if (flags & GBMS_CS_FLAG_CC) {
-			tier->time_fast += elap;
-		} else if (flags & GBMS_CS_FLAG_CV) {
-			tier->time_taper += elap;
-		} else {
-			tier->time_other += elap;
-		}
-
-		/*
-		 * averages: temp < 100. icl_settled < 3000, sum(ibatt)
-		 * is bound to battery capacity, elap in seconds, sums
-		 * are stored in an s64. For icl_settled I need a tier
-		 * to last for more than ~97M years.
-		 */
-		if (temp < tier->temp_min)
-			tier->temp_min = temp;
-		if (temp > tier->temp_max)
-			tier->temp_max = temp;
-		tier->temp_sum += temp * elap;
-
-		if (icl_settled < tier->icl_min)
-			tier->icl_min = icl_settled;
-		if (icl_settled > tier->icl_max)
-			tier->icl_max = icl_settled;
-		tier->icl_sum += icl_settled * elap;
-
-		if (ibatt_ma < tier->ibatt_min)
-			tier->ibatt_min = ibatt_ma;
-		if (ibatt_ma > tier->ibatt_max)
-			tier->ibatt_max = ibatt_ma;
-		tier->ibatt_sum += ibatt_ma * elap;
-
-		tier->cc_total = cc - tier->cc_in;
-	}
-
-	tier->sample_count += 1;
-}
-
 /* call holding stats_lock */
 static void batt_chg_stats_update(struct batt_drv *batt_drv, int temp_idx,
 				  int tier_idx, int ibatt_ma, int temp,
@@ -1660,7 +1552,7 @@ static void batt_chg_stats_update(struct batt_drv *batt_drv, int temp_idx,
 	const int msc_state = batt_drv->msc_state; /* last msc_state */
 	struct gbms_charging_event *ce_data = &batt_drv->ce_data;
 	struct gbms_ce_tier_stats *tier = NULL;
-	int cc;
+	int cc, soc_in;
 
 	if (elap == 0)
 		return;
@@ -1673,26 +1565,32 @@ static void batt_chg_stats_update(struct batt_drv *batt_drv, int temp_idx,
 	}
 	cc = cc / 1000;
 
+	soc_in = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_CAPACITY_RAW);
+	if (soc_in < 0) {
+		pr_info("MSC_STAT cannot read soc_in=%d\n", soc_in);
+		return;
+	}
+
 	/* Note: To log new voltage tiers, add to list in go/pixel-vtier-defs */
 	/* ---  Log tiers in PARALLEL below ---  */
 
 	if (soc_real >= SSOC_HIGH_SOC)
-		batt_chg_stats_update_tier(batt_drv, temp_idx, ibatt_ma, temp,
-					   elap, cc,
-					   &ce_data->high_soc_stats);
+		gbms_stats_update_tier(temp_idx, ibatt_ma, temp, elap, cc,
+				       &batt_drv->chg_state, msc_state, soc_in,
+				       &ce_data->high_soc_stats);
 
 	if (batt_drv->chg_health.dry_run_deadline > 0)
-		batt_chg_stats_update_tier(batt_drv, temp_idx, ibatt_ma, temp,
-					   elap, cc,
-					   &ce_data->health_dryrun_stats);
+		gbms_stats_update_tier(temp_idx, ibatt_ma, temp, elap, cc,
+				       &batt_drv->chg_state, msc_state, soc_in,
+				       &ce_data->health_dryrun_stats);
 
 	/* --- Log tiers in SERIES below --- */
 	if (batt_drv->batt_full) {
 
 		/* Override regular charge tiers when fully charged */
-		batt_chg_stats_update_tier(batt_drv, temp_idx, ibatt_ma,
-					   temp, elap, cc,
-					   &ce_data->full_charge_stats);
+		gbms_stats_update_tier(temp_idx, ibatt_ma, temp, elap, cc,
+				       &batt_drv->chg_state, msc_state, soc_in,
+				       &ce_data->full_charge_stats);
 
 	} else if (msc_state == MSC_HEALTH_PAUSE) {
 
@@ -1700,9 +1598,9 @@ static void batt_chg_stats_update(struct batt_drv *batt_drv, int temp_idx,
 		 * We log the pause tier in different AC tier groups so that we
 		 * can capture pause time separately.
 		 */
-		batt_chg_stats_update_tier(batt_drv, temp_idx, ibatt_ma, temp,
-					   elap, cc,
-					   &ce_data->health_pause_stats);
+		gbms_stats_update_tier(temp_idx, ibatt_ma, temp, elap, cc,
+				       &batt_drv->chg_state, msc_state, soc_in,
+				       &ce_data->health_pause_stats);
 
 	} else if (msc_state == MSC_HEALTH || msc_state == MSC_HEALTH_ALWAYS_ON) {
 		/*
@@ -1718,9 +1616,9 @@ static void batt_chg_stats_update(struct batt_drv *batt_drv, int temp_idx,
 		 */
 
 		/* tier used for TTF during HC, check msc_logic_health() */
-		batt_chg_stats_update_tier(batt_drv, temp_idx, ibatt_ma,
-					   temp, elap, cc,
-					   &ce_data->health_stats);
+		gbms_stats_update_tier(temp_idx, ibatt_ma, temp, elap, cc,
+				       &batt_drv->chg_state, msc_state, soc_in,
+				       &ce_data->health_stats);
 	} else {
 		const qnum_t soc = ssoc_get_capacity_raw(&batt_drv->ssoc_state);
 
@@ -1742,17 +1640,17 @@ static void batt_chg_stats_update(struct batt_drv *batt_drv, int temp_idx,
 
 	/* batt_drv->batt_health is protected with chg_lock, */
 	if (batt_drv->batt_health == POWER_SUPPLY_HEALTH_OVERHEAT) {
-		batt_chg_stats_update_tier(batt_drv, temp_idx, ibatt_ma, temp,
-					   elap, cc,
-					   &ce_data->overheat_stats);
+		gbms_stats_update_tier(temp_idx, ibatt_ma, temp, elap, cc,
+				       &batt_drv->chg_state, msc_state, soc_in,
+				       &ce_data->overheat_stats);
 		tier = NULL;
 	}
 
 	/* custom charge levels (DWELL-DEFEND or RETAIL) */
 	if (batt_drv->chg_state.f.flags & GBMS_CS_FLAG_CCLVL) {
-		batt_chg_stats_update_tier(batt_drv, temp_idx, ibatt_ma, temp,
-					   elap, cc,
-					   &ce_data->cc_lvl_stats);
+		gbms_stats_update_tier(temp_idx, ibatt_ma, temp, elap, cc,
+				       &batt_drv->chg_state, msc_state, soc_in,
+				       &ce_data->cc_lvl_stats);
 		tier = NULL;
 	}
 
@@ -1763,8 +1661,8 @@ static void batt_chg_stats_update(struct batt_drv *batt_drv, int temp_idx,
 	if (!tier)
 		return;
 
-	batt_chg_stats_update_tier(batt_drv, temp_idx, ibatt_ma, temp,
-				   elap, cc, tier);
+	gbms_stats_update_tier(temp_idx, ibatt_ma, temp, elap, cc,
+			       &batt_drv->chg_state, msc_state, soc_in, tier);
 }
 
 static int batt_chg_health_vti(const struct batt_chg_health *chg_health)
@@ -1934,31 +1832,6 @@ static int batt_chg_stats_soc_next(const struct gbms_charging_event *ce_data,
 	return soc_next;
 }
 
-static void bat_log_cstr_handler(struct logbuffer *log, char *buf, int len)
-{
-	int i, j = 0;
-	char tmp[LOG_BUFFER_ENTRY_SIZE];
-
-	buf[len] = '\n';
-	for (i = 0; i <= len; i++) {
-		if (buf[i] == '\n') {
-			tmp[j] = '\0';
-			/* skip first blank line */
-			if (i != 0)
-				logbuffer_log(log, "%s", tmp);
-			j = 0;
-		} else if (j >= LOG_BUFFER_ENTRY_SIZE - 1) {
-			tmp[j] = '\0';
-			logbuffer_log(log, "%s", tmp);
-			i--;
-			j = 0;
-		} else {
-			tmp[j] = buf[i];
-			j++;
-		}
-	}
-}
-
 static void bat_log_chg_stats(struct logbuffer *log,
 			      const struct gbms_charging_event *ce_data)
 {
@@ -1997,15 +1870,15 @@ static void bat_log_chg_stats(struct logbuffer *log,
 		if (!elap)
 			continue;
 
-		len = batt_chg_tier_stats_cstr(buff, sizeof(buff),
+		len = gbms_tier_stats_cstr(buff, sizeof(buff),
 						&ce_data->tier_stats[i], true);
-		bat_log_cstr_handler(log, buff, len);
+		gbms_log_cstr_handler(log, buff, len);
 
 		if (soc_next) {
 			len = ttf_soc_cstr(buff, sizeof(buff),
 					   &ce_data->soc_stats,
 					   soc_in, soc_next);
-			bat_log_cstr_handler(log, buff, len);
+			gbms_log_cstr_handler(log, buff, len);
 		}
 	}
 }
@@ -2030,75 +1903,6 @@ static void batt_chg_stats_pub(struct batt_drv *batt_drv, char *reason,
 	mutex_unlock(&batt_drv->stats_lock);
 }
 
-/* Log only when elap != 0 add a special meaning for health status */
-static int batt_chg_tier_stats_cstr(char *buff, int size,
-				    const struct gbms_ce_tier_stats *tier_stat,
-				    bool verbose)
-{
-	const int soc_in = tier_stat->soc_in >> 8;
-	const long elap = tier_stat->time_fast + tier_stat->time_taper +
-			  tier_stat->time_other;
-	const static char *codes[] = {"n", "s", "d", "l", "v", "vo", "p", "f",
-					"t", "dl", "st", "tc", "r", "w", "rs",
-					"n", "ny", "h", "hp", "ha"};
-	long temp_avg, ibatt_avg, icl_avg;
-	int j, len = 0;
-
-	if (elap) {
-		temp_avg = tier_stat->temp_sum / elap;
-		ibatt_avg = tier_stat->ibatt_sum / elap;
-		icl_avg = tier_stat->icl_sum / elap;
-	} else {
-		temp_avg = 0;
-		ibatt_avg = 0;
-		icl_avg = 0;
-	}
-
-	len += scnprintf(&buff[len], size - len, "\n%d%c ",
-		tier_stat->vtier_idx,
-		(verbose) ? ':' : ',');
-
-	len += scnprintf(&buff[len], size - len,
-		"%d.%d,%d,%d, %d,%d,%d, %d,%ld,%d, %d,%ld,%d, %d,%ld,%d",
-		soc_in,
-		tier_stat->soc_in & 0xff,
-		tier_stat->cc_in,
-		tier_stat->temp_in,
-		tier_stat->time_fast,
-		tier_stat->time_taper,
-		tier_stat->time_other,
-		tier_stat->temp_min,
-		temp_avg,
-		tier_stat->temp_max,
-		tier_stat->ibatt_min,
-		ibatt_avg,
-		tier_stat->ibatt_max,
-		tier_stat->icl_min,
-		icl_avg,
-		tier_stat->icl_max);
-
-	if (!verbose || !elap)
-		return len;
-
-	/* time spent in every multi step charging state */
-	len += scnprintf(&buff[len], size - len, "\n%d:",
-			tier_stat->vtier_idx);
-
-	for (j = 0; j < MSC_STATES_COUNT; j++)
-		len += scnprintf(&buff[len], size - len, " %s=%d",
-			codes[j], tier_stat->msc_elap[j]);
-
-	/* count spent in each step charging state */
-	len += scnprintf(&buff[len], size - len, "\n%d:",
-			tier_stat->vtier_idx);
-
-	for (j = 0; j < MSC_STATES_COUNT; j++)
-		len += scnprintf(&buff[len], size - len, " %s=%d",
-			codes[j], tier_stat->msc_cnt[j]);
-
-	return len;
-}
-
 /* health_stats->tier_index is set on stats_close() */
 static int batt_health_stats_cstr(char *buff, int size,
 				  const struct gbms_charging_event *ce_data,
@@ -2117,15 +1921,14 @@ static int batt_health_stats_cstr(char *buff, int size,
 	if (vti == GBMS_STATS_AC_TI_INVALID)
 		return len;
 
-	len += batt_chg_tier_stats_cstr(&buff[len], size - len,
-					health_stats,
-					verbose);
+	len += gbms_tier_stats_cstr(&buff[len], size - len,
+				    health_stats, verbose);
 
 	/* Only add pause tier logging if there is pause time */
 	if (ce_data->health_pause_stats.soc_in != -1)
-		len += batt_chg_tier_stats_cstr(&buff[len], size - len,
-						&ce_data->health_pause_stats,
-						verbose);
+		len += gbms_tier_stats_cstr(&buff[len], size - len,
+					    &ce_data->health_pause_stats,
+					    verbose);
 
 	return len;
 }
@@ -2180,9 +1983,9 @@ static int batt_chg_stats_cstr(char *buff, int size,
 		if (!elap)
 			continue;
 
-		len += batt_chg_tier_stats_cstr(&buff[len], size - len,
-						&ce_data->tier_stats[i],
-						verbose);
+		len += gbms_tier_stats_cstr(&buff[len], size - len,
+					    &ce_data->tier_stats[i],
+					    verbose);
 
 		if (soc_next)
 			len += ttf_soc_cstr(&buff[len], size - len,
@@ -2192,37 +1995,37 @@ static int batt_chg_stats_cstr(char *buff, int size,
 
 	/* Does not currently check MSC_HEALTH */
 	if (ce_data->health_dryrun_stats.soc_in != -1)
-		len += batt_chg_tier_stats_cstr(&buff[len], size - len,
-						&ce_data->health_dryrun_stats,
-						verbose);
+		len += gbms_tier_stats_cstr(&buff[len], size - len,
+					    &ce_data->health_dryrun_stats,
+					    verbose);
 
 	if (ce_data->full_charge_stats.soc_in != -1)
-		len += batt_chg_tier_stats_cstr(&buff[len], size - len,
-						&ce_data->full_charge_stats,
-						verbose);
+		len += gbms_tier_stats_cstr(&buff[len], size - len,
+					    &ce_data->full_charge_stats,
+					    verbose);
 
 	if (ce_data->high_soc_stats.soc_in != -1)
-		len += batt_chg_tier_stats_cstr(&buff[len], size - len,
-						&ce_data->high_soc_stats,
-						verbose);
+		len += gbms_tier_stats_cstr(&buff[len], size - len,
+					    &ce_data->high_soc_stats,
+					    verbose);
 
 	if (ce_data->overheat_stats.soc_in != -1)
-		len += batt_chg_tier_stats_cstr(&buff[len], size - len,
-						&ce_data->overheat_stats,
-						verbose);
+		len += gbms_tier_stats_cstr(&buff[len], size - len,
+					    &ce_data->overheat_stats,
+					    verbose);
 
 	if (ce_data->cc_lvl_stats.soc_in != -1)
-		len += batt_chg_tier_stats_cstr(&buff[len], size - len,
-						&ce_data->cc_lvl_stats,
-						verbose);
+		len += gbms_tier_stats_cstr(&buff[len], size - len,
+					    &ce_data->cc_lvl_stats,
+					    verbose);
 
 	/* If bd_clear triggers, we need to know about it even if trickle hasn't
 	 * triggered
 	 */
 	if (ce_data->trickle_stats.soc_in != -1 || ce_data->bd_clear_trickle)
-		len += batt_chg_tier_stats_cstr(&buff[len], size - len,
-						&ce_data->trickle_stats,
-						verbose);
+		len += gbms_tier_stats_cstr(&buff[len], size - len,
+					    &ce_data->trickle_stats,
+					    verbose);
 
 	return len;
 }
@@ -2452,7 +2255,7 @@ log_and_done:
 	csi_stats->csi_speed_max = current_speed;
 
 	csi_stats->csi_time_sum = 0;
-	csi_stats->speed_sum = current_speed;
+	csi_stats->speed_sum = 0;
 	csi_stats->last_update = right_now;
 }
 
@@ -2751,6 +2554,8 @@ static inline void batt_reset_chg_drv_state(struct batt_drv *batt_drv)
 	batt_drv->ttf_debounce = 1;
 	batt_drv->fg_status = POWER_SUPPLY_STATUS_UNKNOWN;
 	batt_drv->chg_done = false;
+	batt_drv->ssoc_state.bd_trickle_full = false;
+	batt_drv->ssoc_state.bd_trickle_eoc = false;
 	/* algo */
 	batt_drv->temp_idx = -1;
 	batt_drv->vbatt_idx = -1;
@@ -3999,7 +3804,7 @@ static int msc_logic(struct batt_drv *batt_drv)
 		}
 
 		mutex_lock(&batt_drv->stats_lock);
-		batt_chg_stats_tier(&batt_drv->ce_data.tier_stats[tier_idx],
+		gbms_chg_stats_tier(&batt_drv->ce_data.tier_stats[tier_idx],
 				    batt_drv->msc_irdrop_state, elap);
 		batt_drv->msc_irdrop_state = msc_state;
 		mutex_unlock(&batt_drv->stats_lock);
@@ -4151,6 +3956,8 @@ static void bd_trickle_reset(struct batt_ssoc_state *ssoc_state,
 {
 	ssoc_state->bd_trickle_cnt = 0;
 	ssoc_state->disconnect_time = 0;
+	ssoc_state->bd_trickle_full = false;
+	ssoc_state->bd_trickle_eoc = false;
 
 	/* Set to false in cev_stats_init */
 	ce_data->bd_clear_trickle = true;
@@ -4172,9 +3979,9 @@ static void google_battery_dump_profile(const struct gbms_chg_profile *profile)
 {
 	char *buff;
 
-	buff = kzalloc(GBMS_CHG_ALG_BUF, GFP_KERNEL);
+	buff = kzalloc(GBMS_CHG_ALG_BUF_SZ, GFP_KERNEL);
 	if (buff) {
-		gbms_dump_chg_profile(buff, GBMS_CHG_ALG_BUF, profile);
+		gbms_dump_chg_profile(buff, GBMS_CHG_ALG_BUF_SZ, profile);
 		pr_info("%s", buff);
 		kfree(buff);
 	}
@@ -4413,9 +4220,11 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 					BATT_RL_STATUS_DISCHARGE);
 
 		batt_drv->chg_done = true;
+		batt_drv->ssoc_state.bd_trickle_eoc = true;
 	} else if (batt_drv->batt_full) {
 		changed = batt_rl_enter(&batt_drv->ssoc_state,
 					BATT_RL_STATUS_RECHARGE);
+		batt_drv->ssoc_state.bd_trickle_full = true;
 	}
 
 	err = msc_logic(batt_drv);
@@ -5557,11 +5366,11 @@ static ssize_t batt_show_chg_details(struct device *dev,
 
 		/* NOTE: vtier_idx is -1, can also check elap  */
 		if (h->soc_in != -1)
-			len += batt_chg_tier_stats_cstr(&buf[len],
-							PAGE_SIZE - len, h, !!elap_h);
+			len += gbms_tier_stats_cstr(&buf[len],
+						    PAGE_SIZE - len, h, !!elap_h);
 		if (p->soc_in != -1)
-			len += batt_chg_tier_stats_cstr(&buf[len],
-							PAGE_SIZE - len, p, !!elap_p);
+			len += gbms_tier_stats_cstr(&buf[len],
+						    PAGE_SIZE - len, p, !!elap_p);
 	}
 
 	len += scnprintf(&buf[len], PAGE_SIZE - len, "\n");
@@ -7608,9 +7417,6 @@ static void google_battery_work(struct work_struct *work)
 		if (prev_ssoc != ssoc) {
 			pr_debug("%s: change of ssoc %d->%d\n", __func__,
 				 prev_ssoc, ssoc);
-
-			if (ssoc > prev_ssoc)
-				batt_log_csi_ttf_info(batt_drv);
 
 			dump_ssoc_state(ssoc_state, batt_drv->ssoc_log);
 			batt_log_csi_ttf_info(batt_drv);

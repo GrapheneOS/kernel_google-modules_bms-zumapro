@@ -266,6 +266,7 @@ struct max1720x_chip {
 
 
 static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj);
+static int max1720x_set_next_update(struct max1720x_chip *chip);
 
 static bool max17x0x_reglog_init(struct max1720x_chip *chip)
 {
@@ -1630,6 +1631,13 @@ static int max1720x_get_cycle_count(struct max1720x_chip *chip)
 	chip->eeprom_cycle = max1720x_save_battery_cycle(chip, reg_cycle);
 
 	chip->cycle_count = cycle_count + chip->cycle_count_offset;
+
+	if (chip->model_ok && reg_cycle >= chip->model_next_update) {
+		err = max1720x_set_next_update(chip);
+		if (err < 0)
+			dev_err(chip->dev, "%s cannot set next update (%d)\n",
+				 __func__, err);
+	}
 
 	return chip->cycle_count;
 }
@@ -4279,8 +4287,6 @@ static int max1720x_model_load(struct max1720x_chip *chip)
 	if (ret < 0)
 		dev_err(chip->dev, "Load Model fixing drift data rc=%d\n", ret);
 
-	/* The caller need to call max1720x_set_next_update() */
-
 	/* mark model state as "safe" */
 	chip->reg_prop_capacity_raw = MAX1720X_REPSOC;
 	chip->model_state_valid = true;
@@ -4332,14 +4338,6 @@ static void max1720x_model_work(struct work_struct *work)
 	/* b/171741751, fix capacity drift (if POR is cleared) */
 	if (max1720x_check_drift_enabled(&chip->drift_data))
 		max1720x_fixup_capacity(chip, chip->cap_estimate.cable_in);
-
-	/* save state only when model is running */
-	if (chip->model_ok) {
-		rc = max1720x_set_next_update(chip);
-		if (rc < 0)
-			dev_err(chip->dev, "%s cannot set next update (%d)\n",
-				 __func__, rc);
-	}
 
 	if (chip->model_reload >= MAX_M5_LOAD_MODEL_REQUEST) {
 		const unsigned long delay = msecs_to_jiffies(60 * 1000);

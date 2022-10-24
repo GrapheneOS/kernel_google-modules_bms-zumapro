@@ -1158,6 +1158,7 @@ static int p9222_chip_renegotiate_pwr(struct p9221_charger_data *chgr)
 	for (cnt = 0; cnt < 7 ; cnt++) {
 		/* units 0.5 W */
 		ret = chgr->reg_write_8(chgr, P9222RE_EPP_REQ_NEGOTIATED_POWER_REG, rp8);
+		ret |= chgr->reg_write_8(chgr, P9222RE_EPP_REQ_MAXIMUM_POWER_REG, rp8);
 
 		usleep_range(20 * USEC_PER_MSEC, 22 * USEC_PER_MSEC);
 		if (!chgr->online)
@@ -1769,6 +1770,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_set_fod_addr = P9221R5_FOD_REG;
 		chgr->reg_q_factor_addr = P9221R5_EPP_Q_FACTOR_REG;
 		chgr->reg_csp_addr = P9221R5_CHARGE_STAT_REG;
+		chgr->reg_light_load_addr = 0;
 		break;
 	case P9382A_CHIP_ID:
 		chgr->reg_tx_id_addr = P9382_PROP_TX_ID_REG;
@@ -1780,6 +1782,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_set_fod_addr = P9221R5_FOD_REG;
 		chgr->reg_q_factor_addr = P9221R5_EPP_Q_FACTOR_REG;
 		chgr->reg_csp_addr = P9221R5_CHARGE_STAT_REG;
+		chgr->reg_light_load_addr = 0;
 		break;
 	case P9222_CHIP_ID:
 		chgr->reg_tx_id_addr = P9222RE_PROP_TX_ID_REG;
@@ -1791,6 +1794,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_set_fod_addr = P9222RE_FOD_REG;
 		chgr->reg_q_factor_addr = P9222RE_EPP_Q_FACTOR_REG;
 		chgr->reg_csp_addr = P9222RE_CHARGE_STAT_REG;
+		chgr->reg_light_load_addr = P9222_RX_CALIBRATION_LIGHT_LOAD;
 		break;
 	default:
 		chgr->reg_tx_id_addr = P9221R5_PROP_TX_ID_REG;
@@ -1802,6 +1806,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_set_fod_addr = P9221R5_FOD_REG;
 		chgr->reg_q_factor_addr = P9221R5_EPP_Q_FACTOR_REG;
 		chgr->reg_csp_addr = P9221R5_CHARGE_STAT_REG;
+		chgr->reg_light_load_addr = 0;
 		break;
 	}
 }
@@ -1951,7 +1956,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 }
 
 #if IS_ENABLED(CONFIG_GPIOLIB)
-int p9xxx_gpio_set_value(struct p9221_charger_data *chgr, unsigned gpio, int value)
+int p9xxx_gpio_set_value(struct p9221_charger_data *chgr, int gpio, int value)
 {
 	if (gpio <= 0)
 		return -EINVAL;

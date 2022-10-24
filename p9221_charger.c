@@ -56,6 +56,10 @@
 #define P9XXX_CHK_RP_DELAY_MS	200
 
 #define P9XXX_VOUT_5480MV	5480
+#define P9XXX_VOUT_5000MV	5000
+#define P9XXX_FOD_CHK_DELAY_MS	2000
+
+#define P9XXX_VOUT_5480MV	5480
 
 enum wlc_align_codes {
 	WLC_ALIGN_CHECKING = 0,
@@ -67,6 +71,7 @@ enum wlc_align_codes {
 enum wlc_chg_mode {
 	WLC_BPP = 0,
 	WLC_EPP,
+	WLC_EPP_COMP,
 	WLC_HPP,
 	WLC_HPP_HV,
 };
@@ -291,6 +296,30 @@ bool p9xxx_is_capdiv_en(struct p9221_charger_data *charger)
 	return false;
 }
 
+static int p9221_check_fod_by_fsw(struct p9221_charger_data *charger)
+{
+	const int freq_high_thres = charger->pdata->fod_fsw_high;
+	const int freq_low_thres = charger->pdata->fod_fsw_low;
+	u32 vout_mv = 0, freq_khz = 0;
+	int ret;
+
+	ret = charger->chip_get_vout_max(charger, &vout_mv);
+	if (ret == 0 && vout_mv == P9XXX_VOUT_5000MV)
+		return WLC_BPP;
+
+	if (!charger->is_mfg_google || freq_high_thres < 0 || freq_low_thres < 0)
+		return WLC_EPP;
+
+	ret = charger->chip_get_op_freq(charger, &freq_khz);
+	if (ret != 0)
+		return WLC_EPP;
+	if (freq_khz < freq_low_thres ||
+	    (charger->fod_mode == WLC_EPP_COMP && freq_khz < freq_high_thres))
+		return WLC_EPP_COMP;
+
+	return WLC_EPP;
+}
+
 static void p9221_write_fod(struct p9221_charger_data *charger)
 {
 	int mode = WLC_BPP;
@@ -298,7 +327,7 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 	int fod_count = charger->pdata->fod_num;
 	int ret;
 	int retries = 3;
-	static char *wlc_mode[] = { "BPP", "EPP", "HPP" , "HPP_HV" };
+	static char *wlc_mode[] = { "BPP", "EPP", "EPP_COMP" , "HPP" , "HPP_HV" };
 
 
 	if (charger->no_fod)
@@ -314,9 +343,16 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 		fod = charger->pdata->fod;
 
 	if (p9221_is_epp(charger) && charger->pdata->fod_epp_num) {
-		fod = charger->pdata->fod_epp;
-		fod_count = charger->pdata->fod_epp_num;
 		mode = WLC_EPP;
+		if (charger->pdata->fod_fsw)
+			mode = p9221_check_fod_by_fsw(charger);
+		if (mode == WLC_EPP) {
+			fod = charger->pdata->fod_epp;
+			fod_count = charger->pdata->fod_epp_num;
+		} else if (mode == WLC_EPP_COMP) {
+			fod = charger->pdata->fod_epp_comp;
+			fod_count = charger->pdata->fod_epp_comp_num;
+		}
 	}
 
 	if (p9xxx_is_capdiv_en(charger) && charger->pdata->fod_hpp_num) {
@@ -330,9 +366,8 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 		}
 	}
 
-	if (mode == charger->fod_mode &&
-	    (mode == WLC_HPP || mode == WLC_HPP_HV))
-		return;
+	if (mode == charger->fod_mode)
+		goto done;
 
 	charger->fod_mode = mode;
 
@@ -364,7 +399,7 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 		}
 
 		if (memcmp(fod, fod_read, fod_count) == 0)
-			return;
+			goto done;
 
 		p9221_hex_str(fod_read, fod_count, s, sizeof(s), 0);
 		dev_err(&charger->client->dev,
@@ -378,6 +413,10 @@ no_fod:
 	dev_warn(&charger->client->dev, "FOD not set! bpp:%d epp:%d hpp:%d hpp_hv:%d r:%d\n",
 		 charger->pdata->fod_num, charger->pdata->fod_epp_num,
 		 charger->pdata->fod_hpp_num, charger->pdata->fod_hpp_hv_num, retries);
+done:
+	if (charger->pdata->fod_fsw)
+		mod_delayed_work(system_wq, &charger->chk_fod_work,
+				 msecs_to_jiffies(P9XXX_FOD_CHK_DELAY_MS));
 }
 
 #define CC_DATA_LOCK_MS		250
@@ -698,6 +737,10 @@ static int p9221_reset_wlc_dc(struct p9221_charger_data *charger)
 		charger->prop_mode_en = false;
 		p9221_write_fod(charger);
 	}
+
+	ret = p9221_reg_write_8(charger, P9412_MOT_REG, P9412_MOT_65PCT);
+	if (ret < 0)
+		dev_warn(&charger->client->dev, "Fail to set MOT register(%d)\n", ret);
 
 	return ret;
 }
@@ -2158,6 +2201,7 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 	if (online == PPS_PSY_PROG_ONLINE) {
 		const int extben_gpio = charger->pdata->ext_ben_gpio;
 		bool feat_enable;
+		u8 val8;
 
 		pr_info("%s: online=%d, enabled=%d wlc_dc_enabled=%d prop_mode_en=%d\n",
 			__func__, online, enabled, wlc_dc_enabled,
@@ -2194,6 +2238,15 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 		if (!p9412_is_calibration_done(charger)) {
 			dev_warn(&charger->client->dev, "Calibrating\n");
 			return -EAGAIN;
+		}
+
+		ret = charger->reg_read_8(charger, P9221R5_EPP_TX_GUARANTEED_POWER_REG, &val8);
+		if (ret < 0)
+			return -EINVAL;
+		if (val8 < P9XXX_TX_GUAR_PWR_15W) {
+			dev_warn(&charger->client->dev, "Tx guar_pwr=%dW\n", val8 / 2);
+			p9221_set_auth_dc_icl(charger, false);
+			return -EOPNOTSUPP;
 		}
 
 		/* will return -EAGAIN until the feature is supported */
@@ -2263,6 +2316,11 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 			p9xxx_gpio_set_value(charger, extben_gpio, 1);
 
 		p9221_set_switch_reg(charger, true);
+
+		/* Adjusting the minimum on time(MOT) for mitigate LC node voltage overshoot */
+		ret = p9221_reg_write_8(charger, P9412_MOT_REG, P9412_MOT_40PCT);
+		if (ret < 0)
+			dev_warn(&charger->client->dev, "Fail to adjust MOT(%d)\n", ret);
 
 		return 1;
 	} else if (wlc_dc_enabled) {
@@ -3324,6 +3382,10 @@ static void p9221_notifier_work(struct work_struct *work)
 		goto done_relax;
 	}
 
+	/* Calibrate light load */
+	if (charger->pdata->light_load)
+		p9xxx_chip_set_light_load_reg(charger, P9222_LIGHT_LOAD_VALUE);
+
 	p9xxx_write_q_factor(charger);
 	if (charger->pdata->tx_4191q > 0)
 		p9xxx_update_q_factor(charger);
@@ -4257,7 +4319,7 @@ static ssize_t wpc_ready_show(struct device *dev,
 	struct p9221_charger_data *charger = i2c_get_clientdata(client);
 
 	/* Skip it on BPP */
-	if (!p9221_is_epp(charger))
+	if (!p9221_is_epp(charger) || !charger->pdata->has_wlc_dc)
 		return scnprintf(buf, PAGE_SIZE, "N\n");
 
 	return scnprintf(buf, PAGE_SIZE, "%c\n",
@@ -4680,6 +4742,11 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 {
 	int ret = 0, tx_icl = -1;
 
+	if ((enable && charger->ben_state) || (!enable && !charger->ben_state)) {
+		logbuffer_prlog(charger->rtx_log, "RTx is %s\n", enable ? "enabled" : "disabled");
+		return 0;
+	}
+
 	mutex_lock(&charger->rtx_lock);
 
 	if (enable == 0) {
@@ -4825,10 +4892,12 @@ static int p9412_check_rtx_ocp(struct p9221_charger_data *chgr)
 	logbuffer_log(chgr->rtx_log, "use rtx_ocp_chk_ms=%d retry=%d", chk_ms, retry);
 
 	for (cnt = 0; cnt < retry; cnt++) {
+		if (!chgr->ben_state)
+			return -EIO;
 		/* check if rx_is_connected: if yes, goto 7V */
 		ret = chgr->reg_read_16(chgr, P9221_STATUS_REG, &status_reg);
 		if (ret < 0) {
-			logbuffer_log(chgr->rtx_log, "goto disable RTx(%d)", ret);
+			logbuffer_log(chgr->rtx_log, "ioerr disable RTx(%d)", ret);
 			return -EIO;
 		}
 		if (status_reg & chgr->ints.rx_connected_bit) {
@@ -4865,6 +4934,8 @@ static void p9412_chk_rtx_ocp_work(struct work_struct *work)
 
 	/* check TX OCP before enable 7V */
 	ret = p9412_check_rtx_ocp(chgr);
+	if (!chgr->ben_state)
+		return;
 	if (ret < 0) {
 		p9382_set_rtx(chgr, false);
 		return;
@@ -4903,17 +4974,19 @@ static ssize_t rtx_store(struct device *dev,
 	int ret;
 
 	if (buf[0] == '0') {
-		dev_info(&charger->client->dev, "battery share off\n");
-		logbuffer_log(charger->rtx_log, "battery share off");
+		logbuffer_prlog(charger->rtx_log, "battery share off");
+		mutex_lock(&charger->rtx_lock);
+		charger->rtx_reset_cnt = 0;
+		mutex_unlock(&charger->rtx_lock);
+		ret = p9382_set_rtx(charger, false);
 		cancel_delayed_work_sync(&charger->rtx_work);
 		if (charger->pdata->apbst_en)
 			cancel_delayed_work_sync(&charger->chk_rtx_ocp_work);
-		charger->rtx_reset_cnt = 0;
-		ret = p9382_set_rtx(charger, false);
 	} else if (buf[0] == '1') {
-		dev_info(&charger->client->dev, "battery share on\n");
-		logbuffer_log(charger->rtx_log, "battery share on");
+		logbuffer_prlog(charger->rtx_log, "battery share on");
+		mutex_lock(&charger->rtx_lock);
 		charger->rtx_reset_cnt = 0;
+		mutex_unlock(&charger->rtx_lock);
 		ret = p9382_set_rtx(charger, true);
 	} else {
 		return -EINVAL;
@@ -5263,6 +5336,7 @@ static void p9xxx_reset_rtx_for_ocp(struct p9221_charger_data *charger)
 {
 	int ext_bst_on = 0;
 
+	mutex_lock(&charger->rtx_lock);
 	charger->rtx_reset_cnt += 1;
 
 	if (charger->rtx_reset_cnt >= RTX_RESET_COUNT_MAX) {
@@ -5270,6 +5344,7 @@ static void p9xxx_reset_rtx_for_ocp(struct p9221_charger_data *charger)
 			charger->rtx_err = RTX_HARD_OCP;
 		charger->rtx_reset_cnt = 0;
 	}
+	mutex_unlock(&charger->rtx_lock);
 
 	charger->is_rtx_mode = false;
 	p9382_set_rtx(charger, false);
@@ -5787,6 +5862,17 @@ static irqreturn_t p9221_irq_det_thread(int irq, void *irq_data)
 	return IRQ_HANDLED;
 }
 
+static void p9xxx_chk_fod_work(struct work_struct *work)
+{
+	struct p9221_charger_data *charger = container_of(work,
+			struct p9221_charger_data, chk_fod_work.work);
+
+	if (!charger->online)
+		return;
+
+	p9221_write_fod(charger);
+}
+
 static void p9xxx_chk_rp_work(struct work_struct *work)
 {
 	struct p9221_charger_data *charger = container_of(work,
@@ -6065,6 +6151,31 @@ static int p9221_parse_dt(struct device *dev,
 		}
 	}
 
+
+	pdata->fod_epp_comp_num =
+	    of_property_count_elems_of_size(node, "fod_epp_comp", sizeof(u8));
+	if (pdata->fod_epp_comp_num <= 0) {
+		dev_err(dev, "No dt fod epp comp provided (%d)\n",
+			pdata->fod_epp_comp_num);
+		pdata->fod_epp_comp_num = 0;
+	} else {
+		if (pdata->fod_epp_comp_num > P9221R5_NUM_FOD) {
+			dev_err(dev, "Incorrect num of EPP COMP FOD %d, using first %d\n",
+				pdata->fod_epp_comp_num, P9221R5_NUM_FOD);
+			pdata->fod_epp_comp_num = P9221R5_NUM_FOD;
+		}
+		ret = of_property_read_u8_array(node, "fod_epp_comp", pdata->fod_epp_comp,
+						pdata->fod_epp_comp_num);
+		if (ret == 0) {
+			char buf[P9221R5_NUM_FOD * 3 + 1];
+
+			p9221_hex_str(pdata->fod_epp_comp, pdata->fod_epp_comp_num, buf,
+				      pdata->fod_epp_comp_num * 3 + 1, false);
+			dev_info(dev, "dt fod_epp_comp: %s (%d)\n", buf,
+				 pdata->fod_epp_comp_num);
+		}
+	}
+
 	pdata->fod_hpp_num =
 	    of_property_count_elems_of_size(node, "fod_hpp", sizeof(u8));
 	if (pdata->fod_hpp_num <= 0) {
@@ -6107,6 +6218,26 @@ static int p9221_parse_dt(struct device *dev,
 			dev_info(dev, "dt fod_hpp_hv: %s (%d)\n", buf,
 				 pdata->fod_hpp_hv_num);
 		}
+	}
+
+	ret = of_property_read_bool(node, "google,fod_fsw_base");
+	if (ret)
+		pdata->fod_fsw = true;
+
+	ret = of_property_read_u32(node, "google,fod_fsw_high_thres", &data);
+	if (ret < 0) {
+		pdata->fod_fsw_high = -1;
+	} else {
+		pdata->fod_fsw_high = data;
+		dev_info(dev, "dt fod_fsw_high_thres:%d\n", pdata->fod_fsw_high);
+	}
+
+	ret = of_property_read_u32(node, "google,fod_fsw_low_thres", &data);
+	if (ret < 0) {
+		pdata->fod_fsw_low = -1;
+	} else {
+		pdata->fod_fsw_low = data;
+		dev_info(dev, "dt fod_fsw_low_thres:%d\n", pdata->fod_fsw_low);
 	}
 
 	ret = of_property_read_u32(node, "google,q_value", &data);
@@ -6291,6 +6422,9 @@ static int p9221_parse_dt(struct device *dev,
 		pdata->epp_icl = 0;
 	else
 		pdata->epp_icl = data;
+
+	/* Calibrate light load */
+	pdata->light_load = of_property_read_bool(node, "google,light_load");
 
 	return 0;
 }
@@ -6538,6 +6672,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	INIT_DELAYED_WORK(&charger->fg_work, p9221_fg_work);
 	INIT_DELAYED_WORK(&charger->chk_rp_work, p9xxx_chk_rp_work);
 	INIT_DELAYED_WORK(&charger->chk_rtx_ocp_work, p9412_chk_rtx_ocp_work);
+	INIT_DELAYED_WORK(&charger->chk_fod_work, p9xxx_chk_fod_work);
 	INIT_WORK(&charger->uevent_work, p9221_uevent_work);
 	INIT_WORK(&charger->rtx_disable_work, p9382_rtx_disable_work);
 	INIT_WORK(&charger->rtx_reset_work, p9xxx_rtx_reset_work);
@@ -6846,6 +6981,7 @@ static int p9221_charger_remove(struct i2c_client *client)
 	cancel_delayed_work_sync(&charger->auth_dc_icl_work);
 	cancel_delayed_work_sync(&charger->chk_rp_work);
 	cancel_delayed_work_sync(&charger->chk_rtx_ocp_work);
+	cancel_delayed_work_sync(&charger->chk_fod_work);
 	cancel_work_sync(&charger->uevent_work);
 	cancel_work_sync(&charger->rtx_disable_work);
 	cancel_work_sync(&charger->rtx_reset_work);

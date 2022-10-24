@@ -72,18 +72,22 @@
 #define P9221R5_ILIM_MAX_UA			(1600 * 1000)
 
 #define P9221_CHECK_NP_DELAY_MS		50
-#define P9221_NEG_POWER_5W		(5 / 0.5)
-#define P9221_NEG_POWER_10W		(10 / 0.5)
+#define P9221_NEG_POWER_5W		(5 * 2)
+#define P9221_NEG_POWER_10W		(10 * 2)
 #define P9221_PTMC_EPP_TX_1912		0x32
 #define P9221_PTMC_EPP_TX_4191		0x50
+
+#define P9222_RX_CALIBRATION_LIGHT_LOAD	0x5831
+#define P9222_LIGHT_LOAD_VALUE		0x0C
 
 #define P9221_DCIN_RETRY_DELAY_MS	50
 
 #define P9XXX_DC_ICL_EPP_1000		1000000
 #define P9XXX_DC_ICL_EPP_750		750000
 #define P9XXX_DC_ICL_EPP_100		100000
-#define P9XXX_NEG_POWER_10W		(10 / 0.5)
-#define P9XXX_NEG_POWER_11W		(11 / 0.5)
+#define P9XXX_NEG_POWER_10W		(10 * 2)
+#define P9XXX_NEG_POWER_11W		(11 * 2)
+#define P9XXX_TX_GUAR_PWR_15W		(15 * 2)
 #define P9382_RTX_TIMEOUT_MS		(2 * 1000)
 #define WLCDC_DEBOUNCE_TIME_S		400
 #define WLCDC_AUTH_CHECK_S		15
@@ -505,6 +509,14 @@
 #define P9412_TXOCP_REG				0xA0
 #define P9412_TXOCP_1400MA			1400
 
+#define P9412_MOT_REG				0xD0
+#define P9412_MOT_40PCT				0x10
+#define P9412_MOT_65PCT				0x1A
+
+#define P9412_MOT_REG				0xD0
+#define P9412_MOT_40PCT				0x10
+#define P9412_MOT_65PCT				0x1A
+
 /* Features */
 typedef enum {
     WLCF_DISABLE_ALL_FEATURE     = 0x00,
@@ -608,12 +620,17 @@ struct p9221_charger_platform_data {
 	int				epp_vout_mv;
 	u8				fod[P9221R5_NUM_FOD];
 	u8				fod_epp[P9221R5_NUM_FOD];
+	u8				fod_epp_comp[P9221R5_NUM_FOD];
 	u8				fod_hpp[P9221R5_NUM_FOD];
 	u8				fod_hpp_hv[P9221R5_NUM_FOD];
 	int				fod_num;
 	int				fod_epp_num;
+	int				fod_epp_comp_num;
 	int				fod_hpp_num;
 	int				fod_hpp_hv_num;
+	bool				fod_fsw;
+	int				fod_fsw_high;
+	int				fod_fsw_low;
 	int				q_value;
 	int				tx_4191q;
 	int				epp_rp_value;
@@ -639,6 +656,8 @@ struct p9221_charger_platform_data {
 	/* phone type for tx_id*/
 	u8				phone_type;
 	u32				epp_icl;
+	/* calibrate light load */
+	bool				light_load;
 };
 
 struct p9221_charger_ints_bit {
@@ -705,6 +724,7 @@ struct p9221_charger_data {
 	struct delayed_work		fg_work;
 	struct delayed_work		chk_rp_work;
 	struct delayed_work		chk_rtx_ocp_work;
+	struct delayed_work		chk_fod_work;
 	struct work_struct		uevent_work;
 	struct work_struct		rtx_disable_work;
 	struct work_struct		rtx_reset_work;
@@ -830,6 +850,7 @@ struct p9221_charger_data {
 	u16				reg_set_fod_addr;
 	u16				reg_q_factor_addr;
 	u16				reg_csp_addr;
+	u16				reg_light_load_addr;
 
 	int (*reg_read_n)(struct p9221_charger_data *chgr, u16 reg,
 			  void *buf, size_t n);
@@ -886,7 +907,7 @@ bool p9xxx_is_capdiv_en(struct p9221_charger_data *charger);
 int p9221_wlc_disable(struct p9221_charger_data *charger, int disable, u8 reason);
 int p9221_set_auth_dc_icl(struct p9221_charger_data *charger, bool enable);
 int p9xxx_sw_ramp_icl(struct p9221_charger_data *charger, const int icl_target);
-int p9xxx_gpio_set_value(struct p9221_charger_data *charger, unsigned gpio, int value);
+int p9xxx_gpio_set_value(struct p9221_charger_data *charger, int gpio, int value);
 
 void p9xxx_gpio_init(struct p9221_charger_data *charger);
 extern int p9221_chip_init_funcs(struct p9221_charger_data *charger,
@@ -945,4 +966,8 @@ enum p9xxx_renego_state {
       -ENOTSUPP : chgr->reg_read_n(chgr, chgr->reg_set_fod_addr, data, len))
 #define p9xxx_chip_set_q_factor_reg(chgr, data) (chgr->reg_q_factor_addr == 0 ? \
       -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_q_factor_addr, data))
+#define p9xxx_chip_set_light_load_reg(chgr, data) (chgr->reg_light_load_addr == 0 ? \
+      -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_light_load_addr, data))
+#define logbuffer_prlog(p, fmt, ...)     \
+      gbms_logbuffer_prlog(p, LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG, fmt, ##__VA_ARGS__)
 #endif /* __P9221_CHARGER_H__ */
