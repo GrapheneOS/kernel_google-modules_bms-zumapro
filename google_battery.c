@@ -548,6 +548,9 @@ struct batt_drv {
 
 	/* battery pack status */
 	struct batt_bpst bpst_state;
+
+	/* battery critical level */
+	int batt_critical_voltage;
 };
 
 static int gbatt_get_temp(const struct batt_drv *batt_drv, int *temp);
@@ -7075,6 +7078,37 @@ static bool gbatt_check_dead_battery(const struct batt_drv *batt_drv)
 	return ssoc_get_capacity(&batt_drv->ssoc_state) == 0;
 }
 
+#define VBATT_CRITICAL_LEVEL		3300000
+#define VBATT_CRITICAL_DEADLINE_SEC	40
+
+static bool gbatt_check_critical_level(const struct batt_drv *batt_drv,
+				       int fg_status)
+{
+	const struct batt_ssoc_state *ssoc_state = &batt_drv->ssoc_state;
+	const int soc = ssoc_get_real(ssoc_state);
+
+	if (fg_status == POWER_SUPPLY_STATUS_UNKNOWN)
+		return true;
+
+	if (soc == 0 && ssoc_state->buck_enabled == 1 &&
+	    fg_status == POWER_SUPPLY_STATUS_DISCHARGING) {
+		const ktime_t now = get_boot_sec();
+		int vbatt;
+
+		/* disable the check */
+		if (now > VBATT_CRITICAL_DEADLINE_SEC || batt_drv->batt_critical_voltage == 0)
+			return true;
+
+		vbatt = GPSY_GET_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
+		if (vbatt == -EAGAIN)
+			return false;
+
+		return (vbatt < 0) ? : vbatt < batt_drv->batt_critical_voltage;
+	}
+
+	return false;
+}
+
 #define SSOC_LEVEL_FULL		SSOC_SPOOF
 #define SSOC_LEVEL_HIGH		80
 #define SSOC_LEVEL_NORMAL	30
@@ -7087,9 +7121,10 @@ static bool gbatt_check_dead_battery(const struct batt_drv *batt_drv)
  * NOTE: CRITICAL_LEVEL implies BATTERY_DEAD but BATTERY_DEAD doesn't imply
  * CRITICAL.
  */
-static int gbatt_get_capacity_level(struct batt_ssoc_state *ssoc_state,
+static int gbatt_get_capacity_level(const struct batt_drv *batt_drv,
 				    int fg_status)
 {
+	const struct batt_ssoc_state *ssoc_state = &batt_drv->ssoc_state;
 	const int soc = ssoc_get_real(ssoc_state);
 	int capacity_level;
 
@@ -7106,8 +7141,7 @@ static int gbatt_get_capacity_level(struct batt_ssoc_state *ssoc_state,
 	} else if (ssoc_state->buck_enabled == -1) {
 		/* only at startup, this should not happen */
 		capacity_level = POWER_SUPPLY_CAPACITY_LEVEL_UNKNOWN;
-	} else if (fg_status == POWER_SUPPLY_STATUS_DISCHARGING ||
-		   fg_status == POWER_SUPPLY_STATUS_UNKNOWN) {
+	} else if (gbatt_check_critical_level(batt_drv, fg_status)) {
 		capacity_level = POWER_SUPPLY_CAPACITY_LEVEL_CRITICAL;
 	} else {
 		capacity_level = POWER_SUPPLY_CAPACITY_LEVEL_LOW;
@@ -7494,8 +7528,7 @@ static void google_battery_work(struct work_struct *work)
 		 * same behavior during the transition 99 -> 100 -> Full
 		 */
 
-		level = gbatt_get_capacity_level(&batt_drv->ssoc_state,
-						 fg_status);
+		level = gbatt_get_capacity_level(batt_drv, fg_status);
 		if (level != batt_drv->capacity_level) {
 			pr_debug("%s: change of capacity level %d->%d\n",
 				 __func__, batt_drv->capacity_level,
@@ -8595,6 +8628,11 @@ static void google_battery_init_work(struct work_struct *work)
 					&batt_drv->hist_delta_cycle_cnt);
 	if (ret < 0)
 		batt_drv->hist_delta_cycle_cnt = HCC_DEFAULT_DELTA_CYCLE_CNT;
+
+	ret = of_property_read_u32(batt_drv->device->of_node, "google,batt-voltage-critical",
+				   &batt_drv->batt_critical_voltage);
+	if (ret < 0)
+		batt_drv->batt_critical_voltage = VBATT_CRITICAL_LEVEL;
 
 	/* battery virtual sensor */
 	ret = of_property_read_string(batt_drv->device->of_node,
