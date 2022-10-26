@@ -2353,8 +2353,8 @@ static bool batt_csi_check_ad_qual(const struct batt_drv *chg_drv)
  */
 static bool batt_csi_check_ad_power(const union gbms_ce_adapter_details *ad)
 {
-	const int ad_mw = (ad->ad_voltage * ad->ad_amperage) * 10000;
-	int limit_mw = 9000 * 2000;	/* 18 Watts: it changes with the device */
+	const unsigned int ad_mw = (ad->ad_voltage * ad->ad_amperage) * 10000;
+	unsigned int limit_mw = 9000 * 2000;	/* 18 Watts: it changes with the device */
 
 	switch (ad->ad_type) {
 		case CHG_EV_ADAPTER_TYPE_USB:
@@ -2373,6 +2373,12 @@ static bool batt_csi_check_ad_power(const union gbms_ce_adapter_details *ad)
 		case CHG_EV_ADAPTER_TYPE_WLC_EPP:
 		case CHG_EV_ADAPTER_TYPE_WLC_SPP:
 			limit_mw = 7500000;
+			break;
+		case CHG_EV_ADAPTER_TYPE_EXT:
+		case CHG_EV_ADAPTER_TYPE_EXT1:
+		case CHG_EV_ADAPTER_TYPE_EXT2:
+		case CHG_EV_ADAPTER_TYPE_EXT_UNKNOWN:
+			limit_mw = 10500 * 1250;
 			break;
 		default:
 			break;
