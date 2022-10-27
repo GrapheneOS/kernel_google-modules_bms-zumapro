@@ -479,7 +479,7 @@
 #define P9412_STAT_OVV				BIT(4)
 #define P9412_STAT_OVC				BIT(3)
 #define P9412_STAT_OVT				BIT(2)
-#define P9412_STAT_TXFOD			BIT(12)
+#define P9412_STAT_OCP_PING			BIT(12)
 #define P9412_STAT_RXCONNECTED			BIT(11)
 #define P9412_STAT_PPPSENT			BIT(9)
 #define P9412_STAT_CSP				BIT(10)
@@ -508,6 +508,8 @@
 #define P9412_APBSTPING_7V			BIT(0)
 #define P9412_TXOCP_REG				0xA0
 #define P9412_TXOCP_1400MA			1400
+#define P9412_PLIM_REG				0x3D
+#define P9412_PLIM_1200MA			0x0E
 
 #define P9412_MOT_REG				0xD0
 #define P9412_MOT_40PCT				0x10
@@ -653,6 +655,7 @@ struct p9221_charger_platform_data {
 	bool				feat_compat_mode;
 	bool				apbst_en;
 	bool				has_sw_ramp;
+	bool				hw_ocp_det;
 	/* phone type for tx_id*/
 	u8				phone_type;
 	u32				epp_icl;
@@ -690,6 +693,7 @@ struct p9221_charger_ints_bit {
 	u16				tx_underpower_bit;
 	u16				tx_uvlo_bit;
 	u16				pppsent_bit;
+	u16				ocp_ping_bit;
 	u16				stat_rtx_mask;
 };
 
