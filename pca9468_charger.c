@@ -2665,6 +2665,7 @@ static int pca9468_charge_adjust_ccmode(struct pca9468_charger *pca9468)
 
 	switch(ccmode) {
 	case STS_MODE_IIN_LOOP:
+		pca9468->chg_data.iin_loop_count++;
 	case STS_MODE_CHG_LOOP:	/* CHG_LOOP does't exist */
 		apply_ircomp = true;
 
@@ -2881,6 +2882,7 @@ static int pca9468_charge_ccmode(struct pca9468_charger *pca9468)
 		break;
 
 	case STS_MODE_IIN_LOOP:
+		pca9468->chg_data.iin_loop_count++;
 	case STS_MODE_CHG_LOOP:
 		iin = pca9468_read_adc(pca9468, ADCCH_IIN);
 		if (iin < 0)
@@ -2980,8 +2982,9 @@ static int pca9468_charge_start_cvmode(struct pca9468_charger *pca9468)
 	}
 
 	switch(cvmode) {
-	case STS_MODE_CHG_LOOP:
 	case STS_MODE_IIN_LOOP:
+		pca9468->chg_data.iin_loop_count++;
+	case STS_MODE_CHG_LOOP:
 
 		if (pca9468->ta_type == TA_TYPE_WIRELESS) {
 			/* Decrease RX voltage (100mV) */
@@ -3175,8 +3178,9 @@ static int pca9468_charge_cvmode(struct pca9468_charger *pca9468)
 		pca9468->timer_period = PCA9468_CVMODE_CHECK_T;
 	} break;
 
-	case STS_MODE_CHG_LOOP:
 	case STS_MODE_IIN_LOOP:
+		pca9468->chg_data.iin_loop_count++;
+	case STS_MODE_CHG_LOOP:
 		/* Check the TA type */
 		if (pca9468->ta_type == TA_TYPE_WIRELESS) {
 			/* Decrease RX Voltage (100mV) */
@@ -4843,10 +4847,11 @@ static ssize_t p9468_show_chg_stats(struct device *dev, struct device_attribute 
 			chg_data->receiver_state[3],
 			chg_data->receiver_state[4]);
 	len += scnprintf(&buff[len], max_size - len,
-			"N: ovc=%d,ovc_ibatt=%d,ovc_delta=%d rcp=%d,stby=%d\n",
+			"N: ovc=%d,ovc_ibatt=%d,ovc_delta=%d rcp=%d,stby=%d, iin_loop=%d\n",
 			chg_data->ovc_count, chg_data->ovc_max_ibatt, chg_data->ovc_max_delta,
 			chg_data->rcp_count,
-			chg_data->stby_count);
+			chg_data->stby_count,
+			chg_data->iin_loop_count);
 	len += scnprintf(&buff[len], max_size - len,
 			"C: nc=%d,pre=%d,ca=%d,cc=%d,cv=%d,adj=%d\n",
 			chg_data->nc_count,

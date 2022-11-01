@@ -672,10 +672,10 @@ void p9468_chg_stats_dump(const struct pca9468_charger *pca9468)
 	const struct p9468_chg_stats *chg_data = &pca9468->chg_data;
 
 	logbuffer_prlog(pca9468, LOGLEVEL_INFO,
-			"N: ovc=%d,ovc_ibatt=%d,ovc_delta=%d rcp=%d,stby=%d",
+			"N: ovc=%d,ovc_ibatt=%d,ovc_delta=%d rcp=%d,stby=%d,iin_loop=%d",
 			chg_data->ovc_count,
 			chg_data->ovc_max_ibatt, chg_data->ovc_max_delta,
-			chg_data->rcp_count, chg_data->stby_count);
+			chg_data->rcp_count, chg_data->stby_count, chg_data->iin_loop_count);
 	logbuffer_prlog(pca9468, LOGLEVEL_INFO,
 			"C: nc=%d,pre=%d,ca=%d,cc=%d,cv=%d,adj=%d\n",
 			chg_data->nc_count, chg_data->pre_count,
