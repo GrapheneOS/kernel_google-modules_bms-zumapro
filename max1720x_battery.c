@@ -2119,6 +2119,7 @@ static int max1720x_get_age(struct max1720x_chip *chip)
 static int max1720x_get_fade_rate(struct max1720x_chip *chip)
 {
 	struct max17x0x_eeprom_history hist = { 0 };
+	int bhi_fcn_count = chip->bhi_fcn_count;
 	int ret, ratio, i, fcn_sum = 0;
 	u16 hist_idx;
 
@@ -2130,10 +2131,19 @@ static int max1720x_get_fade_rate(struct max1720x_chip *chip)
 
 	dev_info(chip->dev, "%s: hist_idx=%d\n", __func__, hist_idx);
 
-	if (hist_idx < chip->bhi_fcn_count)
+	if (hist_idx < bhi_fcn_count)
 		return -ENODATA;
 
-	for (i = chip->bhi_fcn_count; i ; i--, hist_idx--) {
+	while (hist_idx >= BATT_MAX_HIST_CNT && bhi_fcn_count > 1) {
+		hist_idx--;
+		bhi_fcn_count--;
+		if (bhi_fcn_count == 1) {
+			hist_idx = BATT_MAX_HIST_CNT - 1;
+			break;
+		}
+	}
+
+	for (i = bhi_fcn_count; i ; i--, hist_idx--) {
 		ret = gbms_storage_read_data(GBMS_TAG_HIST, &hist,
 					     sizeof(hist), hist_idx);
 
@@ -2148,7 +2158,7 @@ static int max1720x_get_fade_rate(struct max1720x_chip *chip)
 	}
 
 	/* convert from max17x0x_eeprom_history to percent */
-	ratio = fcn_sum / (chip->bhi_fcn_count * 8);
+	ratio = fcn_sum / (bhi_fcn_count * 8);
 	if (ratio > 100)
 		ratio = 100;
 
