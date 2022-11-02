@@ -7399,9 +7399,9 @@ static int batt_history_data_work(struct batt_drv *batt_drv)
 
 	idx = cycle_cnt / batt_drv->hist_delta_cycle_cnt;
 
-	/* check if the cycle_cnt is valid */
+	/* save in last when over max cycles */
 	if (idx >= batt_drv->hist_data_max_cnt)
-		return -ENOENT;
+		idx = batt_drv->hist_data_max_cnt - 1;
 
 	ret = batt_hist_data_collect(batt_drv->hist_data, idx);
 	if (ret < 0)
