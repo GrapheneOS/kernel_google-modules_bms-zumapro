@@ -1,10 +1,4 @@
-# NOTE: THIS FILE IS EXPERIMENTAL FOR THE BAZEL MIGRATION AND NOT USED FOR
-# YOUR BUILDS CURRENTLY.
-#
-# It is not yet the source of truth for your build. If you're looking to modify
-# the build file, modify the Android.bp file instead. Do *not* modify this file
-# unless you have coordinated with the team managing the Soong to Bazel
-# migration.
+# SPDX-License-Identifier: GPL-2.0-or-later
 
 load("//build/kernel/kleaf:kernel.bzl", "kernel_module")
 
@@ -14,6 +8,7 @@ filegroup(
         "*.h",
     ]),
     visibility = [
+        "//private/devices/google:__subpackages__",
         "//private/google-modules/bluetooth/broadcom:__subpackages__",
         "//private/google-modules/bms:__subpackages__",
         "//private/google-modules/power/reset:__subpackages__",
@@ -27,12 +22,13 @@ filegroup(
         "Kconfig",
     ]),
     visibility = [
+        "//private/devices/google:__subpackages__",
         "//private/google-modules/soc/gs:__pkg__",
     ],
 )
 
-[kernel_module(
-    name = "bms-misc.{}".format(kernel_build),
+kernel_module(
+    name = "bms-misc",
     srcs = glob([
         "**/*.c",
         "**/*.h",
@@ -42,14 +38,11 @@ filegroup(
         "gvotable.ko",
         "logbuffer.ko",
     ],
-    kernel_build = "//private/google-modules/soc/gs:{}".format(kernel_build),
+    kernel_build = "//private/google-modules/soc/gs:gs_kernel_build",
     visibility = [
+        "//private/devices/google:__subpackages__",
         "//private/google-modules/bluetooth/broadcom:__subpackages__",
         "//private/google-modules/bms:__subpackages__",
         "//private/google-modules/soc/gs:__pkg__",
     ],
-) for kernel_build in [
-    "slider",
-    "zuma_emulator",
-    "zuma_hybrid",
-]]
+)
