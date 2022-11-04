@@ -41,8 +41,6 @@
 #define WC68_IIN_CFG_DFT		2500000 /* uA*/
 /* Charging Float Voltage default value */
 #define WC68_VFLOAT_DFT		4350000	/* uV */
-/* Charging Sub Float Voltage default value */
-#define WC68_VFLOAT_SUB_DFT		5000000	/* 5000000uV */
 /* Charging Float Voltage max voltage for comp */
 #define WC68_COMP_VFLOAT_MAX		4450000	/* uV */
 
@@ -89,8 +87,6 @@
 #define WC68_MAX_RETRY_CNT		3	/* retries */
 /* TA IIN tolerance */
 #define WC68_TA_IIN_OFFSET		100000	/* uA */
-/* IIN_CC upper protection offset in Power Limit Mode TA */
-#define WC68_IIN_CC_UPPER_OFFSET	50000	/* 50mA */
 
 /* PD Message Voltage and Current Step */
 #define PD_MSG_TA_VOL_STEP		20000	/* uV */
@@ -101,17 +97,11 @@
 /* WCRX voltage Step */
 #define WCRX_VOL_STEP			100000	/* uV */
 
-#define WC68_OTV_MARGIN		12000	/* uV */
-
 /* irdrop default limit */
 #define WC68_IRDROP_LIMIT_CNT	3	/* tiers */
 #define WC68_IRDROP_LIMIT_TIER1	-30000	/* uV */
 #define WC68_IRDROP_LIMIT_TIER2	-19000	/* uV */
 #define WC68_IRDROP_LIMIT_TIER3	0	/* uV */
-
-/* Spread Spectrum default settings */
-#define WC68_SC_CLK_DITHER_RATE_DEF	0	/* 25kHz */
-#define WC68_SC_CLK_DITHER_LIMIT_DEF	0xF	/* 10% */
 
 #define CBUS_UCP_DFT			400000	/* 400 mV, actual value TBD */
 
@@ -646,8 +636,8 @@ static int wc68_check_state(u8 val[8], struct wc68_charger *wc68, int loglevel)
 		return ret;
 
 	logbuffer_prlog(wc68, loglevel,
-			"%s: INTR_FLG reg[1]=%#x,[2]=%#x,[3]=%#x,[4]=%#x,[5]=%#x,[6]=%#x,[7]=%#x",
-			__func__, val[1], val[2], val[3], val[4], val[5], val[6], val[7]);
+			"%s: INTR_FLG reg[0]=%#x,reg[1]=%#x,[2]=%#x,[3]=%#x,[4]=%#x,[5]=%#x,[6]=%#x,[7]=%#x",
+			__func__, val[0], val[1], val[2], val[3], val[4], val[5], val[6], val[7]);
 
 	return 0;
 }
@@ -3246,8 +3236,22 @@ static int wc68_preset_dcmode(struct wc68_charger *wc68)
 			ret = wc68_get_apdo_max_power(wc68, ta_max_vol, 0);
 		}
 		if (ret < 0) {
+			int ret1;
+
 			dev_err(wc68->dev, "%s: No APDO to support 2:1\n", __func__);
 			wc68->chg_mode = CHG_NO_DC_MODE;
+
+			if (!wc68->dc_avail)
+				wc68->dc_avail = gvotable_election_get_handle(VOTABLE_DC_CHG_AVAIL);
+
+			if (wc68->dc_avail) {
+				ret1 = gvotable_cast_int_vote(wc68->dc_avail, REASON_DC_DRV, 0, 1);
+				if (ret1 < 0)
+					dev_err(wc68->dev,
+						"Unable to cast vote for DC Chg avail (%d)\n",
+						ret1);
+			}
+
 			goto error;
 		}
 
@@ -3739,15 +3743,6 @@ error:
 			__func__, timer_id, wc68->timer_id, charging_state,
 			wc68->charging_state, wc68->timer_period, ret);
 
-	if (!wc68->dc_avail)
-		wc68->dc_avail = gvotable_election_get_handle(VOTABLE_DC_CHG_AVAIL);
-
-	if (wc68->dc_avail) {
-		ret = gvotable_cast_int_vote(wc68->dc_avail, REASON_DC_DRV, 0, 1);
-		if (ret < 0)
-			dev_err(wc68->dev, "Unable to cast vote for DC Chg avail (%d)\n", ret);
-	}
-
 	wc68_stop_charging(wc68);
 }
 
@@ -4169,6 +4164,20 @@ static int wc68_mains_set_property(struct power_supply *psy,
 				       __func__, ret);
 
 			wc68->mains_online = false;
+
+			/* Reset DC Chg un-avail on disconnect */
+			if (!wc68->dc_avail)
+				wc68->dc_avail = gvotable_election_get_handle(VOTABLE_DC_CHG_AVAIL);
+
+			if (wc68->dc_avail) {
+				ret = gvotable_cast_int_vote(wc68->dc_avail,
+							     REASON_DC_DRV, 1, 1);
+				if (ret < 0)
+					dev_err(wc68->dev,
+						"Unable to cast vote for DC Chg avail (%d)\n",
+						ret);
+			}
+
 		} else if (wc68->mains_online == false) {
 			wc68->mains_online = true;
 		}

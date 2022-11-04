@@ -958,6 +958,7 @@ exit_done:
 static int gcpm_chg_select(struct gcpm_drv *gcpm)
 {
 	int index = GCPM_DEFAULT_CHARGER;
+	int ret;
 
 	if (!gcpm->dc_init_complete)
 		goto exit_done; /* index == GCPM_DEFAULT_CHARGER; */
@@ -969,6 +970,11 @@ static int gcpm_chg_select(struct gcpm_drv *gcpm)
 	/* kill switch */
 	if (gcpm->dc_ctl == GCPM_DC_CTL_DISABLE_BOTH)
 		goto exit_done; /* index == GCPM_DEFAULT_CHARGER; */
+
+	ret = gvotable_get_current_int_vote(gcpm->dc_chg_avail_votable);
+	dev_dbg(gcpm->device, "%s: dc_chg_avail vote: %d\n", __func__, ret);
+	if (ret <= 0)
+		goto exit_done;
 
 	/*
 	 * check demand first to react to thermal engine, then voltage to
@@ -1003,16 +1009,9 @@ exit_done:
 
 static bool gcpm_chg_dc_check_source(const struct gcpm_drv *gcpm, int index)
 {
-	int ret;
-
 	/* Will run detection only the first time */
 	if (gcpm->tcpm_pps_data.stage == PPS_NOTSUPP &&
 	    gcpm->wlc_pps_data.stage == PPS_NOTSUPP )
-		return false;
-
-	ret = gvotable_get_current_int_vote(gcpm->dc_chg_avail_votable);
-	dev_dbg(gcpm->device, "%s: dc_chg_avail vote: %d\n", __func__, ret);
-	if (ret <= 0)
 		return false;
 
 	return gcpm_is_dc(gcpm, index);

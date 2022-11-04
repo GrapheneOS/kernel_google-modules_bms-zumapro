@@ -3360,9 +3360,25 @@ static int pca9468_preset_dcmode(struct pca9468_charger *pca9468)
 				PCA9468_TA_MAX_CUR);
 			ret = pca9468_get_apdo_max_power(pca9468, ta_max_vol, 0);
 		}
+
 		if (ret < 0) {
+			int ret1;
+
 			pr_err("%s: No APDO to support 2:1\n", __func__);
 			pca9468->chg_mode = CHG_NO_DC_MODE;
+
+			if (!pca9468->dc_avail)
+				pca9468->dc_avail =
+					gvotable_election_get_handle(VOTABLE_DC_CHG_AVAIL);
+
+			if (pca9468->dc_avail) {
+				ret1 = gvotable_cast_int_vote(pca9468->dc_avail,
+							      REASON_DC_DRV, 0, 1);
+				if (ret1 < 0)
+					dev_err(pca9468->dev,
+						"Unable to cast vote for DC Chg avail (%d)\n",
+						ret1);
+			}
 			goto error;
 		}
 
@@ -3868,15 +3884,6 @@ error:
 			__func__, timer_id, pca9468->timer_id, charging_state,
 			pca9468->charging_state, pca9468->timer_period, ret);
 
-	if (!pca9468->dc_avail)
-		pca9468->dc_avail = gvotable_election_get_handle(VOTABLE_DC_CHG_AVAIL);
-
-	if (pca9468->dc_avail) {
-		ret = gvotable_cast_int_vote(pca9468->dc_avail, REASON_DC_DRV, 0, 1);
-		if (ret < 0)
-			dev_err(pca9468->dev, "Unable to cast vote for DC Chg avail (%d)\n", ret);
-	}
-
 	pca9468_stop_charging(pca9468);
 }
 
@@ -4323,6 +4330,20 @@ static int pca9468_mains_set_property(struct power_supply *psy,
 				       __func__, ret);
 
 			pca9468->mains_online = false;
+
+			/* Reset DC Chg un-avail on disconnect */
+			if (!pca9468->dc_avail)
+				pca9468->dc_avail =
+				gvotable_election_get_handle(VOTABLE_DC_CHG_AVAIL);
+
+			if (pca9468->dc_avail) {
+				ret = gvotable_cast_int_vote(pca9468->dc_avail,
+							     REASON_DC_DRV, 1, 1);
+				if (ret < 0)
+					dev_err(pca9468->dev,
+						"Unable to cast vote for DC Chg avail (%d)\n",
+						ret);
+			}
 		} else if (pca9468->mains_online == false) {
 			pca9468->mains_online = true;
 		}
