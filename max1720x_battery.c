@@ -259,6 +259,9 @@ struct max1720x_chip {
 	int bhi_acim;
 
 	struct max1720x_rc_switch rc_switch;
+
+	/* support no_battery */
+	bool no_battery;
 };
 
 #define MAX1720_EMPTY_VOLTAGE(profile, temp, cycle) \
@@ -2838,13 +2841,17 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 	if (fg_status & MAX1720X_STATUS_POR) {
 		mutex_lock(&chip->model_lock);
 		chip->por = true;
-		dev_warn(chip->dev, "POR is set(%04x), model reload:%d\n",
-			 fg_status, chip->model_reload);
-		/* trigger model load if not on-going */
-		if (chip->model_reload != MAX_M5_LOAD_MODEL_REQUEST) {
-			err = max1720x_model_reload(chip, true);
-			if (err < 0)
-				fg_status_clr &= ~MAX1720X_STATUS_POR;
+		if (chip->no_battery) {
+			fg_status_clr &= ~MAX1720X_STATUS_POR;
+		} else {
+			dev_warn(chip->dev, "POR is set(%04x), model reload:%d\n",
+				 fg_status, chip->model_reload);
+			/* trigger model load if not on-going */
+			if (chip->model_reload != MAX_M5_LOAD_MODEL_REQUEST) {
+				err = max1720x_model_reload(chip, true);
+				if (err < 0)
+					fg_status_clr &= ~MAX1720X_STATUS_POR;
+			}
 		}
 		mutex_unlock(&chip->model_lock);
 	}
@@ -3515,6 +3522,9 @@ static int max1720x_init_model(struct max1720x_chip *chip)
 	void *model_data;
 
 	if (chip->gauge_type != MAX_M5_GAUGE_TYPE)
+		return 0;
+
+	if (chip->no_battery)
 		return 0;
 
 	/* ->batt_id negative for no lookup */
@@ -4675,6 +4685,9 @@ static int max1720x_log_event(struct max1720x_chip *chip, gbms_tag_t tag)
 static int max1720x_init_max_m5(struct max1720x_chip *chip)
 {
 	int ret;
+
+	if (!chip->model_data)
+		return 0;
 
 	if (!max_m5_fg_model_check_version(chip->model_data)) {
 		if (max_m5_needs_reset_model_data(chip->model_data)) {
@@ -5844,6 +5857,7 @@ static int max1720x_probe(struct i2c_client *client,
 
 	chip->dev = dev;
 	chip->fake_battery = of_property_read_bool(dev->of_node, "maxim,no-battery") ? 0 : -1;
+	chip->no_battery = of_property_read_bool(dev->of_node, "maxim,no-battery");
 	chip->primary = client;
 	chip->batt_id_defer_cnt = DEFAULT_BATTERY_ID_RETRIES;
 	i2c_set_clientdata(client, chip);
