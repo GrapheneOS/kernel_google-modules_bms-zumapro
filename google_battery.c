@@ -4758,6 +4758,31 @@ static int debug_set_ssoc_rls(void *data, u64 val)
 DEFINE_SIMPLE_ATTRIBUTE(debug_ssoc_rls_fops,
 				debug_get_ssoc_rls, debug_set_ssoc_rls, "%llu\n");
 
+static int debug_get_fv_dc_ratio(void *data, u64 *val)
+{
+	struct batt_drv *batt_drv = (struct batt_drv *)data;
+
+	*val = batt_drv->chg_profile.fv_dc_ratio;
+
+	return 0;
+}
+
+static int debug_set_fv_dc_ratio(void *data, u64 val)
+{
+	struct batt_drv *batt_drv = (struct batt_drv *)data;
+
+	if (val < 0)
+		return -EINVAL;
+
+	mutex_lock(&batt_drv->chg_lock);
+	batt_drv->chg_profile.fv_dc_ratio = val;
+	mutex_unlock(&batt_drv->chg_lock);
+
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(debug_fv_dc_ratio_fops,
+			debug_get_fv_dc_ratio, debug_set_fv_dc_ratio, "%llu\n");
 
 static ssize_t debug_get_ssoc_uicurve(struct file *filp,
 					   char __user *buf,
@@ -6920,6 +6945,7 @@ static int batt_init_debugfs(struct batt_drv *batt_drv)
 	debugfs_create_file("ssoc_gdf", 0644, de, batt_drv, &debug_ssoc_gdf_fops);
 	debugfs_create_file("ssoc_uic", 0644, de, batt_drv, &debug_ssoc_uic_fops);
 	debugfs_create_file("ssoc_rls", 0444, de, batt_drv, &debug_ssoc_rls_fops);
+	debugfs_create_file("fv_dc_ratio", 0644, de, batt_drv, &debug_fv_dc_ratio_fops);
 	debugfs_create_file("ssoc_uicurve", 0644, de, batt_drv,
 			    &debug_ssoc_uicurve_cstr_fops);
 	debugfs_create_file("force_psy_update", 0400, de, batt_drv,
