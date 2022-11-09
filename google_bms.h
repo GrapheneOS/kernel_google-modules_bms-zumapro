@@ -425,7 +425,7 @@ void gbms_dump_raw_profile(char *buff, size_t len, const struct gbms_chg_profile
 int gbms_msc_temp_idx(const struct gbms_chg_profile *profile, int temp);
 int gbms_msc_voltage_idx(const struct gbms_chg_profile *profile, int vbatt);
 int gbms_msc_round_fv_uv(const struct gbms_chg_profile *profile,
-			   int vtier, int fv_uv, int cc_ua);
+			   int vtier, int fv_uv, int cc_ua, bool allow_higher_fv);
 int gbms_msc_merge_tiers(const struct gbms_chg_profile *profile,
 			  int vbatt_idx, int temp_idx);
 
@@ -456,6 +456,7 @@ const char *gbms_chg_ev_adapter_s(int adapter);
 #define VOTABLE_FAN_LEVEL	"FAN_LEVEL"
 #define VOTABLE_DEAD_BATTERY	"DEAD_BATTERY"
 #define VOTABLE_TEMP_DRYRUN	"MSC_TEMP_DRYRUN"
+#define VOTABLE_MSC_LAST	"MSC_LAST"
 
 #define VOTABLE_CSI_STATUS	"CSI_STATUS"
 #define VOTABLE_CSI_TYPE	"CSI_TYPE"

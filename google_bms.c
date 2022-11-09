@@ -455,7 +455,7 @@ EXPORT_SYMBOL_GPL(gbms_dump_raw_profile);
  * the vbat will not over the otv threshold.
  */
 int gbms_msc_round_fv_uv(const struct gbms_chg_profile *profile,
-			   int vtier, int fv_uv, int cc_ua)
+			   int vtier, int fv_uv, int cc_ua, bool allow_higher_fv)
 {
 	int result;
 	const unsigned int fv_uv_max = (vtier / 1000) * profile->fv_uv_margin_dpct;
@@ -465,7 +465,7 @@ int gbms_msc_round_fv_uv(const struct gbms_chg_profile *profile,
 
 	if (cc_ua == 0)
 		fv_max = fv_uv_max;
-	else if (dc_fv_uv_max >= last_fv)
+	else if (!allow_higher_fv && dc_fv_uv_max >= last_fv)
 		fv_max = last_fv - profile->fv_uv_resolution;
 	else
 		fv_max = dc_fv_uv_max;
@@ -476,8 +476,8 @@ int gbms_msc_round_fv_uv(const struct gbms_chg_profile *profile,
 	result = fv_uv - (fv_uv % profile->fv_uv_resolution);
 
 	if (fv_max != 0)
-		gbms_info(profile, "MSC_ROUND: fv_uv=%d vtier=%d fv_uv_max=%d -> %d\n",
-			  fv_uv, vtier, fv_max, result);
+		gbms_info(profile, "MSC_ROUND: fv_uv=%d vtier=%d dc_fv_uv_max=%d fv_max=%d -> %d\n",
+			  fv_uv, vtier, dc_fv_uv_max, fv_max, result);
 
 	return result;
 }

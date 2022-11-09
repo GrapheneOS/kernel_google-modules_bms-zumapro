@@ -458,12 +458,14 @@ struct batt_drv {
 	int cc_max;
 	int topoff;
 	int msc_update_interval;
+	int cc_max_pullback;
 
 	bool disable_votes;
 	struct gvotable_election *msc_interval_votable;
 	struct gvotable_election *fcc_votable;
 	struct gvotable_election *fv_votable;
 	struct gvotable_election *temp_dryrun_votable;
+	struct gvotable_election *msc_last_votable;
 
 	/* FAN level */
 	struct gvotable_election *fan_level_votable;
@@ -544,6 +546,9 @@ struct batt_drv {
 
 	/* irdrop for DC */
 	bool dc_irdrop;
+
+	bool pullback_current;
+	bool allow_higher_fv;
 
 	/* shutdown flag */
 	int boot_to_os_attempts;
@@ -2569,6 +2574,7 @@ static inline void batt_reset_chg_drv_state(struct batt_drv *batt_drv)
 	batt_drv->vbatt_idx = -1;
 	batt_drv->fv_uv = -1;
 	batt_drv->cc_max = -1;
+	batt_drv->cc_max_pullback = -1;
 	batt_drv->msc_update_interval = -1;
 	batt_drv->jeita_stop_charging = -1;
 	/* timers */
@@ -2616,7 +2622,7 @@ static bool msc_logic_soft_jeita(struct batt_drv *batt_drv, int temp)
 static int msc_logic_irdrop(struct batt_drv *batt_drv,
 			    int vbatt, int ibatt, int temp_idx,
 			    int *vbatt_idx, int *fv_uv,
-			    int *update_interval)
+			    int *update_interval, int *p_cc_max_pullback)
 {
 	const struct gbms_chg_profile *profile = &batt_drv->chg_profile;
 	const int vtier = profile->volt_limits[*vbatt_idx];
@@ -2653,7 +2659,8 @@ static int msc_logic_irdrop(struct batt_drv *batt_drv,
 		 */
 		*fv_uv = gbms_msc_round_fv_uv(profile, vtier,
 					      *fv_uv - profile->fv_uv_resolution,
-					      no_back_down ? cc_max : 0);
+					      no_back_down ? cc_max : 0,
+					      batt_drv->allow_higher_fv);
 		if (*fv_uv < vtier)
 			*fv_uv = vtier;
 
@@ -2681,8 +2688,11 @@ static int msc_logic_irdrop(struct batt_drv *batt_drv,
 		} else {
 			/* simple pullback */
 			msc_state = MSC_PULLBACK;
-			if (no_back_down)
+			if (no_back_down) {
 				*fv_uv = batt_drv->fv_uv;
+				if (batt_drv->pullback_current)
+					*p_cc_max_pullback = -ibatt;
+			}
 			batt_prlog(BATT_PRLOG_ALWAYS,
 				  "MSC_PULLBACK vt=%d vb=%d ibatt=%d fv_uv=%d->%d no_back=%d\n",
 				  vtier, vbatt, ibatt,
@@ -2716,7 +2726,8 @@ static int msc_logic_irdrop(struct batt_drv *batt_drv,
 			const int cc_max = GBMS_CCCM_LIMITS(profile, temp_idx, *vbatt_idx);
 
 			*fv_uv = gbms_msc_round_fv_uv(profile, vtier, vtier + (vchrg_uv - vbatt),
-						      no_back_down ? cc_max : 0);
+						      no_back_down ? cc_max : 0,
+						      batt_drv->allow_higher_fv);
 		}
 
 		/* not allow to reduce fv in DC to avoid the VSWITCH */
@@ -2822,7 +2833,8 @@ static int msc_logic_irdrop(struct batt_drv *batt_drv,
 		msc_state = MSC_RAISE;
 		*fv_uv = gbms_msc_round_fv_uv(profile, vtier,
 					      *fv_uv + profile->fv_uv_resolution,
-					      no_back_down ? cc_max : 0);
+					      no_back_down ? cc_max : 0,
+					      batt_drv->allow_higher_fv);
 		*update_interval = profile->cv_update_interval;
 
 		/* debounce next taper voltage adjustment */
@@ -3824,7 +3836,8 @@ static int msc_logic(struct batt_drv *batt_drv)
 		msc_state = msc_logic_irdrop(batt_drv,
 					     vbatt, ibatt, temp_idx,
 					     &vbatt_idx, &fv_uv,
-					     &update_interval);
+					     &update_interval,
+					     &batt_drv->cc_max_pullback);
 
 		if (msc_pm_hold(msc_state) == 1 && !batt_drv->hold_taper_ws) {
 			__pm_stay_awake(batt_drv->taper_ws);
@@ -3905,6 +3918,12 @@ static int msc_logic(struct batt_drv *batt_drv)
 		batt_drv->checked_ov_cnt = 0;
 	}
 
+	if (!batt_drv->msc_last_votable)
+		batt_drv->msc_last_votable = gvotable_election_get_handle(VOTABLE_MSC_LAST);
+
+	if (batt_drv->msc_last_votable)
+		gvotable_cast_int_vote(batt_drv->msc_last_votable, "BATT",
+				       vbatt_idx == profile->volt_nb_limits - 1, 1);
 	/*
 	 * book elapsed time to previous tier & msc_state
 	 * NOTE: temp_idx != -1 but batt_drv->msc_state could be -1
@@ -3931,7 +3950,8 @@ static int msc_logic(struct batt_drv *batt_drv)
 
 	changed = batt_drv->temp_idx != temp_idx ||
 		  batt_drv->vbatt_idx != vbatt_idx ||
-		  batt_drv->fv_uv != fv_uv;
+		  batt_drv->fv_uv != fv_uv ||
+		  batt_drv->cc_max_pullback != batt_drv->cc_max;
 	batt_prlog(batt_prlog_level(changed),
 		   "MSC_LOGIC temp_idx:%d->%d, vbatt_idx:%d->%d, fv=%d->%d, cc_max=%d, ui=%d cv_cnt=%d ov_cnt=%d\n",
 		   batt_drv->temp_idx, temp_idx, batt_drv->vbatt_idx, vbatt_idx,
@@ -3940,9 +3960,16 @@ static int msc_logic(struct batt_drv *batt_drv)
 
 	/* next update */
 	batt_drv->msc_update_interval = update_interval;
+	/* if tier change, reset cc_max from chg table, otherwise use pullback value */
+	if (!batt_drv->pullback_current || vbatt_idx != batt_drv->vbatt_idx ||
+	    temp_idx != batt_drv->temp_idx) {
+		batt_drv->cc_max = GBMS_CCCM_LIMITS(profile, temp_idx, vbatt_idx);
+		batt_drv->cc_max_pullback = 0;
+	} else if (batt_drv->cc_max_pullback > 0) {
+		batt_drv->cc_max = batt_drv->cc_max_pullback;
+	}
 	batt_drv->vbatt_idx = vbatt_idx;
 	batt_drv->temp_idx = temp_idx;
-	batt_drv->cc_max = GBMS_CCCM_LIMITS(profile, temp_idx, vbatt_idx);
 	batt_drv->topoff = profile->topoff_limits[temp_idx];
 	batt_drv->fv_uv = fv_uv;
 
@@ -8657,6 +8684,16 @@ static void google_battery_init_work(struct work_struct *work)
 	batt_drv->dc_irdrop = of_property_read_bool(node, "google,dc-irdrop");
 	if (batt_drv->dc_irdrop)
 		pr_info("dc irdrop is enabled\n");
+
+	batt_drv->pullback_current = of_property_read_bool(gbms_batt_id_node(node),
+							   "google,pullback-current");
+	if (batt_drv->pullback_current)
+		pr_info("pullback current is enabled\n");
+
+	batt_drv->allow_higher_fv = of_property_read_bool(gbms_batt_id_node(node),
+							   "google,allow-higher-fv");
+	if (batt_drv->allow_higher_fv)
+		pr_info("allow higher fv is enabled\n");
 
 	/* debugfs */
 	(void)batt_init_debugfs(batt_drv);
