@@ -1528,6 +1528,8 @@ static int pca9468_set_ta_current_comp2(struct pca9468_charger *pca9468)
 
 			/* Check IIN_ADC < IIN_CC - 50mA */
 			if (iin < iin_cc_lb) {
+				const unsigned int ta_max_vol =
+				    pca9468->pdata->ta_max_vol * pca9468->chg_mode;
 				unsigned int iin_apdo;
 				unsigned int val;
 
@@ -1546,8 +1548,7 @@ static int pca9468_set_ta_current_comp2(struct pca9468_charger *pca9468)
 				val = val * PD_MSG_TA_VOL_STEP; /* uV */
 
 				/* Set new TA_MAX_VOL */
-				pca9468->ta_max_vol = min(val, (unsigned)PCA9468_TA_MAX_VOL *
-							  pca9468->chg_mode);
+				pca9468->ta_max_vol = min(val, ta_max_vol);
 
 				/* Increase TA voltage(40mV) */
 				pca9468->ta_vol = pca9468->ta_vol + PD_MSG_TA_VOL_STEP * 2;
@@ -1834,6 +1835,7 @@ static int pca9468_set_wireless_dc(struct pca9468_charger *pca9468, int vbat)
 /* recalculate ->ta_vol and ->ta_cur looking at demand (cc_max) */
 static int pca9468_set_wired_dc(struct pca9468_charger *pca9468, int vbat)
 {
+	const unsigned long ta_max_vol = pca9468->pdata->ta_max_vol * pca9468->chg_mode;
 	unsigned long val;
 	int iin_cc;
 
@@ -1848,8 +1850,7 @@ static int pca9468_set_wired_dc(struct pca9468_charger *pca9468, int vbat)
 	/* Adjust values with APDO resolution(20mV) */
 	val = val * 1000 / PD_MSG_TA_VOL_STEP;
 	val = val * PD_MSG_TA_VOL_STEP; /* uV */
-	pca9468->ta_max_vol = min(val, (unsigned long)PCA9468_TA_MAX_VOL *
-				  pca9468->chg_mode);
+	pca9468->ta_max_vol = min(val, ta_max_vol);
 
 	/* MAX[8000mV * chg_mode, 2 * VBAT_ADC * chg_mode + 500 mV] */
 	pca9468->ta_vol = max(PCA9468_TA_MIN_VOL_PRESET * pca9468->chg_mode,
@@ -2850,7 +2851,7 @@ static int pca9468_charge_ccmode(struct pca9468_charger *pca9468)
 				pca9468->ta_cur = PCA9468_TA_MIN_CUR;
 
 				ret = pca9468_set_ta_voltage_comp(pca9468);
-			} else if (ta_max_vol >= PCA9468_TA_MAX_VOL_CP) {
+			} else if (ta_max_vol >= pca9468->pdata->ta_max_vol_cp) {
 				ret = pca9468_set_ta_current_comp(pca9468);
 			} else {
 				/* constant power mode */
@@ -3341,7 +3342,7 @@ static int pca9468_preset_dcmode(struct pca9468_charger *pca9468)
 				pca9468->ta_max_vol, pca9468->ta_max_cur, pca9468->ta_max_pwr,
 				pca9468->iin_cc, pca9468->chg_mode);
 	} else {
-		const unsigned int ta_max_vol = PCA9468_TA_MAX_VOL * pca9468->chg_mode;
+		const unsigned int ta_max_vol = pca9468->pdata->ta_max_vol * pca9468->chg_mode;
 
 		/*
 		 * Get the APDO max for 2:1 mode.
@@ -4603,6 +4604,20 @@ static int of_pca9468_dt(struct device *dev,
 	}
 	pdata->iin_cfg = pdata->iin_cfg_max;
 	pr_info("%s: pca9468,iin_cfg is %u\n", __func__, pdata->iin_cfg);
+
+	/* TA max voltage limit */
+	ret = of_property_read_u32(np_pca9468, "pca9468,ta-max-vol",
+				   &pdata->ta_max_vol);
+	if (ret) {
+		pr_warn("%s: pca9468,ta-max-vol is Empty\n", __func__);
+		pdata->ta_max_vol = PCA9468_TA_MAX_VOL;
+	}
+	ret = of_property_read_u32(np_pca9468, "pca9468,ta-max-vol-cp",
+				   &pdata->ta_max_vol_cp);
+	if (ret) {
+		pr_warn("%s: pca9468,ta-max-vol-cp is Empty\n", __func__);
+		pdata->ta_max_vol_cp = pdata->ta_max_vol;
+	}
 
 	/* charging float voltage */
 	ret = of_property_read_u32(np_pca9468, "pca9468,float-voltage",

@@ -37,6 +37,9 @@ struct pca9468_platform_data {
 	int		iin_max_offset;
 	int		iin_cc_comp_offset;
 
+	unsigned int	ta_max_vol;
+	unsigned int	ta_max_vol_cp;
+
 	/* irdrop */
 	unsigned int	irdrop_limits[3];
 	int		irdrop_limit_cnt;
