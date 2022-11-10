@@ -85,7 +85,6 @@ enum {
 };
 
 /* ADC step */
-#define VIN_STEP	16000	/* 16mV(16000uV) LSB, Range(0V ~ 16.368V) */
 #define VBAT_STEP	3076	/* (3076uV) LSB, Range(0V ~ 6.297V) */
 #define IIN_STEP	3662 	/* (3662uA) LSB, Range(-7.5A ~ 7.496A) */
 #define DIETEMP_STEP  	-116	/* 0.116C LSB, Range(-40 ~ 150C) */

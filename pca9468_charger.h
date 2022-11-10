@@ -102,6 +102,7 @@ struct p9468_chg_stats {
 	unsigned int cv_count;
 	unsigned int adj_count;
 	unsigned int stby_count;
+	unsigned int iin_loop_count;
 };
 
 #define p9468_chg_stats_valid(chg_data) ((chg_data)->valid)
