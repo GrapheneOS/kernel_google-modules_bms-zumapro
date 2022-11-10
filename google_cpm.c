@@ -902,11 +902,6 @@ static int gcpm_chg_select_by_soc(struct power_supply *psy,
 		 gcpm->dc_index, index, ret, pval.intval,
 		 gcpm->dc_limit_soc_high);
 
-	if (index != gcpm->dc_index)
-		logbuffer_log(gcpm->log, "by_s: index=%d->%d soc=%d soc_high=%d",
-			      gcpm->dc_index, index, pval.intval,
-			      gcpm->dc_limit_soc_high);
-
 	return index;
 }
 
@@ -958,12 +953,6 @@ exit_done:
 	pr_debug("%s: index=%d->%d vbatt=%d: low=%d min=%d high=%d max=%d\n",
 		 __func__, gcpm->dc_index, index, vbatt, vbatt_low, vbatt_min,
 		vbatt_high, vbatt_max);
-
-	if (index != gcpm->dc_index)
-		logbuffer_log(gcpm->log,
-			"by_v: index=%d->%d vbatt=%d: low=%d min=%d high=%d max=%d\n",
-			gcpm->dc_index, index, vbatt, vbatt_low, vbatt_min,
-			vbatt_high, vbatt_max);
 
 	return index;
 }
