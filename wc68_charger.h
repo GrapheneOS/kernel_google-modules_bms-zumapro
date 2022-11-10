@@ -24,9 +24,11 @@ struct wc68_platform_data {
 	u32		iin_cfg_max;	/* from config/dt */
 	u32		v_float;	/* V_Float Voltage - uV unit */
 	u32		v_float_dt;	/* from config/dt */
-	u32 		iin_topoff;	/* Input Topoff current -uV unit */
+	u32		iin_topoff;	/* Input Topoff current -uV unit */
 	s32		iin_max_offset;
 	s32		iin_cc_comp_offset;
+	u32		ta_max_vol;
+	u32		ta_max_vol_cp;
 
 	/* irdrop */
 	s32		irdrop_limits[3];

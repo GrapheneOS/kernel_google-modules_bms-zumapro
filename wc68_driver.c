@@ -1417,6 +1417,8 @@ static int wc68_set_ta_current_comp2(struct wc68_charger *wc68)
 
 			/* Check IIN_ADC < IIN_CC - 50mA */
 			if (iin < iin_cc_lb) {
+				const unsigned int ta_max_vol =
+				    wc68->pdata->ta_max_vol * wc68->chg_mode;
 				unsigned int iin_apdo;
 				unsigned int val;
 
@@ -1435,8 +1437,7 @@ static int wc68_set_ta_current_comp2(struct wc68_charger *wc68)
 				val = val * PD_MSG_TA_VOL_STEP; /* uV */
 
 				/* Set new TA_MAX_VOL */
-				wc68->ta_max_vol = min(val, (unsigned int)WC68_TA_MAX_VOL *
-							  wc68->chg_mode);
+				wc68->ta_max_vol = min(val, ta_max_vol);
 
 				/* Increase TA voltage(40mV) */
 				wc68->ta_vol = wc68->ta_vol + PD_MSG_TA_VOL_STEP * 2;
@@ -1719,6 +1720,7 @@ static int wc68_set_wireless_dc(struct wc68_charger *wc68, int vbat)
 /* recalculate ->ta_vol and ->ta_cur looking at demand (cc_max) */
 static int wc68_set_wired_dc(struct wc68_charger *wc68, int vbat)
 {
+	const unsigned long ta_max_vol = wc68->pdata->ta_max_vol * wc68->chg_mode;
 	unsigned long val;
 	int iin_cc;
 
@@ -1733,8 +1735,7 @@ static int wc68_set_wired_dc(struct wc68_charger *wc68, int vbat)
 	/* Adjust values with APDO resolution(20mV) */
 	val = val * 1000 / PD_MSG_TA_VOL_STEP;
 	val = val * PD_MSG_TA_VOL_STEP; /* uV */
-	wc68->ta_max_vol = min(val, (unsigned long)WC68_TA_MAX_VOL *
-				  wc68->chg_mode);
+	wc68->ta_max_vol = min(val, ta_max_vol);
 
 	/* MAX[8000mV * chg_mode, 2 * VBAT_ADC * chg_mode + 500 mV] */
 	wc68->ta_vol = max(WC68_TA_MIN_VOL_PRESET * wc68->chg_mode,
@@ -2730,7 +2731,7 @@ static int wc68_charge_ccmode(struct wc68_charger *wc68)
 				wc68->ta_cur = WC68_TA_MIN_CUR;
 
 				ret = wc68_set_ta_voltage_comp(wc68);
-			} else if (ta_max_vol >= WC68_TA_MAX_VOL_CP) {
+			} else if (ta_max_vol >= wc68->pdata->ta_max_vol_cp) {
 				ret = wc68_set_ta_current_comp(wc68);
 			} else {
 				/* constant power mode */
@@ -3222,7 +3223,7 @@ static int wc68_preset_dcmode(struct wc68_charger *wc68)
 				wc68->ta_max_vol, wc68->ta_max_cur, wc68->ta_max_pwr,
 				wc68->iin_cc, wc68->chg_mode);
 	} else {
-		const unsigned int ta_max_vol = WC68_TA_MAX_VOL * wc68->chg_mode;
+		const unsigned int ta_max_vol = wc68->pdata->ta_max_vol * wc68->chg_mode;
 
 		/*
 		 * Get the APDO max for 2:1 mode.
@@ -4414,6 +4415,20 @@ static int of_wc68_dt(struct device *dev,
 	}
 	pdata->iin_cfg = pdata->iin_cfg_max;
 	dev_info(dev, "wc68,iin_cfg is %u\n", pdata->iin_cfg);
+
+	/* TA max voltage limit */
+	ret = of_property_read_u32(np_wc68, "wc68,ta-max-vol",
+				   &pdata->ta_max_vol);
+	if (ret) {
+		dev_warn(dev, "wc68,ta-max-vol is Empty\n");
+		pdata->ta_max_vol = WC68_TA_MAX_VOL;
+	}
+	ret = of_property_read_u32(np_wc68, "wc68,ta-max-vol-cp",
+				   &pdata->ta_max_vol_cp);
+	if (ret) {
+		dev_warn(dev, "wc68,ta-max-vol-cp is Empty\n");
+		pdata->ta_max_vol_cp = pdata->ta_max_vol;
+	}
 
 	/* charging float voltage */
 	ret = of_property_read_u32(np_wc68, "wc68,float-voltage",
