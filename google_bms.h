@@ -293,11 +293,17 @@ enum gbms_stats_tier_idx_t {
 	GBMS_STATS_AC_TI_V2_PREDICT_SUCCESS = 19,
 	GBMS_STATS_AC_TI_DONE_AON = 20,
 
-	/* Thermal stats, reported from google_charger */
+	/* Thermal stats, reported from google_charger - reserved 50-59 */
 	GBMS_STATS_TH_LVL0 = 50,
 	GBMS_STATS_TH_LVL1 = 51,
 	GBMS_STATS_TH_LVL2 = 52,
 	GBMS_STATS_TH_LVL3 = 53,
+	GBMS_STATS_TH_LVL4 = 54,
+	GBMS_STATS_TH_LVL5 = 55,
+	GBMS_STATS_TH_LVL6 = 56,
+	GBMS_STATS_TH_LVL7 = 57,
+	GBMS_STATS_TH_LVL8 = 58,
+	GBMS_STATS_TH_LVL9 = 59,
 
 	/* TODO: rename, these are not really related to AC */
 	GBMS_STATS_AC_TI_FULL_CHARGE = 100,
@@ -451,6 +457,7 @@ const char *gbms_chg_ev_adapter_s(int adapter);
 #define VOTABLE_FAN_LEVEL	"FAN_LEVEL"
 #define VOTABLE_DEAD_BATTERY	"DEAD_BATTERY"
 #define VOTABLE_TEMP_DRYRUN	"MSC_TEMP_DRYRUN"
+#define VOTABLE_MDIS		"CHG_MDIS"
 
 #define VOTABLE_CSI_STATUS	"CSI_STATUS"
 #define VOTABLE_CSI_TYPE	"CSI_TYPE"
@@ -588,6 +595,7 @@ enum bhi_algo {
 
 	BHI_ALGO_MIX_N_MATCH 	= 6,
 	BHI_ALGO_DEBUG		= 7,
+	BHI_ALGO_INDI		= 8, /* individual conditions check */
 	BHI_ALGO_MAX,
 };
 
