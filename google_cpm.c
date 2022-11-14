@@ -171,6 +171,9 @@ struct gcpm_drv  {
 	int chg_psy_active;
 	int chg_psy_count;
 
+	/* wakelock */
+	struct wakeup_source *gcpm_ws;
+
 	/* force a charger, this might have side effects */
 	int force_active;
 
@@ -899,11 +902,6 @@ static int gcpm_chg_select_by_soc(struct power_supply *psy,
 		 gcpm->dc_index, index, ret, pval.intval,
 		 gcpm->dc_limit_soc_high);
 
-	if (index != gcpm->dc_index)
-		logbuffer_log(gcpm->log, "by_s: index=%d->%d soc=%d soc_high=%d",
-			      gcpm->dc_index, index, pval.intval,
-			      gcpm->dc_limit_soc_high);
-
 	return index;
 }
 
@@ -955,12 +953,6 @@ exit_done:
 	pr_debug("%s: index=%d->%d vbatt=%d: low=%d min=%d high=%d max=%d\n",
 		 __func__, gcpm->dc_index, index, vbatt, vbatt_low, vbatt_min,
 		vbatt_high, vbatt_max);
-
-	if (index != gcpm->dc_index)
-		logbuffer_log(gcpm->log,
-			"by_v: index=%d->%d vbatt=%d: low=%d min=%d high=%d max=%d\n",
-			gcpm->dc_index, index, vbatt, vbatt_low, vbatt_min,
-			vbatt_high, vbatt_max);
 
 	return index;
 }
@@ -1389,6 +1381,9 @@ static int gcpm_chg_select_logic(struct gcpm_drv *gcpm)
 		/* grace period of 500ms, PPS Work not called during grace */
 		gcpm->dc_start_time = dc_start_time;
 		schedule_pps_interval = DC_ENABLE_DELAY_MS;
+
+		__pm_stay_awake(gcpm->gcpm_ws);
+		pr_debug("%s: pm gcpm stay awake\n", __func__);
 	}
 
 	if (schedule_pps_interval >= 0) {
@@ -1552,8 +1547,8 @@ static void gcpm_pps_wlc_dc_work(struct work_struct *work)
 		 gcpm->dc_index, gcpm->dc_state, gcpm->dc_start_time);
 
 	if (!gcpm->resume_complete || !gcpm->init_complete) {
-		/* TODO: should probably reschedule */
-		goto pps_dc_done;
+		pps_ui = DC_ERROR_RETRY_MS;
+		goto pps_dc_reschedule;
 	}
 
 	/* disconnect, gcpm_chg_check() and most errors reset ->dc_index */
@@ -1585,6 +1580,9 @@ static void gcpm_pps_wlc_dc_work(struct work_struct *work)
 				     dc_disable ? "for the session " : " ",
 				     elap, gcpm->dc_state, active_index,
 				     gcpm->chg_psy_active);
+
+		pr_debug("%s: pm gcpm relax\n", __func__);
+		__pm_relax(gcpm->gcpm_ws);
 
 		/* TODO: send a ps event? */
 		goto pps_dc_done;
@@ -1649,6 +1647,9 @@ static void gcpm_pps_wlc_dc_work(struct work_struct *work)
 			 } else {
 				pr_err("PPS_Work: dc offline\n");
 				pps_ui = 0;
+
+				pr_debug("%s: pm gcpm relax\n", __func__);
+				__pm_relax(gcpm->gcpm_ws);
 			}
 		}
 
@@ -1755,6 +1756,9 @@ static void gcpm_pps_wlc_dc_work(struct work_struct *work)
 		} else if (pps_ui > DC_ERROR_RETRY_MS) {
 			pps_ui = DC_ERROR_RETRY_MS;
 		}
+
+		pr_debug("%s: pm gcpm relax\n", __func__);
+		__pm_relax(gcpm->gcpm_ws);
 	} else {
 		struct power_supply *pps_psy = pps_data->pps_psy;
 
@@ -2544,7 +2548,7 @@ static int gcpm_set_mdis_charge_cntl_limit(struct thermal_cooling_device *tcd,
 {
 	struct mdis_thermal_device *tdev = tcd->devdata;
 	struct gcpm_drv *gcpm = tdev->gcpm;
-	int online = 0, budget = -1, in_idx = -1;
+	int online = 0, in_idx = -1;
 	int msc_fcc, dc_icl, cp_fcc, ret;
 
 	if (tdev->thermal_levels <= 0 || lvl < 0 || lvl > tdev->thermal_levels)
@@ -2556,18 +2560,15 @@ static int gcpm_set_mdis_charge_cntl_limit(struct thermal_cooling_device *tcd,
 
 	tdev->current_level = lvl;
 	if (lvl == tdev->thermal_levels || tdev->thermal_mitigation[lvl] == 0) {
-		budget = msc_fcc = dc_icl = cp_fcc = 0;
+		msc_fcc = dc_icl = cp_fcc = 0;
 		gcpm->cp_fcc_hold_limit = gcpm_chg_select_check_cp_limit(gcpm);
 		gcpm->cp_fcc_hold = true;
 	} else if (tdev->current_level == 0) {
-		budget = tdev->thermal_mitigation[0];
 		msc_fcc = dc_icl = cp_fcc = -1;
 		/* mdis callback will clear hold and re-evaluate PPS */
 		gcpm->cp_fcc_hold_limit = -1;
 	} else {
 		int cp_min = -1;
-
-		budget = tdev->thermal_mitigation[lvl];
 
 		/* 0 always is the main-charger */
 		dc_icl = gcpm->mdis_out_limits[0][lvl + tdev->thermal_levels];
@@ -2662,9 +2663,9 @@ static int gcpm_set_mdis_charge_cntl_limit(struct thermal_cooling_device *tcd,
 	/*  fix the disable, run another charging loop */
 	if (gcpm->mdis_votable) {
 		ret = gvotable_cast_int_vote(gcpm->mdis_votable, "MDIS",
-					     budget, budget >= 0);
+					     lvl, lvl >= 0);
 		if (ret < 0)
-			pr_err("%s: cannot update budget (%d)", __func__, ret);
+			pr_err("%s: cannot update MDIS level (%d)", __func__, ret);
 
 	}
 
@@ -3105,7 +3106,7 @@ static int gcpm_init_mdis(struct gcpm_drv *gcpm)
 
 	gvotable_set_default(gcpm->mdis_votable, (void *)-1);
 	gvotable_set_vote2str(gcpm->mdis_votable, gvotable_v2s_int);
-	gvotable_election_set_name(gcpm->mdis_votable, "CHG_MDIS");
+	gvotable_election_set_name(gcpm->mdis_votable, VOTABLE_MDIS);
 
 	/* race with above */
 	ret = mdis_tdev_register(MDIS_OF_CDEV_NAME, MDIS_CDEV_NAME,
@@ -3837,6 +3838,12 @@ static int google_cpm_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&gcpm->init_work, gcpm_init_work);
 	mutex_init(&gcpm->chg_psy_lock);
 
+	gcpm->gcpm_ws = wakeup_source_register(NULL, "gcpm");
+	if (!gcpm->gcpm_ws) {
+		dev_err(gcpm->device, "Failed to register wakeup source\n");
+		return -ENODEV;
+	}
+
 	/* this is my name */
 	ret = of_property_read_string(pdev->dev.of_node, "google,psy-name",
 				      &tmp_name);
@@ -4094,6 +4101,8 @@ static int google_cpm_remove(struct platform_device *pdev)
 
 	pps_free(&gcpm->wlc_pps_data);
 	pps_free(&gcpm->tcpm_pps_data);
+
+	wakeup_source_unregister(gcpm->gcpm_ws);
 
 	if (gcpm->wlc_dc_psy)
 		power_supply_put(gcpm->wlc_dc_psy);

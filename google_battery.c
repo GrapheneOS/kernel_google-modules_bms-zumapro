@@ -1580,7 +1580,8 @@ static void batt_chg_stats_update(struct batt_drv *batt_drv, int temp_idx,
 	soc_in = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_CAPACITY_RAW);
 	if (soc_in < 0) {
 		pr_info("MSC_STAT cannot read soc_in=%d\n", soc_in);
-		return;
+		/* We still want to update initialized tiers. */
+		soc_in = -1;
 	}
 
 	/* Note: To log new voltage tiers, add to list in go/pixel-vtier-defs */
@@ -2359,8 +2360,8 @@ static bool batt_csi_check_ad_qual(const struct batt_drv *chg_drv)
  */
 static bool batt_csi_check_ad_power(const union gbms_ce_adapter_details *ad)
 {
-	const int ad_mw = (ad->ad_voltage * ad->ad_amperage) * 10000;
-	int limit_mw = 9000 * 2000;	/* 18 Watts: it changes with the device */
+	const unsigned int ad_mw = (ad->ad_voltage * ad->ad_amperage) * 10000;
+	unsigned int limit_mw = 9000 * 2000;	/* 18 Watts: it changes with the device */
 
 	switch (ad->ad_type) {
 		case CHG_EV_ADAPTER_TYPE_USB:
@@ -2379,6 +2380,12 @@ static bool batt_csi_check_ad_power(const union gbms_ce_adapter_details *ad)
 		case CHG_EV_ADAPTER_TYPE_WLC_EPP:
 		case CHG_EV_ADAPTER_TYPE_WLC_SPP:
 			limit_mw = 7500000;
+			break;
+		case CHG_EV_ADAPTER_TYPE_EXT:
+		case CHG_EV_ADAPTER_TYPE_EXT1:
+		case CHG_EV_ADAPTER_TYPE_EXT2:
+		case CHG_EV_ADAPTER_TYPE_EXT_UNKNOWN:
+			limit_mw = 10500 * 1250;
 			break;
 		default:
 			break;
@@ -3230,6 +3237,22 @@ exit_done:
 
 /* BHI -------------------------------------------------------------------- */
 
+#define ONE_YEAR_HRS	(24 * 365)
+#define BHI_INDI_CAP	85
+static int bhi_individual_conditions_index(const struct health_data *health_data)
+{
+	const struct bhi_data *bhi_data = &health_data->bhi_data;
+	const int cur_impedance = batt_ravg_value(&bhi_data->res_state);
+	const int age_impedance_max = bhi_data->act_impedance * 2;
+	const int cur_capacity_pct = 100 - bhi_data->capacity_fade;
+
+	if (health_data->bhi_data.battery_age >= ONE_YEAR_HRS ||
+	    cur_impedance >= age_impedance_max || cur_capacity_pct <= BHI_INDI_CAP)
+		return health_data->need_rep_threshold * 100;
+
+	return BHI_ALGO_FULL_HEALTH;
+}
+
 /* GBMS_PROP_CAPACITY_FADE_RATE access this via GBMS_TAG_HCNT */
 static int hist_get_index(int cycle_count, const struct batt_drv *batt_drv)
 {
@@ -3515,6 +3538,8 @@ static int bhi_calc_health_index(int algo, const struct health_data *health_data
 		w_ii = health_data->bhi_w_pi;
 		w_sd = health_data->bhi_w_sd;
 		break;
+	case BHI_ALGO_INDI:
+		return bhi_individual_conditions_index(health_data);
 	default:
 		return -EINVAL;
 	}
