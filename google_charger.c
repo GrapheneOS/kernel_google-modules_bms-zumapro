@@ -5298,7 +5298,7 @@ static void google_charger_init_work(struct work_struct *work)
 		const bool pps_enable = of_property_read_bool(chg_drv->device->of_node,
 							      "google,pps-enable");
 
-		ret = pps_init(&chg_drv->pps_data, chg_drv->device, tcpm_psy);
+		ret = pps_init(&chg_drv->pps_data, chg_drv->device, tcpm_psy, "gcharger-pps");
 		if (ret < 0) {
 			pr_err("PPS init failure for %s (%d)\n", name, ret);
 		} else if (pps_enable) {
