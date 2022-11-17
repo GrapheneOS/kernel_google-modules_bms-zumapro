@@ -110,7 +110,8 @@
 #define EXT2_DETECT_THRESHOLD_UV	(5000000)
 
 #define usb_pd_is_high_volt(ad) \
-	((ad)->ad_type == CHG_EV_ADAPTER_TYPE_USB_PD && \
+	(((ad)->ad_type == CHG_EV_ADAPTER_TYPE_USB_PD || \
+	(ad)->ad_type == CHG_EV_ADAPTER_TYPE_USB_PD_PPS) && \
 	(ad)->ad_voltage * 100 > PD_SNK_MIN_MV)
 
 /*
@@ -588,13 +589,20 @@ static inline int chg_reset_state(struct chg_drv *chg_drv)
 static int info_usb_ad_type(int usb_type, int usbc_type)
 {
 	switch (usb_type) {
-	case POWER_SUPPLY_TYPE_USB:
-		return CHG_EV_ADAPTER_TYPE_USB_SDP;
-	case POWER_SUPPLY_TYPE_USB_CDP:
+	case POWER_SUPPLY_USB_TYPE_SDP:
+		return (usbc_type == POWER_SUPPLY_USB_TYPE_PD_PPS) ?
+			CHG_EV_ADAPTER_TYPE_USB_PD_PPS :
+			CHG_EV_ADAPTER_TYPE_USB_SDP;
+	case POWER_SUPPLY_USB_TYPE_CDP:
 		return CHG_EV_ADAPTER_TYPE_USB_CDP;
-	case POWER_SUPPLY_TYPE_USB_DCP:
-		return CHG_EV_ADAPTER_TYPE_USB_DCP;
-	case POWER_SUPPLY_TYPE_USB_PD:
+	case POWER_SUPPLY_USB_TYPE_DCP:
+		if (usbc_type == POWER_SUPPLY_USB_TYPE_PD)
+			return CHG_EV_ADAPTER_TYPE_USB_PD;
+		else if (usbc_type == POWER_SUPPLY_USB_TYPE_PD_PPS)
+			return CHG_EV_ADAPTER_TYPE_USB_PD_PPS;
+		else
+			return CHG_EV_ADAPTER_TYPE_USB_DCP;
+	case POWER_SUPPLY_USB_TYPE_PD:
 		return (usbc_type == POWER_SUPPLY_USB_TYPE_PD_PPS) ?
 			CHG_EV_ADAPTER_TYPE_USB_PD_PPS :
 			CHG_EV_ADAPTER_TYPE_USB_PD;
