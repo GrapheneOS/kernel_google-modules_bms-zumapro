@@ -1938,8 +1938,10 @@ static void bd_dd_set_enabled(struct chg_drv *chg_drv, const int ext_present, co
 			bd_state->dd_last_update = now;
 
 		time = now - bd_state->dd_last_update;
-		if (bd_state->dd_trigger_time && time >= bd_state->dd_trigger_time)
+		if (bd_state->dd_trigger_time && time >= bd_state->dd_trigger_time) {
 			bd_state->dd_enabled = 1;
+			bd_state->lowerbd_reached = true;
+		}
 	}
 }
 
@@ -1964,7 +1966,7 @@ static void bd_dd_run_defender(struct chg_drv *chg_drv, int soc, int *disable_ch
 	/* update dd_state to user space */
 	bd_state->dd_state = bd_dd_state_update(bd_state->dd_state,
 						bd_state->dd_triggered,
-						(soc >= lowerbd));
+						(soc >= upperbd));
 
 	/* Start DD stats */
 	if (bd_state->dd_state == DOCK_DEFEND_ACTIVE)
