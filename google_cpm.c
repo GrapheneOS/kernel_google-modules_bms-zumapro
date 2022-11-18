@@ -2550,10 +2550,6 @@ static int gcpm_mdis_update_limits(struct gcpm_drv *gcpm, int msc_fcc,
 				cp_fcc, ret);
 	}
 
-	ret = gvotable_cast_int_vote(gcpm->dc_chg_avail_votable, REASON_MDIS, cp_fcc != 0, 1);
-	if (ret < 0)
-		dev_err(gcpm->device, "Unable to cast vote for DC Chg avail (%d)\n", ret);
-
 	/* turning off wireless charging equires disabling the wireless IC */
 	if (dc_icl == 0 && dc_icl_votable) {
 		ret = mdis_cast_vote(dc_icl_votable, 0, true);
@@ -2575,6 +2571,7 @@ static int gcpm_set_mdis_charge_cntl_limit(struct thermal_cooling_device *tcd,
 	struct gcpm_drv *gcpm = tdev->gcpm;
 	int online = 0, in_idx = -1;
 	int msc_fcc, dc_icl, cp_fcc, ret;
+	bool mdis_crit_lvl;
 
 	if (tdev->thermal_levels <= 0 || lvl < 0 || lvl > tdev->thermal_levels)
 		return -EINVAL;
@@ -2584,7 +2581,8 @@ static int gcpm_set_mdis_charge_cntl_limit(struct thermal_cooling_device *tcd,
 	dev_dbg(gcpm->device, "MSC_THERM_MDIS lvl=%d->%d\n", tdev->current_level, (int)lvl);
 
 	tdev->current_level = lvl;
-	if (lvl == tdev->thermal_levels || tdev->thermal_mitigation[lvl] == 0) {
+	mdis_crit_lvl = lvl == tdev->thermal_levels || tdev->thermal_mitigation[lvl] == 0;
+	if (mdis_crit_lvl) {
 		msc_fcc = dc_icl = cp_fcc = 0;
 		gcpm->cp_fcc_hold_limit = gcpm_chg_select_check_cp_limit(gcpm);
 		gcpm->cp_fcc_hold = true;
@@ -2674,6 +2672,10 @@ static int gcpm_set_mdis_charge_cntl_limit(struct thermal_cooling_device *tcd,
 		lvl, in_idx, online, cp_fcc, gcpm->cp_fcc_hold,
 		gcpm->cp_fcc_hold_limit);
 
+	ret = gvotable_cast_int_vote(gcpm->dc_chg_avail_votable, REASON_MDIS,
+				     !mdis_crit_lvl, 1);
+	if (ret < 0)
+		dev_err(gcpm->device, "Unable to cast vote for DC Chg avail (%d)\n", ret);
 	/*
 	 * this might be in the callback for mdis_votable
 	 * . cp_fcc == 0 will apply msc_fcc, dc_icl and must cause the
