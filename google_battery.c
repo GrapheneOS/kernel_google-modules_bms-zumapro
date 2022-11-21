@@ -352,6 +352,8 @@ struct health_data
 	int bhi_debug_imp_index;
 	int bhi_debug_sd_index;
 	int bhi_debug_health_index;
+	/* algo BHI_ALGO_INDI capacity threshold */
+	int bhi_indi_cap;
 
 	/* current battery state */
 	struct bhi_data bhi_data;
@@ -3237,17 +3239,18 @@ exit_done:
 
 /* BHI -------------------------------------------------------------------- */
 
-#define ONE_YEAR_HRS	(24 * 365)
-#define BHI_INDI_CAP	85
+#define ONE_YEAR_HRS		(24 * 365)
+#define BHI_INDI_CAP_DEFAULT	85
 static int bhi_individual_conditions_index(const struct health_data *health_data)
 {
 	const struct bhi_data *bhi_data = &health_data->bhi_data;
 	const int cur_impedance = batt_ravg_value(&bhi_data->res_state);
 	const int age_impedance_max = bhi_data->act_impedance * 2;
 	const int cur_capacity_pct = 100 - bhi_data->capacity_fade;
+	const int bhi_indi_cap = health_data->bhi_indi_cap;
 
 	if (health_data->bhi_data.battery_age >= ONE_YEAR_HRS ||
-	    cur_impedance >= age_impedance_max || cur_capacity_pct <= BHI_INDI_CAP)
+	    cur_impedance >= age_impedance_max || cur_capacity_pct <= bhi_indi_cap)
 		return health_data->need_rep_threshold * 100;
 
 	return BHI_ALGO_FULL_HEALTH;
@@ -6510,10 +6513,41 @@ static ssize_t health_algo_show(struct device *dev,
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
 
-	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health_data.bhi_algo);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health_data.bhi_indi_cap);
 }
 
 static const DEVICE_ATTR_RW(health_algo);
+
+static ssize_t health_indi_cap_store(struct device *dev,
+				 struct device_attribute *attr,
+				 const char *buf, size_t count)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	int value, ret;
+
+	ret = kstrtoint(buf, 0, &value);
+	if (ret < 0)
+		return ret;
+
+	if (value > 100 || value < 0)
+		return count;
+
+	batt_drv->health_data.bhi_indi_cap = value;
+
+	return count;
+}
+
+static ssize_t health_indi_cap_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health_data.bhi_indi_cap);
+}
+
+static const DEVICE_ATTR_RW(health_indi_cap);
 
 /* CSI --------------------------------------------------------------------- */
 
@@ -6923,6 +6957,9 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_health_algo);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create health algo\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_health_indi_cap);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create health individual capacity\n");
 
 	/* csi */
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_charging_speed);
@@ -8374,6 +8411,12 @@ static int batt_bhi_init(struct batt_drv *batt_drv)
 				   &health_data->cycle_count_need_rep_threshold);
 	if (ret < 0)
 		health_data->cycle_count_need_rep_threshold = BHI_CC_NEED_REP_THRESHOLD_DEFAULT;
+
+	/* algorithm BHI_ALGO_INDI capacity threshold */
+	ret = of_property_read_u32(batt_drv->device->of_node, "google,bhi-indi-cap",
+				   &health_data->bhi_indi_cap);
+	if (ret < 0)
+		health_data->bhi_indi_cap = BHI_INDI_CAP_DEFAULT;
 
 	/* design is the value used to build the charge table */
 	health_data->bhi_data.capacity_design = batt_drv->battery_capacity;
