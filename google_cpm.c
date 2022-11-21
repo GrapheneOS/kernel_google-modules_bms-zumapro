@@ -811,7 +811,7 @@ static int gcpm_chg_select_by_demand(struct gcpm_drv *gcpm)
 	 * done holding a lock on &gcpm->chg_psy_lock (cc_max will become the
 	 * same as gcpm->cp_fcc_hold_limit on exit).
 	 */
-	if (gcpm->cp_fcc_hold && gcpm->cp_fcc_hold_limit >= 0) {
+	if (gcpm->cp_fcc_hold && gcpm->cp_fcc_hold_limit >= 0 && cc_max != 0) {
 		/*
 		 * ->cp_fcc_hold is set when a thermal limit caused the switch
 		 * from CP to main-charger. In this case ->cp_fcc_hold_limit
