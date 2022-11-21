@@ -262,9 +262,6 @@ struct max1720x_chip {
 
 	struct max1720x_rc_switch rc_switch;
 
-	/* support no_battery */
-	bool no_battery;
-
 	/* battery current criteria for report status charge */
 	u32 status_charge_threshold_ma;
 };
@@ -2852,9 +2849,11 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 	fg_status_clr = fg_status;
 
 	if (fg_status & MAX1720X_STATUS_POR) {
+		const bool no_battery = chip->fake_battery == 0;
+
 		mutex_lock(&chip->model_lock);
 		chip->por = true;
-		if (chip->no_battery) {
+		if (no_battery) {
 			fg_status_clr &= ~MAX1720X_STATUS_POR;
 		} else {
 			dev_warn(chip->dev, "POR is set(%04x), model reload:%d\n",
@@ -3532,12 +3531,13 @@ DEFINE_SIMPLE_ATTRIBUTE(debug_ce_start_fops, NULL, debug_ce_start, "%llu\n");
 /* Model reload will be disabled if the node is not found */
 static int max1720x_init_model(struct max1720x_chip *chip)
 {
+	const bool no_battery = chip->fake_battery == 0;
 	void *model_data;
 
 	if (chip->gauge_type != MAX_M5_GAUGE_TYPE)
 		return 0;
 
-	if (chip->no_battery)
+	if (no_battery)
 		return 0;
 
 	/* ->batt_id negative for no lookup */
@@ -5910,7 +5910,6 @@ static int max1720x_probe(struct i2c_client *client,
 
 	chip->dev = dev;
 	chip->fake_battery = of_property_read_bool(dev->of_node, "maxim,no-battery") ? 0 : -1;
-	chip->no_battery = of_property_read_bool(dev->of_node, "maxim,no-battery");
 	chip->primary = client;
 	chip->batt_id_defer_cnt = DEFAULT_BATTERY_ID_RETRIES;
 	i2c_set_clientdata(client, chip);
