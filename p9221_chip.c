@@ -756,43 +756,35 @@ static int p9382_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 	return ret;
 }
 
+static int p9412_chip_tx_apbst_enable(struct p9221_charger_data *chgr)
+{
+	const u8 val8 = chgr->pdata->hw_ocp_det ? P9412_APBSTPING_7V : 0;
+	int ret;
+
+	if (!chgr->pdata->apbst_en)
+		return 0;
+
+	ret = chgr->reg_write_8(chgr, P9412_APBSTPING_REG, val8);
+	ret |= chgr->reg_write_8(chgr, P9412_APBSTCONTROL_REG, P9412_APBSTPING_7V);
+	logbuffer_log(chgr->rtx_log, "configure Ext-Boost Vout to %s.(%d)",
+		      val8 > 0 ? "7V" : "5V", ret);
+
+	if (!chgr->pdata->hw_ocp_det)
+		return ret;
+	/* Set ping phase current limit to 1.2A */
+	ret |= chgr->reg_write_8(chgr, P9412_PLIM_REG, P9412_PLIM_1200MA);
+	logbuffer_log(chgr->rtx_log, "write %#02x to %#02x", P9412_PLIM_1200MA, P9412_PLIM_REG);
+
+	return ret;
+}
+
 static int p9412_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 {
 	int ret;
 
 	logbuffer_log(chgr->rtx_log, "%s(%d)", __func__, enable);
 
-	if (enable) {
-		if (chgr->pdata->apbst_en) {
-			ret = chgr->reg_write_8(chgr, P9412_APBSTPING_REG, 0);
-			ret |= chgr->reg_write_8(chgr, P9412_APBSTCONTROL_REG, P9412_APBSTPING_7V);
-			logbuffer_log(chgr->rtx_log,
-				"configure Ext-Boost Vout to 5V.(%d)", ret);
-			if (ret < 0)
-				return ret;
-		}
-		ret = chgr->reg_write_8(chgr, P9412_TX_CMD_REG, P9412_TX_CMD_TX_MODE_EN);
-		if (ret) {
-			logbuffer_log(chgr->rtx_log,
-				 "tx_cmd_reg write failed (%d)", ret);
-			return ret;
-		}
-		ret = p9382_wait_for_mode(chgr, P9XXX_SYS_OP_MODE_TX_MODE);
-		if (ret) {
-			logbuffer_log(chgr->rtx_log,
-				      "error waiting for tx_mode (%d)", ret);
-			return ret;
-		}
-
-		ret = chgr->reg_write_16(chgr, P9412_TXOCP_REG, P9412_TXOCP_1400MA);
-		logbuffer_log(chgr->rtx_log, "configure TX OCP to %dMA", P9412_TXOCP_1400MA);
-		if (ret < 0)
-			return ret;
-
-		if (!chgr->pdata->apbst_en)
-			return ret;
-		mod_delayed_work(system_wq, &chgr->chk_rtx_ocp_work, 0);
-	} else {
+	if (!enable) {
 		ret = chgr->chip_set_cmd(chgr, P9412_CMD_TXMODE_EXIT);
 		if (ret == 0) {
 			ret = p9382_wait_for_mode(chgr, 0);
@@ -804,9 +796,35 @@ static int p9412_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 			logbuffer_log(chgr->rtx_log,
 				"configure Ext-Boost back to 5V.(%d)", ret);
 		}
+		return ret;
 	}
 
-	return ret;
+	ret = p9412_chip_tx_apbst_enable(chgr);
+	if (ret < 0)
+		return ret;
+
+	ret = chgr->reg_write_8(chgr, P9412_TX_CMD_REG, P9412_TX_CMD_TX_MODE_EN);
+	if (ret) {
+		logbuffer_log(chgr->rtx_log,
+			 "tx_cmd_reg write failed (%d)", ret);
+		return ret;
+	}
+	ret = p9382_wait_for_mode(chgr, P9XXX_SYS_OP_MODE_TX_MODE);
+	if (ret) {
+		logbuffer_log(chgr->rtx_log,
+			      "error waiting for tx_mode (%d)", ret);
+		return ret;
+	}
+
+	ret = chgr->reg_write_16(chgr, P9412_TXOCP_REG, P9412_TXOCP_1400MA);
+	logbuffer_log(chgr->rtx_log, "configure TX OCP to %dMA", P9412_TXOCP_1400MA);
+	if (ret < 0)
+		return ret;
+
+	if (chgr->pdata->apbst_en && !chgr->pdata->hw_ocp_det)
+		mod_delayed_work(system_wq, &chgr->chk_rtx_ocp_work, 0);
+
+	return 0;
 }
 
 static int p9222_chip_set_cmd_reg(struct p9221_charger_data *chgr, u16 cmd)
@@ -1650,10 +1668,11 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 		chgr->ints.tx_conflict_bit = P9412_STAT_TXCONFLICT;
 		chgr->ints.csp_bit = P9412_STAT_CSP;
 		chgr->ints.rx_connected_bit = P9412_STAT_RXCONNECTED;
-		chgr->ints.tx_fod_bit = P9412_STAT_TXFOD;
+		chgr->ints.tx_fod_bit = 0;
 		chgr->ints.tx_underpower_bit = 0;
 		chgr->ints.tx_uvlo_bit = 0;
 		chgr->ints.pppsent_bit = P9412_STAT_PPPSENT;
+		chgr->ints.ocp_ping_bit = P9412_STAT_OCP_PING;
 		break;
 	case P9382A_CHIP_ID:
 		chgr->ints.over_curr_bit = P9221R5_STAT_OVC;
@@ -1678,6 +1697,7 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 		chgr->ints.tx_underpower_bit = P9382_STAT_TXUNDERPOWER;
 		chgr->ints.tx_uvlo_bit = P9382_STAT_TXUVLO;
 		chgr->ints.pppsent_bit = P9221R5_STAT_CCSENDBUSY;
+		chgr->ints.ocp_ping_bit = 0;
 		break;
 	case P9222_CHIP_ID:
 		chgr->ints.over_curr_bit = P9222_STAT_OVC;
@@ -1702,6 +1722,7 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 		chgr->ints.tx_underpower_bit = 0;
 		chgr->ints.tx_uvlo_bit = 0;
 		chgr->ints.pppsent_bit = 0;
+		chgr->ints.ocp_ping_bit = 0;
 		break;
 	default:
 		chgr->ints.over_curr_bit = P9221R5_STAT_OVC;
@@ -1726,6 +1747,7 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 		chgr->ints.tx_underpower_bit = 0;
 		chgr->ints.tx_uvlo_bit = 0;
 		chgr->ints.pppsent_bit = 0;
+		chgr->ints.ocp_ping_bit = 0;
 		break;
 	}
 
@@ -1753,7 +1775,8 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 				    chgr->ints.tx_fod_bit |
 				    chgr->ints.tx_underpower_bit |
 				    chgr->ints.tx_uvlo_bit |
-				    chgr->ints.pppsent_bit);
+				    chgr->ints.pppsent_bit |
+				    chgr->ints.ocp_ping_bit);
 }
 
 void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)

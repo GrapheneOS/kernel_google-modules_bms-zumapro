@@ -232,15 +232,17 @@ static int gs101_ext_mode(struct max77759_usecase_data *uc_data, int mode)
 		gpio_set_value_cansleep(uc_data->bst_on, 0);
 		break;
 	case EXT_MODE_OTG_5_0V:
-		if (uc_data->bst_sel > 0)
+		if (uc_data->bst_sel > 0) {
 			gpio_set_value_cansleep(uc_data->bst_sel, 0);
-		msleep(100);
+			usleep_range(100 * USEC_PER_MSEC, 100 * USEC_PER_MSEC + 100);
+		}
 		gpio_set_value_cansleep(uc_data->bst_on, 1);
 		break;
 	case EXT_MODE_OTG_7_5V: /* TODO: verify this */
-		if (uc_data->bst_sel > 0)
+		if (uc_data->bst_sel > 0) {
 			gpio_set_value_cansleep(uc_data->bst_sel, 1);
-		msleep(100);
+			usleep_range(100 * USEC_PER_MSEC, 100 * USEC_PER_MSEC + 100);
+		}
 		gpio_set_value_cansleep(uc_data->bst_on, 1);
 		break;
 	default:
@@ -291,12 +293,14 @@ static int gs101_wlc_tx_enable(struct max77759_usecase_data *uc_data,
 			ret = gs101_ls2_mode(uc_data, OVP_LS2_MODE_ON);
 		if (ret == 0)
 			ret = gs101_ext_mode(uc_data, EXT_MODE_OTG_7_5V);
-		if (ret == 0 && uc_data->wlctx_bst_en_first)
+		if (ret == 0 && uc_data->wlctx_bst_en_first) {
+			usleep_range(20 * USEC_PER_MSEC, 20 * USEC_PER_MSEC + 100);
 			ret = gs101_ls2_mode(uc_data, OVP_LS2_MODE_ON);
+		}
 		if (ret < 0)
 			return ret;
 
-		msleep(100);
+		usleep_range(100 * USEC_PER_MSEC, 100 * USEC_PER_MSEC + 100);
 
 		/* p9412 will not be in RX when powered from EXT */
 		ret = gs101_wlc_en(uc_data, true);

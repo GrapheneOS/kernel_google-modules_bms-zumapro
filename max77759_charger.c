@@ -705,12 +705,6 @@ static int max77759_get_usecase(struct max77759_foreach_cb_data *cb_data,
 			return -EINVAL;
 		}
 
-		if (dc_on) {
-			pr_warn("%s: no wlc_tx with dc_on for now\n", __func__);
-			/* TODO: GSU_MODE_USB_DC_WLC_TX */
-			wlc_tx = 0;
-		}
-
 		if (uc_data->ext_otg_only && cb_data->otg_on) {
 			pr_warn("%s: no wlc_tx with otg_on for now\n", __func__);
 			wlc_tx = 0;
@@ -760,14 +754,10 @@ static int max77759_get_usecase(struct max77759_foreach_cb_data *cb_data,
 		dc_on = false;
 	} else if (wlc_tx) {
 
+		/* Disable DC when Rtx is on will handle by dc_avail_votable */
 		if (!buck_on) {
 			mode = MAX77759_CHGR_MODE_ALL_OFF;
 			usecase = GSU_MODE_WLC_TX;
-		} else if (dc_on) {
-			/* TODO: turn off DC and run off MW */
-			pr_err("WLC_TX+DC is not supported yet\n");
-			mode = MAX77759_CHGR_MODE_ALL_OFF;
-			usecase = GSU_MODE_USB_DC;
 		} else if (chgr_on) {
 			mode = MAX77759_CHGR_MODE_CHGR_BUCK_ON;
 			usecase = GSU_MODE_USB_CHG_WLC_TX;
@@ -824,6 +814,12 @@ static int max77759_get_usecase(struct max77759_foreach_cb_data *cb_data,
 		}
 
 	}
+
+	if (!cb_data->dc_avail_votable)
+		cb_data->dc_avail_votable = gvotable_election_get_handle(VOTABLE_DC_CHG_AVAIL);
+	if (cb_data->dc_avail_votable)
+		gvotable_cast_int_vote(cb_data->dc_avail_votable,
+				       "WLC_TX", wlc_tx? 0 : 1, wlc_tx);
 
 	/* reg might be ignored later */
 	cb_data->reg = _chg_cnfg_00_cp_en_set(cb_data->reg, dc_on);

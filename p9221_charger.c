@@ -4860,7 +4860,7 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 			dev_err(&charger->client->dev,
 				"cannot enter rTX mode (%d)\n", ret);
 			logbuffer_log(charger->rtx_log,
-				      "cannot enter rTX mode (%d)", ret);
+				      "cannot enter rTX mode (%d)\n", ret);
 			p9382_ben_cfg(charger, RTX_BEN_DISABLED);
 
 			ret = p9382_disable_dcin_en(charger, false);
@@ -5022,8 +5022,7 @@ static ssize_t rtx_store(struct device *dev,
 		mutex_unlock(&charger->rtx_lock);
 		ret = p9382_set_rtx(charger, false);
 		cancel_delayed_work_sync(&charger->rtx_work);
-		if (charger->pdata->apbst_en)
-			cancel_delayed_work_sync(&charger->chk_rtx_ocp_work);
+		cancel_delayed_work_sync(&charger->chk_rtx_ocp_work);
 	} else if (buf[0] == '1') {
 		logbuffer_prlog(charger->rtx_log, "battery share on");
 		mutex_lock(&charger->rtx_lock);
@@ -5454,6 +5453,7 @@ static void rtx_irq_handler(struct p9221_charger_data *charger, u16 irq_src)
 	const u16 tx_conflict_bit = charger->ints.tx_conflict_bit;
 	const u16 rx_connected_bit = charger->ints.rx_connected_bit;
 	const u16 csp_bit = charger->ints.csp_bit;
+	const u16 ocp_ping_bit = charger->ints.ocp_ping_bit;
 
 	if (irq_src & mode_changed_bit) {
 		ret = charger->chip_get_sys_mode(charger, &mode_reg);
@@ -5466,8 +5466,9 @@ static void rtx_irq_handler(struct p9221_charger_data *charger, u16 irq_src)
 		if (mode_reg == P9XXX_SYS_OP_MODE_TX_MODE) {
 			charger->is_rtx_mode = true;
 			cancel_delayed_work_sync(&charger->rtx_work);
-			if (!charger->pdata->apbst_en)
-				schedule_delayed_work(&charger->rtx_work, msecs_to_jiffies(P9382_RTX_TIMEOUT_MS));
+			if (!charger->pdata->apbst_en || charger->pdata->hw_ocp_det)
+				schedule_delayed_work(&charger->rtx_work,
+						      msecs_to_jiffies(P9382_RTX_TIMEOUT_MS));
 		}
 		dev_info(&charger->client->dev,
 			 "P9221_SYSTEM_MODE_REG reg: %02x\n",
@@ -5487,16 +5488,14 @@ static void rtx_irq_handler(struct p9221_charger_data *charger, u16 irq_src)
 	if (irq_src & pppsent_bit)
 		charger->com_busy = 0;
 
-	if (irq_src & (hard_ocp_bit | tx_conflict_bit)) {
+	if (irq_src & (hard_ocp_bit | tx_conflict_bit | ocp_ping_bit)) {
 		if (irq_src & hard_ocp_bit)
 			charger->rtx_err = RTX_HARD_OCP;
-		else
+		else if (irq_src & tx_conflict_bit)
 			charger->rtx_err = RTX_TX_CONFLICT;
 
-		dev_info(&charger->client->dev, "rtx_err=%d, STATUS_REG=%04x",
-			 charger->rtx_err, status_reg);
-		logbuffer_log(charger->rtx_log, "rtx_err=%d, STATUS_REG=%04x",
-			      charger->rtx_err, status_reg);
+		logbuffer_prlog(charger->rtx_log, "rtx_err=%d, STATUS_REG=%04x",
+				charger->rtx_err, status_reg);
 
 		cancel_delayed_work_sync(&charger->rtx_work);
 		if (charger->rtx_err == RTX_HARD_OCP) {
@@ -6086,6 +6085,8 @@ static int p9221_parse_dt(struct device *dev,
 
 	/* configure boost to 7V through wlc chip */
 	pdata->apbst_en = of_property_read_bool(node, "idt,apbst_en");
+	/* support HW detect OCP in ping phase */
+	pdata->hw_ocp_det = of_property_read_bool(node, "idt,hw_ocp_det");
 
 	ret = of_get_named_gpio(node, "idt,gpio_extben", 0);
 	if (ret == -EPROBE_DEFER)
@@ -6939,9 +6940,13 @@ static int p9221_charger_probe(struct i2c_client *client,
 		dev_err(&client->dev, "Failed to create debug_entry\n");
 	} else {
 		debugfs_create_bool("no_fod", 0644, charger->debug_entry, &charger->no_fod);
+		debugfs_create_bool("de_rtx_hw_ocp", 0644, charger->debug_entry,
+				    &charger->pdata->hw_ocp_det);
 		debugfs_create_u32("de_q_value", 0644, charger->debug_entry, &charger->de_q_value);
-		debugfs_create_u32("de_chk_ocp_ms", 0644, charger->debug_entry, &charger->rtx_ocp_chk_ms);
-		debugfs_create_u32("de_rtx_delay_ms", 0644, charger->debug_entry, &charger->rtx_total_delay);
+		debugfs_create_u32("de_chk_ocp_ms", 0644, charger->debug_entry,
+				   &charger->rtx_ocp_chk_ms);
+		debugfs_create_u32("de_rtx_delay_ms", 0644, charger->debug_entry,
+				   &charger->rtx_total_delay);
 	}
 
 	/* can independently read battery capacity */
