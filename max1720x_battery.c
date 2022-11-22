@@ -129,6 +129,8 @@ struct max1720x_rc_switch {
 
 #define BHI_CAP_FCN_COUNT	3
 
+#define DEFAULT_STATUS_CHARGE_MA	100
+
 #pragma pack(1)
 struct max17x0x_eeprom_history {
 	u16 tempco;
@@ -262,6 +264,9 @@ struct max1720x_chip {
 
 	/* support no_battery */
 	bool no_battery;
+
+	/* battery current criteria for report status charge */
+	u32 status_charge_threshold_ma;
 };
 
 #define MAX1720_EMPTY_VOLTAGE(profile, temp, cycle) \
@@ -1248,10 +1253,14 @@ static int max1720x_get_battery_status(struct max1720x_chip *chip)
 		return -EIO;
 	current_avg = -reg_to_micro_amp(data, chip->RSense);
 
-	err = REGMAP_READ(&chip->regmap, MAX1720X_ICHGTERM, &data);
-	if (err)
-		return -EIO;
-	ichgterm = reg_to_micro_amp(data, chip->RSense);
+	if (chip->status_charge_threshold_ma) {
+		ichgterm = chip->status_charge_threshold_ma * 1000;
+	} else {
+		err = REGMAP_READ(&chip->regmap, MAX1720X_ICHGTERM, &data);
+		if (err)
+			return -EIO;
+		ichgterm = reg_to_micro_amp(data, chip->RSense);
+	}
 
 	err = REGMAP_READ(&chip->regmap, MAX1720X_FULLSOCTHR, &data);
 	if (err)
@@ -5886,6 +5895,7 @@ static int max1720x_probe(struct i2c_client *client,
 	const char *psy_name = NULL;
 	char monitor_name[32];
 	int ret = 0;
+	u32 data32;
 
 	chip = devm_kzalloc(dev, sizeof(*chip), GFP_KERNEL);
 	if (!chip)
@@ -5902,6 +5912,15 @@ static int max1720x_probe(struct i2c_client *client,
 	chip->gauge_type = max17xxx_read_gauge_type(chip);
 	if (chip->gauge_type < 0)
 		chip->gauge_type = -1;
+
+	ret = of_property_read_u32(dev->of_node, "maxim,status-charge-threshold-ma",
+				   &data32);
+	if (ret == 0)
+		chip->status_charge_threshold_ma = data32;
+	else if (chip->gauge_type == MAX_M5_GAUGE_TYPE)
+		chip->status_charge_threshold_ma = DEFAULT_STATUS_CHARGE_MA;
+	else
+		chip->status_charge_threshold_ma = 0;
 
 	/* needs chip->primary and (optional) chip->secondary */
 	ret = max17x0x_regmap_init(chip);
