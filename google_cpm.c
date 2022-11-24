@@ -416,6 +416,11 @@ static int gcpm_chg_offline(struct gcpm_drv *gcpm, int index)
 	struct power_supply *chg_psy;
 	int ret;
 
+	ret = gcpm_update_gcpm_fcc(gcpm, "CC_MAX", gcpm->cc_max, false);
+	if (ret < 0)
+		pr_debug("PPS_DC: offline cannot update cp_fcc (%d)\n", ret);
+
+
 	chg_psy = gcpm_chg_get_charger(gcpm, index);
 	if (!chg_psy)
 		return 0;
@@ -701,6 +706,10 @@ static int gcpm_dc_start(struct gcpm_drv *gcpm, int index)
 	ret = gcpm_update_votes(gcpm, gcpm->cp_fcc_hold_limit);
 	if (ret < 0)
 		pr_debug("PPS_DC: start cannot update votes (%d)\n", ret);
+
+	ret = gcpm_update_gcpm_fcc(gcpm, "CC_MAX", gcpm->cc_max, true);
+	if (ret < 0)
+		pr_debug("PPS_DC: start cannot update cp_fcc (%d)\n", ret);
 
 	/* this is the CP */
 	dc_psy = gcpm_chg_get_active_cp(gcpm);
