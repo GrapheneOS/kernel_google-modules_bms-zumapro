@@ -4458,7 +4458,7 @@ static int batt_init_chg_profile(struct batt_drv *batt_drv)
 	}
 
 	/* this is in mAh */
-	ret = of_property_read_u32(node, "google,chg-battery-capacity",
+	ret = of_property_read_u32(batt_id_node(batt_drv), "google,chg-battery-capacity",
 				   &batt_drv->battery_capacity);
 	if (ret < 0)
 		pr_warn("read chg-battery-capacity from gauge\n");
