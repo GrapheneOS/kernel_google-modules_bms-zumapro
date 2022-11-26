@@ -2140,8 +2140,9 @@ static int max1720x_get_fade_rate(struct max1720x_chip *chip)
 
 	dev_info(chip->dev, "%s: hist_idx=%d\n", __func__, hist_idx);
 
+	/* no fade for new battery (less than 30 cycles) */
 	if (hist_idx < bhi_fcn_count)
-		return -ENODATA;
+		return 0;
 
 	while (hist_idx >= BATT_MAX_HIST_CNT && bhi_fcn_count > 1) {
 		hist_idx--;
