@@ -99,7 +99,7 @@ static int google_dock_set_pogo_vout(struct dock_drv *dock,
 
 	return gvotable_cast_long_vote(dock->chg_mode_votable,
 				       DOCK_VOUT_VOTER,
-				       GBMS_CHGR_MODE_VOUT,
+				       GBMS_POGO_VOUT,
 				       enabled != 0);
 }
 
