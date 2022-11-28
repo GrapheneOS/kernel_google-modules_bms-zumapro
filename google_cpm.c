@@ -3168,7 +3168,7 @@ static void gcpm_init_work(struct work_struct *work)
 
 			/* PPS charging: needs an APDO */
 			ret = pps_init(&gcpm->tcpm_pps_data, gcpm->device,
-				       gcpm->tcpm_psy);
+				       gcpm->tcpm_psy, "wired-pps");
 			if (ret == 0 && gcpm->debug_entry)
 				pps_init_fs(&gcpm->tcpm_pps_data, gcpm->debug_entry);
 			if (ret < 0) {
@@ -3206,7 +3206,7 @@ static void gcpm_init_work(struct work_struct *work)
 
 			/* PPS charging: needs an APDO */
 			ret = pps_init(&gcpm->wlc_pps_data, gcpm->device,
-					gcpm->wlc_dc_psy);
+					gcpm->wlc_dc_psy, "wireless-pps");
 			if (ret == 0 && gcpm->debug_entry)
 				pps_init_fs(&gcpm->wlc_pps_data, gcpm->debug_entry);
 			if (ret < 0) {
@@ -3838,7 +3838,7 @@ static int google_cpm_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&gcpm->init_work, gcpm_init_work);
 	mutex_init(&gcpm->chg_psy_lock);
 
-	gcpm->gcpm_ws = wakeup_source_register(NULL, "gcpm");
+	gcpm->gcpm_ws = wakeup_source_register(NULL, "google-cpm");
 	if (!gcpm->gcpm_ws) {
 		dev_err(gcpm->device, "Failed to register wakeup source\n");
 		return -ENODEV;
