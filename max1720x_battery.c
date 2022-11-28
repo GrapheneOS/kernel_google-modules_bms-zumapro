@@ -1455,6 +1455,9 @@ static void max1720x_handle_update_filtercfg(struct max1720x_chip *chip,
 	s16 hysteresis_temp;
 	u16 filtercfg_val;
 
+	if (filtercfg->disable_dynamic_filtercfg)
+		return;
+
 	if (filtercfg->temp == -1)
 		return;
 
@@ -4037,6 +4040,10 @@ static int max17x0x_init_sysfs(struct max1720x_chip *chip)
 
 	/* capacity fade */
 	debugfs_create_u32("bhi_fcn_count", 0644, de, &chip->bhi_fcn_count);
+
+	/* dynamic filtercfg for testing */
+	debugfs_create_bool("disable_dynamic_filtercfg", 0444, de,
+			    &chip->dyn_filtercfg.disable_dynamic_filtercfg);
 
 	return 0;
 }
