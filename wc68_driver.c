@@ -54,9 +54,10 @@
 #define WC68_IIN_S_TH_DFT	10000000	/* uA */
 
 /* Maximum TA voltage threshold */
-#define WC68_TA_MAX_VOL		9800000 /* uV */
+#define WC68_TA_MAX_VOL		10250000 /* uV */
 /* Maximum TA current threshold, set to max(cc_max) / 2 */
 #define WC68_TA_MAX_CUR		2600000	 /* uA */
+#define WC68_TA_MAX_CUR_4_1	2250000	 /* uA */
 /* Minimum TA current threshold */
 #define WC68_TA_MIN_CUR		1000000	/* uA - PPS minimum current */
 
@@ -78,7 +79,7 @@
 /* IIN_CC compensation offset in Power Limit Mode(Constant Power) TA */
 #define WC68_IIN_CC_COMP_OFFSET_CP	20000	/* uA */
 /* TA maximum voltage that can support CC in Constant Power Mode */
-#define WC68_TA_MAX_VOL_CP		9800000	/* 9760000uV --> 9800000uV */
+#define WC68_TA_MAX_VOL_CP		10250000
 /* Offset for cc_max / 2 */
 #define WC68_IIN_MAX_OFFSET		0
 
@@ -103,8 +104,19 @@
 #define WC68_IRDROP_LIMIT_TIER2	-19000	/* uV */
 #define WC68_IRDROP_LIMIT_TIER3	0	/* uV */
 
+/* Default value for protections */
 #define CBUS_UCP_DFT			400000	/* 400 mV, actual value TBD */
-
+#define VBAT_REV_UVP_DFT		3500000 /* 3.5V */
+#define VBAT_UVP_DFT			3400000 /* 3.4V */
+#define VBAT_OVP_WARN_DFT		4450000 /* 4.45V */
+#define VBAT_OVP_DFT			4500000 /* 4.5V */
+#define SWCAP_OVP_DFT			750000 /* 0.75V */
+#define SWCAP_UVP_DFT			0 /* 0V */
+#define CBAT_OCP_WARN_DFT		8000000 /* 8A */
+#define CBAT_OCP_DFT			8200000 /* 8.2A */
+#define CBUS_OCP_WARN_DFT		2500000 /* 2.5A */
+#define CBUS_OCP_DFT			3000000 /* 3A */
+#define VBUS_OVP_DFT			20000000 /* 20V */
 /* Status */
 enum {
 	STS_MODE_CHG_LOOP,	/* TODO: There is no such thing */
@@ -207,6 +219,69 @@ static int wc68_i2c_write(struct i2c_client *client, void *cmd, u8 cmd_length)
 	return 0;
 }
 
+static inline int wc68_reg8_get(struct wc68_charger *wc68, u16 addr, u8 *val)
+{
+	u16 cmd[2];
+	int ret;
+
+	cmd[0] = cpu_to_be16(addr);
+	ret = wc68_i2c_read(wc68->client, &cmd[0], 2, val, 1);
+	if (ret)
+		dev_err(wc68->dev, "%s: Error reading addr: %#04X (%d)\n",
+			__func__, addr, ret);
+
+	return ret;
+}
+
+static inline int wc68_reg16_get(struct wc68_charger *wc68, u16 addr, u16 *val)
+{
+	u16 cmd[2];
+	int ret;
+
+	cmd[0] = cpu_to_be16(addr);
+	ret = wc68_i2c_read(wc68->client, &cmd[0], 2, val, 2);
+	if (ret)
+		dev_err(wc68->dev, "%s: Error reading addr: %#04X (%d)\n",
+			__func__, addr, ret);
+
+	return ret;
+}
+
+static inline int wc68_reg8_set(struct wc68_charger *wc68, u16 addr, u8 val)
+{
+	u16 cmd[2];
+	int ret;
+
+	cmd[0] = cpu_to_be16(addr);
+	cmd[1] = val;
+	ret = wc68_i2c_write(wc68->client, &cmd[0], 3);
+	if (ret)
+		dev_err(wc68->dev, "%s: Error writing addr: %#04X to val: %d (%d)\n",
+			__func__, addr, val, ret);
+
+	return ret;
+}
+
+static inline int wc68_reg16_set(struct wc68_charger *wc68, u16 addr, u16 val)
+{
+	u16 cmd[2];
+	int ret;
+
+	cmd[0] = cpu_to_be16(addr);
+	cmd[1] = val;
+	ret = wc68_i2c_write(wc68->client, &cmd[0], 4);
+	if (ret)
+		dev_err(wc68->dev, "%s: Error writing addr: %#04X to val: %d (%d)\n",
+			__func__, addr, val, ret);
+
+	return ret;
+}
+
+static inline int conv_chg_mode(const struct wc68_charger *wc68, int val)
+{
+	return (wc68->chg_mode == CHG_2TO1_DC_MODE) ? val * 2 : val * 4;
+}
+
 static ssize_t chip_info_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	int ret;
@@ -305,7 +380,6 @@ DEFINE_SIMPLE_ATTRIBUTE(register_debug_ops_wc68, read_reg_wc68, write_reg_wc68, 
 /* ADC Read function, return uV or uA */
 int wc68_read_adc(struct wc68_charger *wc68, u8 adc_ch)
 {
-	u16 addr;
 	u16 raw_adc = 0;
 	int conv_adc = -1;
 	int ret;
@@ -320,8 +394,7 @@ int wc68_read_adc(struct wc68_charger *wc68, u8 adc_ch)
 		break;
 
 	case ADCCH_VBAT:
-		addr = cpu_to_be16(VBAT1_ADC);
-		ret = wc68_i2c_read(wc68->client, &addr, 2, &raw_adc, 2);
+		ret = wc68_reg16_get(wc68, VBAT1_ADC, &raw_adc);
 		if (ret < 0) {
 			conv_adc = ret;
 			goto error;
@@ -331,8 +404,7 @@ int wc68_read_adc(struct wc68_charger *wc68, u8 adc_ch)
 		break;
 
 	case ADCCH_IIN:
-		addr = cpu_to_be16(IBUS_ADC);
-		ret = wc68_i2c_read(wc68->client, &addr, 2, &raw_adc, 2);
+		ret = wc68_reg16_get(wc68, IBUS_ADC, &raw_adc);
 		if (ret < 0) {
 			conv_adc = ret;
 			goto error;
@@ -347,8 +419,7 @@ int wc68_read_adc(struct wc68_charger *wc68, u8 adc_ch)
 		break;
 
 	case ADCCH_DIETEMP:
-		addr = cpu_to_be16(TDIE_ADC);
-		ret = wc68_i2c_read(wc68->client, &addr, 2, &raw_adc, 2);
+		ret = wc68_reg16_get(wc68, TDIE_ADC, &raw_adc);
 		if (ret < 0) {
 			conv_adc = ret;
 			goto error;
@@ -389,22 +460,15 @@ static int wc68_set_vfloat(struct wc68_charger *wc68,
 			      unsigned int v_float)
 {
 	int ret = 0;
-	u16 cmd[2];
 	u16 val;
 
-	cmd[0] = cpu_to_be16(VBAT_OVP_WARN_THRES);
-	cmd[1] = v_float / VFLOAT_STEP;
-	ret = wc68_i2c_write(wc68->client, &cmd[0], 4);
-	if (ret < 0) {
-		dev_err(wc68->dev, "%s: Error setting vfloat: %d\n", __func__, ret);
+	ret = wc68_reg16_set(wc68, VBAT_OVP_WARN_THRES,  v_float / VFLOAT_STEP);
+	if (ret < 0)
 		return ret;
-	}
 
-	ret = wc68_i2c_read(wc68->client, &cmd[0], 2, &val, 2);
-	if (ret < 0) {
-		dev_err(wc68->dev, "%s: Error reading vfloat: %d\n", __func__, ret);
+	ret = wc68_reg16_get(wc68, VBAT_OVP_WARN_THRES, &val);
+	if (ret < 0)
 		return ret;
-	}
 
 	dev_info(wc68->dev, "%s: v_float=%u, reg: %d (%d) Read back: raw: %d, conv: %d\n",
 		__func__, v_float, v_float / VFLOAT_STEP, ret, val, val * VFLOAT_STEP);
@@ -416,7 +480,6 @@ static int wc68_set_input_current(struct wc68_charger *wc68,
 				     unsigned int iin)
 {
 	int ret = 0, val;
-	u16 cmd[2];
 
 	/* round-up and increase one step */
 	iin = iin + PD_MSG_TA_CUR_STEP;
@@ -426,15 +489,10 @@ static int wc68_set_input_current(struct wc68_charger *wc68,
 	val = val + 1;
 	if (val > 2040)
 		val = 2040; /* maximum value is 7.469A  (7469/3.662) = 2039 */
-	cmd[0] = cpu_to_be16(CBUS_OCP_WARN_THRES);
-	cmd[1] = val;
-	ret = wc68_i2c_write(wc68->client, &cmd[0], 4);
-	if (ret < 0) {
-		dev_err(wc68->dev, "%s: Error setting IIN: %d\n", __func__, ret);
-	}
+	ret = wc68_reg16_set(wc68, CBUS_OCP_WARN_THRES, val);
 
 	dev_info(wc68->dev, "%s: iin=%d real iin_cfg=%d (%d)\n", __func__,
-		 iin, val * WC68_IIN_CFG_STEP, ret);
+		 iin, val * IIN_STEP, ret);
 
 	return ret;
 }
@@ -443,16 +501,13 @@ static int wc68_set_input_current(struct wc68_charger *wc68,
 static int wc68_get_charging_enabled(struct wc68_charger *wc68)
 {
 	int ret;
-	u16 cmd = cpu_to_be16(SYS_CFG_2);
 	u8 val;
 
-	ret = wc68_i2c_read(wc68->client, &cmd, 2, &val, 1);
-	if (ret < 0) {
-		dev_err(wc68->dev, "Error reading SC_EN err: %d\n", ret);
+	ret = wc68_reg8_get(wc68, SYS_CFG_2, &val);
+	if (ret < 0)
 		return ret;
-	}
 
-	return val & SYS_CFG_2_SC_EN;
+	return (val & SYS_CFG_2_SC_EN) != 0;
 }
 
 
@@ -571,18 +626,34 @@ static int wc68_set_charging(struct wc68_charger *wc68, bool enable)
 	}
 
 	if (enable) {
-		u16 cmd[2];
-		/* Start charging */
-		cmd[0] = cpu_to_be16(SYS_CFG_2);
-		cmd[1] = SYS_CFG_2_SC_EN;
-		ret = wc68_i2c_write(wc68->client, &cmd[0], 3);
-		if (ret < 0) {
-			dev_err(wc68->dev, "Error enabling SC_EN err: %d\n", ret);
+		u8 val;
+
+		/* Check USB present */
+		ret = wc68_reg8_get(wc68, PWRSRC_STS, &val);
+		if (ret < 0)
+			goto error;
+
+		if (!(val & PWRSRC_STS_USB_PRESENT)) {
+			dev_err(wc68->dev, "%s: No USB present. Not enabling charging\n", __func__);
 			goto error;
 		}
-	} else {
-		u16 cmd[2];
 
+		/* Set work mode */
+		ret = wc68_reg8_set(wc68, SYS_CMD, SYS_CMD_SW_CTRL_USB | (2 * wc68->chg_mode));
+		if (ret < 0)
+			goto error;
+
+		/* Start charging */
+		ret = wc68_reg8_set(wc68, SYS_CFG_2, SYS_CFG_2_SC_EN);
+		if (ret < 0)
+			goto error;
+
+		msleep(150);
+		/* Enable CBUS_UCP prot for unplug detection */
+		ret = wc68_reg8_set(wc68, PROT_EN_0, PROT_EN_0_CBUS_UCP_EN);
+		if (ret)
+			goto error;
+	} else {
 		if (wc68->ta_type == TA_TYPE_WIRELESS) {
 			struct power_supply *wlc_psy;
 
@@ -601,22 +672,19 @@ static int wc68_set_charging(struct wc68_charger *wc68, bool enable)
 		}
 
 		/* turn off charging */
-		cmd[0] = cpu_to_be16(SYS_CFG_2);
-		cmd[1] = 0;
-		ret = wc68_i2c_write(wc68->client, &cmd[0], 3);
-		if (ret < 0) {
-			dev_err(wc68->dev, "Error disabling SC_EN err: %d\n", ret);
+		ret = wc68_reg8_set(wc68, SYS_CFG_2, 0);
+		if (ret < 0)
 			goto error;
-		}
+
+		/* Turn off FETs and reset chg mode */
+		ret = wc68_reg8_set(wc68, SYS_CMD, 0);
+		if (ret < 0)
+			goto error;
 
 		/* Disable CBUS_UCP prot for replug detection */
-		cmd[0] = cpu_to_be16(PROT_EN_0);
-		cmd[1] = 0;
-		ret = wc68_i2c_write(wc68->client, &cmd[0], 3);
-		if (ret) {
-			dev_err(wc68->dev, "Error disabling UCP protection: %d\n", ret);
+		ret = wc68_reg8_set(wc68, PROT_EN_0, 0);
+		if (ret)
 			goto error;
-		}
 	}
 
 error:
@@ -636,7 +704,7 @@ static int wc68_check_state(u8 val[8], struct wc68_charger *wc68, int loglevel)
 		return ret;
 
 	logbuffer_prlog(wc68, loglevel,
-			"%s: INTR_FLG reg[0]=%#x,reg[1]=%#x,[2]=%#x,[3]=%#x,[4]=%#x,[5]=%#x,[6]=%#x,[7]=%#x",
+			"%s: INTR_FLG reg%#x, %#x, %#x, %#x, %#x, %#x, %#x, %#x",
 			__func__, val[0], val[1], val[2], val[3], val[4], val[5], val[6], val[7]);
 
 	return 0;
@@ -678,17 +746,14 @@ static int wc68_check_not_active(struct wc68_charger *wc68)
 int wc68_check_standby(struct wc68_charger *wc68)
 {
 	int ret;
-	u16 cmd;
 	u8 val;
 
-	cmd = cpu_to_be16(CHARGE_STS);
-	ret = wc68_i2c_read(wc68->client, &cmd, 2, &val, 1);
-	if (ret) {
-		dev_err(wc68->dev, "Error reading CHARGE_STS : %d\n", ret);
+	ret = wc68_reg8_get(wc68, CHARGE_STS, &val);
+	if (ret)
 		return ret;
-	}
 
-	return (val & CHARGE_STS_CHARGING) ? 0 : 1;
+	return ((val & CHARGE_STS_CHARGING_MASK) ==  CHARGE_STS_DISCHARGING ||
+		(val & CHARGE_STS_CHARGING_MASK) ==  CHARGE_STS_BLOCKED);
 }
 
 /*
@@ -708,16 +773,15 @@ int wc68_check_standby(struct wc68_charger *wc68)
 static int wc68_check_error(struct wc68_charger *wc68)
 {
 	int ret;
-	u16 cmd;
 	u8 val;
 
-	cmd = cpu_to_be16(CHARGE_STS);
-	ret = wc68_i2c_read(wc68->client, &cmd, 2, &val, 1);
+	ret = wc68_reg8_get(wc68, CHARGE_STS, &val);
 	if (ret < 0)
 		goto done;
 
 	/* WC68 is active state */
-	if (val & CHARGE_STS_CHARGING) {
+	if ((val & CHARGE_STS_CHARGING_MASK) == CHARGE_STS_CHARGING ||
+	    (val & CHARGE_STS_CHARGING_MASK) == CHARGE_STS_SLOW_START) {
 		int vbatt;
 
 		/* WC68 is charging */
@@ -727,8 +791,7 @@ static int wc68_check_error(struct wc68_charger *wc68)
 		if (vbatt > WC68_DC_VBAT_MIN) {
 			/* Normal charging battery level */
 			/* Check temperature regulation loop */
-			cmd = cpu_to_be16(INTR_FLG_0);
-			ret = wc68_i2c_read(wc68->client, &cmd, 2, &val, 1);
+			ret = wc68_reg8_get(wc68, INTR_FLG_0, &val);
 			if (ret < 0) {
 				dev_err(wc68->dev, "%s: cannot read INTR_FLG_0 (%d)\n",
 					__func__, ret);
@@ -754,7 +817,7 @@ static int wc68_check_error(struct wc68_charger *wc68)
 
 	ret = wc68_check_not_active(wc68);
 	if (ret < 0) {
-		/* There was an error, done... */
+		dev_err(wc68->dev, "%s: check_not_active error: %d\n", __func__, ret);
 		goto done;
 	}
 
@@ -800,7 +863,7 @@ static int wc68_get_iin(struct wc68_charger *wc68, int *iin)
 	if (temp < offset)
 		temp = offset;
 
-	*iin = (temp - offset) * 2;
+	*iin = conv_chg_mode(wc68, temp - offset);
 	return 0;
 }
 
@@ -879,11 +942,9 @@ error:
 static int wc68_read_status(struct wc68_charger *wc68)
 {
 	int ret = 0;
-	u16 addr;
 	u8 reg_val;
 
-	addr = cpu_to_be16(PROT_STS_1);
-	ret = wc68_i2c_read(wc68->client, &addr, 2, &reg_val, 1);
+	ret = wc68_reg8_get(wc68, PROT_STS_1, &reg_val);
 	if (ret < 0) {
 		dev_err(wc68->dev, "Error reading PROT_STS_1: %d\n", ret);
 		return ret;
@@ -1361,7 +1422,8 @@ static int wc68_set_ta_current_comp(struct wc68_charger *wc68)
  */
 static int wc68_get_iin_max(const struct wc68_charger *wc68, int cc_max)
 {
-	const int cc_limit = wc68->pdata->iin_max_offset + cc_max / 2;
+	const int cc_limit = wc68->pdata->iin_max_offset +
+			     cc_max / conv_chg_mode(wc68, 1);
 	int iin_max;
 
 	iin_max = min(wc68->pdata->iin_cfg_max, (unsigned int)cc_limit);
@@ -1673,7 +1735,7 @@ static int wc68_set_rx_voltage_comp(struct wc68_charger *wc68)
 }
 
 /*
- * iin limit for 2:1 for the adapter and chg_mode
+ * iin limit for the adapter for the chg_mode
  * Minimum between the configuration, cc_max (scaled with offset) and the
  * adapter capabilities.
  */
@@ -1725,6 +1787,9 @@ static int wc68_set_wired_dc(struct wc68_charger *wc68, int vbat)
 	int iin_cc;
 
 	wc68->iin_cc = wc68_get_iin_limit(wc68);
+	/* Update OCP_WARN_THRES as chg_mode might have changed to 2:1 */
+	wc68_set_input_current(wc68, wc68->iin_cc);
+	wc68->pdata->iin_cfg = wc68->iin_cc;
 
 	/* Calculate new TA max voltage, current */
 	val = wc68->iin_cc / PD_MSG_TA_CUR_STEP;
@@ -1746,7 +1811,7 @@ static int wc68_set_wired_dc(struct wc68_charger *wc68, int vbat)
 	wc68->ta_vol = val * PD_MSG_TA_VOL_STEP;
 	wc68->ta_vol = min(wc68->ta_vol, wc68->ta_max_vol);
 	/* Set TA current to IIN_CC */
-	wc68->ta_cur = iin_cc / wc68->chg_mode;
+	wc68->ta_cur = iin_cc;
 
 	logbuffer_prlog(wc68, LOGLEVEL_DEBUG,
 			"%s: iin_cc=%d, ta_vol=%d ta_cur=%d ta_max_vol=%d",
@@ -1839,7 +1904,7 @@ static void wc68_return_to_loop(struct wc68_charger *wc68)
  */
 static int wc68_adjust_ta_current(struct wc68_charger *wc68)
 {
-	const int ta_limit = wc68->iin_cc / wc68->chg_mode;
+	const int ta_limit = wc68->iin_cc;
 	int rc, ibat, icn = -EINVAL, iin = -EINVAL;
 	bool ovc_flag;
 	int ret = 0;
@@ -2143,7 +2208,7 @@ static int wc68_apply_new_iin(struct wc68_charger *wc68)
 	wc68->iin_cc = wc68->new_iin;
 	if (wc68->ta_type == TA_TYPE_WIRELESS) {
 		ret = wc68_adjust_rx_voltage(wc68);
-	} else if (wc68->iin_cc < (WC68_TA_MIN_CUR * wc68->chg_mode)) {
+	} else if (wc68->iin_cc < WC68_TA_MIN_CUR) {
 		/* TA current = WC68_TA_MIN_CUR(1.0A) */
 		wc68->ta_cur = WC68_TA_MIN_CUR;
 		ret = wc68_adjust_ta_voltage(wc68);
@@ -3147,6 +3212,47 @@ error_exit:
 	return ret;
 }
 
+static int wc68_set_chg_mode_by_apdo(struct wc68_charger *wc68)
+{
+	int ret;
+	unsigned int ta_max_vol = wc68->pdata->ta_max_vol;
+
+	/*
+	 * Get the APDO max and set chg_mode.
+	 * Returns ->ta_max_vol, ->ta_max_cur, ->ta_max_pwr and
+	 * ->ta_objpos for the given ta_max_vol and ta_max_cur.
+	 */
+	ret = wc68_get_apdo_max_power(wc68, ta_max_vol * CHG_4TO1_DC_MODE, WC68_TA_MAX_CUR_4_1);
+	if (ret == 0) {
+		wc68->chg_mode = CHG_4TO1_DC_MODE;
+		goto done;
+	}
+
+	dev_warn(wc68->dev, "%s: No APDO to support 4:1 for %d, max_voltage: %d\n",
+		 __func__, WC68_TA_MAX_CUR_4_1, ta_max_vol * CHG_4TO1_DC_MODE);
+
+	ret = wc68_get_apdo_max_power(wc68, ta_max_vol * CHG_2TO1_DC_MODE, WC68_TA_MAX_CUR);
+	if (ret == 0) {
+		wc68->chg_mode = CHG_2TO1_DC_MODE;
+		goto done;
+	}
+
+	 dev_warn(wc68->dev, "%s: No APDO to support 2:1 for %d, max_voltage: %d\n",
+		  __func__, WC68_TA_MAX_CUR, ta_max_vol * CHG_2TO1_DC_MODE);
+
+	ret = wc68_get_apdo_max_power(wc68, ta_max_vol * CHG_2TO1_DC_MODE, 0);
+	if (ret == 0) {
+		wc68->chg_mode = CHG_2TO1_DC_MODE;
+		goto done;
+	}
+
+	dev_err(wc68->dev, "%s: No APDO to support 2:1\n", __func__);
+	wc68->chg_mode = CHG_NO_DC_MODE;
+
+done:
+	return ret;
+}
+
 /*
  * Preset TA voltage and current for Direct Charging Mode using
  * the configured cc_max and fv_uv limits. Used only on start
@@ -3223,24 +3329,9 @@ static int wc68_preset_dcmode(struct wc68_charger *wc68)
 				wc68->ta_max_vol, wc68->ta_max_cur, wc68->ta_max_pwr,
 				wc68->iin_cc, wc68->chg_mode);
 	} else {
-		const unsigned int ta_max_vol = wc68->pdata->ta_max_vol * wc68->chg_mode;
-
-		/*
-		 * Get the APDO max for 2:1 mode.
-		 * Returns ->ta_max_vol, ->ta_max_cur, ->ta_max_pwr and
-		 * ->ta_objpos for the given ta_max_vol and ta_max_cur.
-		 */
-		ret = wc68_get_apdo_max_power(wc68, ta_max_vol, WC68_TA_MAX_CUR);
-		if (ret < 0) {
-			dev_warn(wc68->dev, "%s: No APDO to support 2:1 for %d\n", __func__,
-				WC68_TA_MAX_CUR);
-			ret = wc68_get_apdo_max_power(wc68, ta_max_vol, 0);
-		}
+		ret = wc68_set_chg_mode_by_apdo(wc68);
 		if (ret < 0) {
 			int ret1;
-
-			dev_err(wc68->dev, "%s: No APDO to support 2:1\n", __func__);
-			wc68->chg_mode = CHG_NO_DC_MODE;
 
 			if (!wc68->dc_avail)
 				wc68->dc_avail = gvotable_election_get_handle(VOTABLE_DC_CHG_AVAIL);
@@ -3398,20 +3489,9 @@ static int wc68_start_direct_charging(struct wc68_charger *wc68)
 {
 	struct wc68_chg_stats *chg_data = &wc68->chg_data;
 	int ret;
-	u16 cmd[2];
 
 	dev_dbg(wc68->dev, "%s: =========START=========\n", __func__);
 	mutex_lock(&wc68->lock);
-
-	/* Enable CBUS_UCP prot for unplug detection */
-	cmd[0] = cpu_to_be16(PROT_EN_0);
-	cmd[1] = PROT_EN_0_CBUS_UCP_EN;
-	ret = wc68_i2c_write(wc68->client, &cmd[0], 3);
-	if (ret) {
-		dev_err(wc68->dev, "%s: Error enabling UCP protection: %d\n",
-			__func__, ret);
-		goto error_done;
-	}
 
 	/* configure DC charging type for the requested index */
 	ret = wc68_set_ta_type(wc68, wc68->pps_index);
@@ -3790,10 +3870,9 @@ int wc68_hw_ping(struct wc68_charger *wc68)
 {
 	int ret;
 	u16 read_buff[1];
-	u16 cmd = cpu_to_be16(FWREG_CHIP_ID_REG);
 	u16 val;
 
-	ret = wc68_i2c_read(wc68->client, &cmd, 2, read_buff, 2);
+	ret = wc68_reg16_get(wc68, FWREG_CHIP_ID_REG, read_buff);
 	if (ret) {
 		dev_err(wc68->dev, "STWC68 Error reading version\n");
 		return -EIO;
@@ -3812,19 +3891,14 @@ static int wc68_hw_init(struct wc68_charger *wc68)
 	int retries = 20;
 
 	/* Reset the chip */
-	cmd[0] = cpu_to_be16(SYS_CMD);
-	cmd[1] = SYS_CMD_SYS_RESET;
-	ret = wc68_i2c_write(wc68->client, &cmd[0], 3);
-	if (ret) {
-		dev_err(wc68->dev, "STWC68 Error resetting chip: %d\n", ret);
+	ret = wc68_reg8_set(wc68, SYS_CMD, SYS_CMD_SYS_RESET);
+	if (ret)
 		goto error_done;
-	}
 
 	/* Wait for boot up after reset */
 	do {
-		u16 cmd2 = cpu_to_be16(INTR_FLG_3);
 		msleep(100);
-		ret = wc68_i2c_read(wc68->client, &cmd2, 2, &val, 1);
+		ret = wc68_reg8_get(wc68, INTR_FLG_3, &val);
 	} while (retries-- && !ret && !(val & INTR_FLG_3_BOOTUP_RDY));
 	if (ret) {
 		dev_err(wc68->dev, "STWC68 Error reading boot up flag %d\n", ret);
@@ -3845,26 +3919,6 @@ static int wc68_hw_init(struct wc68_charger *wc68)
 			disable_irq(wc68->client->irq);
 	}
 
-	/* Set switching frequency and deadtime */
-	cmd[0] = cpu_to_be16(SYS_CFG_1);
-	cmd[1] = 0xB9;
-	ret = wc68_i2c_write(wc68->client, &cmd[0], 3);
-	if (ret) {
-		dev_err(wc68->dev, "%s: Error writing Switching frequency: %d\n",
-			__func__, ret);
-		goto error_done;
-	}
-
-	/* Set safety switch drive voltage 5V */
-	cmd[0] = cpu_to_be16(SYS_CFG_3);
-	cmd[1] = 0xFD;
-	ret = wc68_i2c_write(wc68->client, &cmd[0], 3);
-	if (ret) {
-		dev_err(wc68->dev, "%s: Error setting Safety SW drv voltage: %d\n",
-			__func__, ret);
-		goto error_done;
-	}
-
 	/* Disable all protections */
 	cmd[0] = cpu_to_be16(PROT_EN_0);
 	cmd[1] = cmd[2] = 0;
@@ -3875,44 +3929,79 @@ static int wc68_hw_init(struct wc68_charger *wc68)
 		goto error_done;
 	}
 
-	/* Enable the protections we need */
-	cmd[0] = cpu_to_be16(PROT_EN_1);
-	cmd[1] = PROT_EN_1_VBAT_OVP_WARN_EN | PROT_EN_1_CBUS_OCP_WARN_EN;
-	ret = wc68_i2c_write(wc68->client, &cmd[0], 3);
-	if (ret) {
-		dev_err(wc68->dev, "%s: Error enabling protections: %d\n",
-			__func__, ret);
+	/* Set switching frequency and deadtime */
+	ret = wc68_reg8_set(wc68, SYS_CFG_1, 0x67);
+	if (ret)
 		goto error_done;
-	}
+
+	/* Set safety switch drive voltage 5V */
+	ret = wc68_reg8_set(wc68, SYS_CFG_3, 0xFD);
+	if (ret)
+		goto error_done;
+
+	/* Configure protection thresholds */
+	ret = wc68_reg16_set(wc68, VBAT_REV_UVP_THRES, VBAT_REV_UVP_DFT / VBAT_STEP);
+	if (ret)
+		goto error_done;
+
+	ret = wc68_reg16_set(wc68, VBAT_UVP_THRES, VBAT_UVP_DFT / VBAT_STEP);
+	if (ret)
+		goto error_done;
+
+	ret = wc68_reg16_set(wc68, VBAT_OVP_WARN_THRES, VBAT_OVP_WARN_DFT / VBAT_STEP);
+	if (ret)
+		goto error_done;
+
+	ret = wc68_reg16_set(wc68, VBAT_OVP_THRES, VBAT_OVP_DFT / VBAT_STEP);
+	if (ret)
+		goto error_done;
+
+	ret = wc68_reg16_set(wc68, SWCAP_OVP_THRES, SWCAP_OVP_DFT / SWCAP_OVP_STEP);
+	if (ret)
+		goto error_done;
+
+	ret = wc68_reg16_set(wc68, SWCAP_UVP_THRES,
+			     (SWCAP_UVP_DFT / SWCAP_OVP_STEP) + SWCAP_UVP_OFFSET);
+	if (ret)
+		goto error_done;
+
+	ret = wc68_reg16_set(wc68, CBAT_OCP_WARN_THRES, CBAT_OCP_WARN_DFT / SWCAP_OVP_STEP);
+	if (ret)
+		goto error_done;
+
+	ret = wc68_reg16_set(wc68, CBAT_OCP_THRES, CBAT_OCP_DFT / SWCAP_OVP_STEP);
+	if (ret)
+		goto error_done;
+
+	ret = wc68_reg16_set(wc68, CBUS_OCP_WARN_THRES, CBUS_OCP_WARN_DFT / CBUS_UCP_STEP);
+	if (ret)
+		goto error_done;
+
+	ret = wc68_reg16_set(wc68, CBUS_OCP_THRES, CBUS_OCP_DFT / CBUS_UCP_STEP);
+	if (ret)
+		goto error_done;
+
+	ret = wc68_reg16_set(wc68, VBUS_OVP_THRES,
+			     ((VBUS_OVP_DFT / SWCAP_OVP_STEP) + SWCAP_UVP_OFFSET) & 0xFFFF);
+	if (ret)
+		goto error_done;
 
 	/* Configure UCP threshold for unplug detection */
-	cmd[0] = cpu_to_be16(CBUS_UCP_THRES);
-	cmd[1] = CBUS_UCP_DFT / CBUS_UCP_STEP;
-	ret = wc68_i2c_write(wc68->client, &cmd[0], 4);
-	if (ret) {
-		dev_err(wc68->dev, "%s: Error setting CBUS_UCP_THRES: %d\n",
-			__func__, ret);
+	ret = wc68_reg16_set(wc68, CBUS_UCP_THRES, CBUS_UCP_DFT / CBUS_UCP_STEP);
+	if (ret)
 		goto error_done;
-	}
+
+	/* Enable the protections we need */
+	ret = wc68_reg8_set(wc68, PROT_EN_1,
+			    PROT_EN_1_VBAT_OVP_WARN_EN | PROT_EN_1_CBUS_OCP_WARN_EN);
+	if (ret)
+		goto error_done;
 
 	/* Enable ADC */
-	cmd[0] = cpu_to_be16(ADC_CTRL);
-	cmd[1] = ADC_CTRL_CONT_EN;
-	ret = wc68_i2c_write(wc68->client, &cmd[0], 3);
-	if (ret) {
-		dev_err(wc68->dev, "STWC68 Error enabling ADC: %d\n", ret);
+	ret = wc68_reg8_set(wc68, ADC_CTRL, ADC_CTRL_CONT_EN);
+	if (ret)
 		goto error_done;
-	}
 	msleep(200);
-
-	/* Set work mode 2:1 */
-	cmd[0] = cpu_to_be16(SYS_CMD);
-	cmd[1] = (SYS_CMD_SW_CTRL_USB | SYS_CMD_MODE_CTRL_2_1);
-	ret = wc68_i2c_write(wc68->client, &cmd[0], 3);
-	if (ret < 0) {
-		dev_err(wc68->dev, "Error enabling 2:1 err: %d\n", ret);
-		goto error_done;
-	}
 
 error_done:
 	return ret;
@@ -3955,14 +4044,9 @@ static irqreturn_t wc68_interrupt_handler(int irq, void *data)
 		__func__, val[0], val[1], val[2], val[3], val[4]);
 
 	/* Clear the interrupts */
-	cmd[0] = cpu_to_be16(INTR_CLR_0);
-	cmd[1] = 0;
-	ret = wc68_i2c_write(wc68->client, &cmd[0], 3);
-	if (ret) {
-		dev_err(wc68->dev, "%s: Error clearing INTR_FLG_0: %d\n",
-			__func__, ret);
+	ret = wc68_reg8_set(wc68, INTR_CLR_0, 0);
+	if (ret)
 		goto exit_done;
-	}
 
 exit_done:
 	return handled ? IRQ_HANDLED : IRQ_NONE;
@@ -4036,18 +4120,17 @@ int wc68_input_current_limit(struct wc68_charger *wc68)
 {
 	int ret;
 	u16 val;
-	u16 cmd = cpu_to_be16(CBUS_OCP_WARN_THRES);
 
 	if (!wc68->mains_online)
 		return -ENODATA;
 
-	ret = wc68_i2c_read(wc68->client, &cmd, 2, &val, 2);
+	ret = wc68_reg16_get(wc68, CBUS_OCP_WARN_THRES, &val);
 	if (ret < 0) {
 		dev_err(wc68->dev, "Error reading CBUS_OCP_WARN_THRES: %d\n", ret);
 		return ret;
 	}
 
-	val = val * WC68_IIN_CFG_STEP;
+	val = val * IIN_STEP;
 	return val;
 }
 
@@ -4064,12 +4147,11 @@ static int wc68_const_charge_voltage(struct wc68_charger *wc68)
 	u16 val;
 	int conv;
 	int ret;
-	u16 cmd = cpu_to_be16(VBAT_OVP_WARN_THRES);
 
 	if (!wc68->mains_online)
 		return -ENODATA;
 
-	ret = wc68_i2c_read(wc68->client, &cmd, 2, &val, 2);
+	ret = wc68_reg16_get(wc68, VBAT_OVP_WARN_THRES, &val);
 	if (ret < 0) {
 		dev_err(wc68->dev, "Error reading VBAT_OVP_WARN_THRES: %d\n", ret);
 		return ret;
@@ -4756,7 +4838,7 @@ static int wc68_probe(struct i2c_client *client,
 	wc68_chg->charging_state = DC_STATE_NO_CHARGING;
 	wc68_chg->wlc_ramp_out_iin = true;
 	wc68_chg->wlc_ramp_out_vout_target = 15300000; /* 15.3V as default */
-	wc68_chg->wlc_ramp_out_delay = 250; /* 250 ms default */
+	wc68_chg->wlc_ramp_out_delay = 300; /* 300 ms default */
 	wc68_chg->hw_init_done = false;
 
 	/* Create a work queue for the direct charger */

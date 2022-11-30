@@ -461,7 +461,7 @@ int wc68_set_ta_type(struct wc68_charger *wc68, int pps_index)
 		}
 
 		wc68->ta_type = TA_TYPE_USBPD;
-		wc68->chg_mode = CHG_2TO1_DC_MODE;
+		wc68->chg_mode = CHG_4TO1_DC_MODE;
 	} else if (pps_index == PPS_INDEX_WLC) {
 		struct power_supply *wlc_psy;
 
