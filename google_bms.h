@@ -571,7 +571,8 @@ enum gbms_charger_modes {
 
 	GBMS_CHGR_MODE_WLC_TX	= 0x40,
 
-	GBMS_CHGR_MODE_VOUT	= 0x50,
+	GBMS_POGO_VIN		= 0x50,
+	GBMS_POGO_VOUT		= 0x51,
 };
 
 #define GBMS_MODE_VOTABLE "CHARGER_MODE"
