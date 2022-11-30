@@ -110,7 +110,8 @@
 #define EXT2_DETECT_THRESHOLD_UV	(5000000)
 
 #define usb_pd_is_high_volt(ad) \
-	((ad)->ad_type == CHG_EV_ADAPTER_TYPE_USB_PD && \
+	(((ad)->ad_type == CHG_EV_ADAPTER_TYPE_USB_PD || \
+	(ad)->ad_type == CHG_EV_ADAPTER_TYPE_USB_PD_PPS) && \
 	(ad)->ad_voltage * 100 > PD_SNK_MIN_MV)
 
 /*
@@ -588,13 +589,20 @@ static inline int chg_reset_state(struct chg_drv *chg_drv)
 static int info_usb_ad_type(int usb_type, int usbc_type)
 {
 	switch (usb_type) {
-	case POWER_SUPPLY_TYPE_USB:
-		return CHG_EV_ADAPTER_TYPE_USB_SDP;
-	case POWER_SUPPLY_TYPE_USB_CDP:
+	case POWER_SUPPLY_USB_TYPE_SDP:
+		return (usbc_type == POWER_SUPPLY_USB_TYPE_PD_PPS) ?
+			CHG_EV_ADAPTER_TYPE_USB_PD_PPS :
+			CHG_EV_ADAPTER_TYPE_USB_SDP;
+	case POWER_SUPPLY_USB_TYPE_CDP:
 		return CHG_EV_ADAPTER_TYPE_USB_CDP;
-	case POWER_SUPPLY_TYPE_USB_DCP:
-		return CHG_EV_ADAPTER_TYPE_USB_DCP;
-	case POWER_SUPPLY_TYPE_USB_PD:
+	case POWER_SUPPLY_USB_TYPE_DCP:
+		if (usbc_type == POWER_SUPPLY_USB_TYPE_PD)
+			return CHG_EV_ADAPTER_TYPE_USB_PD;
+		else if (usbc_type == POWER_SUPPLY_USB_TYPE_PD_PPS)
+			return CHG_EV_ADAPTER_TYPE_USB_PD_PPS;
+		else
+			return CHG_EV_ADAPTER_TYPE_USB_DCP;
+	case POWER_SUPPLY_USB_TYPE_PD:
 		return (usbc_type == POWER_SUPPLY_USB_TYPE_PD_PPS) ?
 			CHG_EV_ADAPTER_TYPE_USB_PD_PPS :
 			CHG_EV_ADAPTER_TYPE_USB_PD;
@@ -1938,8 +1946,10 @@ static void bd_dd_set_enabled(struct chg_drv *chg_drv, const int ext_present, co
 			bd_state->dd_last_update = now;
 
 		time = now - bd_state->dd_last_update;
-		if (bd_state->dd_trigger_time && time >= bd_state->dd_trigger_time)
+		if (bd_state->dd_trigger_time && time >= bd_state->dd_trigger_time) {
 			bd_state->dd_enabled = 1;
+			bd_state->lowerbd_reached = true;
+		}
 	}
 }
 
@@ -1964,7 +1974,7 @@ static void bd_dd_run_defender(struct chg_drv *chg_drv, int soc, int *disable_ch
 	/* update dd_state to user space */
 	bd_state->dd_state = bd_dd_state_update(bd_state->dd_state,
 						bd_state->dd_triggered,
-						(soc >= lowerbd));
+						(soc >= upperbd));
 
 	/* Start DD stats */
 	if (bd_state->dd_state == DOCK_DEFEND_ACTIVE)
@@ -5288,7 +5298,7 @@ static void google_charger_init_work(struct work_struct *work)
 		const bool pps_enable = of_property_read_bool(chg_drv->device->of_node,
 							      "google,pps-enable");
 
-		ret = pps_init(&chg_drv->pps_data, chg_drv->device, tcpm_psy);
+		ret = pps_init(&chg_drv->pps_data, chg_drv->device, tcpm_psy, "gcharger-pps");
 		if (ret < 0) {
 			pr_err("PPS init failure for %s (%d)\n", name, ret);
 		} else if (pps_enable) {
