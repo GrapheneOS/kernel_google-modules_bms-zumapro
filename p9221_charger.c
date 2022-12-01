@@ -2516,7 +2516,9 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 /* trigger DD */
 static void p9221_dream_defend(struct p9221_charger_data *charger)
 {
+	struct gvotable_election *csi_type_votable = charger->csi_type_votable;
 	const ktime_t now = get_boot_sec();
+	bool is_ac = false;
 	u32 threshold;
 	int ret;
 
@@ -2527,15 +2529,22 @@ static void p9221_dream_defend(struct p9221_charger_data *charger)
 		return;
 	}
 
-	if (!charger->csi_type_votable)
+	if (!csi_type_votable)
 		charger->csi_type_votable = gvotable_election_get_handle(VOTABLE_CSI_TYPE);
+	if (csi_type_votable)
+		is_ac = gvotable_get_current_int_vote(csi_type_votable) == CSI_TYPE_Adaptive;
+
+	/* extended trigger soc for TTF calculations to ensure enough time for AC */
+	if (!is_ac)
+		charger->pdata->power_mitigate_ac_threshold = 0;
+	else if (charger->pdata->power_mitigate_ac_threshold == 0)
+		charger->pdata->power_mitigate_ac_threshold = charger->last_capacity + 1;
 
 	if (charger->mitigate_threshold > 0)
 		threshold = charger->mitigate_threshold;
-	else if (charger->csi_type_votable &&
-		 charger->pdata->power_mitigate_threshold > 0 &&
-		 gvotable_get_current_int_vote(charger->csi_type_votable) == CSI_TYPE_Adaptive)
-		threshold = charger->last_capacity - 1; /* Run dream defend when AC trigger */
+	else if (charger->pdata->power_mitigate_threshold > 0 &&
+		 charger->pdata->power_mitigate_ac_threshold > 0)
+		threshold = charger->pdata->power_mitigate_ac_threshold;
 	else
 		threshold = charger->pdata->power_mitigate_threshold;
 

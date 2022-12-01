@@ -650,6 +650,7 @@ struct p9221_charger_platform_data {
 	bool				has_wlc_dc;
 	bool				has_rtx;
 	u32				power_mitigate_threshold;
+	u32				power_mitigate_ac_threshold;
 	u32				alignment_scalar_low_current;
 	u32				alignment_scalar_high_current;
 	u32				alignment_offset_low_current;
