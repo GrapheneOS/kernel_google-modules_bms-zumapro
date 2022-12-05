@@ -407,6 +407,7 @@ union gbms_charger_state {
 	} f;
 };
 
+struct device_node *gbms_batt_id_node(struct device_node *node);
 int gbms_init_chg_profile_internal(struct gbms_chg_profile *profile,
 			  struct device_node *node, const char *owner_name);
 #define gbms_init_chg_profile(p, n) \
