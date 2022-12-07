@@ -29,6 +29,7 @@
 #define 	SYS_CMD_SYS_RESET		BIT(4)
 #define		SYS_CMD_SW_CTRL_USB		(0x2 << 6)
 #define 	SYS_CMD_MODE_CTRL_2_1		(0X2 << 0)
+#define		SYS_CMD_MODE_CTRL_4_1		(0x4 << 0)
 #define SYS_CFG_1			0xA40A
 #define SYS_CFG_2			0xA40B
 #define 	SYS_CFG_2_SC_EN			BIT(4)
@@ -42,31 +43,46 @@
 #define PROT_STS_1			0xA413
 #define 	PROT_STS_1_VBAT_OVP_WARN_STS	BIT(2)
 #define 	PROT_STS_1_CBUS_OCP_WARN_STS	BIT(4)
+#define VBAT_REV_UVP_THRES		0xA419
 #define CBUS_UCP_THRES			0xA41B
+#define VBAT_UVP_THRES			0xA41D
 #define VBAT_OVP_WARN_THRES		0xA41F
+#define VBAT_OVP_THRES			0xA421
+#define SWCAP_OVP_THRES			0xA423
+#define SWCAP_UVP_THRES			0xA425
+#define CBAT_OCP_WARN_THRES		0xA42B
+#define CBAT_OCP_THRES			0XA42D
 #define CBUS_OCP_WARN_THRES		0xA42F
+#define CBUS_OCP_THRES			0xA431
+#define VBUS_OVP_THRES			0xA433
 #define ADC_CTRL			0xA437
 #define 	ADC_CTRL_CONT_EN		0x1
 #define CHARGE_STS			0xA44D
-#define 	CHARGE_STS_CHARGING		(0x2 << 0)
+#define		CHARGE_STS_DISCHARGING		(0x0 << 0)
+#define		CHARGE_STS_SLOW_START		(0x1 << 0)
+#define		CHARGE_STS_CHARGING		(0x2 << 0)
+#define		CHARGE_STS_BLOCKED		(0x3 << 0)
+#define		CHARGE_STS_CHARGING_MASK	(0x3 << 0)
+#define PWRSRC_STS			0xA44E
+#define		PWRSRC_STS_USB_PRESENT		BIT(4)
 #define INTR_FLG_0			0xA44F
-#define 	INTR_FLG_0_TDIE_OVTP		BIT(7)
+#define		INTR_FLG_0_TDIE_OVTP		BIT(7)
 #define INTR_FLG_3			0xA452
-#define 	INTR_FLG_3_BOOTUP_RDY		BIT(0)
+#define		INTR_FLG_3_BOOTUP_RDY		BIT(0)
 #define INTR_EN_0			0xA457
-#define 	VBAT_OVP_INTR_MSK		BIT(0)
-#define 	CBUS_OCP_INTR_MSK		BIT(5)
-#define 	TDIE_OVTP_INTR_MSK		BIT(7)
+#define		VBAT_OVP_INTR_MSK		BIT(0)
+#define		CBUS_OCP_INTR_MSK		BIT(5)
+#define		TDIE_OVTP_INTR_MSK		BIT(7)
 #define INTR_CLR_0			0xA45F
 #define VBAT1_ADC			0xA472
 #define IBUS_ADC			0xA470
 #define TDIE_ADC			0xA478
 
-#define WC68_IIN_CFG_MIN		0
+#define WC68_IIN_CFG_MIN		150000
 /* input current step, unit - uA */
-#define WC68_IIN_CFG_STEP		3662
+#define WC68_IIN_CFG_STEP		100000
 /* input current, unit - uA */
-#define WC68_IIN_CFG(input_curr)	((input_curr) / WC68_IIN_CFG_STEP)
+#define WC68_IIN_CFG(input_curr)	((input_curr) / IIN_STEP)
 /* charging current, uint - uA  */
 #define WC68_ICHG_CFG(_chg_current)	((_chg_current) / 100000)
 /* v_float voltage, unit - uV */
@@ -93,6 +109,8 @@ enum {
 #define ADC_IIN_OFFSET	900000	/* 900mA */
 #define VFLOAT_STEP	3076
 #define CBUS_UCP_STEP	3662
+#define SWCAP_OVP_STEP	7324
+#define SWCAP_UVP_OFFSET	0xF800
 
 #endif /* STWC68_H */
 
