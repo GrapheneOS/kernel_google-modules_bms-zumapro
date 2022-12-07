@@ -27,7 +27,7 @@
 #include <linux/debugfs.h>
 
 #define P9221R5_OVER_CHECK_NUM		3
-
+#define MFG_CHK_COUNT_MAX		30
 #define OVC_LIMIT			1
 #define OVC_THRESHOLD			1400000
 #define OVC_BACKOFF_LIMIT		900000
@@ -1418,7 +1418,7 @@ align_again:
 	 *  Check 10 times if alignment_capble is still 0.
 	 */
 
-	if ((charger->mfg_check_count < 10) ||
+	if ((charger->mfg_check_count < MFG_CHK_COUNT_MAX) ||
 	    (charger->alignment_capable == ALIGN_MFG_PASSED)) {
 
 		/* release the align_ws before return*/
@@ -1435,7 +1435,8 @@ align_end:
 	/* release the align_ws */
 	__pm_relax(charger->align_ws);
 
-	dev_info(&charger->client->dev, "align_work ended\n");
+	dev_info(&charger->client->dev, "align_work ended(mfg_check_count=%d)\n",
+		 charger->mfg_check_count);
 }
 
 static const char *p9221_get_tx_id_str(struct p9221_charger_data *charger)
@@ -2228,6 +2229,23 @@ exit:
 	return ret;
 }
 
+static int p9xxx_check_alignment(struct p9221_charger_data *charger)
+{
+	int ret = 0;
+
+	if (charger->alignment == 100) {
+		dev_dbg(&charger->client->dev, "Alignment check OK\n");
+	} else if (charger->alignment == -1 && charger->mfg_check_count < MFG_CHK_COUNT_MAX) {
+		ret = -EAGAIN;
+		dev_dbg(&charger->client->dev, "Alignment checking\n");
+	} else {
+		ret = -EOPNOTSUPP;
+		dev_err(&charger->client->dev, "Misalignment!\n");
+	}
+
+	return ret;
+}
+
 /* < 0 error, 0 = no changes, > 1 changed */
 static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 {
@@ -2306,14 +2324,19 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 			return -EOPNOTSUPP;
 		}
 
+		/* AUTH is passed remove the DC_ICL limit */
+		p9221_set_auth_dc_icl(charger, false);
+		mutex_unlock(&charger->auth_lock);
+
+		/* Check alignment before enabling proprietary mode */
+		ret = p9xxx_check_alignment(charger);
+		if (ret < 0)
+			return ret;
+
 		ret = p9221_set_hpp_dc_icl(charger, true);
 		if (ret < 0)
 			dev_warn(&charger->client->dev, "Cannot enable HPP_ICL (%d)\n", ret);
 		mdelay(10);
-
-		/* AUTH is passed remove the DC_ICL limit */
-		p9221_set_auth_dc_icl(charger, false);
-		mutex_unlock(&charger->auth_lock);
 
 		/*
 		 * run ->chip_prop_mode_en() if proprietary mode or cap divider
