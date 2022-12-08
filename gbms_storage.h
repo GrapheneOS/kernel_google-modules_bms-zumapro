@@ -51,6 +51,9 @@
 #define GBMS_LOTR_DEFAULT 0xff
 #define GBMS_LOTR_V1 1
 
+/* Date of manufacturing and first use */
+#define BATT_EEPROM_TAG_XYMD_LEN 3
+
 /*
  * Tags are u32 constants: hardcoding as hex since characters constants of more
  * than one byte such as 'BGCE' are frown upon.
