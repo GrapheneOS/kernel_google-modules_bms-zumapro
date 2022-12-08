@@ -45,6 +45,9 @@
 #define GBMS_DEFAULT_CV_TIER_SWITCH_CNT 3
 #define GBMS_DEFAULT_CV_OTV_MARGIN      0
 
+#define GBMS_STORAGE_READ_DELAY_MS	1000
+#define GBMS_STORAGE_READ_RETRIES	20
+
 /* same as POWER_SUPPLY_CHARGE_TYPE_TEXT */
 static const char *psy_chgt_str[] = {
 	[POWER_SUPPLY_CHARGE_TYPE_UNKNOWN]	= "Unknown",
@@ -105,10 +108,18 @@ static const char *gbms_get_code(const int index)
 struct device_node *gbms_batt_id_node(struct device_node *config_node)
 {
 	struct device_node *child_node;
+	int retry_cnt = GBMS_STORAGE_READ_RETRIES;
 	int ret = 0;
 	u32 batt_id, gbatt_id;
 
-	ret = gbms_storage_read(GBMS_TAG_BRID, &batt_id, sizeof(batt_id));
+	do {
+		ret = gbms_storage_read(GBMS_TAG_BRID, &batt_id, sizeof(batt_id));
+		if (ret != -EPROBE_DEFER)
+			break;
+
+		msleep(GBMS_STORAGE_READ_DELAY_MS);
+	} while (ret < 0 && retry_cnt-- > 0);
+
 	if (ret < 0) {
 		pr_warn("Failed to get batt_id (%d)\n", ret);
 		return config_node;
