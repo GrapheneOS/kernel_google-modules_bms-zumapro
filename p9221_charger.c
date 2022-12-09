@@ -646,7 +646,7 @@ static int p9xxx_set_bypass_mode(struct p9221_charger_data *charger)
 	const int vout_target = WLC_VOUT_RAMP_DOWN_MV;
 	int i, count, ret;
 	u8 cdmode, currpwr;
-	u32 vout_mv;
+	u32 vout_mv = 0, vout_now;
 
 	if (!charger->online)
 		return 0;
@@ -660,16 +660,25 @@ static int p9xxx_set_bypass_mode(struct p9221_charger_data *charger)
 	usleep_range(500 * USEC_PER_MSEC, 510 * USEC_PER_MSEC);
 	/* Ramp down WLC Vout to 15.3V */
 	while (true) {
-		ret = charger->chip_get_vout(charger, &vout_mv);
-		if (ret < 0 || vout_mv == 0) {
+		ret = charger->chip_get_vout(charger, &vout_now);
+		if (ret < 0 || vout_now == 0) {
 			dev_err(&charger->client->dev, "%s: invalid vout %d\n", __func__, ret);
 			return ret;
 		}
 
+		if (!vout_mv)
+			vout_mv = vout_now;
 		if (vout_mv < vout_target) {
-			dev_info(&charger->client->dev, "%s: underflow vout=%d, (target=%d)\n",
-				 __func__, vout_mv, vout_target);
-			break;
+			if (vout_now < vout_target) {
+				dev_info(&charger->client->dev,
+					 "%s: underflow vout=%d (target=%d)\n",
+					 __func__, vout_now, vout_target);
+				break;
+			}
+			dev_dbg(&charger->client->dev, "%s: vout_now=%d, (target=%d)\n",
+				__func__, vout_now, vout_target);
+			usleep_range(250 * USEC_PER_MSEC, 260 * USEC_PER_MSEC);
+			continue;
 		}
 
 		vout_mv -= WLC_VOUT_CFG_STEP;
