@@ -2388,19 +2388,6 @@ static int pca9468_apply_new_vfloat(struct pca9468_charger *pca9468)
 
 	pca9468->fv_uv = fv_uv;
 
-	/* Restart the process (TODO: optimize this) */
-	ret = pca9468_reset_dcmode(pca9468);
-	if (ret < 0) {
-		pr_err("%s: cannot reset dcmode (%d)\n", __func__, ret);
-	} else {
-		dev_info(pca9468->dev, "%s: charging_state=%u->%u\n", __func__,
-			 pca9468->charging_state, DC_STATE_ADJUST_CC);
-
-		pca9468->charging_state = DC_STATE_ADJUST_CC;
-		pca9468->timer_id = TIMER_PDMSG_SEND;
-		pca9468->timer_period = 0;
-	}
-
 error_done:
 	logbuffer_prlog(pca9468, LOGLEVEL_INFO,
 			"%s: new_vfloat=%d, fv_uv=%d ret=%d", __func__,

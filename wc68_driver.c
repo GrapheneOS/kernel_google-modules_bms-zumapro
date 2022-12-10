@@ -2332,19 +2332,6 @@ static int wc68_apply_new_vfloat(struct wc68_charger *wc68)
 
 	wc68->fv_uv = fv_uv;
 
-	/* Restart the process (TODO: optimize this) */
-	ret = wc68_reset_dcmode(wc68);
-	if (ret < 0) {
-		dev_err(wc68->dev, "%s: cannot reset dcmode (%d)\n", __func__, ret);
-	} else {
-		dev_info(wc68->dev, "%s: charging_state=%u->%u\n", __func__,
-			 wc68->charging_state, DC_STATE_ADJUST_CC);
-
-		wc68->charging_state = DC_STATE_ADJUST_CC;
-		wc68->timer_id = TIMER_PDMSG_SEND;
-		wc68->timer_period = 0;
-	}
-
 error_done:
 	logbuffer_prlog(wc68, LOGLEVEL_INFO,
 			"%s: new_vfloat=%d, fv_uv=%d ret=%d", __func__,
