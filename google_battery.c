@@ -389,6 +389,20 @@ struct csi_stats {
 	ktime_t last_update;
 };
 
+#define TEMP_SAMPLE_SIZE 5
+struct batt_temp_filter {
+	struct delayed_work work;
+	struct mutex lock;
+	bool enable;
+	bool force_update;
+	bool resume_delay;
+	int sample[TEMP_SAMPLE_SIZE];
+	int default_interval;
+	int fast_interval;
+	int resume_delay_time;
+	int last_idx;
+};
+
 /* battery driver state */
 struct batt_drv {
 	struct device *device;
@@ -551,16 +565,42 @@ struct batt_drv {
 
 	/* battery critical level */
 	int batt_critical_voltage;
+
+	/* battery temperature filter */
+	struct batt_temp_filter temp_filter;
 };
 
-static int gbatt_get_temp(const struct batt_drv *batt_drv, int *temp);
+static int gbatt_get_temp(struct batt_drv *batt_drv, int *temp);
 
 static int gbatt_get_capacity(struct batt_drv *batt_drv);
 
-static int gbatt_get_raw_temp(const struct batt_drv *batt_drv, int *temp)
+static int batt_get_filter_temp(struct batt_temp_filter *temp_filter)
 {
-	int err;
+	int sum = 0, max, min, i;
+
+	mutex_lock(&temp_filter->lock);
+	max = min = temp_filter->sample[0];
+	for (i = 0; i < TEMP_SAMPLE_SIZE; i++) {
+		if (temp_filter->sample[i] > max)
+			max = temp_filter->sample[i];
+		if (temp_filter->sample[i] < min)
+			min = temp_filter->sample[i];
+		sum += temp_filter->sample[i];
+	}
+	mutex_unlock(&temp_filter->lock);
+
+	return (sum - max - min) / (TEMP_SAMPLE_SIZE - 2);
+}
+
+static int gbatt_get_raw_temp(struct batt_drv *batt_drv, int *temp)
+{
+	int err = 0;
 	union power_supply_propval val;
+
+	if (batt_drv->temp_filter.enable) {
+		*temp = batt_get_filter_temp(&batt_drv->temp_filter);
+		return err;
+	}
 
 	if (!batt_drv->fg_psy)
 		return -EINVAL;
@@ -1055,7 +1095,7 @@ static void ssoc_change_curve(struct batt_ssoc_state *ssoc_state, qnum_t delta,
 #define FAN_CHG_LIMIT_LOW	50
 #define FAN_CHG_LIMIT_MED	70
 
-static int fan_bt_calculate_level(const struct batt_drv *batt_drv)
+static int fan_bt_calculate_level(struct batt_drv *batt_drv)
 {
 	int level, temp, ret;
 
@@ -1088,7 +1128,7 @@ static int fan_bt_calculate_level(const struct batt_drv *batt_drv)
 	return level;
 }
 
-static int fan_calculate_level(const struct batt_drv *batt_drv)
+static int fan_calculate_level(struct batt_drv *batt_drv)
 {
 	int charging_rate, fan_level, chg_fan_level, cc_max;
 
@@ -5158,6 +5198,32 @@ static int debug_ravg_fops_write(void *data, u64 val)
 
 DEFINE_SIMPLE_ATTRIBUTE(debug_ravg_fops, NULL, debug_ravg_fops_write, "%llu\n");
 
+static int debug_temp_filter_enable_read(void *data, u64 *val)
+{
+	struct batt_drv *batt_drv = (struct batt_drv *)data;
+
+	*val = batt_drv->temp_filter.enable;
+	return 0;
+}
+
+static int debug_temp_filter_enable_write(void *data, u64 val)
+{
+	struct batt_drv *batt_drv = (struct batt_drv *)data;
+	struct batt_temp_filter *temp_filter = &batt_drv->temp_filter;
+	bool enable = val != 0;
+
+	if (temp_filter->enable != enable) {
+		temp_filter->enable = enable;
+		temp_filter->force_update = true;
+		mod_delayed_work(system_wq, &temp_filter->work, 0);
+	}
+
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(debug_temp_filter_enable_fops,
+			debug_temp_filter_enable_read,
+			debug_temp_filter_enable_write, "%llu\n");
 
 #endif
 
@@ -7061,6 +7127,16 @@ static int batt_init_debugfs(struct batt_drv *batt_drv)
 			   &batt_drv->health_data.bhi_data.res_state.ravg_soc_high);
 	debugfs_create_file("ravg", 0400, de,  batt_drv, &debug_ravg_fops);
 
+	/* battery temperature filter */
+	debugfs_create_u32("temp_filter_default_interval", 0644, de,
+			   &batt_drv->temp_filter.default_interval);
+	debugfs_create_u32("temp_filter_fast_interval", 0644, de,
+			   &batt_drv->temp_filter.fast_interval);
+	debugfs_create_u32("temp_filter_resume_delay_interval", 0644, de,
+			   &batt_drv->temp_filter.resume_delay_time);
+	debugfs_create_file("temp_filter_enable", 0644, de, batt_drv,
+			    &debug_temp_filter_enable_fops);
+
 	return 0;
 }
 
@@ -7181,7 +7257,7 @@ static int gbatt_get_capacity_level(const struct batt_drv *batt_drv,
 	return capacity_level;
 }
 
-static int gbatt_get_temp(const struct batt_drv *batt_drv, int *temp)
+static int gbatt_get_temp(struct batt_drv *batt_drv, int *temp)
 {
 	int err = 0;
 
@@ -7471,6 +7547,90 @@ static int google_battery_init_hist_work(struct batt_drv *batt_drv )
 	return 0;
 }
 
+#define TEMP_FILTER_DEFAULT_INTERVAL_MS 30000
+#define TEMP_FILTER_FAST_INTERVAL_MS 3000
+#define TEMP_FILTER_RESUME_DELAY_MS 1500
+static void batt_init_temp_filter(struct batt_drv *batt_drv)
+{
+	struct batt_temp_filter *temp_filter = &batt_drv->temp_filter;
+	const struct device_node *node = batt_drv->device->of_node;
+	u32 tmp;
+	int ret;
+
+	mutex_init(&batt_drv->temp_filter.lock);
+
+	ret = of_property_read_u32(node, "google,temp-filter-default-interval", &tmp);
+	if (ret == 0)
+		temp_filter->default_interval = tmp;
+	else
+		temp_filter->default_interval = TEMP_FILTER_DEFAULT_INTERVAL_MS;
+
+	ret = of_property_read_u32(node, "google,temp-filter-fast-interval", &tmp);
+	if (ret == 0)
+		temp_filter->fast_interval = tmp;
+	else
+		temp_filter->fast_interval = TEMP_FILTER_FAST_INTERVAL_MS;
+
+	ret = of_property_read_u32(node, "google,temp-filter-resume-delay", &tmp);
+	if (ret == 0)
+		temp_filter->resume_delay_time = tmp;
+	else
+		temp_filter->resume_delay_time = TEMP_FILTER_RESUME_DELAY_MS;
+
+	/* initial temperature value in first read data */
+	temp_filter->force_update = true;
+	mod_delayed_work(system_wq, &temp_filter->work, 0);
+
+	pr_info("temperture filter: default:%ds, fast:%ds, resume:%dms\n",
+		temp_filter->default_interval / 1000, temp_filter->fast_interval / 1000,
+		temp_filter->resume_delay_time);
+}
+
+static void google_battery_temp_filter_work(struct work_struct *work)
+{
+	struct batt_drv *batt_drv = container_of(work, struct batt_drv, temp_filter.work.work);
+	const union gbms_ce_adapter_details *ad = &batt_drv->ce_data.adapter_details;
+	struct batt_temp_filter *temp_filter = &batt_drv->temp_filter;
+	int interval = temp_filter->default_interval;
+	union power_supply_propval val;
+	int err = 0, i;
+
+	if (!temp_filter->enable || interval == 0)
+		return;
+
+	if (!batt_drv->fg_psy)
+		goto done;
+
+	if (temp_filter->resume_delay) {
+		interval = temp_filter->resume_delay_time; /* i2c might busy when resume */
+		temp_filter->resume_delay = false;
+		temp_filter->force_update = true;
+		goto done;
+	}
+
+	if (ad->ad_type == CHG_EV_ADAPTER_TYPE_WLC ||
+	    ad->ad_type == CHG_EV_ADAPTER_TYPE_WLC_EPP ||
+	    ad->ad_type == CHG_EV_ADAPTER_TYPE_WLC_SPP)
+		interval = temp_filter->fast_interval;
+
+	err = power_supply_get_property(batt_drv->fg_psy, POWER_SUPPLY_PROP_TEMP, &val);
+	if (err != 0)
+		goto done;
+
+	mutex_lock(&temp_filter->lock);
+	if (temp_filter->force_update) {
+		temp_filter->force_update = false;
+		for (i = 0; i < TEMP_SAMPLE_SIZE; i++)
+			temp_filter->sample[i] = val.intval;
+	} else {
+		temp_filter->last_idx = (temp_filter->last_idx + 1) % TEMP_SAMPLE_SIZE;
+		temp_filter->sample[temp_filter->last_idx] = val.intval;
+	}
+	mutex_unlock(&temp_filter->lock);
+
+done:
+	mod_delayed_work(system_wq, &temp_filter->work, msecs_to_jiffies(interval));
+}
 
 /*
  * poll the battery, run SOC%, dead battery, critical.
@@ -8539,6 +8699,10 @@ static void google_battery_init_work(struct work_struct *work)
 		google_battery_dump_profile(&batt_drv->chg_profile);
 	}
 
+	batt_drv->temp_filter.enable = of_property_read_bool(node, "google,temp-filter-enable");
+	if (batt_drv->temp_filter.enable)
+		batt_init_temp_filter(batt_drv);
+
 	cev_stats_init(&batt_drv->ce_data, &batt_drv->chg_profile);
 	cev_stats_init(&batt_drv->ce_qual, &batt_drv->chg_profile);
 
@@ -8803,6 +8967,7 @@ static int google_battery_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&batt_drv->init_work, google_battery_init_work);
 	INIT_DELAYED_WORK(&batt_drv->batt_work, google_battery_work);
 	INIT_DELAYED_WORK(&batt_drv->power_metrics.work, power_metrics_data_work);
+	INIT_DELAYED_WORK(&batt_drv->temp_filter.work, google_battery_temp_filter_work);
 	platform_set_drvdata(pdev, batt_drv);
 
 	psy_cfg.drv_data = batt_drv;
@@ -8971,6 +9136,7 @@ static int gbatt_pm_resume(struct device *dev)
 
 	pm_runtime_get_sync(batt_drv->device);
 	batt_drv->resume_complete = true;
+	batt_drv->temp_filter.resume_delay = true;
 	pm_runtime_put_sync(batt_drv->device);
 
 	mod_delayed_work(system_wq, &batt_drv->batt_work, 0);
