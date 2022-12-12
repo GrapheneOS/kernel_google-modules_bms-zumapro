@@ -557,6 +557,21 @@ static int gbatt_get_temp(const struct batt_drv *batt_drv, int *temp);
 
 static int gbatt_get_capacity(struct batt_drv *batt_drv);
 
+static int gbatt_get_raw_temp(const struct batt_drv *batt_drv, int *temp)
+{
+	int err;
+	union power_supply_propval val;
+
+	if (!batt_drv->fg_psy)
+		return -EINVAL;
+
+	err = power_supply_get_property(batt_drv->fg_psy, POWER_SUPPLY_PROP_TEMP, &val);
+	if (err == 0)
+		*temp = val.intval;
+
+	return err;
+}
+
 static inline void batt_update_cycle_count(struct batt_drv *batt_drv)
 {
 	batt_drv->cycle_count = GPSY_GET_PROP(batt_drv->fg_psy,
@@ -590,9 +605,11 @@ static int batt_vs_tz_get(struct thermal_zone_device *tzd, int *batt_vs)
 	if (!batt_vs)
 		return -EINVAL;
 
-	temp = GPSY_GET_INT_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_TEMP, &rc) * 100;
+	rc = gbatt_get_raw_temp(batt_drv, &temp);
 	if (rc)
 		return -EINVAL;
+
+	temp = temp * 100;
 
 	ibat = abs(GPSY_GET_INT_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_CURRENT_AVG, &rc));
 	if (rc)
@@ -1773,10 +1790,16 @@ static bool batt_chg_stats_close(struct batt_drv *batt_drv,
 	if (batt_drv->vbatt_idx != -1 && batt_drv->temp_idx != -1) {
 		const ktime_t elap = now - batt_drv->ce_data.last_update;
 		const int tier_idx = batt_chg_vbat2tier(batt_drv->vbatt_idx);
-		const int ibatt = GPSY_GET_PROP(batt_drv->fg_psy,
-						POWER_SUPPLY_PROP_CURRENT_NOW);
-		const int temp = GPSY_GET_PROP(batt_drv->fg_psy,
-					       POWER_SUPPLY_PROP_TEMP);
+		int ibatt, temp, rc = 0;
+
+		/* use default value to close charging session when read fail */
+		ibatt = GPSY_GET_INT_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_CURRENT_NOW, &rc);
+		if (rc != 0)
+			ibatt = 0;
+
+		rc = gbatt_get_raw_temp(batt_drv, &temp);
+		if (rc != 0)
+			temp = 250;
 
 		batt_chg_stats_update(batt_drv,
 				      batt_drv->temp_idx, tier_idx,
@@ -2175,7 +2198,7 @@ static void batt_res_work(struct batt_drv *batt_drv)
 		return;
 
 	/* do not collect samples when temperature is outside the range */
-	temp = GPSY_GET_INT_PROP(fg_psy, POWER_SUPPLY_PROP_TEMP, &ret);
+	ret = gbatt_get_raw_temp(batt_drv, &temp);
 	if (ret < 0 || temp < rstate->res_temp_low || temp > rstate->res_temp_high)
 		return;
 
@@ -3754,7 +3777,7 @@ static int msc_logic(struct batt_drv *batt_drv)
 	ktime_t elap = now - batt_drv->ce_data.last_update;
 	bool changed;
 
-	temp = GPSY_GET_INT_PROP(fg_psy, POWER_SUPPLY_PROP_TEMP, &ioerr);
+	ioerr = gbatt_get_raw_temp(batt_drv, &temp);
 	if (ioerr < 0)
 		return -EIO;
 
@@ -7161,18 +7184,11 @@ static int gbatt_get_capacity_level(const struct batt_drv *batt_drv,
 static int gbatt_get_temp(const struct batt_drv *batt_drv, int *temp)
 {
 	int err = 0;
-	union power_supply_propval val;
 
-	if (batt_drv->fake_temp) {
+	if (batt_drv->fake_temp)
 		*temp = batt_drv->fake_temp;
-	} else if (!batt_drv->fg_psy) {
-		err = -EINVAL;
-	} else {
-		err = power_supply_get_property(batt_drv->fg_psy,
-						POWER_SUPPLY_PROP_TEMP, &val);
-		if (err == 0)
-			*temp = val.intval;
-	}
+	else
+		err = gbatt_get_raw_temp(batt_drv, temp);
 
 	return err;
 }
