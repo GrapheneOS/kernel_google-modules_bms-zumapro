@@ -102,6 +102,32 @@ static const char *gbms_get_code(const int index)
 	return (index >= 0 && index < len) ? codes[index] : "?";
 }
 
+struct device_node *gbms_batt_id_node(struct device_node *config_node)
+{
+	struct device_node *child_node;
+	int ret = 0;
+	u32 batt_id, gbatt_id;
+
+	ret = gbms_storage_read(GBMS_TAG_BRID, &batt_id, sizeof(batt_id));
+	if (ret < 0) {
+		pr_warn("Failed to get batt_id (%d)\n", ret);
+		return config_node;
+	}
+
+	for_each_child_of_node(config_node, child_node) {
+		ret = of_property_read_u32(child_node, "google,batt-id",
+					   &gbatt_id);
+		if (ret != 0)
+			continue;
+
+		if (batt_id == gbatt_id)
+			return child_node;
+	}
+
+	return config_node;
+}
+EXPORT_SYMBOL_GPL(gbms_batt_id_node);
+
 /* convert C rates to current. Caller can account for tolerances reducing
  * battery_capacity. fv_uv_resolution is used to create discrete steps.
  * NOTE: the call covert C rates to chanrge currents IN PLACE, ie you cannot
@@ -170,7 +196,7 @@ static int gbms_read_cccm_limits(struct gbms_chg_profile *profile,
 	}
 
 	profile->volt_nb_limits =
-	    of_property_count_elems_of_size(node, "google,chg-cv-limits",
+	    of_property_count_elems_of_size(gbms_batt_id_node(node), "google,chg-cv-limits",
 					    sizeof(u32));
 	if (profile->volt_nb_limits <= 0) {
 		ret = profile->volt_nb_limits;
@@ -182,7 +208,7 @@ static int gbms_read_cccm_limits(struct gbms_chg_profile *profile,
 		       GBMS_CHG_VOLT_NB_LIMITS_MAX);
 		return -EINVAL;
 	}
-	ret = of_property_read_u32_array(node, "google,chg-cv-limits",
+	ret = of_property_read_u32_array(gbms_batt_id_node(node), "google,chg-cv-limits",
 					 (u32 *)profile->volt_limits,
 					 profile->volt_nb_limits);
 	if (ret < 0) {
