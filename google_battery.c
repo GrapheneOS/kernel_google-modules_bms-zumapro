@@ -8752,9 +8752,6 @@ static void google_battery_init_work(struct work_struct *work)
 		pr_info("google,batt-vs-tz-name is %s\n", batt_vs_tz_name);
 	}
 
-	/* debugfs */
-	(void)batt_init_debugfs(batt_drv);
-
 	/* single battery disconnect */
 	(void)batt_bpst_init_debugfs(batt_drv);
 
@@ -8973,6 +8970,9 @@ static int google_battery_probe(struct platform_device *pdev)
 	/* create the sysfs node */
 	batt_init_fs(batt_drv);
 	batt_bpst_init_fs(batt_drv);
+
+	/* debugfs */
+	(void)batt_init_debugfs(batt_drv);
 
 	/* give time to fg driver to start */
 	schedule_delayed_work(&batt_drv->init_work,
