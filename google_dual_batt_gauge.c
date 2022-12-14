@@ -22,6 +22,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
+#include <linux/debugfs.h>
 #include <misc/gvotable.h>
 #include "gbms_power_supply.h"
 #include "google_bms.h"
@@ -38,6 +39,10 @@
 
 #define DUAL_BATT_VSEC_OFFSET		50000
 #define DUAL_BATT_VSEC_OFFSET_IDX	0
+
+static int debug_printk_prlog = LOGLEVEL_INFO;
+#define logbuffer_prlog(p, level, fmt, ...)	\
+	gbms_logbuffer_prlog(p->log, level, 0, debug_printk_prlog, fmt, ##__VA_ARGS__)
 
 struct dual_fg_drv {
 	struct device *device;
@@ -59,6 +64,8 @@ struct dual_fg_drv {
 	struct gbms_chg_profile chg_profile;
 	struct gbms_chg_profile base_profile;
 	struct gbms_chg_profile sec_profile;
+
+	struct logbuffer *log;
 
 	struct notifier_block fg_nb;
 
@@ -191,10 +198,12 @@ static void gdbatt_check_current(struct dual_fg_drv *dual_fg_drv, int temp_idx, 
 		gvotable_cast_int_vote(dual_fg_drv->fcc_votable, DUAL_BATT_BALANCE_VOTER,
 				       dual_fg_drv->cc_max - cc_offset, true);
 
-		pr_info("%s: battery OC base:%d/%d sec:%d/%d cc_offset:%d->%d cc_max:%d (%d/%d)\n",
-			__func__, ibase, cc_base, isec, cc_sec,
-			dual_fg_drv->cc_balance_offset, cc_offset,
-			dual_fg_drv->cc_max - cc_offset, next_cc_max, cc_lowerbd);
+		logbuffer_prlog(dual_fg_drv, LOGLEVEL_DEBUG,
+				"%s: battery OC base:%d/%d sec:%d/%d cc_offset:%d->%d cc_max:%d (%d/%d)",
+				__func__, ibase, cc_base, isec, cc_sec,
+				dual_fg_drv->cc_balance_offset, cc_offset,
+				dual_fg_drv->cc_max - cc_offset, next_cc_max, cc_lowerbd);
+
 		dual_fg_drv->cc_balance_offset = cc_offset;
 		power_supply_changed(dual_fg_drv->psy);
 	}
@@ -211,7 +220,8 @@ static void gdbatt_ov_last_tier(struct dual_fg_drv *dual_fg_drv)
 
 		gvotable_cast_int_vote(dual_fg_drv->fv_votable, DUAL_BATT_BALANCE_VOTER,
 				       fv - fv_offset, true);
-		pr_info("%s: battery over max fv:%d->%d\n", __func__, fv, fv - fv_offset);
+		logbuffer_prlog(dual_fg_drv, LOGLEVEL_DEBUG, "%s: battery over max fv:%d->%d",
+				__func__, fv, fv - fv_offset);
 		dual_fg_drv->fv_balance_offset = fv_offset;
 	}
 }
@@ -243,8 +253,8 @@ static void gdbatt_ov_handler(struct dual_fg_drv *dual_fg_drv, int vbatt_idx, in
 
 		gvotable_cast_int_vote(dual_fg_drv->fcc_votable, DUAL_BATT_BALANCE_VOTER,
 				       cc_max - cc_offset, true);
-		pr_debug("%s: battery OV cc_max:%d->%d (%d)\n", __func__, cc_max,
-			 cc_max - cc_offset, next_cc_max);
+		logbuffer_prlog(dual_fg_drv, LOGLEVEL_DEBUG,"%s: battery OV cc_max:%d->%d (%d)",
+				__func__, cc_max, cc_max - cc_offset, next_cc_max);
 
 		dual_fg_drv->cc_balance_offset = cc_offset;
 		power_supply_changed(dual_fg_drv->psy);
@@ -315,8 +325,9 @@ static void gdbatt_select_cc_max(struct dual_fg_drv *dual_fg_drv)
 
 	if (cc_max == dual_fg_drv->cc_max) {
 		if ((base_vbatt_idx > vbatt_idx) || (sec_vbatt_idx > vbatt_idx)) {
-			pr_debug("%s: battery OV v_base:%d, v_sec:%d\n",
-				 __func__, base_vbatt, sec_vbatt);
+			logbuffer_prlog(dual_fg_drv, LOGLEVEL_DEBUG,
+					"%s: battery OV v_base:%d, v_sec:%d",
+					__func__, base_vbatt, sec_vbatt);
 			if (vbatt_idx >= profile->volt_nb_limits)
 				gdbatt_ov_last_tier(dual_fg_drv);
 			else
@@ -779,6 +790,7 @@ static int google_dual_batt_gauge_probe(struct platform_device *pdev)
 	const char *second_fg_psy_name;
 	struct dual_fg_drv *dual_fg_drv;
 	struct power_supply_config psy_cfg = {};
+	struct dentry *de;
 	int ret;
 
 	dual_fg_drv = devm_kzalloc(&pdev->dev, sizeof(*dual_fg_drv), GFP_KERNEL);
@@ -852,6 +864,20 @@ static int google_dual_batt_gauge_probe(struct platform_device *pdev)
 	if (ret < 0)
 		dual_fg_drv->vsec_offset_max_idx = DUAL_BATT_VSEC_OFFSET_IDX;
 
+	dual_fg_drv->log = logbuffer_register("dual_batt");
+	if (IS_ERR(dual_fg_drv->log)) {
+		dev_err(dual_fg_drv->device, "Couldn't register logbuffer, (%ld)\n",
+			PTR_ERR(dual_fg_drv->log));
+		dual_fg_drv->log = NULL;
+	}
+
+	/* debugfs */
+	de = debugfs_create_dir("google_dual_batt", 0);
+	if (IS_ERR_OR_NULL(de))
+		dev_err(dual_fg_drv->device, "Couldn't create debugfs, (%ld)\n", PTR_ERR(de));
+	else
+		debugfs_create_u32("debug_level", 0644, de, &debug_printk_prlog);
+
 	schedule_delayed_work(&dual_fg_drv->init_work,
 					msecs_to_jiffies(DUAL_FG_DELAY_INIT_MS));
 
@@ -867,6 +893,9 @@ static int google_dual_batt_gauge_remove(struct platform_device *pdev)
 	gbms_free_chg_profile(&dual_fg_drv->chg_profile);
 	kfree(dual_fg_drv->base_profile.cccm_limits);
 	kfree(dual_fg_drv->sec_profile.cccm_limits);
+
+	if (dual_fg_drv->log)
+		logbuffer_unregister(dual_fg_drv->log);
 
 	return 0;
 }
