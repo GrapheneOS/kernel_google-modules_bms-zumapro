@@ -3318,7 +3318,7 @@ static int batt_get_activation_date(struct bhi_data *bhi_data)
 	if (bhi_data->act_date[0] == 0xff) {
 		/*
 		 * TODO: set a default value
-		 * might to set by dev_act_date_show() from user space
+		 * might be set by first_usage_date_show() from user space
 		 */
 		bhi_data->act_date[0] = 0x30; /* 0x30 = '0', 2020 */
 		bhi_data->act_date[1] = 0x43; /* 0x43 = 'C', 12th */
@@ -5374,6 +5374,44 @@ static ssize_t debug_get_bhi_status(struct file *filp, char __user *buf,
 }
 BATTERY_DEBUG_ATTRIBUTE(debug_bhi_status_fops, debug_get_bhi_status, 0);
 
+static ssize_t debug_set_first_usage_date(struct file *filp,
+					  const char __user *user_buf,
+					  size_t count, loff_t *ppos)
+{
+	struct batt_drv *batt_drv = (struct batt_drv *)filp->private_data;
+	struct bhi_data *bhi_data = &batt_drv->health_data.bhi_data;
+	int ret = 0, val;
+	char buf[8];
+
+	ret = simple_write_to_buffer(buf, sizeof(buf), ppos, user_buf, count);
+	if (!ret)
+		return -EFAULT;
+
+	buf[ret] = '\0';
+	ret = kstrtoint(buf, 0, &val);
+	if (ret < 0)
+		return ret;
+
+	/* reset device activation date */
+	if (val == 1) {
+		u8 act_date[BATT_EEPROM_TAG_XYMD_LEN];
+
+		memset(act_date, 0xff, sizeof(act_date));
+		ret = gbms_storage_write(GBMS_TAG_AYMD, act_date, sizeof(act_date));
+		if (ret < 0)
+			return -EINVAL;
+
+		/* set a default value */
+		bhi_data->act_date[0] = 0x30; /* 0x30 = '0', 2020 */
+		bhi_data->act_date[1] = 0x43; /* 0x43 = 'C', 12th */
+		bhi_data->act_date[2] = 0x31; /* 0x31 = '1', 1st */
+	}
+
+	return count;
+}
+
+BATTERY_DEBUG_ATTRIBUTE(debug_first_usage_date_fops, 0, debug_set_first_usage_date);
+
 /* TODO: add writes to restart pairing (i.e. provide key) */
 static ssize_t batt_pairing_state_show(struct device *dev,
 				       struct device_attribute *attr,
@@ -6638,20 +6676,8 @@ static ssize_t health_indi_cap_show(struct device *dev,
 
 static const DEVICE_ATTR_RW(health_indi_cap);
 
-static ssize_t health_cycle_count_show(struct device *dev,
-				      struct device_attribute *attr, char *buf)
-{
-	struct power_supply *psy = container_of(dev, struct power_supply, dev);
-	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
-	struct bhi_data *bhi_data = &batt_drv->health_data.bhi_data;
-
-	return scnprintf(buf, PAGE_SIZE, "%d\n", bhi_data->cycle_count);
-}
-
-static const DEVICE_ATTR_RO(health_cycle_count);
-
-static ssize_t dev_date_show(struct device *dev,
-				      struct device_attribute *attr, char *buf)
+static ssize_t manufacturing_date_show(struct device *dev,
+				       struct device_attribute *attr, char *buf)
 {
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
@@ -6665,11 +6691,11 @@ static ssize_t dev_date_show(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%lld\n", rtc_tm_to_time64(&tm));
 }
 
-static const DEVICE_ATTR_RO(dev_date);
+static const DEVICE_ATTR_RO(manufacturing_date);
 
-static ssize_t dev_act_date_store(struct device *dev,
-				 struct device_attribute *attr,
-				 const char *buf, size_t count)
+static ssize_t first_usage_date_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t count)
 {
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
@@ -6680,23 +6706,35 @@ static ssize_t dev_act_date_store(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	if (value >= 0) {
-		/* reset: 0, set: YYMMDD */
-		bhi_data->act_date[0] = (!value) ? 0xff : date_to_xymd((value >> 16) & 0xff - 20);
-		bhi_data->act_date[1] = (!value) ? 0xff : date_to_xymd((value >> 8) & 0xff);
-		bhi_data->act_date[2] = (!value) ? 0xff : date_to_xymd(value & 0xff);
+	/* set: YYMMDD */
+	if (value > 0) {
+		u8 act_date[BATT_EEPROM_TAG_XYMD_LEN];
+		uint32_t date = value;
 
-		ret = gbms_storage_write(GBMS_TAG_AYMD, &bhi_data->act_date,
-					 sizeof(bhi_data->act_date));
+		ret = gbms_storage_read(GBMS_TAG_AYMD, act_date, sizeof(act_date));
 		if (ret < 0)
 			return -EINVAL;
+
+		if (act_date[0] != 0xff)
+			return count > 0 ? count : 0;
+
+		act_date[0] = date_to_xymd((date >> 16) & 0xff - 20);
+		act_date[1] = date_to_xymd((date >> 8) & 0xff);
+		act_date[2] = date_to_xymd(date & 0xff);
+
+		ret = gbms_storage_write(GBMS_TAG_AYMD, act_date, sizeof(act_date));
+		if (ret < 0)
+			return -EINVAL;
+
+		/* update bhi_data->act_date */
+		memcpy(&bhi_data->act_date, act_date, sizeof(act_date));
 	}
 
-	return count;
+	return count > 0 ? count : 0;
 }
 
-static ssize_t dev_act_date_show(struct device *dev,
-				      struct device_attribute *attr, char *buf)
+static ssize_t first_usage_date_show(struct device *dev,
+				     struct device_attribute *attr, char *buf)
 {
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
@@ -6716,7 +6754,7 @@ static ssize_t dev_act_date_show(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%lld\n", rtc_tm_to_time64(&tm));
 }
 
-static const DEVICE_ATTR_RW(dev_act_date);
+static const DEVICE_ATTR_RW(first_usage_date);
 
 /* CSI --------------------------------------------------------------------- */
 
@@ -7129,15 +7167,12 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_health_indi_cap);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create health individual capacity\n");
-	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_health_cycle_count);
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_manufacturing_date);
 	if (ret)
-		dev_err(&batt_drv->psy->dev, "Failed to create health cycle count\n");
-	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_dev_date);
+		dev_err(&batt_drv->psy->dev, "Failed to create manufacturing date\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_first_usage_date);
 	if (ret)
-		dev_err(&batt_drv->psy->dev, "Failed to create dev date\n");
-	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_dev_act_date);
-	if (ret)
-		dev_err(&batt_drv->psy->dev, "Failed to create dev activation date\n");
+		dev_err(&batt_drv->psy->dev, "Failed to create first usage date\n");
 
 	/* csi */
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_charging_speed);
@@ -7236,6 +7271,8 @@ static int batt_init_debugfs(struct batt_drv *batt_drv)
 			   &batt_drv->health_data.bhi_debug_health_index);
 	debugfs_create_file("bhi_debug_status", 0644, de, batt_drv,
 			   &debug_bhi_status_fops);
+	debugfs_create_file("reset_first_usage_date", 0644, de, batt_drv,
+			    &debug_first_usage_date_fops);
 
 	/* google_resistance, tuning */
 	debugfs_create_u32("ravg_temp_low", 0644, de,
@@ -7831,13 +7868,6 @@ static void google_battery_work(struct work_struct *work)
 				 __func__, ssoc, full, batt_drv->fg_status, fg_status);
 			if (!full)
 				notify_psy_changed = true;
-		}
-
-		/* update the date of first use of the battery */
-		if (!batt_drv->health_data.bhi_data.act_date[0]) {
-			ret = batt_get_activation_date(&batt_drv->health_data.bhi_data);
-			if (ret < 0)
-				pr_warn("cannot get battery activation date, ret=%d\n", ret);;
 		}
 
 		/* slow down the updates at full */
@@ -9167,6 +9197,13 @@ static int google_battery_probe(struct platform_device *pdev)
 	ret = batt_get_manufacture_date(&batt_drv->health_data.bhi_data);
 	if (ret < 0)
 		pr_warn("cannot get battery manufacture date, ret=%d\n", ret);
+
+	/* Date of first use of the battery */
+	if (!batt_drv->health_data.bhi_data.act_date[0]) {
+		ret = batt_get_activation_date(&batt_drv->health_data.bhi_data);
+		if (ret < 0)
+			pr_warn("cannot get battery activation date, ret=%d\n", ret);;
+	}
 
 	return 0;
 }
