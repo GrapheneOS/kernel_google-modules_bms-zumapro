@@ -702,7 +702,7 @@ struct p9221_charger_data {
 	struct p9221_charger_ints_bit	ints;
 	struct power_supply		*wc_psy;
 	struct power_supply		*dc_psy;
-	struct power_supply		*fg_psy;
+	struct power_supply		*batt_psy;
 	struct gvotable_election	*dc_icl_votable;
 	struct gvotable_election	*dc_suspend_votable;
 	struct gvotable_election	*tx_icl_votable;
@@ -725,7 +725,7 @@ struct p9221_charger_data {
 	struct delayed_work		rtx_work;
 	struct delayed_work		power_mitigation_work;
 	struct delayed_work		auth_dc_icl_work;
-	struct delayed_work		fg_work;
+	struct delayed_work		soc_work;
 	struct delayed_work		chk_rp_work;
 	struct delayed_work		chk_rtx_ocp_work;
 	struct delayed_work		chk_fod_work;
