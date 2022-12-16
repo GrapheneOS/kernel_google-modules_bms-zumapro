@@ -42,7 +42,7 @@
 /* Charging Float Voltage default value */
 #define WC68_VFLOAT_DFT		4350000	/* uV */
 /* Charging Float Voltage max voltage for comp */
-#define WC68_COMP_VFLOAT_MAX		4450000	/* uV */
+#define WC68_COMP_VFLOAT_MAX		4700000	/* uV */
 
 /* Charging Done Condition */
 #define WC68_IIN_DONE_DFT	500000		/* uA */
@@ -75,7 +75,7 @@
 /* IIN_CC adc offset for accuracy */
 #define WC68_IIN_ADC_OFFSET		20000	/* uA */
 /* IIN_CC compensation offset */
-#define WC68_IIN_CC_COMP_OFFSET	50000	/* uA */
+#define WC68_IIN_CC_COMP_OFFSET		25000	/* uA */
 /* IIN_CC compensation offset in Power Limit Mode(Constant Power) TA */
 #define WC68_IIN_CC_COMP_OFFSET_CP	20000	/* uA */
 /* TA maximum voltage that can support CC in Constant Power Mode */
@@ -1744,8 +1744,8 @@ static int wc68_get_iin_limit(const struct wc68_charger *wc68)
 	int iin_cc;
 
 	iin_cc = wc68_get_iin_max(wc68, wc68->cc_max);
-	if (wc68->ta_max_cur * wc68->chg_mode < iin_cc)
-		iin_cc = wc68->ta_max_cur * wc68->chg_mode;
+	if (wc68->ta_max_cur < iin_cc)
+		iin_cc = wc68->ta_max_cur;
 
 	dev_dbg(wc68->dev, "%s: iin_cc=%d ta_max_cur=%u, chg_mode=%d\n", __func__,
 		 iin_cc, wc68->ta_max_cur, wc68->chg_mode);
@@ -1978,7 +1978,7 @@ static int wc68_adjust_ta_current(struct wc68_charger *wc68)
 		 */
 		val = wc68->iin_cc / PD_MSG_TA_CUR_STEP;
 		wc68->iin_cc = val * PD_MSG_TA_CUR_STEP;
-		wc68->ta_cur = wc68->iin_cc / wc68->chg_mode;
+		wc68->ta_cur = wc68->iin_cc;
 
 		logbuffer_prlog(wc68, LOGLEVEL_DEBUG, "adjust iin=%u ta_cur=%d chg_mode=%d",
 				wc68->iin_cc, wc68->ta_cur, wc68->chg_mode);
@@ -2331,19 +2331,6 @@ static int wc68_apply_new_vfloat(struct wc68_charger *wc68)
 		goto error_done;
 
 	wc68->fv_uv = fv_uv;
-
-	/* Restart the process (TODO: optimize this) */
-	ret = wc68_reset_dcmode(wc68);
-	if (ret < 0) {
-		dev_err(wc68->dev, "%s: cannot reset dcmode (%d)\n", __func__, ret);
-	} else {
-		dev_info(wc68->dev, "%s: charging_state=%u->%u\n", __func__,
-			 wc68->charging_state, DC_STATE_ADJUST_CC);
-
-		wc68->charging_state = DC_STATE_ADJUST_CC;
-		wc68->timer_id = TIMER_PDMSG_SEND;
-		wc68->timer_period = 0;
-	}
 
 error_done:
 	logbuffer_prlog(wc68, LOGLEVEL_INFO,
@@ -3158,15 +3145,13 @@ static int wc68_charge_cvmode(struct wc68_charger *wc68)
 		/* Check the TA type */
 		if (wc68->ta_type == TA_TYPE_WIRELESS) {
 			/* Decrease RX voltage */
-			wc68->ta_vol = wc68->ta_vol -
-						WCRX_VOL_STEP;
+			wc68->ta_vol = wc68->ta_vol - WCRX_VOL_STEP;
 			logbuffer_prlog(wc68, LOGLEVEL_DEBUG,
 					"%s: CV VFLOAT, Cont: rx_vol=%u",
 					__func__, wc68->ta_vol);
 		} else {
 			/* Decrease TA voltage */
-			wc68->ta_vol = wc68->ta_vol -
-						PD_MSG_TA_VOL_STEP;
+			wc68->ta_vol = wc68->ta_vol - 2 * PD_MSG_TA_VOL_STEP;
 			logbuffer_prlog(wc68, LOGLEVEL_DEBUG,
 					"%s: CV VFLOAT, Cont: ta_vol=%u",
 					__func__, wc68->ta_vol);

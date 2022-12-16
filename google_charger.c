@@ -270,6 +270,7 @@ struct chg_drv {
 	struct gvotable_election *fan_level_votable;
 	struct gvotable_election *dead_battery_votable;
 	struct gvotable_election *tx_icl_votable;
+	struct gvotable_election *msc_last_votable;
 
 	bool init_done;
 	bool batt_present;
@@ -283,6 +284,7 @@ struct chg_drv {
 	int chg_mode;			/* debug */
 	int stop_charging;		/* no power source */
 	int egain_retries;
+	bool taper_last_tier;		/* set taper on last tier entry */
 
 	/* retail & battery defender */
 	struct delayed_work bd_work;
@@ -786,19 +788,22 @@ static int chg_update_charger(struct chg_drv *chg_drv, int fv_uv, int cc_max, in
 		return 0;
 
 	if (chg_drv->fv_uv != fv_uv || chg_drv->cc_max != cc_max || chg_drv->topoff != topoff) {
-		const int taper_limit = chg_drv->batt_profile_fv_uv >= 0 ?
-					chg_drv->batt_profile_fv_uv : -1;
 		const int chg_cc_tolerance = chg_drv->chg_cc_tolerance;
-		int taper_ctl = GBMS_TAPER_CONTROL_OFF;
 		int fcc = cc_max;
 
-		if (taper_limit > 0 && fv_uv >= taper_limit)
-			taper_ctl = GBMS_TAPER_CONTROL_ON;
+		if (!chg_drv->taper_last_tier) {
+			const int taper_limit = chg_drv->batt_profile_fv_uv >= 0 ?
+					chg_drv->batt_profile_fv_uv : -1;
+			int taper_ctl = GBMS_TAPER_CONTROL_OFF;
 
-		/* GBMS_PROP_TAPER_CONTROL is optional */
-		rc = GPSY_SET_PROP(chg_psy, GBMS_PROP_TAPER_CONTROL, taper_ctl);
-		if (rc < 0)
-			pr_debug("MSC_CHG cannot set taper control rc=%d\n", rc);
+			if (taper_limit > 0 && fv_uv >= taper_limit)
+				taper_ctl = GBMS_TAPER_CONTROL_ON;
+
+			/* GBMS_PROP_TAPER_CONTROL is optional */
+			rc = GPSY_SET_PROP(chg_psy, GBMS_PROP_TAPER_CONTROL, taper_ctl);
+			if (rc < 0)
+				pr_debug("MSC_CHG cannot set taper control rc=%d\n", rc);
+		}
 
 		/* when set cc_tolerance needs to be applied to everything */
 		if (chg_drv->chg_cc_tolerance)
@@ -2671,6 +2676,10 @@ static int chg_init_chg_profile(struct chg_drv *chg_drv)
 		chg_drv->chg_term.usb_5v = 0;
 	}
 
+	chg_drv->taper_last_tier = of_property_read_bool(node, "google,chg-taper-last-tier");
+	if (chg_drv->taper_last_tier)
+		pr_info("taper on last tier entry\n");
+
 	pr_info("charging profile in the battery\n");
 	return 0;
 }
@@ -4272,6 +4281,26 @@ static int msc_pwr_disable_cb(struct gvotable_election *el,
 	return 0;
 }
 
+static int msc_last_cb(struct gvotable_election *el, const char *reason, void *vote)
+{
+	struct chg_drv *chg_drv = gvotable_get_data(el);
+	int last_tier = GVOTABLE_PTR_TO_INT(vote);
+	int taper_ctl = last_tier ? GBMS_TAPER_CONTROL_ON : GBMS_TAPER_CONTROL_OFF;
+	struct power_supply *chg_psy = chg_drv->chg_psy;
+	int rc;
+
+	if (!chg_psy || !chg_drv->taper_last_tier)
+		return 0;
+
+	/* GBMS_PROP_TAPER_CONTROL is optional */
+	rc = GPSY_SET_PROP(chg_psy, GBMS_PROP_TAPER_CONTROL, taper_ctl);
+	if (rc < 0)
+		pr_debug("MSC_CHG cannot set taper control rc=%d\n", rc);
+
+	return rc;
+
+}
+
 static int chg_disable_std_votables(struct chg_drv *chg_drv)
 {
 	struct gvotable_election *qc_votable;
@@ -4305,6 +4334,7 @@ static void chg_destroy_votables(struct chg_drv *chg_drv)
 	gvotable_destroy_election(chg_drv->msc_chg_disable_votable);
 	gvotable_destroy_election(chg_drv->msc_pwr_disable_votable);
 	gvotable_destroy_election(chg_drv->msc_temp_dry_run_votable);
+	gvotable_destroy_election(chg_drv->msc_last_votable);
 
 	chg_drv->msc_fv_votable = NULL;
 	chg_drv->msc_fcc_votable = NULL;
@@ -4314,6 +4344,7 @@ static void chg_destroy_votables(struct chg_drv *chg_drv)
 	chg_drv->msc_temp_dry_run_votable = NULL;
 	chg_drv->csi_status_votable = NULL;
 	chg_drv->csi_type_votable = NULL;
+	chg_drv->msc_last_votable = NULL;
 }
 
 /* TODO: qcom/battery.c mostly handles PL charging: we don't need it.
@@ -4408,6 +4439,20 @@ static int chg_create_votables(struct chg_drv *chg_drv)
 			      gvotable_v2s_int);
 	gvotable_election_set_name(chg_drv->msc_temp_dry_run_votable,
 				   VOTABLE_TEMP_DRYRUN);
+
+	chg_drv->msc_last_votable =
+		gvotable_create_int_election(NULL, gvotable_comparator_int_min, msc_last_cb,
+					     chg_drv);
+	if (IS_ERR_OR_NULL(chg_drv->msc_last_votable)) {
+		ret = PTR_ERR(chg_drv->msc_last_votable);
+		chg_drv->msc_last_votable = NULL;
+		goto error_exit;
+	}
+
+	gvotable_set_default(chg_drv->msc_last_votable, (void *)0);
+	gvotable_set_vote2str(chg_drv->msc_last_votable, gvotable_v2s_int);
+	gvotable_election_set_name(chg_drv->msc_last_votable, VOTABLE_MSC_LAST);
+	gvotable_use_default(chg_drv->msc_last_votable, true);
 
 	return 0;
 
