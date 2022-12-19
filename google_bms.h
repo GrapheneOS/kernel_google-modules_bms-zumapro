@@ -462,6 +462,10 @@ const char *gbms_chg_ev_adapter_s(int adapter);
 #define VOTABLE_CSI_STATUS	"CSI_STATUS"
 #define VOTABLE_CSI_TYPE	"CSI_TYPE"
 
+#define VOTABLE_DC_CHG_AVAIL	"DC_AVAIL"
+#define REASON_DC_DRV		"DC_DRV"
+#define REASON_MDIS		"MDIS"
+
 #define FAN_LVL_UNKNOWN		-1
 #define FAN_LVL_NOT_CARE	0
 #define FAN_LVL_LOW		1

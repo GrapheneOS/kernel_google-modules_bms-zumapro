@@ -167,6 +167,7 @@ struct gcpm_drv  {
 	int chg_psy_retries;
 	struct power_supply *chg_psy_avail[GCPM_MAX_CHARGERS];
 	const char *chg_psy_names[GCPM_MAX_CHARGERS];
+	struct gvotable_election *dc_chg_avail_votable;
 	struct mutex chg_psy_lock;
 	int chg_psy_active;
 	int chg_psy_count;
@@ -414,6 +415,11 @@ static int gcpm_chg_offline(struct gcpm_drv *gcpm, int index)
 	const int active_index = gcpm->chg_psy_active;
 	struct power_supply *chg_psy;
 	int ret;
+
+	ret = gcpm_update_gcpm_fcc(gcpm, "CC_MAX", gcpm->cc_max, false);
+	if (ret < 0)
+		pr_debug("PPS_DC: offline cannot update cp_fcc (%d)\n", ret);
+
 
 	chg_psy = gcpm_chg_get_charger(gcpm, index);
 	if (!chg_psy)
@@ -701,6 +707,10 @@ static int gcpm_dc_start(struct gcpm_drv *gcpm, int index)
 	if (ret < 0)
 		pr_debug("PPS_DC: start cannot update votes (%d)\n", ret);
 
+	ret = gcpm_update_gcpm_fcc(gcpm, "CC_MAX", gcpm->cc_max, true);
+	if (ret < 0)
+		pr_debug("PPS_DC: start cannot update cp_fcc (%d)\n", ret);
+
 	/* this is the CP */
 	dc_psy = gcpm_chg_get_active_cp(gcpm);
 	if (!dc_psy) {
@@ -961,6 +971,7 @@ exit_done:
 static int gcpm_chg_select(struct gcpm_drv *gcpm)
 {
 	int index = GCPM_DEFAULT_CHARGER;
+	int ret;
 
 	if (!gcpm->dc_init_complete)
 		goto exit_done; /* index == GCPM_DEFAULT_CHARGER; */
@@ -972,6 +983,11 @@ static int gcpm_chg_select(struct gcpm_drv *gcpm)
 	/* kill switch */
 	if (gcpm->dc_ctl == GCPM_DC_CTL_DISABLE_BOTH)
 		goto exit_done; /* index == GCPM_DEFAULT_CHARGER; */
+
+	ret = gvotable_get_current_int_vote(gcpm->dc_chg_avail_votable);
+	dev_dbg(gcpm->device, "%s: dc_chg_avail vote: %d\n", __func__, ret);
+	if (ret <= 0)
+		goto exit_done;
 
 	/*
 	 * check demand first to react to thermal engine, then voltage to
@@ -1637,7 +1653,6 @@ static void gcpm_pps_wlc_dc_work(struct work_struct *work)
 			pps_ui = DC_ERROR_RETRY_MS;
 		} else {
 			pr_err("PPS_Work: ping DC failed, elap=%lld (%d)\n", elap, ret);
-
 			ret = gcpm_chg_offline(gcpm, gcpm->dc_index);
 			if (ret == 0)
 				ret = gcpm_enable_default(gcpm);
@@ -1847,6 +1862,21 @@ static int gcpm_dc_fcc_callback(struct gvotable_election *el,
 				 msecs_to_jiffies(DC_ENABLE_DELAY_MS));
 
 	mutex_unlock(&gcpm->chg_psy_lock);
+	return 0;
+}
+
+static int gcpm_dc_chg_avail_callback(struct gvotable_election *el,
+				      const char *reason, void *value)
+{
+	struct gcpm_drv *gcpm = gvotable_get_data(el);
+	const int dc_chg_avail = GVOTABLE_PTR_TO_INT(value);
+
+	if (!gcpm->init_complete)
+		return 0;
+
+	mod_delayed_work(system_wq, &gcpm->select_work, 0);
+	pr_debug("DC_CHG_AVAIL: dc_avail=%d, reason=%s\n", dc_chg_avail, reason);
+
 	return 0;
 }
 
@@ -2550,6 +2580,7 @@ static int gcpm_set_mdis_charge_cntl_limit(struct thermal_cooling_device *tcd,
 	struct gcpm_drv *gcpm = tdev->gcpm;
 	int online = 0, in_idx = -1;
 	int msc_fcc, dc_icl, cp_fcc, ret;
+	bool mdis_crit_lvl;
 
 	if (tdev->thermal_levels <= 0 || lvl < 0 || lvl > tdev->thermal_levels)
 		return -EINVAL;
@@ -2559,7 +2590,8 @@ static int gcpm_set_mdis_charge_cntl_limit(struct thermal_cooling_device *tcd,
 	dev_dbg(gcpm->device, "MSC_THERM_MDIS lvl=%d->%d\n", tdev->current_level, (int)lvl);
 
 	tdev->current_level = lvl;
-	if (lvl == tdev->thermal_levels || tdev->thermal_mitigation[lvl] == 0) {
+	mdis_crit_lvl = lvl == tdev->thermal_levels || tdev->thermal_mitigation[lvl] == 0;
+	if (mdis_crit_lvl) {
 		msc_fcc = dc_icl = cp_fcc = 0;
 		gcpm->cp_fcc_hold_limit = gcpm_chg_select_check_cp_limit(gcpm);
 		gcpm->cp_fcc_hold = true;
@@ -2649,6 +2681,10 @@ static int gcpm_set_mdis_charge_cntl_limit(struct thermal_cooling_device *tcd,
 		lvl, in_idx, online, cp_fcc, gcpm->cp_fcc_hold,
 		gcpm->cp_fcc_hold_limit);
 
+	ret = gvotable_cast_int_vote(gcpm->dc_chg_avail_votable, REASON_MDIS,
+				     !mdis_crit_lvl, 1);
+	if (ret < 0)
+		dev_err(gcpm->device, "Unable to cast vote for DC Chg avail (%d)\n", ret);
 	/*
 	 * this might be in the callback for mdis_votable
 	 * . cp_fcc == 0 will apply msc_fcc, dc_icl and must cause the
@@ -4010,6 +4046,21 @@ static int google_cpm_probe(struct platform_device *pdev)
 	gvotable_set_default(gcpm->dc_fcc_votable, (void *)-1);
 	gvotable_set_vote2str(gcpm->dc_fcc_votable, gvotable_v2s_int);
 	gvotable_election_set_name(gcpm->dc_fcc_votable, "DC_FCC");
+
+	gcpm->dc_chg_avail_votable = gvotable_create_int_election(
+			NULL, gvotable_comparator_int_min,
+			gcpm_dc_chg_avail_callback, gcpm);
+
+	if (IS_ERR_OR_NULL(gcpm->dc_chg_avail_votable)) {
+		ret = PTR_ERR(gcpm->dc_chg_avail_votable);
+		dev_err(gcpm->device, "no DC chg avail votable %d\n", ret);
+		return ret;
+	}
+
+	gvotable_set_default(gcpm->dc_chg_avail_votable, (void *)1);
+	gvotable_set_vote2str(gcpm->dc_chg_avail_votable, gvotable_v2s_int);
+	gvotable_election_set_name(gcpm->dc_chg_avail_votable, VOTABLE_DC_CHG_AVAIL);
+	gvotable_use_default(gcpm->dc_chg_avail_votable, true);
 
 	/* sysfs & debug */
 	gcpm->debug_entry = gcpm_init_fs(gcpm);
