@@ -105,7 +105,7 @@
 #define WC68_IRDROP_LIMIT_TIER3	0	/* uV */
 
 /* Default value for protections */
-#define CBUS_UCP_DFT			400000	/* 400 mV, actual value TBD */
+#define CBUS_UCP_DFT			150000	/* 150 mA, actual value TBD */
 #define VBAT_REV_UVP_DFT		3500000 /* 3.5V */
 #define VBAT_UVP_DFT			3400000 /* 3.4V */
 #define VBAT_OVP_WARN_DFT		4450000 /* 4.45V */
@@ -426,9 +426,9 @@ int wc68_read_adc(struct wc68_charger *wc68, u8 adc_ch)
 		}
 
 		if (raw_adc <= 2047)
-			conv_adc = 371 + (raw_adc + 2048) * DIETEMP_STEP;
+			conv_adc = 371 + (raw_adc + 2048) * DIETEMP_STEP / 1000;
 		else if (raw_adc >= 63488)
-			conv_adc = 371 + (raw_adc - 65536 + 2048) * DIETEMP_STEP;
+			conv_adc = 371 + (raw_adc - 65536 + 2048) * DIETEMP_STEP / 1000;
 		else
 			conv_adc = 0;
 		if (conv_adc > DIETEMP_MAX)
@@ -685,6 +685,15 @@ static int wc68_set_charging(struct wc68_charger *wc68, bool enable)
 		ret = wc68_reg8_set(wc68, PROT_EN_0, 0);
 		if (ret)
 			goto error;
+
+		ret = wc68_hw_init(wc68);
+		if (ret) {
+			dev_err(wc68->dev, "Error initializing hw %d\n", ret);
+			wc68->hw_init_done = false;
+			goto error;
+		}
+
+		wc68->hw_init_done = true;
 	}
 
 error:
@@ -3915,12 +3924,12 @@ static int wc68_hw_init(struct wc68_charger *wc68)
 	}
 
 	/* Set switching frequency and deadtime */
-	ret = wc68_reg8_set(wc68, SYS_CFG_1, 0x67);
+	ret = wc68_reg8_set(wc68, SYS_CFG_1, 0xA7);
 	if (ret)
 		goto error_done;
 
-	/* Set safety switch drive voltage 5V */
-	ret = wc68_reg8_set(wc68, SYS_CFG_3, 0xFD);
+	/* Set safety switch drive voltage 9V */
+	ret = wc68_reg8_set(wc68, SYS_CFG_3, 0xFE);
 	if (ret)
 		goto error_done;
 
@@ -3986,7 +3995,7 @@ static int wc68_hw_init(struct wc68_charger *wc68)
 	ret = wc68_reg8_set(wc68, ADC_CTRL, ADC_CTRL_CONT_EN);
 	if (ret)
 		goto error_done;
-	msleep(200);
+	msleep(5);
 
 error_done:
 	return ret;
