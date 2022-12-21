@@ -462,6 +462,8 @@ const char *gbms_chg_ev_adapter_s(int adapter);
 #define VOTABLE_CSI_STATUS	"CSI_STATUS"
 #define VOTABLE_CSI_TYPE	"CSI_TYPE"
 
+#define VOTABLE_CHARGING_POLICY	"CHARGING_POLICY"
+
 #define VOTABLE_DC_CHG_AVAIL	"DC_AVAIL"
 #define REASON_DC_DRV		"DC_DRV"
 #define REASON_MDIS		"MDIS"
@@ -646,6 +648,41 @@ enum csi_status {
 	CSI_STATUS_Defender_Dock = 43,	// Dock Defend
 	CSI_STATUS_NotCharging = 100,	// There will be a more specific reason
 	CSI_STATUS_Charging = 200,	// All good
+};
+
+enum charging_state {
+       BATTERY_STATUS_UNKNOWN = -1,
+
+       BATTERY_STATUS_NORMAL = 1,
+       BATTERY_STATUS_TOO_COLD = 2,
+       BATTERY_STATUS_TOO_HOT = 3,
+       BATTERY_STATUS_LONGLIFE = 4,
+       BATTERY_STATUS_ADAPTIVE = 5,
+};
+
+#define LONGLIFE_CHARGE_STOP_LEVEL 80
+#define LONGLIFE_CHARGE_START_LEVEL 70
+#define ADAPTIVE_ALWAYS_ON_SOC 80
+
+enum charging_policy {
+       CHARGING_POLICY_UNKNOWN = -1,
+
+       CHARGING_POLICY_DEFAULT = 1,
+       CHARGING_POLICY_LONGLIFE = 2,
+       CHARGING_POLICY_ADAPTIVE = 3,
+};
+
+/*
+ * LONGLIFE takes precedence over AC or AON limits,
+ * and AC also must take precedence over the AON limit.
+ */
+enum charging_policy_vote {
+       CHARGING_POLICY_VOTE_UNKNOWN = -1,
+
+       CHARGING_POLICY_VOTE_DEFAULT = 1,
+       CHARGING_POLICY_VOTE_ADAPTIVE_AON = 2,
+       CHARGING_POLICY_VOTE_ADAPTIVE_AC = 3,
+       CHARGING_POLICY_VOTE_LONGLIFE = 4,
 };
 
 #define to_cooling_device(_dev)	\

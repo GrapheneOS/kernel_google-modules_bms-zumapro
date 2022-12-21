@@ -585,6 +585,10 @@ struct batt_drv {
 
 	/* battery temperature filter */
 	struct batt_temp_filter temp_filter;
+
+	/* charging policy */
+	struct gvotable_election *charging_policy_votable;
+	int charging_policy;
 };
 
 static int gbatt_get_temp(struct batt_drv *batt_drv, int *temp);
@@ -4368,6 +4372,10 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 		batt_update_cycle_count(batt_drv);
 		batt_rl_reset(batt_drv);
 
+		/* charging_policy: vote AC false when disconnected */
+		gvotable_cast_long_vote(batt_drv->charging_policy_votable, "MSC_AC",
+					CHARGING_POLICY_VOTE_ADAPTIVE_AC, false);
+
 		/* trigger google_capacity learning. */
 		err = GPSY_SET_PROP(batt_drv->fg_psy,
 				    GBMS_PROP_BATT_CE_CTRL,
@@ -5806,20 +5814,12 @@ static ssize_t chg_health_charge_limit_get(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%d\n",
 			 batt_drv->chg_health.always_on_soc);
 }
-/* setting disable (deadline = -1) or replug (deadline == 0) will disable */
-static ssize_t chg_health_charge_limit_set(struct device *dev,
-					   struct device_attribute *attr,
-					   const char *buf, size_t count)
-{
-	struct power_supply *psy = container_of(dev, struct power_supply, dev);
-	struct batt_drv *batt_drv =(struct batt_drv *)
-					power_supply_get_drvdata(psy);
-	const int always_on_soc = simple_strtol(buf, NULL, 10);
-	enum chg_health_state rest_state;
 
-	/* Always enable AC when SOC is over trigger */
-	if (always_on_soc < -1 || always_on_soc > 99)
-		return -EINVAL;
+/* setting disable (deadline = -1) or replug (deadline == 0) will disable */
+static void batt_set_health_charge_limit(struct batt_drv *batt_drv,
+					 const int always_on_soc)
+{
+	enum chg_health_state rest_state;
 
 	mutex_lock(&batt_drv->chg_lock);
 
@@ -5860,6 +5860,22 @@ static ssize_t chg_health_charge_limit_set(struct device *dev,
 	batt_drv->chg_health.rest_state = rest_state;
 
 	mutex_unlock(&batt_drv->chg_lock);
+}
+
+static ssize_t chg_health_charge_limit_set(struct device *dev,
+					   struct device_attribute *attr,
+					   const char *buf, size_t count)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv =(struct batt_drv *)
+					power_supply_get_drvdata(psy);
+	const int always_on_soc = simple_strtol(buf, NULL, 10);
+
+	/* Always enable AC when SOC is over the trigger point. */
+	if (always_on_soc < -1 || always_on_soc > 99)
+		return -EINVAL;
+
+	batt_set_health_charge_limit(batt_drv, always_on_soc);
 	power_supply_changed(batt_drv->psy);
 	return count;
 }
@@ -5942,8 +5958,14 @@ static ssize_t batt_set_chg_deadline(struct device *dev,
 					       deadline_s);
 	mutex_unlock(&batt_drv->chg_lock);
 
-	if (changed)
+	if (changed) {
+		/* charging_policy: vote AC */
+		gvotable_cast_long_vote(batt_drv->charging_policy_votable, "MSC_AC",
+					CHARGING_POLICY_VOTE_ADAPTIVE_AC,
+					batt_drv->chg_health.rest_deadline > 0);
+
 		power_supply_changed(batt_drv->psy);
+	}
 
 	gbms_logbuffer_prlog(batt_drv->ttf_stats.ttf_log, LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG,
 			     "MSC_HEALTH: deadline_s=%lld deadline at %lld",
@@ -6844,6 +6866,141 @@ static ssize_t first_usage_date_show(struct device *dev,
 
 static const DEVICE_ATTR_RW(first_usage_date);
 
+static int batt_get_charging_state(const struct batt_drv *batt_drv)
+{
+	int ret = BATTERY_STATUS_UNKNOWN;
+	int type, status;
+
+	/* wait for csi_type updated */
+	if (!batt_drv->csi_type_votable)
+		return ret;
+
+	type = gvotable_get_current_int_vote(batt_drv->csi_type_votable);
+	switch (type) {
+	case CSI_TYPE_Normal:
+	case CSI_TYPE_None:
+		ret = BATTERY_STATUS_NORMAL;
+		break;
+	case CSI_TYPE_JEITA:
+		/* wait for csi_status updated */
+		if (!batt_drv->csi_status_votable)
+			break;
+
+		status = gvotable_get_current_int_vote(batt_drv->csi_status_votable);
+		ret = (status == CSI_STATUS_Health_Cold) ?
+		      BATTERY_STATUS_TOO_COLD : BATTERY_STATUS_TOO_HOT;
+		break;
+	case CSI_TYPE_LongLife:
+		ret = BATTERY_STATUS_LONGLIFE;
+		break;
+	case CSI_TYPE_Adaptive:
+		ret = BATTERY_STATUS_ADAPTIVE;
+		break;
+	default:
+		break;
+	}
+
+	return ret;
+}
+
+static ssize_t charging_state_show(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	int charging_state = batt_get_charging_state(batt_drv);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", charging_state);
+}
+
+static const DEVICE_ATTR_RO(charging_state);
+
+static void batt_update_charging_policy(struct batt_drv *batt_drv)
+{
+	int value;
+
+	value = gvotable_get_current_int_vote(batt_drv->charging_policy_votable);
+	if (value == batt_drv->charging_policy)
+		return;
+
+	/* update adaptive charging */
+	if (value == CHARGING_POLICY_VOTE_ADAPTIVE_AON)
+		batt_set_health_charge_limit(batt_drv, ADAPTIVE_ALWAYS_ON_SOC);
+	else if (value != CHARGING_POLICY_VOTE_ADAPTIVE_AON &&
+		   batt_drv->charging_policy == CHARGING_POLICY_VOTE_ADAPTIVE_AON)
+		batt_set_health_charge_limit(batt_drv, -1);
+
+	batt_drv->charging_policy = value;
+}
+
+static int charging_policy_translate(int value)
+{
+	int ret = CHARGING_POLICY_VOTE_DEFAULT;
+
+	switch (value) {
+	case CHARGING_POLICY_DEFAULT:
+		ret = CHARGING_POLICY_VOTE_DEFAULT;
+		break;
+	case CHARGING_POLICY_LONGLIFE:
+		ret = CHARGING_POLICY_VOTE_LONGLIFE;
+		break;
+	case CHARGING_POLICY_ADAPTIVE:
+		ret = CHARGING_POLICY_VOTE_ADAPTIVE_AON;
+		break;
+	default:
+		break;
+	}
+
+	return ret;
+}
+
+static ssize_t charging_policy_store(struct device *dev,
+				     struct device_attribute *attr,
+				     const char *buf, size_t count)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	int value, ret;
+
+	ret = kstrtoint(buf, 0, &value);
+	if (ret < 0)
+		return ret;
+
+	if (value > CHARGING_POLICY_ADAPTIVE || value < CHARGING_POLICY_DEFAULT)
+		return count;
+
+	if (!batt_drv->charging_policy_votable) {
+		batt_drv->charging_policy_votable =
+			gvotable_election_get_handle(VOTABLE_CHARGING_POLICY);
+		if (!batt_drv->charging_policy_votable)
+			return count;
+	}
+
+	gvotable_cast_long_vote(batt_drv->charging_policy_votable, "MSC_USER",
+				charging_policy_translate(value), true);
+	batt_update_charging_policy(batt_drv);
+
+	return count;
+}
+
+static ssize_t charging_policy_show(struct device *dev,
+				    struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	int value = CHARGING_POLICY_VOTE_UNKNOWN;
+
+	if (!batt_drv->charging_policy_votable)
+		batt_drv->charging_policy_votable =
+			gvotable_election_get_handle(VOTABLE_CHARGING_POLICY);
+	if (batt_drv->charging_policy_votable)
+		value = gvotable_get_current_int_vote(batt_drv->charging_policy_votable);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", value);
+}
+
+static const DEVICE_ATTR_RW(charging_policy);
+
 /* CSI --------------------------------------------------------------------- */
 
 static ssize_t charging_speed_store(struct device *dev,
@@ -7298,6 +7455,12 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_first_usage_date);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create first usage date\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_charging_state);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create charging state\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_charging_policy);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create charging policy\n");
 
 	/* csi */
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_charging_speed);
@@ -8922,6 +9085,7 @@ static void google_battery_init_work(struct work_struct *work)
 	batt_drv->fake_temp = 0;
 	batt_drv->fake_battery_present = -1;
 	batt_drv->boot_to_os_attempts = 0;
+	batt_drv->charging_policy = CHARGING_POLICY_DEFAULT;
 	batt_reset_chg_drv_state(batt_drv);
 
 	mutex_init(&batt_drv->chg_lock);
@@ -9465,6 +9629,7 @@ static int google_battery_remove(struct platform_device *pdev)
 	batt_drv->fan_level_votable = NULL;
 	batt_drv->csi_status_votable = NULL;
 	batt_drv->csi_type_votable = NULL;
+	batt_drv->charging_policy_votable = NULL;
 
 	return 0;
 }

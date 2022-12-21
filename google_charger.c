@@ -327,6 +327,10 @@ struct chg_drv {
 	ktime_t thermal_stats_last_update;
 	int *thermal_stats_mdis_levels;
 	int thermal_levels_count;
+
+	/* charging policy */
+	struct gvotable_election *charging_policy_votable;
+	int charging_policy;
 };
 
 static void reschedule_chg_work(struct chg_drv *chg_drv)
@@ -4228,6 +4232,39 @@ static int msc_pwr_disable_cb(struct gvotable_election *el,
 	return 0;
 }
 
+static void chg_update_charging_policy(struct chg_drv *chg_drv, const int value)
+{
+	/* set custom upper and lower bound for long_life charging policy */
+	if (value == CHARGING_POLICY_VOTE_LONGLIFE &&
+	    chg_drv->charging_policy != CHARGING_POLICY_VOTE_LONGLIFE) {
+		chg_drv->charge_stop_level = LONGLIFE_CHARGE_STOP_LEVEL;
+		chg_drv->charge_start_level = LONGLIFE_CHARGE_START_LEVEL;
+	} else if (value != CHARGING_POLICY_VOTE_LONGLIFE &&
+		   chg_drv->charging_policy == CHARGING_POLICY_VOTE_LONGLIFE) {
+		chg_drv->charge_stop_level = DEFAULT_CHARGE_STOP_LEVEL;
+		chg_drv->charge_start_level = DEFAULT_CHARGE_START_LEVEL;
+	}
+
+	chg_drv->charging_policy = value;
+}
+
+static int charging_policy_cb(struct gvotable_election *el,
+			      const char *reason, void *vote)
+{
+	struct chg_drv *chg_drv = gvotable_get_data(el);
+	int charging_policy = GVOTABLE_PTR_TO_INT(vote);
+
+	if (!chg_drv || chg_drv->charging_policy == charging_policy)
+		return 0;
+
+	chg_update_charging_policy(chg_drv, charging_policy);
+
+	if (chg_drv->bat_psy)
+		power_supply_changed(chg_drv->bat_psy);
+
+	return 0;
+}
+
 static int chg_disable_std_votables(struct chg_drv *chg_drv)
 {
 	struct gvotable_election *qc_votable;
@@ -4261,6 +4298,7 @@ static void chg_destroy_votables(struct chg_drv *chg_drv)
 	gvotable_destroy_election(chg_drv->msc_chg_disable_votable);
 	gvotable_destroy_election(chg_drv->msc_pwr_disable_votable);
 	gvotable_destroy_election(chg_drv->msc_temp_dry_run_votable);
+	gvotable_destroy_election(chg_drv->charging_policy_votable);
 
 	chg_drv->msc_fv_votable = NULL;
 	chg_drv->msc_fcc_votable = NULL;
@@ -4270,6 +4308,7 @@ static void chg_destroy_votables(struct chg_drv *chg_drv)
 	chg_drv->msc_temp_dry_run_votable = NULL;
 	chg_drv->csi_status_votable = NULL;
 	chg_drv->csi_type_votable = NULL;
+	chg_drv->charging_policy_votable = NULL;
 }
 
 /* TODO: qcom/battery.c mostly handles PL charging: we don't need it.
@@ -4364,6 +4403,21 @@ static int chg_create_votables(struct chg_drv *chg_drv)
 			      gvotable_v2s_int);
 	gvotable_election_set_name(chg_drv->msc_temp_dry_run_votable,
 				   VOTABLE_TEMP_DRYRUN);
+
+	chg_drv->charging_policy_votable =
+		gvotable_create_int_election(NULL, gvotable_comparator_int_max,
+					     charging_policy_cb, chg_drv);
+	if (IS_ERR_OR_NULL(chg_drv->charging_policy_votable)) {
+		ret = PTR_ERR(chg_drv->charging_policy_votable);
+		chg_drv->charging_policy_votable = NULL;
+		goto error_exit;
+	}
+
+	gvotable_set_vote2str(chg_drv->charging_policy_votable, gvotable_v2s_int);
+	gvotable_election_set_name(chg_drv->charging_policy_votable,
+				   VOTABLE_CHARGING_POLICY);
+	gvotable_cast_long_vote(chg_drv->charging_policy_votable,
+				"DEFAULT", CHARGING_POLICY_DEFAULT, true);
 
 	return 0;
 
@@ -5329,6 +5383,7 @@ static void google_charger_init_work(struct work_struct *work)
 	chg_drv->stop_charging = -1;
 	chg_drv->charge_stop_level = DEFAULT_CHARGE_STOP_LEVEL;
 	chg_drv->charge_start_level = DEFAULT_CHARGE_START_LEVEL;
+	chg_drv->charging_policy = CHARGING_POLICY_DEFAULT;
 	mutex_init(&chg_drv->stats_lock);
 	thermal_stats_init(chg_drv);
 
