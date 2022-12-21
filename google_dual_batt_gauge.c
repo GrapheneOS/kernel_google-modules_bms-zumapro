@@ -668,9 +668,9 @@ static int __maybe_unused google_dual_batt_pm_resume(struct device *dev)
 	return 0;
 }
 
-static SIMPLE_DEV_PM_OPS(google_dual_batt_pm_ops,
-			 google_dual_batt_pm_suspend,
-			 google_dual_batt_pm_resume);
+static const struct dev_pm_ops google_dual_batt_pm_ops = {
+	SET_NOIRQ_SYSTEM_SLEEP_PM_OPS(google_dual_batt_pm_suspend, google_dual_batt_pm_resume)
+};
 
 static const struct of_device_id google_dual_batt_gauge_of_match[] = {
 	{.compatible = "google,dual_batt_gauge"},
