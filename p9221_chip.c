@@ -778,6 +778,21 @@ static int p9412_chip_tx_apbst_enable(struct p9221_charger_data *chgr)
 	return ret;
 }
 
+static void rtx_current_limit_opt(struct p9221_charger_data *chgr)
+{
+	int ret;
+
+	/* Set API limit to 1.35A */
+	ret = chgr->reg_write_16(chgr, P9412_I_API_Limit, P9412_I_API_Limit_1350MA);
+	/* Set API Hyst to 0.8A */
+	ret |= chgr->reg_write_8(chgr, P9412_I_API_Hys, P9412_I_API_Hys_08);
+	/* Set Frequency low limit to 120kHz */
+	ret |= chgr->reg_write_16(chgr, P9412_MIN_FREQ_PER, P9412_MIN_FREQ_PER_120);
+
+	if (ret < 0)
+		logbuffer_log(chgr->rtx_log, "fail to set RTx current limit, ret=%d\n", ret);
+}
+
 static int p9412_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 {
 	int ret;
@@ -820,6 +835,8 @@ static int p9412_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 	logbuffer_log(chgr->rtx_log, "configure TX OCP to %dMA", P9412_TXOCP_1400MA);
 	if (ret < 0)
 		return ret;
+	if (chgr->pdata->hw_ocp_det)
+		rtx_current_limit_opt(chgr);
 
 	if (chgr->pdata->apbst_en && !chgr->pdata->hw_ocp_det)
 		mod_delayed_work(system_wq, &chgr->chk_rtx_ocp_work, 0);

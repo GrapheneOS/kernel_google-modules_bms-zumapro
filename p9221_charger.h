@@ -510,6 +510,12 @@
 #define P9412_TXOCP_1400MA			1400
 #define P9412_PLIM_REG				0x3D
 #define P9412_PLIM_1200MA			0x0E
+#define P9412_I_API_Limit			0x56
+#define P9412_I_API_Limit_1350MA		1350
+#define P9412_I_API_Hys				0x82
+#define P9412_I_API_Hys_08			0x6A
+#define P9412_MIN_FREQ_PER			0x94
+#define P9412_MIN_FREQ_PER_120			1000	/* 120000/120 */
 
 #define P9412_MOT_REG				0xD0
 #define P9412_MOT_40PCT				0x10
