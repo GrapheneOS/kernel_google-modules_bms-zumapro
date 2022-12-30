@@ -461,6 +461,7 @@ struct batt_drv {
 
 	int temp_idx;
 	int vbatt_idx;
+	int profile_vbatt_idx;
 	int checked_cv_cnt;
 	int checked_ov_cnt;
 	int checked_tier_switch_cnt;
@@ -1783,11 +1784,11 @@ static bool batt_chg_stats_close(struct batt_drv *batt_drv,
 	const ktime_t dry_run_deadline = batt_drv->chg_health.dry_run_deadline;
 
 	/* book last period to the current tier
-	 * NOTE: vbatt_idx != -1 -> temp_idx != -1
+	 * NOTE: profile_vbatt_idx != -1 -> temp_idx != -1
 	 */
-	if (batt_drv->vbatt_idx != -1 && batt_drv->temp_idx != -1) {
+	if (batt_drv->profile_vbatt_idx != -1 && batt_drv->temp_idx != -1) {
 		const ktime_t elap = now - batt_drv->ce_data.last_update;
-		const int tier_idx = batt_chg_vbat2tier(batt_drv->vbatt_idx);
+		const int tier_idx = batt_chg_vbat2tier(batt_drv->profile_vbatt_idx);
 		const int ibatt = GPSY_GET_PROP(batt_drv->fg_psy,
 						POWER_SUPPLY_PROP_CURRENT_NOW);
 		const int temp = GPSY_GET_PROP(batt_drv->fg_psy,
@@ -2592,6 +2593,7 @@ static inline void batt_reset_chg_drv_state(struct batt_drv *batt_drv)
 	/* algo */
 	batt_drv->temp_idx = -1;
 	batt_drv->vbatt_idx = -1;
+	batt_drv->profile_vbatt_idx = -1;
 	batt_drv->fv_uv = -1;
 	batt_drv->cc_max = -1;
 	batt_drv->cc_max_pullback = -1;
@@ -3803,7 +3805,7 @@ static int msc_logic(struct batt_drv *batt_drv)
 	struct power_supply *fg_psy = batt_drv->fg_psy;
 	struct gbms_chg_profile *profile = &batt_drv->chg_profile;
 	int vbatt_idx = batt_drv->vbatt_idx, fv_uv = batt_drv->fv_uv, temp_idx;
-	int temp, ibatt, vbatt, ioerr;
+	int temp, ibatt, vbatt, ioerr, profile_vbatt_idx;
 	int update_interval = MSC_DEFAULT_UPDATE_INTERVAL;
 	const ktime_t now = get_boot_sec();
 	ktime_t elap = now - batt_drv->ce_data.last_update;
@@ -4022,14 +4024,13 @@ static int msc_logic(struct batt_drv *batt_drv)
 	 * NOTE: temp_idx != -1 but batt_drv->msc_state could be -1
 	 */
 	mutex_lock(&batt_drv->stats_lock);
-	if (vbatt_idx != -1 && vbatt_idx < profile->volt_nb_limits) {
-		int tier_idx = batt_chg_vbat2tier(batt_drv->vbatt_idx);
+	profile_vbatt_idx = gbms_msc_voltage_idx(profile, vbatt);
+	if (profile_vbatt_idx != -1 && profile_vbatt_idx < profile->volt_nb_limits) {
+		int tier_idx = batt_chg_vbat2tier(profile_vbatt_idx);
 
 		/* this is the seed after the connect */
-		if (tier_idx == -1) {
-			tier_idx = batt_chg_vbat2tier(vbatt_idx);
+		if (batt_drv->profile_vbatt_idx == -1)
 			elap = 0;
-		}
 
 		batt_chg_stats_update(batt_drv, temp_idx, tier_idx,
 				      ibatt / 1000, temp,
@@ -4062,6 +4063,7 @@ static int msc_logic(struct batt_drv *batt_drv)
 		batt_drv->cc_max = batt_drv->cc_max_pullback;
 	}
 	batt_drv->vbatt_idx = vbatt_idx;
+	batt_drv->profile_vbatt_idx = profile_vbatt_idx;
 	batt_drv->temp_idx = temp_idx;
 	batt_drv->topoff = profile->topoff_limits[temp_idx];
 	batt_drv->fv_uv = fv_uv;
