@@ -68,7 +68,7 @@ int ttf_pwr_ibatt(const struct gbms_ce_tier_stats *ts)
 	}
 
 	/* actual, called only when avg_ibatt in tier indicates charging */
-	avg_ibatt = div_u64(ts->ibatt_sum, (elap + ts->time_other));
+	avg_ibatt = div_s64(ts->ibatt_sum, (elap + ts->time_other));
 	if (avg_ibatt < 0)
 		sign = -1;
 
