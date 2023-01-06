@@ -313,6 +313,7 @@ struct chg_drv {
 
 	/* debug */
 	struct dentry *debug_entry;
+	bool debug_input_suspend;
 
 	/* dock_defend */
 	struct delayed_work bd_dd_work;
@@ -1192,8 +1193,9 @@ static int chg_work_roundtrip(struct chg_drv *chg_drv,
 	 */
 	wlc_on = chg_work_check_wlc_state(wlc_psy);
 	usb_on = chg_work_check_usb_state(chg_drv);
-	if ((wlc_on | usb_on) && batt_chg_state.f.chg_status == POWER_SUPPLY_STATUS_DISCHARGING) {
-		batt_chg_state.f.chg_status = POWER_SUPPLY_STATUS_NOT_CHARGING;
+	if ((wlc_on || usb_on) && batt_chg_state.f.chg_status == POWER_SUPPLY_STATUS_DISCHARGING) {
+		if (!chg_drv->debug_input_suspend)
+			batt_chg_state.f.chg_status = POWER_SUPPLY_STATUS_NOT_CHARGING;
 		batt_chg_state.f.flags = gbms_gen_chg_flags(chg_state->f.chg_status,
 							    chg_state->f.chg_type);
 	}
@@ -3403,6 +3405,8 @@ static int chg_set_input_suspend(void *data, u64 val)
 	rc = chg_vote_input_suspend(chg_drv, USER_VOTER, val != 0);
 	if (rc < 0)
 		return rc;
+
+	chg_drv->debug_input_suspend = (val != 0);
 
 	if (chg_drv->chg_psy)
 		power_supply_changed(chg_drv->chg_psy);
