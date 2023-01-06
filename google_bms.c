@@ -889,9 +889,9 @@ int gbms_tier_stats_cstr(char *buff, int size,
 	int j, len = 0;
 
 	if (elap) {
-		temp_avg = tier_stat->temp_sum / elap;
-		ibatt_avg = tier_stat->ibatt_sum / elap;
-		icl_avg = tier_stat->icl_sum / elap;
+		temp_avg = div_s64(tier_stat->temp_sum, elap);
+		ibatt_avg = div_s64(tier_stat->ibatt_sum, elap);
+		icl_avg = div_s64(tier_stat->icl_sum, elap);
 	} else {
 		temp_avg = 0;
 		ibatt_avg = 0;

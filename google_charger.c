@@ -1456,7 +1456,7 @@ static int bd_fan_calculate_level(struct bd_data *bd_state)
 		return FAN_LVL_NOT_CARE;
 
 	if (bd_state->time_sum)
-		temp_avg = div64_u64(bd_state->temp_sum, bd_state->time_sum);
+		temp_avg = div64_s64(bd_state->temp_sum, bd_state->time_sum);
 
 	if (temp_avg < bd_state->bd_trigger_temp)
 		bd_fan_level = FAN_LVL_NOT_CARE;
@@ -1630,7 +1630,7 @@ static int bd_update_stats(struct bd_data *bd_state,
 		return 0;
 
 	/* exit and entry criteria on temperature while connected */
-	temp_avg = div64_u64(bd_state->temp_sum, bd_state->time_sum);
+	temp_avg = div64_s64(bd_state->temp_sum, bd_state->time_sum);
 	if (triggered && temp <= bd_state->bd_resume_abs_temp) {
 		pr_info("MSC_BD: resume time_sum=%lld, temp_sum=%lld, temp_avg=%lld\n",
 			bd_state->time_sum, bd_state->temp_sum, temp_avg);
@@ -1848,7 +1848,7 @@ static void bd_work(struct work_struct *work)
 		soc,
 		delta_time, bd_state->bd_resume_time,
 		bd_state->last_temp, bd_state->bd_resume_abs_temp,
-		div64_u64(bd_state->temp_sum, bd_state->time_sum));
+		div64_s64(bd_state->temp_sum, bd_state->time_sum));
 
 bd_rerun:
 	if (!bd_state->triggered) {
@@ -3197,7 +3197,7 @@ bd_state_show(struct device *dev, struct device_attribute *attr, char *buf)
 
 	mutex_lock(&chg_drv->bd_lock);
 
-	temp_avg = div64_u64(bd_state->temp_sum, bd_state->time_sum);
+	temp_avg = div64_s64(bd_state->temp_sum, bd_state->time_sum);
 	len = scnprintf(buf, PAGE_SIZE,
 		       "t_sum=%lld, time_sum=%lld t_avg=%lld lst_v=%d lst_t=%d lst_u=%lld, dt=%lld, t=%d e=%d\n",
 		       bd_state->temp_sum, bd_state->time_sum, temp_avg,
@@ -3741,8 +3741,8 @@ thermal_stats_show(struct device *dev, struct device_attribute *attr, char *buf)
 		int ibatt_avg, icl_avg;
 
 		if (elap) {
-			ibatt_avg = div_u64(thermal_stats->ibatt_sum, elap);
-			icl_avg = div_u64(thermal_stats->icl_sum, elap);
+			ibatt_avg = div_s64(thermal_stats->ibatt_sum, elap);
+			icl_avg = div_s64(thermal_stats->icl_sum, elap);
 		} else {
 			ibatt_avg = 0;
 			icl_avg = 0;

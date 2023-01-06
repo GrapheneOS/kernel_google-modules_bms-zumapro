@@ -48,7 +48,7 @@ static int ttf_pwr_icl(const struct gbms_ce_tier_stats *ts,
 	if (elap <= ELAP_LIMIT_S)
 		amperage = ad->ad_amperage * 100;
 	else
-		amperage = div_u64(ts->icl_sum, (elap + ts->time_other));
+		amperage = div_s64(ts->icl_sum, (elap + ts->time_other));
 
 	return amperage;
 }

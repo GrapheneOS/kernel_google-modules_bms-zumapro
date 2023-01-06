@@ -796,7 +796,7 @@ static qnum_t ssoc_rl_max_delta(const struct batt_ssoc_rl_state *rls,
 				int bucken, ktime_t delta_time)
 {
 	int i;
-	const qnum_t max_delta = div_u64(((qnumd_t)rls->rl_delta_max_soc * delta_time),
+	const qnum_t max_delta = div_s64(((qnumd_t)rls->rl_delta_max_soc * delta_time),
 				  (rls->rl_delta_max_time ? rls->rl_delta_max_time : 1));
 
 	if (rls->rl_fast_track)
@@ -808,7 +808,7 @@ static qnum_t ssoc_rl_max_delta(const struct batt_ssoc_rl_state *rls,
 			break;
 
 		if (rls->rl_ssoc_target < rls->rl_delta_soc_limit[i])
-			return div_u64(((qnumd_t)max_delta * 10),
+			return div_s64(((qnumd_t)max_delta * 10),
 				rls->rl_delta_soc_ratio[i]);
 	}
 
@@ -1389,8 +1389,8 @@ static void bat_log_ttf_change(ktime_t estimate, int max_ratio, struct batt_drv 
 				  ce_data->tier_stats[i].time_taper +
 				  ce_data->tier_stats[i].time_other;
 		if (elap) {
-			ibatt_avg = div64_u64(ce_data->tier_stats[i].ibatt_sum, elap);
-			icl_avg = div64_u64(ce_data->tier_stats[i].icl_sum, elap);
+			ibatt_avg = div64_s64(ce_data->tier_stats[i].ibatt_sum, elap);
+			icl_avg = div64_s64(ce_data->tier_stats[i].icl_sum, elap);
 		} else {
 			ibatt_avg = 0;
 			icl_avg = 0;
@@ -2263,18 +2263,22 @@ log_and_done:
 		const int cc = GPSY_GET_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_CHARGE_COUNTER);
 		ktime_t res = 0;
 		const int max_ratio = batt_ttf_estimate(&res, batt_drv);
+		u64 hours;
+		u32 remaining_sec;
 
 		if (max_ratio < 0)
 			res = 0;
 
+		hours = div_u64_rem(res, 3600, &remaining_sec);
+
 		gbms_logbuffer_prlog(batt_drv->ttf_stats.ttf_log, LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG,
 				     "ssoc=%d CSI[min=%d max=%d avg=%d type=%d status=%d] "
-				     "TTF[cc=%d time=%lld %lld:%lld:%lld (est=%lld max_ratio=%d)]",
+				     "TTF[cc=%d time=%lld %lld:%d:%d (est=%lld max_ratio=%d)]",
 				     csi_stats->ssoc, csi_stats->csi_speed_min,
 				     csi_stats->csi_speed_max, csi_speed_avg,
 				     csi_stats->csi_current_type, csi_stats->csi_current_status,
-				     cc / 1000, right_now, res / 3600, (res % 3600) / 60, (res % 3600) % 60,
-				     res, max_ratio);
+				     cc / 1000, right_now, hours, remaining_sec / 60,
+				     remaining_sec % 60, res, max_ratio);
 	}
 
 	/* ssoc == -1 on disconnect */
