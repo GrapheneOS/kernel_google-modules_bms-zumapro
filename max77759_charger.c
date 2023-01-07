@@ -202,7 +202,7 @@ static int max77759_get_uvlo_lvl(struct i2c_client *client, uint8_t mode, unsign
 	if (max77759_resume_check(data))
 		return -EAGAIN;
 
-	reg = (mode == 1) ? MAX77759_CHG_CNFG_15 : MAX77759_CHG_CNFG_16;
+	reg = (mode == UVLO1) ? MAX77759_CHG_CNFG_15 : MAX77759_CHG_CNFG_16;
 
 	if (max77759_reg_read(data->regmap, reg, &val) < 0)
 		return -EINVAL;
