@@ -2221,8 +2221,9 @@ static void batt_log_csi_ttf_info(struct batt_drv *batt_drv)
 	const bool same_type_and_status =
 		csi_stats->csi_current_type == batt_drv->csi_current_type &&
 		csi_stats->csi_current_status == batt_drv->csi_current_status;
-	int current_speed = batt_drv->csi_current_speed < 0 ? 0 :
-			    batt_drv->csi_current_speed;
+	int current_speed = batt_drv->csi_current_speed;
+	int min_speed = csi_stats->csi_speed_min;
+	int max_speed = csi_stats->csi_speed_max;
 	const ktime_t right_now = get_boot_sec();
 	int ssoc = -1;
 
@@ -2239,14 +2240,18 @@ static void batt_log_csi_ttf_info(struct batt_drv *batt_drv)
 		csi_stats->last_update = right_now;
 
 		/* accumulate only positive*/
-		if (batt_drv->csi_current_speed < 0)
+		if (current_speed < 0)
 			return;
 
-		if (current_speed < csi_stats->csi_speed_min)
-			csi_stats->csi_speed_min = current_speed;
-		else if (current_speed > csi_stats->csi_speed_max)
-			csi_stats->csi_speed_max = current_speed;
+		if (min_speed == max_speed && max_speed == 0)
+			min_speed = max_speed = current_speed;
+		else if (current_speed < min_speed)
+			min_speed = current_speed;
+		else if (current_speed > max_speed)
+			max_speed = current_speed;
 
+		csi_stats->csi_speed_min = min_speed;
+		csi_stats->csi_speed_max = max_speed;
 		csi_stats->speed_sum += current_speed * elap;
 		csi_stats->csi_time_sum += elap;
 		return;
@@ -2258,7 +2263,7 @@ log_and_done:
 
 	if (csi_stats->ssoc != -1) {
 		const int csi_speed_avg = csi_stats->csi_time_sum == 0 ?
-					  csi_stats->speed_sum :
+					  ((csi_stats->csi_speed_min + csi_stats->csi_speed_max) / 2) :
 					  (csi_stats->speed_sum / csi_stats->csi_time_sum);
 		const int cc = GPSY_GET_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_CHARGE_COUNTER);
 		ktime_t res = 0;
@@ -2278,7 +2283,7 @@ log_and_done:
 	}
 
 	/* ssoc == -1 on disconnect */
-	if (ssoc == -1)
+	if (ssoc == -1 || current_speed < 0)
 		current_speed = 0;
 
 	csi_stats->ssoc = ssoc;
@@ -2524,11 +2529,14 @@ static int batt_calc_charging_speed(struct batt_drv *batt_drv)
 	 * different from the reference. Here status will either be *_COLD
 	 * or *_HOT.
 	 */
-	cc_max = GBMS_CCCM_LIMITS(profile, batt_drv->temp_idx, batt_drv->vbatt_idx);
+	cc_max = GBMS_CCCM_LIMITS(profile, batt_drv->temp_idx, batt_drv->vbatt_idx) / 1000;
 	if (cc_max && cc_max < nominal_demand)
 		nominal_demand = cc_max;
 
 	chg_speed = ibatt * 100 / nominal_demand;
+
+	pr_debug("chg_speed=%d ibatt=%d nominal_demand=%d cc_max=%d",
+		 chg_speed, ibatt, nominal_demand, cc_max);
 
 	/* bound in [0,100] */
 	if (chg_speed > CSI_CHG_SPEED_MAX)
