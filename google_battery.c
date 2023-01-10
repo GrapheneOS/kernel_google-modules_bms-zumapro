@@ -3856,8 +3856,8 @@ static int msc_logic(struct batt_drv *batt_drv)
 
 		msc_state = MSC_SEED;
 
-		/* seed voltage and charging table only on connect, book 0 time */
-		if (batt_drv->vbatt_idx == -1)
+		/* seed voltage and charging table on connect or temp_idx change, book 0 time */
+		if (batt_drv->vbatt_idx == -1 || temp_idx != batt_drv->temp_idx)
 			vbatt_idx = gbms_msc_voltage_idx(profile, vbatt);
 
 		batt_prlog(BATT_PRLOG_ALWAYS,
@@ -4007,7 +4007,7 @@ static int msc_logic(struct batt_drv *batt_drv)
 	}
 
 	/* need a new fv_uv only on a new voltage tier.  */
-	if (vbatt_idx != batt_drv->vbatt_idx) {
+	if (vbatt_idx != batt_drv->vbatt_idx || temp_idx != batt_drv->temp_idx) {
 		vbatt_idx = gbms_msc_merge_tiers(profile, vbatt_idx, temp_idx);
 		if (vbatt_idx == -EINVAL)
 			return -EINVAL;
