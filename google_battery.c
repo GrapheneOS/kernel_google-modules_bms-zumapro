@@ -4050,11 +4050,6 @@ static int msc_logic(struct batt_drv *batt_drv)
 		  batt_drv->vbatt_idx != vbatt_idx ||
 		  batt_drv->fv_uv != fv_uv ||
 		  batt_drv->cc_max_pullback != batt_drv->cc_max;
-	batt_prlog(batt_prlog_level(changed),
-		   "MSC_LOGIC temp_idx:%d->%d, vbatt_idx:%d->%d, fv=%d->%d, cc_max=%d, ui=%d cv_cnt=%d ov_cnt=%d\n",
-		   batt_drv->temp_idx, temp_idx, batt_drv->vbatt_idx, vbatt_idx,
-		   batt_drv->fv_uv, fv_uv, batt_drv->cc_max, update_interval,
-		   batt_drv->checked_cv_cnt, batt_drv->checked_ov_cnt);
 
 	/* next update */
 	batt_drv->msc_update_interval = update_interval;
@@ -4066,6 +4061,13 @@ static int msc_logic(struct batt_drv *batt_drv)
 	} else if (batt_drv->cc_max_pullback > 0) {
 		batt_drv->cc_max = batt_drv->cc_max_pullback;
 	}
+
+	batt_prlog(batt_prlog_level(changed),
+		   "MSC_LOGIC temp_idx:%d->%d, vbatt_idx:%d->%d, fv=%d->%d, cc_max=%d, ui=%d cv_cnt=%d ov_cnt=%d\n",
+		   batt_drv->temp_idx, temp_idx, batt_drv->vbatt_idx, vbatt_idx,
+		   batt_drv->fv_uv, fv_uv, batt_drv->cc_max, update_interval,
+		   batt_drv->checked_cv_cnt, batt_drv->checked_ov_cnt);
+
 	batt_drv->vbatt_idx = vbatt_idx;
 	batt_drv->profile_vbatt_idx = profile_vbatt_idx;
 	batt_drv->temp_idx = temp_idx;
