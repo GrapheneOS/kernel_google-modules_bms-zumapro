@@ -134,6 +134,7 @@ CFLAGS_google_dual_batt_gauge.o += $(WENUMS)
 CFLAGS_google_dock.o += $(WENUMS)
 CFLAGS_wc68_driver.o += $(WENUMS)
 CFLAGS_wc68_gbms_pps.o += $(WENUMS)
+CFLAGS_p9221_charger.o += $(WENUMS)
 
 KERNEL_SRC ?= /lib/modules/$(shell uname -r)/build
 M ?= $(shell pwd)
