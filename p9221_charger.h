@@ -664,6 +664,7 @@ struct p9221_charger_platform_data {
 	/* calibrate light load */
 	bool				light_load;
 	bool				disable_align;
+	bool				ll_vout_not_set;
 };
 
 struct p9221_charger_ints_bit {

@@ -1156,11 +1156,17 @@ static void p9221_power_mitigation_work(struct work_struct *work)
 	if (!p9221_is_epp(charger)) {
 		/* only for LL */
 		if (charger->trigger_power_mitigation && charger->ll_bpp_cep == 1) {
-			dev_info(&charger->client->dev,
-				 "power_mitigate: change Vout to %d mV and disable CMFET\n",
-				 P9XXX_VOUT_5480MV);
-			ret = charger->chip_set_vout_max(charger, P9XXX_VOUT_5480MV);
-			ret |= p9221_reg_write_8(charger, P9412_CMFET_L_REG, 0);
+			if (!charger->pdata->ll_vout_not_set) {
+				dev_info(&charger->client->dev,
+				      "power_mitigate: change Vout to %d mV and disable CMFET\n",
+				      P9XXX_VOUT_5480MV);
+				ret = charger->chip_set_vout_max(charger, P9XXX_VOUT_5480MV);
+				if (ret < 0)
+					dev_err(&charger->client->dev,
+						"Fail to configure Vout to %d mV\n",
+						P9XXX_VOUT_5480MV);
+			}
+			ret = p9221_reg_write_8(charger, P9412_CMFET_L_REG, 0);
 			if (ret < 0)
 				dev_err(&charger->client->dev, "Fail to configure LL\n");
 			p9221_ll_bpp_cep(charger, charger->last_capacity);
@@ -6470,6 +6476,8 @@ static int p9221_parse_dt(struct device *dev,
 
 	/* Calibrate light load */
 	pdata->light_load = of_property_read_bool(node, "google,light_load");
+
+	pdata->ll_vout_not_set = of_property_read_bool(node, "google,ll-bpp-vout-not-set");
 
 	return 0;
 }
