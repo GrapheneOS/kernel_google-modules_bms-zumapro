@@ -714,6 +714,7 @@ struct p9221_charger_data {
 	struct notifier_block		nb;
 	struct mutex			io_lock;
 	struct mutex			cmd_lock;
+	struct mutex			fod_lock;
 	struct device			*dev;
 	struct delayed_work		notifier_work;
 	struct delayed_work		charge_stats_work;

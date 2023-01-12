@@ -349,6 +349,10 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 	int retries = 3;
 	static char *wlc_mode[] = { "BPP", "EPP", "EPP_COMP" , "HPP" , "HPP_HV" };
 
+	mutex_lock(&charger->fod_lock);
+
+	if (charger->fod_cnt)
+		goto done;
 
 	if (charger->no_fod)
 		goto no_fod;
@@ -407,7 +411,7 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 		if (ret) {
 			dev_err(&charger->client->dev,
 				"Could not write FOD: %d\n", ret);
-			return;
+			goto unlock;
 		}
 
 		/* Verify the FOD has been written properly */
@@ -415,7 +419,7 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 		if (ret) {
 			dev_err(&charger->client->dev,
 				"Could not read back FOD: %d\n", ret);
-			return;
+			goto unlock;
 		}
 
 		if (memcmp(fod, fod_read, fod_count) == 0)
@@ -437,6 +441,8 @@ done:
 	if (charger->pdata->fod_fsw)
 		mod_delayed_work(system_wq, &charger->chk_fod_work,
 				 msecs_to_jiffies(P9XXX_FOD_CHK_DELAY_MS));
+unlock:
+	mutex_unlock(&charger->fod_lock);
 }
 
 #define CC_DATA_LOCK_MS		250
@@ -1112,6 +1118,8 @@ static void force_set_fod(struct p9221_charger_data *charger)
 	u8 fod[P9221R5_NUM_FOD] = { 0 };
 	int ret;
 
+	mutex_lock(&charger->fod_lock);
+
 	if (p9221_is_hpp(charger)) {
 		dev_info(&charger->client->dev,
 			"power_mitigate: send EOP for revert to BPP\n");
@@ -1123,6 +1131,8 @@ static void force_set_fod(struct p9221_charger_data *charger)
 	if (ret)
 		dev_err(&charger->client->dev,
 			"power_mitigate: failed, ret=%d\n", ret);
+
+	mutex_unlock(&charger->fod_lock);
 }
 
 static void p9221_power_mitigation_work(struct work_struct *work)
@@ -6691,6 +6701,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	mutex_init(&charger->rtx_lock);
 	mutex_init(&charger->auth_lock);
 	mutex_init(&charger->renego_lock);
+	mutex_init(&charger->fod_lock);
 	timer_setup(&charger->vrect_timer, p9221_vrect_timer_handler, 0);
 	timer_setup(&charger->align_timer, p9221_align_timer_handler, 0);
 	INIT_DELAYED_WORK(&charger->dcin_work, p9221_dcin_work);
