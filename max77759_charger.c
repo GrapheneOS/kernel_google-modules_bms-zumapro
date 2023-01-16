@@ -2742,29 +2742,15 @@ static irqreturn_t max77759_chgr_irq(int irq, void *client)
 		atomic_inc(&data->insel_cnt);
 	}
 
-#if IS_ENABLED(CONFIG_GOOGLE_BCL)
 	/* TODO: make this an interrupt controller */
-	if (chg_int[1] & MAX77759_CHG_INT2_SYS_UVLO1_I) {
+	if (chg_int[1] & MAX77759_CHG_INT2_SYS_UVLO1_I)
 		pr_debug("%s: SYS_UVLO1\n", __func__);
 
-		if (data->bcl_dev)
-			google_bcl_irq_changed(data->bcl_dev, UVLO1);
-	}
-
-	if (chg_int[1] & MAX77759_CHG_INT2_SYS_UVLO2_I) {
+	if (chg_int[1] & MAX77759_CHG_INT2_SYS_UVLO2_I)
 		pr_debug("%s: SYS_UVLO2\n", __func__);
 
-		if (data->bcl_dev)
-			google_bcl_irq_changed(data->bcl_dev, UVLO2);
-	}
-
-	if (chg_int[1] & MAX77759_CHG_INT2_BAT_OILO_I) {
+	if (chg_int[1] & MAX77759_CHG_INT2_BAT_OILO_I)
 		pr_debug("%s: BAT_OILO\n", __func__);
-
-		if (data->bcl_dev)
-			google_bcl_irq_changed(data->bcl_dev, BATOILO);
-	}
-#endif
 
 	if (chg_int[1] & MAX77759_CHG_INT2_MASK_CHG_STA_TO_M) {
 		pr_debug("%s: TOP_OFF\n", __func__);
