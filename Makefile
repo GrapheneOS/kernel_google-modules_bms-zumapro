@@ -15,6 +15,7 @@ GBMS_MODULES =	GOOGLE_BMS \
 		CHARGER_MAX77729 \
 		CHARGER_MAX77759 \
 		MAXQ_MAX77759 \
+		MAX77779_SP \
 		CHARGER_P9221 \
 		MAX1720X_BATTERY \
 		MAX_M5 \
@@ -117,6 +118,10 @@ wc68-objs += wc68_driver.o
 wc68-objs += wc68_gbms_pps.o
 wc68-objs += google_dc_pps.o
 
+# max77779 Scratch Space
+obj-$(CONFIG_MAX77779_SP)	+= max77779-sp.o
+max77779-sp-objs += max77779_sp.o
+
 # LN8411 DC Charge pump
 obj-$(CONFIG_LN8411)	+= ln8411_driver.o
 
@@ -139,6 +144,7 @@ CFLAGS_google_dock.o += $(WENUMS)
 CFLAGS_wc68_driver.o += $(WENUMS)
 CFLAGS_wc68_gbms_pps.o += $(WENUMS)
 CFLAGS_p9221_charger.o += $(WENUMS)
+CFLAGS_max77779_sp.o += -Wno-unused-function $(WENUMS)
 
 KERNEL_SRC ?= /lib/modules/$(shell uname -r)/build
 M ?= $(shell pwd)
