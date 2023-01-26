@@ -238,12 +238,51 @@ static int max77759_set_uvlo_lvl(struct i2c_client *client, uint8_t mode, unsign
 	return 0;
 }
 
+static int max77759_get_and_clr_bcl_irq(struct i2c_client *client, u8 *irq_val)
+{
+	struct max77759_chgr_data *data;
+	u8 chg_int;
+	u8 ret;
+
+	if (!client)
+		return -ENODEV;
+
+	data = i2c_get_clientdata(client);
+	if (!data || !data->regmap)
+		return -ENODEV;
+
+	if (max77759_resume_check(data))
+		return -EAGAIN;
+
+	ret = max77759_reg_read(data->regmap, MAX77759_CHG_INT2, &chg_int);
+	if (ret < 0)
+		return IRQ_NONE;
+
+	if ((chg_int & ~MAX77759_CHG_INT2_BAT_OILO_I) &
+		(chg_int & ~MAX77759_CHG_INT2_SYS_UVLO1_I) &
+		(chg_int & ~MAX77759_CHG_INT2_SYS_UVLO2_I) == 0)
+		return IRQ_NONE;
+
+	if (chg_int & MAX77759_CHG_INT2_BAT_OILO_I)
+		*irq_val = BATOILO;
+	else if (chg_int & MAX77759_CHG_INT2_SYS_UVLO2_I)
+		*irq_val = UVLO2;
+	else
+		*irq_val = UVLO1;
+	ret = max77759_reg_write(data->regmap, MAX77759_CHG_INT2, chg_int);
+	if (ret < 0)
+		return IRQ_NONE;
+
+	return ret;
+}
+
 static const struct bcl_ifpmic_ops bcl_ifpmic_ops = {
 	max77759_get_vdroop_ok,
 	max77759_set_uvlo_lvl,
 	max77759_get_uvlo_lvl,
 	max77759_set_batoilo_lvl,
 	max77759_get_batoilo_lvl,
+	max77759_get_and_clr_bcl_irq,
 };
 #endif /* CONFIG_GOOGLE_BCL */
 
@@ -2702,6 +2741,7 @@ static irqreturn_t max77759_chgr_irq(int irq, void *client)
 {
 	struct max77759_chgr_data *data = client;
 	u8 chg_int[MAX77759_CHG_INT_COUNT];
+	u8 chg_int_clr[MAX77759_CHG_INT_COUNT];
 	bool broadcast;
 	int ret;
 
@@ -2722,8 +2762,13 @@ static irqreturn_t max77759_chgr_irq(int irq, void *client)
 	    (chg_int[1] & ~max77759_int_mask[1]) == 0)
 		return IRQ_NONE;
 
-	ret = max77759_writen(data->regmap, MAX77759_CHG_INT, chg_int,
-			      sizeof(chg_int));
+	chg_int_clr[0] = chg_int[0];
+	chg_int_clr[1] = chg_int[1] & (~MAX77759_CHG_INT2_BAT_OILO_I &
+					~MAX77759_CHG_INT2_SYS_UVLO2_I &
+					~MAX77759_CHG_INT2_SYS_UVLO1_I);
+
+	ret = max77759_writen(data->regmap, MAX77759_CHG_INT, /* NOTYPO */
+                              chg_int_clr, sizeof(chg_int_clr));
 	if (ret < 0)
 		return IRQ_NONE;
 
@@ -2743,15 +2788,6 @@ static irqreturn_t max77759_chgr_irq(int irq, void *client)
 	}
 
 	/* TODO: make this an interrupt controller */
-	if (chg_int[1] & MAX77759_CHG_INT2_SYS_UVLO1_I)
-		pr_debug("%s: SYS_UVLO1\n", __func__);
-
-	if (chg_int[1] & MAX77759_CHG_INT2_SYS_UVLO2_I)
-		pr_debug("%s: SYS_UVLO2\n", __func__);
-
-	if (chg_int[1] & MAX77759_CHG_INT2_BAT_OILO_I)
-		pr_debug("%s: BAT_OILO\n", __func__);
-
 	if (chg_int[1] & MAX77759_CHG_INT2_MASK_CHG_STA_TO_M) {
 		pr_debug("%s: TOP_OFF\n", __func__);
 
