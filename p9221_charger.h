@@ -516,6 +516,8 @@
 #define P9412_I_API_Hys_08			0x6A
 #define P9412_MIN_FREQ_PER			0x94
 #define P9412_MIN_FREQ_PER_120			1000	/* 120000/120 */
+#define P9412_TX_FOD_THRSH_REG			0xD4
+#define P9412_TX_FOD_THRSH_1500			0x640
 
 #define P9412_MOT_REG				0xD0
 #define P9412_MOT_40PCT				0x10

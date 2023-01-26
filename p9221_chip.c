@@ -838,6 +838,11 @@ static int p9412_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 	if (chgr->pdata->hw_ocp_det)
 		rtx_current_limit_opt(chgr);
 
+	/* Set Foreign Object Detection Threshold to 1500mW */
+	ret = chgr->reg_write_16(chgr, P9412_TX_FOD_THRSH_REG, P9412_TX_FOD_THRSH_1500);
+	if (ret < 0)
+		logbuffer_log(chgr->rtx_log, "fail to set RTxFOD threshold, ret=%d\n", ret);
+
 	if (chgr->pdata->apbst_en && !chgr->pdata->hw_ocp_det)
 		mod_delayed_work(system_wq, &chgr->chk_rtx_ocp_work, 0);
 
