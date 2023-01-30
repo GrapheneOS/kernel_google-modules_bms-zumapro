@@ -6648,7 +6648,7 @@ static ssize_t health_algo_show(struct device *dev,
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
 
-	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health_data.bhi_indi_cap);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health_data.bhi_algo);
 }
 
 static const DEVICE_ATTR_RW(health_algo);
