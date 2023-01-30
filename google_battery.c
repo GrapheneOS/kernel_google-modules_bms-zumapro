@@ -6650,6 +6650,15 @@ static ssize_t manufacturing_date_show(struct device *dev,
 	struct bm_date *date = &batt_drv->health_data.bhi_data.bm_date;
 	struct rtc_time tm;
 
+	/* read manufacturing date when data is not successfully read in probe */
+	if (date->bm_y == 0) {
+		int ret;
+
+		ret = batt_get_manufacture_date(&batt_drv->health_data.bhi_data);
+		if (ret < 0)
+			return scnprintf(buf, PAGE_SIZE, "%d\n", ret);
+	}
+
 	tm.tm_year = date->bm_y + 100;	// base is 1900
 	tm.tm_mon = date->bm_m - 1;	// 0 is Jan ... 11 is Dec
 	tm.tm_mday = date->bm_d;	// 1st ... 31th
@@ -6707,6 +6716,15 @@ static ssize_t first_usage_date_show(struct device *dev,
 	struct bhi_data *bhi_data = &batt_drv->health_data.bhi_data;
 	struct bm_date date;
 	struct rtc_time tm;
+
+	/* read activation date when data is not successfully read in probe */
+	if (bhi_data->act_date[0] == 0) {
+		int ret;
+
+		ret = batt_get_activation_date(&batt_drv->health_data.bhi_data);
+		if (ret < 0)
+			return scnprintf(buf, PAGE_SIZE, "%d\n", ret);
+	}
 
 	/* format: YYMMDD */
 	date.bm_y = xymd_to_date(bhi_data->act_date[0]) + 20;
