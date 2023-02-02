@@ -39,6 +39,7 @@ kernel_module(
         "overheat_mitigation.ko",
         "p9221.ko",
         "pca9468.ko",
+        "max77779_i2cm.ko",
         "max77779_pmic.ko",
         "max77779_pmic_irq.ko",
         "max77779_pmic_pinctrl.ko",

@@ -144,6 +144,12 @@ config LN8411
 	help
 	  Say Y to enable support for the LN8411 direct charger.
 
+config MAX77779_I2CM
+	tristate "Maxim 77779 I2C Bridge Bus"
+	depends on OF
+	help
+	  Bus to bridge I2C to Maxim 77779
+
 config MAX77779_PMIC
 	tristate "Maxim 77779 PMIC"
 	depends on OF
