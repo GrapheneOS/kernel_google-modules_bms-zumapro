@@ -5969,16 +5969,18 @@ static void p9382_rtx_disable_work(struct work_struct *work)
 {
 	struct p9221_charger_data *charger = container_of(work,
 			struct p9221_charger_data, rtx_disable_work);
+	char reason[GVOTABLE_MAX_REASON_LEN];
 	int tx_icl, ret = 0;
 
-	/* Set error reason if THERMAL_DAEMON_VOTER want to disable rtx */
-	tx_icl = gvotable_get_int_vote(charger->tx_icl_votable,
-				       THERMAL_DAEMON_VOTER);
-	if (tx_icl == 0) {
+	/* Set error reason rtx is disabled due to overtemp*/
+	tx_icl = gvotable_get_current_int_vote(charger->tx_icl_votable);
+	gvotable_get_current_reason(charger->tx_icl_votable, reason, GVOTABLE_MAX_REASON_LEN);
+	if (tx_icl == 0 && (strcmp(reason, THERMAL_DAEMON_VOTER) == 0 ||
+				strcmp(reason, REASON_MDIS) == 0)) {
 		charger->rtx_err = RTX_OVER_TEMP;
 		logbuffer_log(charger->rtx_log,
-			      "tdv vote %d to tx_icl",
-			      tx_icl);
+			      "over temp vote %d to tx_icl, voter: %s",
+			      tx_icl, reason);
 	}
 
 	/* Disable rtx mode */
