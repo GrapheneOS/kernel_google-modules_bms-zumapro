@@ -28,6 +28,8 @@ struct wc68_platform_data {
 	s32		iin_max_offset;
 	s32		iin_cc_comp_offset;
 	u32		ta_max_vol;
+	u32		ta_max_vol_2_1;
+	u32		ta_max_vol_4_1;
 	u32		ta_max_vol_cp;
 
 	/* irdrop */

@@ -55,6 +55,7 @@
 
 /* Maximum TA voltage threshold */
 #define WC68_TA_MAX_VOL		10250000 /* uV */
+#define WC68_TA_MAX_VOL_2_1	10250000 /* UV */
 /* Maximum TA current threshold, set to max(cc_max) / 2 */
 #define WC68_TA_MAX_CUR		2600000	 /* uA */
 #define WC68_TA_MAX_CUR_4_1	2250000	 /* uA */
@@ -3209,39 +3210,44 @@ error_exit:
 static int wc68_set_chg_mode_by_apdo(struct wc68_charger *wc68)
 {
 	int ret;
-	unsigned int ta_max_vol = wc68->pdata->ta_max_vol;
 
 	/*
 	 * Get the APDO max and set chg_mode.
 	 * Returns ->ta_max_vol, ->ta_max_cur, ->ta_max_pwr and
 	 * ->ta_objpos for the given ta_max_vol and ta_max_cur.
 	 */
-	ret = wc68_get_apdo_max_power(wc68, ta_max_vol * CHG_4TO1_DC_MODE, WC68_TA_MAX_CUR_4_1);
+	ret = wc68_get_apdo_max_power(wc68, wc68->pdata->ta_max_vol_4_1 * CHG_4TO1_DC_MODE,
+				      WC68_TA_MAX_CUR_4_1);
 	if (ret == 0) {
 		wc68->chg_mode = CHG_4TO1_DC_MODE;
+		wc68->pdata->ta_max_vol = wc68->pdata->ta_max_vol_4_1;
 		goto done;
 	}
 
 	dev_warn(wc68->dev, "%s: No APDO to support 4:1 for %d, max_voltage: %d\n",
-		 __func__, WC68_TA_MAX_CUR_4_1, ta_max_vol * CHG_4TO1_DC_MODE);
+		 __func__, WC68_TA_MAX_CUR_4_1, wc68->pdata->ta_max_vol_4_1 * CHG_4TO1_DC_MODE);
 
-	ret = wc68_get_apdo_max_power(wc68, ta_max_vol * CHG_2TO1_DC_MODE, WC68_TA_MAX_CUR);
+	ret = wc68_get_apdo_max_power(wc68, wc68->pdata->ta_max_vol_2_1 * CHG_2TO1_DC_MODE,
+				      WC68_TA_MAX_CUR);
 	if (ret == 0) {
 		wc68->chg_mode = CHG_2TO1_DC_MODE;
+		wc68->pdata->ta_max_vol = wc68->pdata->ta_max_vol_2_1;
 		goto done;
 	}
 
 	 dev_warn(wc68->dev, "%s: No APDO to support 2:1 for %d, max_voltage: %d\n",
-		  __func__, WC68_TA_MAX_CUR, ta_max_vol * CHG_2TO1_DC_MODE);
+		  __func__, WC68_TA_MAX_CUR, wc68->pdata->ta_max_vol_2_1 * CHG_2TO1_DC_MODE);
 
-	ret = wc68_get_apdo_max_power(wc68, ta_max_vol * CHG_2TO1_DC_MODE, 0);
+	ret = wc68_get_apdo_max_power(wc68, wc68->pdata->ta_max_vol_2_1 * CHG_2TO1_DC_MODE, 0);
 	if (ret == 0) {
 		wc68->chg_mode = CHG_2TO1_DC_MODE;
+		wc68->pdata->ta_max_vol = wc68->pdata->ta_max_vol_2_1;
 		goto done;
 	}
 
 	dev_err(wc68->dev, "%s: No APDO to support 2:1\n", __func__);
 	wc68->chg_mode = CHG_NO_DC_MODE;
+	wc68->pdata->ta_max_vol = 0;
 
 done:
 	return ret;
@@ -4493,11 +4499,17 @@ static int of_wc68_dt(struct device *dev,
 	dev_info(dev, "wc68,iin_cfg is %u\n", pdata->iin_cfg);
 
 	/* TA max voltage limit */
-	ret = of_property_read_u32(np_wc68, "wc68,ta-max-vol",
-				   &pdata->ta_max_vol);
+	ret = of_property_read_u32(np_wc68, "wc68,ta-max-vol-4_1",
+				   &pdata->ta_max_vol_4_1);
 	if (ret) {
-		dev_warn(dev, "wc68,ta-max-vol is Empty\n");
-		pdata->ta_max_vol = WC68_TA_MAX_VOL;
+		dev_warn(dev, "wc68,ta-max-vol-4_1 is Empty\n");
+		pdata->ta_max_vol_4_1 = WC68_TA_MAX_VOL;
+	}
+	ret = of_property_read_u32(np_wc68, "wc68,ta-max-vol-2_1",
+				   &pdata->ta_max_vol_2_1);
+	if (ret) {
+		dev_warn(dev, "wc68,ta-max-vol_2_1 is Empty\n");
+		pdata->ta_max_vol_2_1 = WC68_TA_MAX_VOL_2_1;
 	}
 	ret = of_property_read_u32(np_wc68, "wc68,ta-max-vol-cp",
 				   &pdata->ta_max_vol_cp);
