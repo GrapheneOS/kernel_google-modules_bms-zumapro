@@ -6842,8 +6842,10 @@ static ssize_t dev_sn_store(struct device *dev,
 {
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	const size_t max_len = sizeof(batt_drv->dev_sn);
 
-	memcpy(batt_drv->dev_sn, buf, strlen(buf));
+	if (strlcpy(batt_drv->dev_sn, buf, max_len) >= max_len)
+		pr_warn("Paired data out of bounds\n");
 
 	return count;
 }
