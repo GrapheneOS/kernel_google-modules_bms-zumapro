@@ -4921,7 +4921,7 @@ error:
 	return ret;
 }
 
-static int wc68_remove(struct i2c_client *client)
+static void wc68_remove(struct i2c_client *client)
 {
 	struct wc68_charger *wc68_chg = i2c_get_clientdata(client);
 
@@ -4944,8 +4944,6 @@ static int wc68_remove(struct i2c_client *client)
 	if (wc68_chg->log)
 		logbuffer_unregister(wc68_chg->log);
 	pps_free(&wc68_chg->pps_data);
-
-	return 0;
 }
 
 static const struct i2c_device_id wc68_id[] = {
