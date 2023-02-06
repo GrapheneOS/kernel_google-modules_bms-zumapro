@@ -611,7 +611,7 @@ struct p9221_charger_platform_data {
 	int				slct_gpio;
 	int				slct_value;
 	int				ben_gpio;
-	int                             ext_ben_gpio;
+	int				ext_ben_gpio;
 	int				switch_gpio;
 	int				boost_gpio;
 	int				dc_switch_gpio;
@@ -661,6 +661,7 @@ struct p9221_charger_platform_data {
 	u32				epp_icl;
 	/* calibrate light load */
 	bool				light_load;
+	bool				disable_align;
 };
 
 struct p9221_charger_ints_bit {
@@ -714,6 +715,7 @@ struct p9221_charger_data {
 	struct notifier_block		nb;
 	struct mutex			io_lock;
 	struct mutex			cmd_lock;
+	struct mutex			fod_lock;
 	struct device			*dev;
 	struct delayed_work		notifier_work;
 	struct delayed_work		charge_stats_work;
