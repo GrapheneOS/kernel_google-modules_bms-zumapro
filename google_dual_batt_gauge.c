@@ -386,23 +386,29 @@ static void google_dual_batt_work(struct work_struct *work)
 	mutex_lock(&dual_fg_drv->fg_lock);
 
 	if (!dual_fg_drv->init_complete)
-		goto error_done;
+		goto done;
 
 	if (!base_psy || !sec_psy)
-		goto error_done;
+		goto done;
 
 	gdbatt_select_cc_max(dual_fg_drv);
+
+	if (dual_fg_drv->base_charge_full && dual_fg_drv->sec_charge_full)
+		goto done;
 
 	base_data = GPSY_GET_PROP(base_psy, POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN);
 	sec_data = GPSY_GET_PROP(sec_psy, POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN);
 
 	if (base_data <= 0 || sec_data <= 0)
-		goto error_done;
+		goto done;
+
+	dev_info(dual_fg_drv->device, "update base_charge_full:%d->%d, sec_charge_full:%d->%d\n",
+		 dual_fg_drv->base_charge_full, base_data, dual_fg_drv->sec_charge_full, sec_data);
 
 	dual_fg_drv->base_charge_full = base_data;
 	dual_fg_drv->sec_charge_full = sec_data;
 
-error_done:
+done:
 	mod_delayed_work(system_wq, &dual_fg_drv->gdbatt_work,
 			 msecs_to_jiffies(DUAL_FG_WORK_PERIOD_MS));
 
@@ -774,6 +780,8 @@ static void google_dual_batt_gauge_init_work(struct work_struct *work)
 
 	dual_fg_drv->init_complete = true;
 	dual_fg_drv->resume_complete = true;
+	dual_fg_drv->base_charge_full = 0;
+	dual_fg_drv->sec_charge_full = 0;
 	mod_delayed_work(system_wq, &dual_fg_drv->gdbatt_work, 0);
 	dev_info(dual_fg_drv->device, "google_dual_batt_gauge_init_work done\n");
 
