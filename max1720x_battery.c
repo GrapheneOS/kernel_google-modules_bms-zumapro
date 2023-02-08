@@ -267,6 +267,7 @@ struct max1720x_chip {
 
 static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj);
 static int max1720x_set_next_update(struct max1720x_chip *chip);
+static int max1720x_monitor_log_data(struct max1720x_chip *chip, bool force_log);
 
 static bool max17x0x_reglog_init(struct max1720x_chip *chip)
 {
@@ -2511,6 +2512,9 @@ static int max1720x_set_property(struct power_supply *psy,
 		rc = max1720x_health_update_ai(chip, val->intval);
 		mutex_unlock(&chip->model_lock);
 		break;
+	case GBMS_PROP_FG_REG_LOGGING:
+		max1720x_monitor_log_data(chip, !!val->intval);
+		break;
 	default:
 		return -EINVAL;
 	}
@@ -2535,7 +2539,7 @@ static int max1720x_property_is_writeable(struct power_supply *psy,
 	return 0;
 }
 
-static int max1720x_monitor_log_data(struct max1720x_chip *chip)
+static int max1720x_monitor_log_data(struct max1720x_chip *chip, bool force_log)
 {
 	u16 data, repsoc, vfsoc, avcap, repcap, fullcap, fullcaprep;
 	u16 fullcapnom, qh0, qh, dqacc, dpacc, qresidual, fstat;
@@ -2547,7 +2551,7 @@ static int max1720x_monitor_log_data(struct max1720x_chip *chip)
 		return ret;
 
 	repsoc = (data >> 8) & 0x00FF;
-	if (repsoc == chip->pre_repsoc)
+	if (repsoc == chip->pre_repsoc && !force_log)
 		return ret;
 
 	ret = REGMAP_READ(&chip->regmap, MAX1720X_VFSOC, &vfsoc);
@@ -2908,7 +2912,7 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 		if (storm)
 			pr_debug("Force power_supply_change in storm\n");
 		else
-			max1720x_monitor_log_data(chip);
+			max1720x_monitor_log_data(chip, false);
 
 		storm = false;
 	}
