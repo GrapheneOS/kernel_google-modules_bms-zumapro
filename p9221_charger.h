@@ -527,6 +527,8 @@
 #define P9412_MOT_40PCT				0x10
 #define P9412_MOT_65PCT				0x1A
 
+#define P9412_HPP_FOD_SETS			8
+
 /* RA9530 */
 
 #define RA9530_CHIP_ID				0x9530
@@ -617,6 +619,11 @@ struct p9221_charger_cc_data_lock {
 	ktime_t cc_rcv_at;
 };
 
+struct p9221_fod_data {
+	int num;
+	u8 fod[P9221R5_NUM_FOD];
+};
+
 struct p9221_charger_platform_data {
 	int				irq_gpio;
 	int				irq_int;
@@ -641,6 +648,7 @@ struct p9221_charger_platform_data {
 	u8				fod_epp_comp[P9221R5_NUM_FOD];
 	u8				fod_hpp[P9221R5_NUM_FOD];
 	u8				fod_hpp_hv[P9221R5_NUM_FOD];
+	struct p9221_fod_data		hpp_fods[P9412_HPP_FOD_SETS];
 	int				fod_num;
 	int				fod_epp_num;
 	int				fod_epp_comp_num;
@@ -677,6 +685,8 @@ struct p9221_charger_platform_data {
 	u32				epp_icl;
 	/* calibrate light load */
 	bool				light_load;
+	int				nb_hpp_fod_vol;
+	int				*hpp_fod_vol;
 };
 
 struct p9221_charger_ints_bit {
@@ -849,6 +859,7 @@ struct p9221_charger_data {
 	int				send_txid_cnt;
 	bool				sw_ramp_done;
 	bool				hpp_hv;
+	int				hpp_fod_level;
 	int				fod_mode;
 	enum p9xxx_chk_rp		check_rp;
 

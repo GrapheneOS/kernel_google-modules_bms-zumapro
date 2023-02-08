@@ -327,8 +327,9 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 	int fod_count = charger->pdata->fod_num;
 	int ret;
 	int retries = 3;
-	static char *wlc_mode[] = { "BPP", "EPP", "EPP_COMP" , "HPP" , "HPP_HV" };
-
+	static char *wlc_mode[] = { "BPP", "EPP", "EPP_COMP",
+				    "HPP_0", "HPP_1", "HPP_2", "HPP_3",
+				    "HPP_4", "HPP_5", "HPP_6", "HPP_7" };
 
 	if (charger->no_fod)
 		goto no_fod;
@@ -355,15 +356,10 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 		}
 	}
 
-	if (p9xxx_is_capdiv_en(charger) && charger->pdata->fod_hpp_num) {
-		fod = charger->pdata->fod_hpp;
-		fod_count = charger->pdata->fod_hpp_num;
-		mode = WLC_HPP;
-		if (charger->hpp_hv && charger->pdata->fod_hpp_hv_num) {
-			fod = charger->pdata->fod_hpp_hv;
-			fod_count = charger->pdata->fod_hpp_hv_num;
-			mode = WLC_HPP_HV;
-		}
+	if (p9xxx_is_capdiv_en(charger) && charger->pdata->nb_hpp_fod_vol > 0) {
+		fod = charger->pdata->hpp_fods[charger->hpp_fod_level].fod;
+		fod_count = charger->pdata->hpp_fods[charger->hpp_fod_level].num;
+		mode = WLC_HPP + charger->hpp_fod_level;
 	}
 
 	if (mode == charger->fod_mode)
@@ -2596,6 +2592,26 @@ static int p9221_capacity_raw(struct p9221_charger_data *charger)
 	return ret;
 }
 
+static int check_hpp_fod_level(struct p9221_charger_data *charger,
+			       int dc_voltage)
+{
+	const int hpp_fod_buckets = charger->pdata->nb_hpp_fod_vol;
+	int i, hysteresis;
+
+	for (i = 0; i < hpp_fod_buckets; i += 1) {
+		if (i == charger->hpp_fod_level)
+			hysteresis = 100000;
+		else if (i == charger->hpp_fod_level - 1)
+			hysteresis = -100000;
+		else
+			hysteresis = 0;
+
+		if (dc_voltage < charger->pdata->hpp_fod_vol[i] + hysteresis)
+			return i;
+	}
+	return 0;
+}
+
 static int p9221_set_property(struct power_supply *psy,
 			      enum power_supply_property prop,
 			      const union power_supply_propval *val)
@@ -2666,6 +2682,7 @@ static int p9221_set_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
 		if (!charger->wlc_dc_enabled) {
+			charger->hpp_fod_level = 0;
 			dev_dbg(&charger->client->dev,
 				"Not WLC-DC, not allow to set Vout\n");
 			ret = -EINVAL;
@@ -2673,9 +2690,11 @@ static int p9221_set_property(struct power_supply *psy,
 		}
 		/* uV */
 		charger->wlc_dc_voltage_now = val->intval;
-		ret = charger->chip_set_vout_max(charger, P9221_UV_TO_MV(charger->wlc_dc_voltage_now));
-		charger->hpp_hv = (ret == 0 &&
-				   charger->wlc_dc_voltage_now > HPP_FOD_VOUT_THRESHOLD_UV);
+		ret = charger->chip_set_vout_max(charger,
+						 P9221_UV_TO_MV(charger->wlc_dc_voltage_now));
+		if (ret < 0)
+			break;
+		charger->hpp_fod_level = check_hpp_fod_level(charger, charger->wlc_dc_voltage_now);
 		p9221_write_fod(charger);
 		break;
 
@@ -3626,7 +3645,7 @@ static ssize_t p9221_show_status(struct device *dev,
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct p9221_charger_data *charger = i2c_get_clientdata(client);
-	int count = 0;
+	int count = 0, i;
 	int ret;
 	u8 tmp[P9221R5_NUM_FOD];
 	uint32_t tx_id = 0;
@@ -3731,12 +3750,14 @@ static ssize_t p9221_show_status(struct device *dev,
 			       charger->pdata->fod_epp_num,
 			       buf + count, PAGE_SIZE - count, false);
 
-	count += scnprintf(buf + count, PAGE_SIZE - count,
-			   "\ndt fod-hpp  : (n=%d) ",
-			   charger->pdata->fod_hpp_num);
-	count += p9221_hex_str(charger->pdata->fod_hpp,
-			       charger->pdata->fod_hpp_num,
-			       buf + count, PAGE_SIZE - count, false);
+	for (i = 0; i < charger->pdata->nb_hpp_fod_vol; i++) {
+		count += scnprintf(buf + count, PAGE_SIZE - count,
+				   "\ndt fod-hpp-%d  : (n=%d) ",
+				   i, charger->pdata->hpp_fods[i].num);
+		count += p9221_hex_str(charger->pdata->hpp_fods[i].fod,
+				       charger->pdata->hpp_fods[i].num,
+				       buf + count, PAGE_SIZE - count, false);
+	}
 
 	count += scnprintf(buf + count, PAGE_SIZE - count,
 			   "\npp buf      : (v=%d) ", charger->pp_buf_valid);
@@ -6015,6 +6036,54 @@ static void p9221_uevent_work(struct work_struct *work)
 	}
 }
 
+static void p9221_parse_fod(struct device *dev,
+			    int *fod_num, u8 *fod, char *of_name)
+{
+	int ret;
+	struct device_node *node = dev->of_node;
+
+	*fod_num = of_property_count_elems_of_size(node, of_name, sizeof(u8));
+	if (*fod_num <= 0) {
+		dev_err(dev, "No dt %s provided (%d)\n", of_name, *fod_num);
+		*fod_num = 0;
+	} else {
+		if (*fod_num > P9221R5_NUM_FOD) {
+			dev_err(dev,
+			    "Incorrect num of EPP FOD %d, using first %d\n",
+			    *fod_num, P9221R5_NUM_FOD);
+			*fod_num = P9221R5_NUM_FOD;
+		}
+		ret = of_property_read_u8_array(node, of_name, fod, *fod_num);
+		if (ret == 0) {
+			char buf[P9221R5_NUM_FOD * 3 + 1];
+
+			p9221_hex_str(fod, *fod_num, buf, *fod_num * 3 + 1, false);
+			dev_info(dev, "dt %s: %s (%d)\n", of_name, buf, *fod_num);
+		}
+	}
+}
+
+static int p9221_parse_hpp_fods(struct device *dev,
+				struct p9221_charger_platform_data *pdata,
+				int nb_hpp_fod_vol)
+{
+	int i;
+
+	for (i = 0; i < nb_hpp_fod_vol; i++) {
+		char of_name[36];
+
+		scnprintf(of_name, sizeof(of_name), "fod_hpp_%d", i);
+		p9221_parse_fod(dev, &pdata->hpp_fods[i].num,
+				pdata->hpp_fods[i].fod, of_name);
+	}
+	if (nb_hpp_fod_vol != i) {
+		dev_info(dev, "dt fod not match nb=%d i=%d\n", nb_hpp_fod_vol, i);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 static int p9221_parse_dt(struct device *dev,
 			  struct p9221_charger_platform_data *pdata)
 {
@@ -6023,6 +6092,7 @@ static int p9221_parse_dt(struct device *dev,
 	struct device_node *node = dev->of_node;
 	int vout_set_max_mv = P9221_VOUT_SET_MAX_MV;
 	int vout_set_min_mv = P9221_VOUT_SET_MIN_MV;
+	int nb_hpp_fod_vol;
 	enum of_gpio_flags flags = 0;
 
 	pdata->max_vout_mv = P9221_VOUT_SET_MAX_MV;
@@ -6186,120 +6256,50 @@ static int p9221_parse_dt(struct device *dev,
 	}
 
 	/* Optional FOD data */
-	pdata->fod_num =
-	    of_property_count_elems_of_size(node, "fod", sizeof(u8));
-	if (pdata->fod_num <= 0) {
-		dev_err(dev, "No dt fod provided (%d)\n", pdata->fod_num);
-		pdata->fod_num = 0;
+	p9221_parse_fod(dev, &pdata->fod_num, pdata->fod, "fod");
+	p9221_parse_fod(dev, &pdata->fod_epp_num, pdata->fod_epp, "fod_epp");
+	p9221_parse_fod(dev, &pdata->fod_epp_comp_num, pdata->fod_epp_comp, "fod_epp_comp");
+
+	nb_hpp_fod_vol = of_property_count_elems_of_size(node, "google,hpp_fod_vol", sizeof(u32));
+	if (nb_hpp_fod_vol > 0) {
+		if (nb_hpp_fod_vol > P9412_HPP_FOD_SETS)
+			nb_hpp_fod_vol = P9412_HPP_FOD_SETS;
+
+		pdata->hpp_fod_vol = devm_kmalloc_array(dev, nb_hpp_fod_vol,
+							sizeof(u32), GFP_KERNEL);
+		if (pdata->hpp_fod_vol == NULL) {
+			dev_warn(dev, "dt google,hpp_fod_vol array not created");
+			return -ENOMEM;
+		}
+		ret = of_property_read_u32_array(node,
+						 "google,hpp_fod_vol",
+						 pdata->hpp_fod_vol,
+						 nb_hpp_fod_vol);
+		if (ret < 0) {
+			dev_warn(dev, "failed to read google,hpp_fod_vol: %d\n", ret);
+			pdata->hpp_fod_vol = NULL;
+		} else {
+			ret = p9221_parse_hpp_fods(dev, pdata, nb_hpp_fod_vol);
+			if (ret == 0)
+				pdata->nb_hpp_fod_vol = nb_hpp_fod_vol;
+		}
 	} else {
-		if (pdata->fod_num > P9221R5_NUM_FOD) {
-			dev_err(dev,
-			    "Incorrect num of FOD %d, using first %d\n",
-			    pdata->fod_num, P9221R5_NUM_FOD);
-			pdata->fod_num = P9221R5_NUM_FOD;
+		nb_hpp_fod_vol = 2;
+		pdata->hpp_fod_vol = devm_kmalloc_array(dev, nb_hpp_fod_vol,
+							sizeof(u32), GFP_KERNEL);
+		if (pdata->hpp_fod_vol == NULL) {
+			dev_warn(dev, "dt google,hpp_fod_vol array not created");
+			return -ENOMEM;
 		}
-		ret = of_property_read_u8_array(node, "fod", pdata->fod,
-						pdata->fod_num);
-		if (ret == 0) {
-			char buf[P9221R5_NUM_FOD * 3 + 1];
-
-			p9221_hex_str(pdata->fod, pdata->fod_num, buf,
-				      pdata->fod_num * 3 + 1, false);
-			dev_info(dev, "dt fod: %s (%d)\n", buf, pdata->fod_num);
-		}
-	}
-
-	pdata->fod_epp_num =
-	    of_property_count_elems_of_size(node, "fod_epp", sizeof(u8));
-	if (pdata->fod_epp_num <= 0) {
-		dev_err(dev, "No dt fod epp provided (%d)\n",
-			pdata->fod_epp_num);
-		pdata->fod_epp_num = 0;
-	} else {
-		if (pdata->fod_epp_num > P9221R5_NUM_FOD) {
-			dev_err(dev,
-			    "Incorrect num of EPP FOD %d, using first %d\n",
-			    pdata->fod_epp_num, P9221R5_NUM_FOD);
-			pdata->fod_epp_num = P9221R5_NUM_FOD;
-		}
-		ret = of_property_read_u8_array(node, "fod_epp", pdata->fod_epp,
-						pdata->fod_epp_num);
-		if (ret == 0) {
-			char buf[P9221R5_NUM_FOD * 3 + 1];
-
-			p9221_hex_str(pdata->fod_epp, pdata->fod_epp_num, buf,
-				      pdata->fod_epp_num * 3 + 1, false);
-			dev_info(dev, "dt fod_epp: %s (%d)\n", buf,
-				 pdata->fod_epp_num);
-		}
-	}
-
-
-	pdata->fod_epp_comp_num =
-	    of_property_count_elems_of_size(node, "fod_epp_comp", sizeof(u8));
-	if (pdata->fod_epp_comp_num <= 0) {
-		dev_err(dev, "No dt fod epp comp provided (%d)\n",
-			pdata->fod_epp_comp_num);
-		pdata->fod_epp_comp_num = 0;
-	} else {
-		if (pdata->fod_epp_comp_num > P9221R5_NUM_FOD) {
-			dev_err(dev, "Incorrect num of EPP COMP FOD %d, using first %d\n",
-				pdata->fod_epp_comp_num, P9221R5_NUM_FOD);
-			pdata->fod_epp_comp_num = P9221R5_NUM_FOD;
-		}
-		ret = of_property_read_u8_array(node, "fod_epp_comp", pdata->fod_epp_comp,
-						pdata->fod_epp_comp_num);
-		if (ret == 0) {
-			char buf[P9221R5_NUM_FOD * 3 + 1];
-
-			p9221_hex_str(pdata->fod_epp_comp, pdata->fod_epp_comp_num, buf,
-				      pdata->fod_epp_comp_num * 3 + 1, false);
-			dev_info(dev, "dt fod_epp_comp: %s (%d)\n", buf,
-				 pdata->fod_epp_comp_num);
-		}
-	}
-
-	pdata->fod_hpp_num =
-	    of_property_count_elems_of_size(node, "fod_hpp", sizeof(u8));
-	if (pdata->fod_hpp_num <= 0) {
-		pdata->fod_hpp_num = 0;
-	} else {
-		if (pdata->fod_hpp_num > P9221R5_NUM_FOD) {
-			dev_err(dev, "Incorrect num of HPP FOD %d, using first %d\n",
-				pdata->fod_hpp_num, P9221R5_NUM_FOD);
-			pdata->fod_hpp_num = P9221R5_NUM_FOD;
-		}
-		ret = of_property_read_u8_array(node, "fod_hpp", pdata->fod_hpp,
-						pdata->fod_hpp_num);
-		if (ret == 0) {
-			char buf[P9221R5_NUM_FOD * 3 + 1];
-
-			p9221_hex_str(pdata->fod_hpp, pdata->fod_hpp_num, buf,
-				      pdata->fod_hpp_num * 3 + 1, false);
-			dev_info(dev, "dt fod_hpp: %s (%d)\n", buf,
-				 pdata->fod_hpp_num);
-		}
-	}
-
-	pdata->fod_hpp_hv_num =
-	    of_property_count_elems_of_size(node, "fod_hpp_hv", sizeof(u8));
-	if (pdata->fod_hpp_hv_num <= 0) {
-		pdata->fod_hpp_hv_num = 0;
-	} else {
-		if (pdata->fod_hpp_hv_num > P9221R5_NUM_FOD) {
-			dev_err(dev, "Incorrect num of HPP HV FOD %d, using first %d\n",
-				pdata->fod_hpp_hv_num, P9221R5_NUM_FOD);
-			pdata->fod_hpp_hv_num = P9221R5_NUM_FOD;
-		}
-		ret = of_property_read_u8_array(node, "fod_hpp_hv", pdata->fod_hpp_hv,
-						pdata->fod_hpp_hv_num);
-		if (ret == 0) {
-			char buf[P9221R5_NUM_FOD * 3 + 1];
-
-			p9221_hex_str(pdata->fod_hpp_hv, pdata->fod_hpp_hv_num, buf,
-				      pdata->fod_hpp_hv_num * 3 + 1, false);
-			dev_info(dev, "dt fod_hpp_hv: %s (%d)\n", buf,
-				 pdata->fod_hpp_hv_num);
+		p9221_parse_fod(dev, &pdata->hpp_fods[0].num, pdata->hpp_fods[0].fod, "fod_hpp");
+		p9221_parse_fod(dev, &pdata->hpp_fods[1].num, pdata->hpp_fods[1].fod, "fod_hpp_hv");
+		if (pdata->hpp_fods[0].num > 0 && pdata->hpp_fods[1].num > 0) {
+			pdata->hpp_fod_vol[0] = HPP_FOD_VOUT_THRESHOLD_UV;
+			pdata->hpp_fod_vol[1] = pdata->max_vout_mv;
+			pdata->nb_hpp_fod_vol = nb_hpp_fod_vol;
+		} else {
+			dev_warn(dev, "failed to read fod_hpp, fod_hpp_hv: %d\n", ret);
+			pdata->hpp_fod_vol = NULL;
 		}
 	}
 
