@@ -86,6 +86,9 @@ struct dual_fg_drv {
 
 	u32 vsec_offset;
 	u32 vsec_offset_max_idx;
+
+	int base_soc;
+	int sec_soc;
 };
 
 static int gdbatt_resume_check(struct dual_fg_drv *dual_fg_drv) {
@@ -375,6 +378,25 @@ static int gdbatt_get_capacity(struct dual_fg_drv *dual_fg_drv, int base_soc, in
 	return (base_soc * base_full + sec_soc * sec_full) / full_sum;
 }
 
+#define MONITOR_SOC_DIFF	10
+static void gdbatt_fg_logging(struct dual_fg_drv *dual_fg_drv, int base_soc_raw, int sec_soc_raw)
+{
+	const int base_soc = qnum_toint(qnum_from_q8_8(base_soc_raw));
+	const int sec_soc = qnum_toint(qnum_from_q8_8(sec_soc_raw));
+
+	if (dual_fg_drv->base_soc == base_soc && dual_fg_drv->sec_soc == sec_soc)
+		return;
+
+	/* Dump registers */
+	if (abs(base_soc - sec_soc) >= MONITOR_SOC_DIFF) {
+		GPSY_SET_PROP(dual_fg_drv->first_fg_psy, GBMS_PROP_FG_REG_LOGGING, true);
+		GPSY_SET_PROP(dual_fg_drv->second_fg_psy, GBMS_PROP_FG_REG_LOGGING, true);
+	}
+
+	dual_fg_drv->base_soc = base_soc;
+	dual_fg_drv->sec_soc = sec_soc;
+}
+
 static void google_dual_batt_work(struct work_struct *work)
 {
 	struct dual_fg_drv *dual_fg_drv = container_of(work, struct dual_fg_drv,
@@ -476,6 +498,9 @@ static int gdbatt_get_property(struct power_supply *psy,
 		val->intval = (fg_1.intval + fg_2.intval)/2;
 		break;
 	case GBMS_PROP_CAPACITY_RAW:
+		val->intval = gdbatt_get_capacity(dual_fg_drv, fg_1.intval, fg_2.intval);
+		gdbatt_fg_logging(dual_fg_drv, fg_1.intval, fg_2.intval);
+		break;
 	case POWER_SUPPLY_PROP_CAPACITY:
 		val->intval = gdbatt_get_capacity(dual_fg_drv, fg_1.intval, fg_2.intval);
 		break;
