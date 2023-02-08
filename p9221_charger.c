@@ -349,6 +349,10 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 	int retries = 3;
 	static char *wlc_mode[] = { "BPP", "EPP", "EPP_COMP" , "HPP" , "HPP_HV" };
 
+	mutex_lock(&charger->fod_lock);
+
+	if (charger->fod_cnt)
+		goto done;
 
 	if (charger->no_fod)
 		goto no_fod;
@@ -407,7 +411,7 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 		if (ret) {
 			dev_err(&charger->client->dev,
 				"Could not write FOD: %d\n", ret);
-			return;
+			goto unlock;
 		}
 
 		/* Verify the FOD has been written properly */
@@ -415,7 +419,7 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 		if (ret) {
 			dev_err(&charger->client->dev,
 				"Could not read back FOD: %d\n", ret);
-			return;
+			goto unlock;
 		}
 
 		if (memcmp(fod, fod_read, fod_count) == 0)
@@ -437,6 +441,8 @@ done:
 	if (charger->pdata->fod_fsw)
 		mod_delayed_work(system_wq, &charger->chk_fod_work,
 				 msecs_to_jiffies(P9XXX_FOD_CHK_DELAY_MS));
+unlock:
+	mutex_unlock(&charger->fod_lock);
 }
 
 #define CC_DATA_LOCK_MS		250
@@ -1162,6 +1168,8 @@ static void force_set_fod(struct p9221_charger_data *charger)
 	u8 fod[P9221R5_NUM_FOD] = { 0 };
 	int ret;
 
+	mutex_lock(&charger->fod_lock);
+
 	if (p9221_is_hpp(charger)) {
 		dev_info(&charger->client->dev,
 			"power_mitigate: send EOP for revert to BPP\n");
@@ -1173,6 +1181,8 @@ static void force_set_fod(struct p9221_charger_data *charger)
 	if (ret)
 		dev_err(&charger->client->dev,
 			"power_mitigate: failed, ret=%d\n", ret);
+
+	mutex_unlock(&charger->fod_lock);
 }
 
 static void p9221_power_mitigation_work(struct work_struct *work)
@@ -1239,13 +1249,15 @@ static void p9221_power_mitigation_work(struct work_struct *work)
 
 static void p9221_init_align(struct p9221_charger_data *charger)
 {
+	const bool disabled = charger->prop_mode_en || charger->pdata->disable_align;
+
 	/* Reset values used for alignment */
 	charger->alignment_last = -1;
 	charger->current_filtered = 0;
 	charger->current_sample_cnt = 0;
 	charger->mfg_check_count = 0;
 	/* Disable misaligned message in high power mode, b/159066422 */
-	if (!charger->online || charger->prop_mode_en == true) {
+	if (!charger->online || disabled) {
 		charger->align = WLC_ALIGN_CENTERED;
 		return;
 	}
@@ -6482,56 +6494,49 @@ static int p9221_parse_dt(struct device *dev,
 	ret = of_property_read_u32(node, "google,alignment_scalar_low_current",
 				   &data);
 	if (ret < 0)
-		pdata->alignment_scalar_low_current =
-			WLC_ALIGN_DEFAULT_SCALAR_LOW_CURRENT;
+		pdata->alignment_scalar_low_current = 0;
 	else
 		pdata->alignment_scalar_low_current = data;
-
-	dev_info(dev, "google,alignment_scalar_low_current set to: %d\n",
-		 pdata->alignment_scalar_low_current);
 
 	ret = of_property_read_u32(node, "google,alignment_scalar_high_current",
 				   &data);
 	if (ret < 0)
-		pdata->alignment_scalar_high_current =
-			  WLC_ALIGN_DEFAULT_SCALAR_HIGH_CURRENT;
+		pdata->alignment_scalar_high_current = 0;
 	else
 		pdata->alignment_scalar_high_current = data;
-
-	dev_info(dev, "google,alignment_scalar_high_current set to: %d\n",
-		 pdata->alignment_scalar_high_current);
 
 	ret = of_property_read_u32(node, "google,alignment_offset_low_current",
 				   &data);
 	if (ret < 0)
-		pdata->alignment_offset_low_current =
-			WLC_ALIGN_DEFAULT_OFFSET_LOW_CURRENT;
+		pdata->alignment_offset_low_current = 0;
 	else
 		pdata->alignment_offset_low_current = data;
-
-	dev_info(dev, "google,alignment_offset_low_current set to: %d\n",
-		 pdata->alignment_offset_low_current);
 
 	ret = of_property_read_u32(node, "google,alignment_offset_high_current",
 				   &data);
 	if (ret < 0)
-		pdata->alignment_offset_high_current =
-			WLC_ALIGN_DEFAULT_OFFSET_HIGH_CURRENT;
+		pdata->alignment_offset_high_current = 0;
 	else
 		pdata->alignment_offset_high_current = data;
-
-	dev_info(dev, "google,alignment_offset_high_current set to: %d\n",
-		 pdata->alignment_offset_high_current);
 
 	ret = of_property_read_u32(node, "google,alignment_current_threshold",
 				   &data);
 	if (ret < 0)
-		pdata->alignment_current_threshold = WLC_ALIGN_CURRENT_THRESHOLD;
+		pdata->alignment_current_threshold = 0;
 	else
 		pdata->alignment_current_threshold = data;
 
-	dev_info(dev, "google,alignment_current_threshold set to: %d\n",
-		 pdata->alignment_current_threshold);
+	pdata->disable_align = !(pdata->alignment_scalar_low_current &&
+				 pdata->alignment_scalar_high_current &&
+				 pdata->alignment_offset_low_current &&
+				 pdata->alignment_offset_high_current &&
+				 pdata->alignment_current_threshold);
+	dev_info(dev, "align:%s, scalar_low=%d, scalar_high=%d, "
+		 "offset_low=%d, offset_high=%d, current_thres=%d\n",
+		 pdata->disable_align ? "disable" : "enable", pdata->alignment_scalar_low_current,
+		 pdata->alignment_scalar_high_current, pdata->alignment_offset_low_current,
+		 pdata->alignment_offset_high_current, pdata->alignment_current_threshold);
+
 
 	ret = of_property_read_u32(node, "google,power_mitigate_threshold",
 				   &data);
@@ -6797,6 +6802,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	mutex_init(&charger->rtx_lock);
 	mutex_init(&charger->auth_lock);
 	mutex_init(&charger->renego_lock);
+	mutex_init(&charger->fod_lock);
 	timer_setup(&charger->vrect_timer, p9221_vrect_timer_handler, 0);
 	timer_setup(&charger->align_timer, p9221_align_timer_handler, 0);
 	INIT_DELAYED_WORK(&charger->dcin_work, p9221_dcin_work);
