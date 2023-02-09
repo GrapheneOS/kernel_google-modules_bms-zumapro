@@ -2151,6 +2151,9 @@ static int chg_run_defender(struct chg_drv *chg_drv)
 		/* run dock_defend */
 		if (!bd_state->triggered && bd_state->dd_enabled)
 			bd_dd_run_defender(chg_drv, soc, &disable_charging, &disable_pwrsrc);
+
+		if (chg_drv->debug_input_suspend)
+			bd_reset(&chg_drv->bd_state);
 	} else if (chg_drv->bd_state.dd_enabled) {
 		bd_dd_run_defender(chg_drv, soc, &disable_charging, &disable_pwrsrc);
 	} else if (chg_drv->disable_charging) {
