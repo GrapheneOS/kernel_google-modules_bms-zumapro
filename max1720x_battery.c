@@ -2569,7 +2569,7 @@ static int max1720x_monitor_log_data(struct max1720x_chip *chip, bool force_log)
 {
 	u16 data, repsoc, vfsoc, avcap, repcap, fullcap, fullcaprep;
 	u16 fullcapnom, qh0, qh, dqacc, dpacc, qresidual, fstat;
-	u16 learncfg, tempco, filtercfg;
+	u16 learncfg, tempco, filtercfg, mixcap, vfremcap, vcell, ibat;
 	int ret = 0, charge_counter = -1;
 
 	ret = REGMAP_READ(&chip->regmap, MAX1720X_REPSOC, &data);
@@ -2640,6 +2640,22 @@ static int max1720x_monitor_log_data(struct max1720x_chip *chip, bool force_log)
 	if (ret < 0)
 		return ret;
 
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_MIXCAP, &mixcap);
+	if (ret < 0)
+		return ret;
+
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_VFREMCAP, &vfremcap);
+	if (ret < 0)
+		return ret;
+
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_VCELL, &vcell);
+	if (ret < 0)
+		return ret;
+
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_CURRENT, &ibat);
+	if (ret < 0)
+		return ret;
+
 	ret = max1720x_update_battery_qh_based_capacity(chip);
 	if (ret == 0)
 		charge_counter = reg_to_capacity_uah(chip->current_capacity, chip);
@@ -2647,7 +2663,8 @@ static int max1720x_monitor_log_data(struct max1720x_chip *chip, bool force_log)
 	gbms_logbuffer_prlog(chip->monitor_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
 			     "%s %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
 			     " %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
-			     " %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X CC:%d",
+			     " %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
+			     " %02X:%04X %02X:%04X %02X:%04X CC:%d",
 			     chip->max1720x_psy_desc.name, MAX1720X_REPSOC, data, MAX1720X_VFSOC,
 			     vfsoc, MAX1720X_AVCAP, avcap, MAX1720X_REPCAP, repcap,
 			     MAX1720X_FULLCAP, fullcap, MAX1720X_FULLCAPREP, fullcaprep,
@@ -2655,7 +2672,9 @@ static int max1720x_monitor_log_data(struct max1720x_chip *chip, bool force_log)
 			     MAX1720X_QH, qh, MAX1720X_DQACC, dqacc, MAX1720X_DPACC, dpacc,
 			     MAX1720X_QRESIDUAL, qresidual, MAX1720X_FSTAT, fstat,
 			     MAX1720X_LEARNCFG, learncfg, MAX1720X_TEMPCO, tempco,
-			     MAX1720X_FILTERCFG, filtercfg, charge_counter);
+			     MAX1720X_FILTERCFG, filtercfg, MAX1720X_MIXCAP, mixcap,
+			     MAX1720X_VFREMCAP, vfremcap, MAX1720X_VCELL, vcell,
+			     MAX1720X_CURRENT, ibat, charge_counter);
 
 	chip->pre_repsoc = repsoc;
 
