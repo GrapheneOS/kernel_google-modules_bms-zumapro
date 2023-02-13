@@ -5198,33 +5198,6 @@ static int debug_ravg_fops_write(void *data, u64 val)
 
 DEFINE_SIMPLE_ATTRIBUTE(debug_ravg_fops, NULL, debug_ravg_fops_write, "%llu\n");
 
-static int debug_temp_filter_enable_read(void *data, u64 *val)
-{
-	struct batt_drv *batt_drv = (struct batt_drv *)data;
-
-	*val = batt_drv->temp_filter.enable;
-	return 0;
-}
-
-static int debug_temp_filter_enable_write(void *data, u64 val)
-{
-	struct batt_drv *batt_drv = (struct batt_drv *)data;
-	struct batt_temp_filter *temp_filter = &batt_drv->temp_filter;
-	bool enable = val != 0;
-
-	if (temp_filter->enable != enable) {
-		temp_filter->enable = enable;
-		temp_filter->force_update = true;
-		mod_delayed_work(system_wq, &temp_filter->work, 0);
-	}
-
-	return 0;
-}
-
-DEFINE_SIMPLE_ATTRIBUTE(debug_temp_filter_enable_fops,
-			debug_temp_filter_enable_read,
-			debug_temp_filter_enable_write, "%llu\n");
-
 #endif
 
 /* ------------------------------------------------------------------------- */
@@ -6861,6 +6834,41 @@ static ssize_t dev_sn_show(struct device *dev,
 
 static const DEVICE_ATTR_RW(dev_sn);
 
+static ssize_t temp_filter_enable_store(struct device *dev,
+			    struct device_attribute *attr,
+			    const char *buf, size_t count)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	struct batt_temp_filter *temp_filter = &batt_drv->temp_filter;
+	int val, ret;
+	bool enable;
+
+	ret = kstrtoint(buf, 0, &val);
+	if (ret < 0)
+		return ret;
+
+	enable = val != 0;
+
+	if (temp_filter->enable != enable) {
+		temp_filter->enable = enable;
+		temp_filter->force_update = true;
+		mod_delayed_work(system_wq, &temp_filter->work, 0);
+	}
+
+	return count;
+}
+
+static ssize_t temp_filter_enable_show(struct device *dev,
+			   struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->temp_filter.enable);
+}
+
+static const DEVICE_ATTR_RW(temp_filter_enable);
 /* ------------------------------------------------------------------------- */
 
 static int batt_init_fs(struct batt_drv *batt_drv)
@@ -7040,6 +7048,11 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create dev sn\n");
 
+	/* temperature filter */
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_temp_filter_enable);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create temp_filter_enable\n");
+
 	return 0;
 
 }
@@ -7136,8 +7149,6 @@ static int batt_init_debugfs(struct batt_drv *batt_drv)
 			   &batt_drv->temp_filter.fast_interval);
 	debugfs_create_u32("temp_filter_resume_delay_interval", 0644, de,
 			   &batt_drv->temp_filter.resume_delay_time);
-	debugfs_create_file("temp_filter_enable", 0644, de, batt_drv,
-			    &debug_temp_filter_enable_fops);
 
 	return 0;
 }
