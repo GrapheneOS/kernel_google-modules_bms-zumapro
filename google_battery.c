@@ -403,6 +403,20 @@ struct csi_stats {
 	ktime_t last_update;
 };
 
+#define TEMP_SAMPLE_SIZE 5
+struct batt_temp_filter {
+	struct delayed_work work;
+	struct mutex lock;
+	bool enable;
+	bool force_update;
+	bool resume_delay;
+	int sample[TEMP_SAMPLE_SIZE];
+	int default_interval;
+	int fast_interval;
+	int resume_delay_time;
+	int last_idx;
+};
+
 /* battery driver state */
 struct batt_drv {
 	struct device *device;
@@ -568,11 +582,52 @@ struct batt_drv {
 
 	/* battery critical level */
 	int batt_critical_voltage;
+
+	/* battery temperature filter */
+	struct batt_temp_filter temp_filter;
 };
 
-static int gbatt_get_temp(const struct batt_drv *batt_drv, int *temp);
+static int gbatt_get_temp(struct batt_drv *batt_drv, int *temp);
 
 static int gbatt_get_capacity(struct batt_drv *batt_drv);
+
+static int batt_get_filter_temp(struct batt_temp_filter *temp_filter)
+{
+	int sum = 0, max, min, i;
+
+	mutex_lock(&temp_filter->lock);
+	max = min = temp_filter->sample[0];
+	for (i = 0; i < TEMP_SAMPLE_SIZE; i++) {
+		if (temp_filter->sample[i] > max)
+			max = temp_filter->sample[i];
+		if (temp_filter->sample[i] < min)
+			min = temp_filter->sample[i];
+		sum += temp_filter->sample[i];
+	}
+	mutex_unlock(&temp_filter->lock);
+
+	return (sum - max - min) / (TEMP_SAMPLE_SIZE - 2);
+}
+
+static int gbatt_get_raw_temp(struct batt_drv *batt_drv, int *temp)
+{
+	int err = 0;
+	union power_supply_propval val;
+
+	if (batt_drv->temp_filter.enable) {
+		*temp = batt_get_filter_temp(&batt_drv->temp_filter);
+		return err;
+	}
+
+	if (!batt_drv->fg_psy)
+		return -EINVAL;
+
+	err = power_supply_get_property(batt_drv->fg_psy, POWER_SUPPLY_PROP_TEMP, &val);
+	if (err == 0)
+		*temp = val.intval;
+
+	return err;
+}
 
 static inline void batt_update_cycle_count(struct batt_drv *batt_drv)
 {
@@ -607,9 +662,11 @@ static int batt_vs_tz_get(struct thermal_zone_device *tzd, int *batt_vs)
 	if (!batt_vs)
 		return -EINVAL;
 
-	temp = GPSY_GET_INT_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_TEMP, &rc) * 100;
+	rc = gbatt_get_raw_temp(batt_drv, &temp);
 	if (rc)
 		return -EINVAL;
+
+	temp = temp * 100;
 
 	ibat = abs(GPSY_GET_INT_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_CURRENT_AVG, &rc));
 	if (rc)
@@ -1055,7 +1112,7 @@ static void ssoc_change_curve(struct batt_ssoc_state *ssoc_state, qnum_t delta,
 #define FAN_CHG_LIMIT_LOW	50
 #define FAN_CHG_LIMIT_MED	70
 
-static int fan_bt_calculate_level(const struct batt_drv *batt_drv)
+static int fan_bt_calculate_level(struct batt_drv *batt_drv)
 {
 	int level, temp, ret;
 
@@ -1088,7 +1145,7 @@ static int fan_bt_calculate_level(const struct batt_drv *batt_drv)
 	return level;
 }
 
-static int fan_calculate_level(const struct batt_drv *batt_drv)
+static int fan_calculate_level(struct batt_drv *batt_drv)
 {
 	int charging_rate, fan_level, chg_fan_level, cc_max;
 
@@ -1794,10 +1851,16 @@ static bool batt_chg_stats_close(struct batt_drv *batt_drv,
 	if (batt_drv->vbatt_idx != -1 && batt_drv->temp_idx != -1) {
 		const ktime_t elap = now - batt_drv->ce_data.last_update;
 		const int tier_idx = batt_chg_vbat2tier(batt_drv->vbatt_idx);
-		const int ibatt = GPSY_GET_PROP(batt_drv->fg_psy,
-						POWER_SUPPLY_PROP_CURRENT_NOW);
-		const int temp = GPSY_GET_PROP(batt_drv->fg_psy,
-					       POWER_SUPPLY_PROP_TEMP);
+		int ibatt, temp, rc = 0;
+
+		/* use default value to close charging session when read fail */
+		ibatt = GPSY_GET_INT_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_CURRENT_NOW, &rc);
+		if (rc != 0)
+			ibatt = 0;
+
+		rc = gbatt_get_raw_temp(batt_drv, &temp);
+		if (rc != 0)
+			temp = 250;
 
 		batt_chg_stats_update(batt_drv,
 				      batt_drv->temp_idx, tier_idx,
@@ -2196,7 +2259,7 @@ static void batt_res_work(struct batt_drv *batt_drv)
 		return;
 
 	/* do not collect samples when temperature is outside the range */
-	temp = GPSY_GET_INT_PROP(fg_psy, POWER_SUPPLY_PROP_TEMP, &ret);
+	ret = gbatt_get_raw_temp(batt_drv, &temp);
 	if (ret < 0 || temp < rstate->res_temp_low || temp > rstate->res_temp_high)
 		return;
 
@@ -3849,7 +3912,7 @@ static int msc_logic(struct batt_drv *batt_drv)
 	ktime_t elap = now - batt_drv->ce_data.last_update;
 	bool changed;
 
-	temp = GPSY_GET_INT_PROP(fg_psy, POWER_SUPPLY_PROP_TEMP, &ioerr);
+	ioerr = gbatt_get_raw_temp(batt_drv, &temp);
 	if (ioerr < 0)
 		return -EIO;
 
@@ -5229,7 +5292,6 @@ static int debug_ravg_fops_write(void *data, u64 val)
 }
 
 DEFINE_SIMPLE_ATTRIBUTE(debug_ravg_fops, NULL, debug_ravg_fops_write, "%llu\n");
-
 
 #endif
 
@@ -7015,8 +7077,10 @@ static ssize_t dev_sn_store(struct device *dev,
 {
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	const size_t max_len = sizeof(batt_drv->dev_sn);
 
-	memcpy(batt_drv->dev_sn, buf, strlen(buf));
+	if (strlcpy(batt_drv->dev_sn, buf, max_len) >= max_len)
+		pr_warn("Paired data out of bounds\n");
 
 	return count;
 }
@@ -7032,6 +7096,41 @@ static ssize_t dev_sn_show(struct device *dev,
 
 static const DEVICE_ATTR_RW(dev_sn);
 
+static ssize_t temp_filter_enable_store(struct device *dev,
+			    struct device_attribute *attr,
+			    const char *buf, size_t count)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	struct batt_temp_filter *temp_filter = &batt_drv->temp_filter;
+	int val, ret;
+	bool enable;
+
+	ret = kstrtoint(buf, 0, &val);
+	if (ret < 0)
+		return ret;
+
+	enable = val != 0;
+
+	if (temp_filter->enable != enable) {
+		temp_filter->enable = enable;
+		temp_filter->force_update = true;
+		mod_delayed_work(system_wq, &temp_filter->work, 0);
+	}
+
+	return count;
+}
+
+static ssize_t temp_filter_enable_show(struct device *dev,
+			   struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->temp_filter.enable);
+}
+
+static const DEVICE_ATTR_RW(temp_filter_enable);
 /* ------------------------------------------------------------------------- */
 
 static int batt_init_fs(struct batt_drv *batt_drv)
@@ -7220,6 +7319,11 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create dev sn\n");
 
+	/* temperature filter */
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_temp_filter_enable);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create temp_filter_enable\n");
+
 	return 0;
 
 }
@@ -7310,6 +7414,14 @@ static int batt_init_debugfs(struct batt_drv *batt_drv)
 	debugfs_create_u32("ravg_soc_high", 0644, de,
 			   &batt_drv->health_data.bhi_data.res_state.ravg_soc_high);
 	debugfs_create_file("ravg", 0400, de,  batt_drv, &debug_ravg_fops);
+
+	/* battery temperature filter */
+	debugfs_create_u32("temp_filter_default_interval", 0644, de,
+			   &batt_drv->temp_filter.default_interval);
+	debugfs_create_u32("temp_filter_fast_interval", 0644, de,
+			   &batt_drv->temp_filter.fast_interval);
+	debugfs_create_u32("temp_filter_resume_delay_interval", 0644, de,
+			   &batt_drv->temp_filter.resume_delay_time);
 
 	/* shutdown flag */
 	debugfs_create_u32("boot_to_os_attempts", 0660, de, &batt_drv->boot_to_os_attempts);
@@ -7434,21 +7546,14 @@ static int gbatt_get_capacity_level(const struct batt_drv *batt_drv,
 	return capacity_level;
 }
 
-static int gbatt_get_temp(const struct batt_drv *batt_drv, int *temp)
+static int gbatt_get_temp(struct batt_drv *batt_drv, int *temp)
 {
 	int err = 0;
-	union power_supply_propval val;
 
-	if (batt_drv->fake_temp) {
+	if (batt_drv->fake_temp)
 		*temp = batt_drv->fake_temp;
-	} else if (!batt_drv->fg_psy) {
-		err = -EINVAL;
-	} else {
-		err = power_supply_get_property(batt_drv->fg_psy,
-						POWER_SUPPLY_PROP_TEMP, &val);
-		if (err == 0)
-			*temp = val.intval;
-	}
+	else
+		err = gbatt_get_raw_temp(batt_drv, temp);
 
 	return err;
 }
@@ -7729,6 +7834,91 @@ static int google_battery_init_hist_work(struct batt_drv *batt_drv )
 		 batt_drv->blf_state, cnt);
 
 	return 0;
+}
+
+#define TEMP_FILTER_DEFAULT_INTERVAL_MS 30000
+#define TEMP_FILTER_FAST_INTERVAL_MS 3000
+#define TEMP_FILTER_RESUME_DELAY_MS 1500
+static void batt_init_temp_filter(struct batt_drv *batt_drv)
+{
+	struct batt_temp_filter *temp_filter = &batt_drv->temp_filter;
+	const struct device_node *node = batt_drv->device->of_node;
+	u32 tmp;
+	int ret;
+
+	mutex_init(&batt_drv->temp_filter.lock);
+
+	ret = of_property_read_u32(node, "google,temp-filter-default-interval", &tmp);
+	if (ret == 0)
+		temp_filter->default_interval = tmp;
+	else
+		temp_filter->default_interval = TEMP_FILTER_DEFAULT_INTERVAL_MS;
+
+	ret = of_property_read_u32(node, "google,temp-filter-fast-interval", &tmp);
+	if (ret == 0)
+		temp_filter->fast_interval = tmp;
+	else
+		temp_filter->fast_interval = TEMP_FILTER_FAST_INTERVAL_MS;
+
+	ret = of_property_read_u32(node, "google,temp-filter-resume-delay", &tmp);
+	if (ret == 0)
+		temp_filter->resume_delay_time = tmp;
+	else
+		temp_filter->resume_delay_time = TEMP_FILTER_RESUME_DELAY_MS;
+
+	/* initial temperature value in first read data */
+	temp_filter->force_update = true;
+	mod_delayed_work(system_wq, &temp_filter->work, 0);
+
+	pr_info("temperture filter: default:%ds, fast:%ds, resume:%dms\n",
+		temp_filter->default_interval / 1000, temp_filter->fast_interval / 1000,
+		temp_filter->resume_delay_time);
+}
+
+static void google_battery_temp_filter_work(struct work_struct *work)
+{
+	struct batt_drv *batt_drv = container_of(work, struct batt_drv, temp_filter.work.work);
+	const union gbms_ce_adapter_details *ad = &batt_drv->ce_data.adapter_details;
+	struct batt_temp_filter *temp_filter = &batt_drv->temp_filter;
+	int interval = temp_filter->default_interval;
+	union power_supply_propval val;
+	int err = 0, i;
+
+	if (!temp_filter->enable || interval == 0)
+		return;
+
+	if (!batt_drv->fg_psy)
+		goto done;
+
+	if (temp_filter->resume_delay) {
+		interval = temp_filter->resume_delay_time; /* i2c might busy when resume */
+		temp_filter->resume_delay = false;
+		temp_filter->force_update = true;
+		goto done;
+	}
+
+	if (ad->ad_type == CHG_EV_ADAPTER_TYPE_WLC ||
+	    ad->ad_type == CHG_EV_ADAPTER_TYPE_WLC_EPP ||
+	    ad->ad_type == CHG_EV_ADAPTER_TYPE_WLC_SPP)
+		interval = temp_filter->fast_interval;
+
+	err = power_supply_get_property(batt_drv->fg_psy, POWER_SUPPLY_PROP_TEMP, &val);
+	if (err != 0)
+		goto done;
+
+	mutex_lock(&temp_filter->lock);
+	if (temp_filter->force_update) {
+		temp_filter->force_update = false;
+		for (i = 0; i < TEMP_SAMPLE_SIZE; i++)
+			temp_filter->sample[i] = val.intval;
+	} else {
+		temp_filter->last_idx = (temp_filter->last_idx + 1) % TEMP_SAMPLE_SIZE;
+		temp_filter->sample[temp_filter->last_idx] = val.intval;
+	}
+	mutex_unlock(&temp_filter->lock);
+
+done:
+	mod_delayed_work(system_wq, &temp_filter->work, msecs_to_jiffies(interval));
 }
 
 #define BOOT_TO_OS_ATTEMPTS 3
@@ -8850,6 +9040,10 @@ static void google_battery_init_work(struct work_struct *work)
 		google_battery_dump_profile(&batt_drv->chg_profile);
 	}
 
+	batt_drv->temp_filter.enable = of_property_read_bool(node, "google,temp-filter-enable");
+	if (batt_drv->temp_filter.enable)
+		batt_init_temp_filter(batt_drv);
+
 	cev_stats_init(&batt_drv->ce_data, &batt_drv->chg_profile);
 	cev_stats_init(&batt_drv->ce_qual, &batt_drv->chg_profile);
 
@@ -9114,6 +9308,7 @@ static int google_battery_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&batt_drv->init_work, google_battery_init_work);
 	INIT_DELAYED_WORK(&batt_drv->batt_work, google_battery_work);
 	INIT_DELAYED_WORK(&batt_drv->power_metrics.work, power_metrics_data_work);
+	INIT_DELAYED_WORK(&batt_drv->temp_filter.work, google_battery_temp_filter_work);
 	platform_set_drvdata(pdev, batt_drv);
 
 	psy_cfg.drv_data = batt_drv;
@@ -9294,6 +9489,7 @@ static int gbatt_pm_resume(struct device *dev)
 
 	pm_runtime_get_sync(batt_drv->device);
 	batt_drv->resume_complete = true;
+	batt_drv->temp_filter.resume_delay = true;
 	pm_runtime_put_sync(batt_drv->device);
 
 	mod_delayed_work(system_wq, &batt_drv->batt_work, 0);
