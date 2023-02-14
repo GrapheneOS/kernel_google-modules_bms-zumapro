@@ -4757,11 +4757,11 @@ static ssize_t p9221_show_chg_stats(struct device *dev,
 		goto enodata_done;
 
 	len = p9221_chg_data_head_dump(buf, PAGE_SIZE, &charger->chg_data);
-	if (len < PAGE_SIZE)
+	if (len < PAGE_SIZE - 1)
 		buf[len++] = '\n';
 
 	len += p9221_adapter_capabilities_dump(&buf[len], PAGE_SIZE - len, &charger->chg_data);
-	if (len < PAGE_SIZE)
+	if (len < PAGE_SIZE - 1)
 		buf[len++] = '\n';
 
 	for (i = 0; i < WLC_SOC_STATS_LEN; i++) {
@@ -4769,7 +4769,7 @@ static ssize_t p9221_show_chg_stats(struct device *dev,
 			continue;
 		len += p9221_soc_data_dump(&buf[len], PAGE_SIZE - len,
 					   &charger->chg_data, i);
-		if (len < PAGE_SIZE)
+		if (len < PAGE_SIZE - 1)
 			buf[len++] = '\n';
 	}
 
