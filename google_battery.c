@@ -3219,17 +3219,14 @@ static u32 aacr_get_reference_capacity(const struct batt_drv *batt_drv, int cycl
 }
 
 /* 80% of design_capacity min, design_capacity in grace, aacr or negative */
-static int aacr_get_capacity_at_cycle(const struct batt_drv *batt_drv, int cycle_count)
+static int aacr_get_capacity_for_algo(const struct batt_drv *batt_drv, int cycle_count,
+				      int aacr_algo)
 {
 	const int design_capacity = batt_drv->battery_capacity; /* mAh */
 	const int min_capacity = (batt_drv->battery_capacity * 80) / 100;
 	int reference_capacity, full_cap_nom, full_capacity;
 	struct power_supply *fg_psy = batt_drv->fg_psy;
 	int aacr_capacity;
-
-	/* batt_drv->cycle_count might be negative */
-	if (cycle_count <= batt_drv->aacr_cycle_grace)
-		return design_capacity;
 
 	/* peg at 80% of design when over limit (if set) */
 	if (batt_drv->aacr_cycle_max && (cycle_count >= batt_drv->aacr_cycle_max))
@@ -3243,10 +3240,9 @@ static int aacr_get_capacity_at_cycle(const struct batt_drv *batt_drv, int cycle
 	full_cap_nom = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_CHARGE_FULL);
 	if (full_cap_nom < 0)
 		return full_cap_nom;
-
 	full_cap_nom /= 1000;
 
-	if (batt_drv->aacr_algo == BATT_AACR_ALGO_LOW_B)
+	if (aacr_algo == BATT_AACR_ALGO_LOW_B)
 		full_capacity = min(min(full_cap_nom, design_capacity), reference_capacity);
 	else
 		full_capacity = max(min(full_cap_nom, design_capacity), reference_capacity);
@@ -3259,6 +3255,17 @@ static int aacr_get_capacity_at_cycle(const struct batt_drv *batt_drv, int cycle
 		 full_capacity, aacr_capacity, batt_drv->aacr_algo);
 
 	return aacr_capacity;
+}
+
+static int aacr_get_capacity_at_cycle(const struct batt_drv *batt_drv, int cycle_count)
+{
+	const int design_capacity = batt_drv->battery_capacity; /* mAh */
+
+	/* batt_drv->cycle_count might be negative */
+	if (cycle_count <= batt_drv->aacr_cycle_grace)
+		return design_capacity;
+
+	return aacr_get_capacity_for_algo(batt_drv, cycle_count, batt_drv->aacr_algo);
 }
 
 /* design_capacity when not enabled, never a negative value */
@@ -3425,7 +3432,11 @@ static int bhi_calc_cap_index(int algo, struct batt_drv *batt_drv)
 
 	/* for BHI_ALGO_ACHI_B compare to aacr capacity */
 	if (algo == BHI_ALGO_ACHI_B || algo == BHI_ALGO_ACHI_RAVG_B) {
-		capacity_aacr = aacr_get_capacity(batt_drv);
+		const int cycle_count = batt_drv->fake_aacr_cc ?
+					batt_drv->fake_aacr_cc : batt_drv->cycle_count;
+
+		capacity_aacr =  aacr_get_capacity_for_algo(batt_drv, cycle_count,
+							   batt_drv->aacr_algo);
 
 		if (capacity_health < capacity_aacr)
 			capacity_health = capacity_aacr;
