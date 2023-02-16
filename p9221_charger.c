@@ -2059,6 +2059,11 @@ static int p9221_get_property(struct power_supply *psy,
 		}
 
 		val->intval = p9221_get_psy_online(charger);
+		/* thermal throttled + PDET detected + not in RTX mode */
+		if (val->intval)
+			break;
+		val->intval = charger->online_spoof && charger->det_status == 0 &&
+				charger->ben_state == 0;
 		break;
 	case POWER_SUPPLY_PROP_SERIAL_NUMBER:
 		/* val->strval == NULL means NODATA */
@@ -3479,6 +3484,17 @@ static void p9221_notifier_check_dc(struct p9221_charger_data *charger)
 	cancel_delayed_work(&charger->dcin_work);
 	del_timer(&charger->vrect_timer);
 
+	if (charger->online_spoof && dc_in == 1) {
+		/* stop spoofing is queued */
+		if (cancel_delayed_work(&charger->stop_online_spoof_work)) {
+			logbuffer_prlog(charger->log, "dc=1: online_spoof=0");
+			charger->online_spoof = false;
+		} else {
+			dev_err(&charger->client->dev, "Error: no spoof work even though spoof=1 && dc=1\n");
+			charger->online_spoof = false;
+		}
+	}
+
 	if (charger->log) {
 		u32 vout_uv;
 		u32 vout_mv;
@@ -4835,6 +4851,16 @@ static ssize_t fw_rev_show(struct device *dev,
 
 static DEVICE_ATTR_RO(fw_rev);
 
+static int irq_det_show(void *data, u64 *val)
+{
+	struct p9221_charger_data *charger = data;
+
+	*val = charger->det_status;
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(debug_irq_det_fops, irq_det_show, NULL, "%lld\n");
+
 static ssize_t p9382_show_rtx_boost(struct device *dev,
 				    struct device_attribute *attr,
 				    char *buf)
@@ -6134,12 +6160,60 @@ out:
 	return IRQ_HANDLED;
 }
 
+static void p9xxx_stop_online_spoof_work(struct work_struct *work)
+{
+	struct p9221_charger_data *charger = container_of(work,
+			struct p9221_charger_data, stop_online_spoof_work.work);
+
+	if (charger->online_spoof) {
+		/* timeout after WLC re-enabled */
+		logbuffer_prlog(charger->log, "timeout: online_spoof=0");
+		charger->online_spoof = false;
+	}
+}
+
+static void p9xxx_change_det_status_work(struct work_struct *work)
+{
+	struct p9221_charger_data *charger = container_of(work,
+			struct p9221_charger_data, change_det_status_work.work);
+	const int det_gpio = gpio_get_value(charger->pdata->irq_det_gpio);
+
+	/* Debounce det status */
+	logbuffer_log(charger->log, "irq_det debounce: val=%d", det_gpio);
+	if (charger->det_status != det_gpio) {
+		if (det_gpio == 1 && charger->det_status == 0 && charger->online_spoof) {
+			logbuffer_prlog(charger->log, "det=0: online_spoof=0");
+			charger->online_spoof = false;
+		}
+		charger->det_status = det_gpio;
+		power_supply_changed(charger->wc_psy);
+	}
+	__pm_relax(charger->det_status_ws);
+}
+
 static irqreturn_t p9221_irq_det_thread(int irq, void *irq_data)
 {
 	struct p9221_charger_data *charger = irq_data;
+	const int det_gpio = gpio_get_value(charger->pdata->irq_det_gpio);
+	int debounce_interval = -1;
 
-	logbuffer_log(charger->log, "irq_det: online=%d ben=%d",
-		      charger->online, charger->ben_state);
+	logbuffer_log(charger->log, "irq_det: value=%d, status=%d, online=%d ben=%d",
+			det_gpio, charger->det_status, charger->online, charger->ben_state);
+	if (!charger->online_spoof) {
+		charger->det_status = det_gpio;
+	} else if (det_gpio == 1 && charger->det_status == 0) {
+		debounce_interval = msecs_to_jiffies(charger->det_off_debounce);
+	} else if (det_gpio == 0 && charger->det_status == 1) {
+		debounce_interval = msecs_to_jiffies(charger->det_on_debounce);
+	} else if (det_gpio == charger->det_status) {
+		cancel_delayed_work(&charger->change_det_status_work);
+		__pm_relax(charger->det_status_ws);
+	}
+
+	if (debounce_interval >= 0) {
+		__pm_stay_awake(charger->det_status_ws);
+		mod_delayed_work(system_wq, &charger->change_det_status_work, debounce_interval);
+	}
 
 	/* If we are already online, just ignore the interrupt. */
 	if (p9221_is_online(charger))
@@ -6834,6 +6908,15 @@ static int p9221_wlc_disable_callback(struct gvotable_election *el,
 	int disable = GVOTABLE_PTR_TO_INT(vote);
 	u8 val = P9221_EOP_UNKNOWN;
 
+	if (disable && (charger->last_disable == 0 || charger->last_disable == -1) && charger->online) {
+		logbuffer_prlog(charger->log, "wlc_disable: online_spoof=1");
+		charger->online_spoof = true;
+		cancel_delayed_work(&charger->stop_online_spoof_work);
+	}
+
+	if (charger->online_spoof && charger->last_disable && !disable)
+		schedule_delayed_work(&charger->stop_online_spoof_work, msecs_to_jiffies(2000));
+
 	if (charger->last_disable != disable)
 		logbuffer_prlog(charger->log, "set wlc %s, vote=%s",
 				disable ? "disable" : "enable", reason);
@@ -6980,6 +7063,8 @@ static int p9221_charger_probe(struct i2c_client *client,
 	timer_setup(&charger->vrect_timer, p9221_vrect_timer_handler, 0);
 	timer_setup(&charger->align_timer, p9221_align_timer_handler, 0);
 	INIT_DELAYED_WORK(&charger->dcin_work, p9221_dcin_work);
+	INIT_DELAYED_WORK(&charger->stop_online_spoof_work, p9xxx_stop_online_spoof_work);
+	INIT_DELAYED_WORK(&charger->change_det_status_work, p9xxx_change_det_status_work);
 	INIT_DELAYED_WORK(&charger->charge_stats_work, p9221_charge_stats_work);
 	INIT_DELAYED_WORK(&charger->tx_work, p9221_tx_work);
 	INIT_DELAYED_WORK(&charger->txid_work, p9382_txid_work);
@@ -7006,6 +7091,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	init_waitqueue_head(&charger->ccreset_wq);
 
 	charger->align_ws = wakeup_source_register(NULL, "p9221_align");
+	charger->det_status_ws = wakeup_source_register(NULL, "p9221_det_status");
 
 	/* setup function pointers for platform */
 	/* first from *_charger.c -> *_chip.c */
@@ -7180,20 +7266,13 @@ static int p9221_charger_probe(struct i2c_client *client,
 		ret = devm_request_threaded_irq(
 			&client->dev, charger->pdata->irq_det_int, NULL,
 			p9221_irq_det_thread,
-			IRQF_TRIGGER_RISING | IRQF_ONESHOT, "p9221-irq-det",
+			IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING | IRQF_ONESHOT, "p9221-irq-det",
 			charger);
 		if (ret) {
 			dev_err(&client->dev, "Failed to request IRQ_DET\n");
 			return ret;
 		}
-
-		ret = devm_gpio_request_one(&client->dev,
-					    charger->pdata->irq_det_gpio,
-					    GPIOF_DIR_IN, "p9221-det-gpio");
-		if (ret) {
-			dev_err(&client->dev, "Failed to request GPIO_DET\n");
-			return ret;
-		}
+		charger->det_status = gpio_get_value(charger->pdata->irq_det_gpio);
 		enable_irq_wake(charger->pdata->irq_det_int);
 	}
 
@@ -7226,6 +7305,9 @@ static int p9221_charger_probe(struct i2c_client *client,
 				   &charger->rtx_total_delay);
 		debugfs_create_bool("needs_align_check", 0644, charger->debug_entry,
 				    &charger->pdata->needs_align_check);
+		debugfs_create_file("irq_det", 0444, charger->debug_entry, charger, &debug_irq_det_fops);
+		debugfs_create_u32("det_on_debounce", 0644, charger->debug_entry, &charger->det_on_debounce);
+		debugfs_create_u32("det_off_debounce", 0644, charger->debug_entry, &charger->det_off_debounce);
 	}
 
 	/* can independently read battery capacity */
@@ -7298,6 +7380,8 @@ static int p9221_charger_remove(struct i2c_client *client)
 	struct p9221_charger_data *charger = i2c_get_clientdata(client);
 
 	cancel_delayed_work_sync(&charger->dcin_work);
+	cancel_delayed_work_sync(&charger->stop_online_spoof_work);
+	cancel_delayed_work_sync(&charger->change_det_status_work);
 	cancel_delayed_work_sync(&charger->charge_stats_work);
 	cancel_delayed_work_sync(&charger->tx_work);
 	cancel_delayed_work_sync(&charger->txid_work);
@@ -7335,6 +7419,7 @@ static int p9221_charger_remove(struct i2c_client *client)
 		logbuffer_unregister(charger->rtx_log);
 
 	wakeup_source_unregister(charger->align_ws);
+	wakeup_source_unregister(charger->det_status_ws);
 	return 0;
 }
 
