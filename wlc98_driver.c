@@ -329,12 +329,11 @@ probe_exit_error0:
 	return error;
 }
 
-static int wlc98_remove(struct i2c_client *client)
+static void wlc98_remove(struct i2c_client *client)
 {
 	struct wlc_ts_info *info = dev_get_drvdata(&(client->dev));
 	sysfs_remove_group(&client->dev.kobj, &info->attrs);
 	devm_kfree(info->dev, info);
-	return 0;
 }
 
 static const struct i2c_device_id id[] = {

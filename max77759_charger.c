@@ -3204,7 +3204,7 @@ static int max77759_charger_probe(struct i2c_client *client,
 	return 0;
 }
 
-static int max77759_charger_remove(struct i2c_client *client)
+static void max77759_charger_remove(struct i2c_client *client)
 {
 	struct max77759_chgr_data *data = i2c_get_clientdata(client);
 
@@ -3212,8 +3212,6 @@ static int max77759_charger_remove(struct i2c_client *client)
 		debugfs_remove(data->de);
 	wakeup_source_unregister(data->usecase_wake_lock);
 	wakeup_source_unregister(data->otg_fccm_wake_lock);
-
-	return 0;
 }
 
 

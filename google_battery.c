@@ -580,9 +580,9 @@ static inline void batt_update_cycle_count(struct batt_drv *batt_drv)
 					      POWER_SUPPLY_PROP_CYCLE_COUNT);
 }
 
-static int google_battery_tz_get_cycle_count(void *data, int *cycle_count)
+static int google_battery_tz_get_cycle_count(struct thermal_zone_device *tz, int *cycle_count)
 {
-	struct batt_drv *batt_drv = (struct batt_drv *)data;
+	struct batt_drv *batt_drv = (struct batt_drv *)tz->devdata;
 
 	if (!cycle_count) {
 		pr_err("Cycle Count NULL");
@@ -8990,7 +8990,7 @@ retry_init_work:
 			      msecs_to_jiffies(BATT_DELAY_INIT_MS));
 }
 
-static struct thermal_zone_of_device_ops google_battery_tz_ops = {
+static struct thermal_zone_device_ops google_battery_tz_ops = {
 	.get_temp = google_battery_tz_get_cycle_count,
 };
 
@@ -9099,8 +9099,9 @@ static int google_battery_probe(struct platform_device *pdev)
 	if (ret < 0)
 		dev_info(batt_drv->device, "RAVG: not available\n");
 
-	batt_drv->tz_dev = thermal_zone_of_sensor_register(batt_drv->device,
-				0, batt_drv, &google_battery_tz_ops);
+	batt_drv->tz_dev = devm_thermal_of_zone_register(batt_drv->device, 0,
+							 batt_drv,
+							 &google_battery_tz_ops);
 	if (IS_ERR(batt_drv->tz_dev)) {
 		pr_err("battery tz register failed. err:%ld\n",
 			PTR_ERR(batt_drv->tz_dev));
@@ -9196,9 +9197,6 @@ static int google_battery_remove(struct platform_device *pdev)
 		logbuffer_unregister(batt_drv->ssoc_log);
 	if (batt_drv->ttf_stats.ttf_log)
 		logbuffer_unregister(batt_drv->ttf_stats.ttf_log);
-	if (batt_drv->tz_dev)
-		thermal_zone_of_sensor_unregister(batt_drv->device,
-				batt_drv->tz_dev);
 	if (batt_drv->history)
 		gbms_storage_cleanup_device(batt_drv->history);
 

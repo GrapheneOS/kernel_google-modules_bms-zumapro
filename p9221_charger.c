@@ -7053,7 +7053,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	return 0;
 }
 
-static int p9221_charger_remove(struct i2c_client *client)
+static void p9221_charger_remove(struct i2c_client *client)
 {
 	struct p9221_charger_data *charger = i2c_get_clientdata(client);
 
@@ -7094,7 +7094,6 @@ static int p9221_charger_remove(struct i2c_client *client)
 		logbuffer_unregister(charger->rtx_log);
 
 	wakeup_source_unregister(charger->align_ws);
-	return 0;
 }
 
 static const struct i2c_device_id p9221_charger_id_table[] = {
