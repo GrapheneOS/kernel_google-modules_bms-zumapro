@@ -2106,6 +2106,7 @@ static int max1720x_get_age(struct max1720x_chip *chip)
 	return reg_to_time_hr(timerh, chip);
 }
 
+#define MAX_HIST_FULLCAP	0x3FF
 static int max1720x_get_fade_rate(struct max1720x_chip *chip)
 {
 	struct max17x0x_eeprom_history hist = { 0 };
@@ -2130,7 +2131,7 @@ static int max1720x_get_fade_rate(struct max1720x_chip *chip)
 		dev_info(chip->dev, "%s: idx=%d hist.fc=%d (%x) ret=%d\n", __func__,
 			hist_idx, hist.fullcapnom, hist.fullcapnom, ret);
 
-		if (ret < 0 || hist.fullcapnom == 0x3FF)
+		if (ret < 0)
 			return -EINVAL;
 
 		/* hist.fullcapnom = fullcapnom * 800 / designcap */
@@ -5209,55 +5210,90 @@ static int max17x0x_collect_history_data(void *buff, size_t size,
 {
 	struct max17x0x_eeprom_history hist = { 0 };
 	u16 data, designcap;
+	int ret;
 
-	if (REGMAP_READ(&chip->regmap, MAX1720X_TEMPCO, &data) == 0)
-		hist.tempco = data;
+	if (chip->por)
+		return -EINVAL;
 
-	if (REGMAP_READ(&chip->regmap, MAX1720X_RCOMP0, &data) == 0)
-		hist.rcomp0 = data;
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_TEMPCO, &data);
+	if (ret)
+		return ret;
 
-	if (REGMAP_READ(&chip->regmap, MAX1720X_TIMERH, &data) == 0) {
-		/* Convert LSB from 3.2hours(192min) to 5days(7200min) */
-		hist.timerh = data * 192 / 7200;
-	}
+	hist.tempco = data;
 
-	if (REGMAP_READ(&chip->regmap, MAX1720X_DESIGNCAP, &designcap) == 0) {
-		/* multiply by 100 to convert from mAh to %, LSB 0.125% */
-		if (REGMAP_READ(&chip->regmap, MAX1720X_FULLCAPNOM, &data) == 0)
-			hist.fullcapnom = data * 800 / designcap;
-		if (REGMAP_READ(&chip->regmap, MAX1720X_FULLCAPREP, &data) == 0)
-			hist.fullcaprep = data * 800 / designcap;
-	}
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_RCOMP0, &data);
+	if (ret)
+		return ret;
 
-	if (REGMAP_READ(&chip->regmap, MAX1720X_MIXSOC, &data) == 0) {
-		/* Convert LSB from 1% to 2% */
-		hist.mixsoc = REG_HALF_HIGH(data) / 2;
-	}
+	hist.rcomp0 = data;
 
-	if (REGMAP_READ(&chip->regmap, MAX1720X_VFSOC, &data) == 0) {
-		/* Convert LSB from 1% to 2% */
-		hist.vfsoc = REG_HALF_HIGH(data) / 2;
-	}
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_TIMERH, &data);
+	if (ret)
+		return ret;
 
-	if (REGMAP_READ(&chip->regmap, MAX1720X_MAXMINVOLT, &data) == 0) {
-		/* LSB is 20mV, store values from 4.2V min */
-		hist.maxvolt = (REG_HALF_HIGH(data) * 20 - 4200) / 20;
-		/* Convert LSB from 20mV to 10mV, store values from 2.5V min */
-		hist.minvolt = (REG_HALF_LOW(data) * 20 - 2500) / 10;
-	}
+	/* Convert LSB from 3.2hours(192min) to 5days(7200min) */
+	hist.timerh = data * 192 / 7200;
 
-	if (REGMAP_READ(&chip->regmap, MAX1720X_MAXMINTEMP, &data) == 0) {
-		/* Convert LSB from 1degC to 3degC, store values from 25degC min */
-		hist.maxtemp = (REG_HALF_HIGH(data) - 25) / 3;
-		/* Convert LSB from 1degC to 3degC, store values from -20degC min */
-		hist.mintemp = (REG_HALF_LOW(data) + 20) / 3;
-	}
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_DESIGNCAP, &designcap);
+	if (ret)
+		return ret;
 
-	if (REGMAP_READ(&chip->regmap, MAX1720X_MAXMINCURR, &data) == 0) {
-		/* Convert LSB from 0.08A to 0.5A */
-		hist.maxchgcurr = REG_HALF_HIGH(data) * 8 / 50;
-		hist.maxdischgcurr = REG_HALF_LOW(data) * 8 / 50;
-	}
+	/* multiply by 100 to convert from mAh to %, LSB 0.125% */
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_FULLCAPNOM, &data);
+	if (ret)
+		return ret;
+
+	data = data * 800 / designcap;
+	hist.fullcapnom = data > MAX_HIST_FULLCAP ? MAX_HIST_FULLCAP : data;
+
+	/* multiply by 100 to convert from mAh to %, LSB 0.125% */
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_FULLCAPREP, &data);
+	if (ret)
+		return ret;
+
+	data = data * 800 / designcap;
+	hist.fullcaprep = data > MAX_HIST_FULLCAP ? MAX_HIST_FULLCAP : data;
+
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_MIXSOC, &data);
+	if (ret)
+		return ret;
+
+	/* Convert LSB from 1% to 2% */
+	hist.mixsoc = REG_HALF_HIGH(data) / 2;
+
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_VFSOC, &data);
+	if (ret)
+		return ret;
+
+	/* Convert LSB from 1% to 2% */
+	hist.vfsoc = REG_HALF_HIGH(data) / 2;
+
+
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_MAXMINVOLT, &data);
+	if (ret)
+		return ret;
+
+	/* LSB is 20mV, store values from 4.2V min */
+	hist.maxvolt = (REG_HALF_HIGH(data) * 20 - 4200) / 20;
+	/* Convert LSB from 20mV to 10mV, store values from 2.5V min */
+	hist.minvolt = (REG_HALF_LOW(data) * 20 - 2500) / 10;
+
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_MAXMINTEMP, &data);
+	if (ret)
+		return ret;
+
+	/* Convert LSB from 1degC to 3degC, store values from 25degC min */
+	hist.maxtemp = (REG_HALF_HIGH(data) - 25) / 3;
+	/* Convert LSB from 1degC to 3degC, store values from -20degC min */
+	hist.mintemp = (REG_HALF_LOW(data) + 20) / 3;
+
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_MAXMINCURR, &data);
+	if (ret)
+		return ret;
+
+	/* Convert LSB from 0.08A to 0.5A */
+	hist.maxchgcurr = REG_HALF_HIGH(data) * 8 / 50;
+	hist.maxdischgcurr = REG_HALF_LOW(data) * 8 / 50;
 
 	memcpy(buff, &hist, sizeof(hist));
 	return (size_t)sizeof(hist);
