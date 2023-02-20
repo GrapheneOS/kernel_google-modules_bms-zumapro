@@ -311,6 +311,7 @@ struct bm_date {
 	u8 reserve;
 };
 
+#define BHI_TREND_POINTS_SIZE 8
 struct bhi_data
 {
 	/* context */
@@ -334,6 +335,9 @@ struct bhi_data
 	struct bm_date bm_date;		/* from eeprom SN */
 	u8 act_date[BATT_EEPROM_TAG_XYMD_LEN];
 
+	/* set trend points and low boundary */
+	u16 trend[BHI_TREND_POINTS_SIZE];
+	u16 l_bound[BHI_TREND_POINTS_SIZE];
 };
 
 struct health_data
@@ -361,6 +365,9 @@ struct health_data
 	/* current battery state */
 	struct bhi_data bhi_data;
 
+	/* recalibration */
+	u8 cal_mode;
+	u8 cal_state;
 };
 
 #define POWER_METRICS_MAX_DATA	50
@@ -6888,6 +6895,77 @@ static ssize_t charging_policy_show(struct device *dev,
 
 static const DEVICE_ATTR_RW(charging_policy);
 
+static ssize_t health_set_cal_mode_store(struct device *dev,
+					 struct device_attribute *attr,
+					 const char *buf, size_t count)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = (struct batt_drv *)power_supply_get_drvdata(psy);
+	int value, ret;
+
+	ret = kstrtoint(buf, 0, &value);
+	if (ret < 0)
+		return ret;
+
+	/* TODO: implement set recalibration mode */
+	batt_drv->health_data.cal_mode = value;
+
+	return count;
+}
+
+static DEVICE_ATTR_WO(health_set_cal_mode);
+
+static ssize_t health_get_cal_state_show(struct device *dev,
+				       struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health_data.cal_state);
+}
+
+static const DEVICE_ATTR_RO(health_get_cal_state);
+
+static ssize_t health_set_trend_points_store(struct device *dev,
+					     struct device_attribute *attr,
+					     const char *buf, size_t count)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	struct bhi_data *bhi_data = &batt_drv->health_data.bhi_data;
+	int cnt = sscanf(buf, "%hu,%hu,%hu,%hu,%hu,%hu,%hu,%hu",
+			 &bhi_data->trend[0], &bhi_data->trend[1], &bhi_data->trend[2],
+			 &bhi_data->trend[3], &bhi_data->trend[4], &bhi_data->trend[5],
+			 &bhi_data->trend[6], &bhi_data->trend[7]);
+
+	if (cnt != BHI_TREND_POINTS_SIZE)
+		return -ERANGE;
+
+	return count;
+}
+
+static const DEVICE_ATTR_WO(health_set_trend_points);
+
+static ssize_t health_set_low_boundary_store(struct device *dev,
+					     struct device_attribute *attr,
+					     const char *buf, size_t count)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	struct bhi_data *bhi_data = &batt_drv->health_data.bhi_data;
+	int cnt = sscanf(buf, "%hu,%hu,%hu,%hu,%hu,%hu,%hu,%hu",
+			 &bhi_data->l_bound[0], &bhi_data->l_bound[1], &bhi_data->l_bound[2],
+			 &bhi_data->l_bound[3], &bhi_data->l_bound[4], &bhi_data->l_bound[5],
+			 &bhi_data->l_bound[6], &bhi_data->l_bound[7]);
+
+	if (cnt != BHI_TREND_POINTS_SIZE)
+		return -ERANGE;
+
+	return count;
+}
+
+static const DEVICE_ATTR_WO(health_set_low_boundary);
+
 /* CSI --------------------------------------------------------------------- */
 
 static ssize_t charging_speed_store(struct device *dev,
@@ -7308,6 +7386,18 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_charging_policy);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create charging policy\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_health_set_cal_mode);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create health_set_cal_mode\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_health_get_cal_state);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create health_get_cal_state\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_health_set_trend_points);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create health_set_trend_points\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_health_set_low_boundary);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create health_set_low_boundary\n");
 
 	/* csi */
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_charging_speed);
