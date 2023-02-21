@@ -2879,6 +2879,99 @@ error_done:
 
 DEBUG_ATTRIBUTE_WO(mdis_out);
 
+static int mdis_size_show(void *data, u64 *val)
+{
+	struct gcpm_drv *gcpm = data;
+
+	*val = gcpm->thermal_device.thermal_levels;
+	return 0;
+}
+
+static int mdis_size_store(void *data, u64 val)
+{
+	struct gcpm_drv *gcpm = data;
+	struct mdis_thermal_device *tdev = &gcpm->thermal_device;
+	const int newsize = val;
+	const int newsize_bytes = newsize * sizeof(u32);
+	u32 *limits;
+	int bytes, index, i;
+	int ret;
+
+	mutex_lock(&gcpm->chg_psy_lock);
+
+	limits = devm_kzalloc(gcpm->device, newsize_bytes, GFP_KERNEL);
+	if (!limits) {
+		ret = -ENOMEM;
+		goto exit;
+	}
+	bytes = (newsize <= tdev->thermal_levels ? newsize : tdev->thermal_levels) * sizeof(u32);
+	memcpy(limits, tdev->thermal_mitigation, bytes);
+
+	for (index = 0; index < gcpm->mdis_out_count; index++) {
+		limits = devm_kzalloc(gcpm->device, newsize_bytes * gcpm->mdis_in_count, GFP_KERNEL);
+		if (!limits) {
+			ret = -ENOMEM;
+			tdev->thermal_levels = 0;
+			goto exit;
+		}
+		for (i = 0; i < gcpm->mdis_in_count; i++)
+			memcpy(limits + (i * newsize), gcpm->mdis_out_limits[index] + (i * tdev->thermal_levels), bytes);
+		devm_kfree(gcpm->device, gcpm->mdis_out_limits[index]);
+		gcpm->mdis_out_limits[index] = limits;
+	}
+	devm_kfree(gcpm->device, tdev->thermal_mitigation);
+	tdev->thermal_mitigation = limits;
+	tdev->thermal_levels = newsize;
+	ret = 0;
+exit:
+	mutex_unlock(&gcpm->chg_psy_lock);
+	return ret;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(mdis_size_fops, mdis_size_show,
+			mdis_size_store, "%lld\n");
+
+static int wlc_cc_lim_show(void *data, u64 *val)
+{
+	struct gcpm_drv *gcpm = data;
+
+	*val = gcpm->dc_limit_cc_min_wlc;
+	return 0;
+}
+
+static int wlc_cc_lim_store(void *data, u64 val)
+{
+	struct gcpm_drv *gcpm = data;
+
+	gcpm->dc_limit_cc_min_wlc = val;
+	return 0;
+
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(wlc_cc_lim_fops, wlc_cc_lim_show,
+			wlc_cc_lim_store, "%lld\n");
+
+static int dc_cc_lim_show(void *data, u64 *val)
+{
+	struct gcpm_drv *gcpm = data;
+
+	*val = gcpm->dc_limit_cc_min;
+	return 0;
+}
+
+static int dc_cc_lim_store(void *data, u64 val)
+{
+	struct gcpm_drv *gcpm = data;
+
+	gcpm->dc_limit_cc_min = val;
+	return 0;
+
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(dc_cc_lim_fops, dc_cc_lim_show,
+			dc_cc_lim_store, "%lld\n");
+
+
 #endif // CONFIG_DEBUG_FS
 
 /* ------------------------------------------------------------------------- */
@@ -3195,6 +3288,9 @@ static int gcpm_init_mdis(struct gcpm_drv *gcpm)
 			    gcpm, &mdis_tm_fops);
 	debugfs_create_file("mdis_out_table", 0644,  gcpm->debug_entry,
 			    gcpm, &mdis_out_fops);
+	debugfs_create_file("mdis_size", 0644, gcpm->debug_entry, gcpm, &mdis_size_fops);
+	debugfs_create_file("wlc_cc_lim", 0644, gcpm->debug_entry, gcpm, &wlc_cc_lim_fops);
+	debugfs_create_file("dc_cc_lim", 0644, gcpm->debug_entry, gcpm, &dc_cc_lim_fops);
 
 	return 0;
 }
@@ -3963,7 +4059,7 @@ static int google_cpm_probe(struct platform_device *pdev)
 		gcpm->dc_limit_cc_min = GCPM_DEFAULT_DC_LIMIT_CC_MIN;
 
 	ret = of_property_read_u32(pdev->dev.of_node, "google,dc_limit-cc_min_wlc",
-				   &gcpm->dc_limit_cc_min);
+				   &gcpm->dc_limit_cc_min_wlc);
 	if (ret < 0)
 		gcpm->dc_limit_cc_min_wlc = GCPM_DEFAULT_DC_LIMIT_CC_MIN_WLC;
 
