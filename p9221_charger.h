@@ -497,6 +497,8 @@
 						 P9412_CAL_STATE_2)
 /* Rx Communication Modulation FET(CMFET) */
 #define P9412_CMFET_DISABLE_ALL			(0xF0) /* CM-A/B-1/2: REG[7:4]=0b1111 */
+#define P9412_CMFET_DEFAULT			(0x30) /* REG[7:4]=0b0011 */
+#define P9412_CMFET_2_COMM			(0xC0) /* REG[7:4]=0b1100 */
 
 #define P9221_CRC8_POLYNOMIAL			0x07    /* (x^8) + x^2 + x + 1 */
 #define P9412_ADT_TYPE_AUTH			0x02
@@ -517,10 +519,7 @@
 #define P9412_MOT_REG				0xD0
 #define P9412_MOT_40PCT				0x10
 #define P9412_MOT_65PCT				0x1A
-
-#define P9412_MOT_REG				0xD0
-#define P9412_MOT_40PCT				0x10
-#define P9412_MOT_65PCT				0x1A
+#define P9412_MOT_30PCT                         0x0C
 
 /* Features */
 typedef enum {
@@ -860,6 +859,7 @@ struct p9221_charger_data {
 	u16				reg_q_factor_addr;
 	u16				reg_csp_addr;
 	u16				reg_light_load_addr;
+	u16				reg_mot_addr;
 
 	int (*reg_read_n)(struct p9221_charger_data *chgr, u16 reg,
 			  void *buf, size_t n);
@@ -977,6 +977,8 @@ enum p9xxx_renego_state {
       -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_q_factor_addr, data))
 #define p9xxx_chip_set_light_load_reg(chgr, data) (chgr->reg_light_load_addr == 0 ? \
       -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_light_load_addr, data))
+#define p9xxx_chip_set_mot_reg(chgr, data) (chgr->reg_mot_addr == 0 ? \
+      -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_mot_addr, data))
 #define logbuffer_prlog(p, fmt, ...)     \
       gbms_logbuffer_prlog(p, LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG, fmt, ##__VA_ARGS__)
 #endif /* __P9221_CHARGER_H__ */

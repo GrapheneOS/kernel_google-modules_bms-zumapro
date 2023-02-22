@@ -59,8 +59,6 @@
 #define P9XXX_VOUT_5000MV	5000
 #define P9XXX_FOD_CHK_DELAY_MS	2000
 
-#define P9XXX_VOUT_5480MV	5480
-
 enum wlc_align_codes {
 	WLC_ALIGN_CHECKING = 0,
 	WLC_ALIGN_MOVE,
@@ -814,9 +812,9 @@ static int p9221_reset_wlc_dc(struct p9221_charger_data *charger)
 		p9221_write_fod(charger);
 	}
 
-	ret = p9221_reg_write_8(charger, P9412_MOT_REG, P9412_MOT_65PCT);
+	ret = p9221_reg_write_8(charger, P9412_CMFET_L_REG, P9412_CMFET_DEFAULT);
 	if (ret < 0)
-		dev_warn(&charger->client->dev, "Fail to set MOT register(%d)\n", ret);
+		dev_warn(&charger->client->dev, "Fail to set comm cap(%d)\n", ret);
 
 	return ret;
 }
@@ -2448,10 +2446,9 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 
 		p9221_set_switch_reg(charger, true);
 
-		/* Adjusting the minimum on time(MOT) for mitigate LC node voltage overshoot */
-		ret = p9221_reg_write_8(charger, P9412_MOT_REG, P9412_MOT_40PCT);
+		ret = p9221_reg_write_8(charger, P9412_CMFET_L_REG, P9412_CMFET_2_COMM);
 		if (ret < 0)
-			dev_warn(&charger->client->dev, "Fail to adjust MOT(%d)\n", ret);
+			dev_warn(&charger->client->dev, "Fail to set comm cap(%d)\n", ret);
 
 		return 1;
 	} else if (wlc_dc_enabled) {
@@ -3406,8 +3403,17 @@ static void p9221_notifier_check_dc(struct p9221_charger_data *charger)
 	 * Always write FOD, check dc_icl, send CSP
 	 */
 	if (dc_in) {
-		if (p9221_is_epp(charger))
+		if (p9221_is_epp(charger)) {
 			charger->chip_check_neg_power(charger);
+			/*
+			 * When WLC online && EPP, adjust minimum on time(MOT) to 40%
+			 * for mitigate LC node voltage overshoot
+			 */
+			ret = p9xxx_chip_set_mot_reg(charger, P9412_MOT_40PCT);
+			if (ret < 0)
+				dev_warn(&charger->client->dev,
+					 "Fail to set MOT register(%d)\n", ret);
+		}
 
 		if (charger->pdata->has_sw_ramp && !charger->sw_ramp_done) {
 			gvotable_cast_int_vote(charger->dc_icl_votable,
