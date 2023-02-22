@@ -7729,6 +7729,14 @@ static void google_battery_work(struct work_struct *work)
 
 	pr_debug("battery work item\n");
 
+	pm_runtime_get_sync(batt_drv->device);
+	if (!batt_drv->resume_complete) {
+		schedule_delayed_work(&batt_drv->batt_work, msecs_to_jiffies(100));
+		pm_runtime_put_sync(batt_drv->device);
+		return;
+	}
+	pm_runtime_put_sync(batt_drv->device);
+
 	__pm_stay_awake(batt_drv->batt_ws);
 
 	/* chg_lock protect msc_logic */
@@ -7976,6 +7984,14 @@ static void power_metrics_data_work(struct work_struct *work)
 
 	if (!batt_drv->fg_psy)
 		goto error;
+
+	pm_runtime_get_sync(batt_drv->device);
+	if (!batt_drv->resume_complete) {
+		next_work = 100;
+		pm_runtime_put_sync(batt_drv->device);
+		goto error;
+	}
+	pm_runtime_put_sync(batt_drv->device);
 
 	cc = GPSY_GET_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_CHARGE_COUNTER);
 	vbat = GPSY_GET_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
