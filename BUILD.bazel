@@ -40,6 +40,7 @@ kernel_module(
         "pca9468.ko",
         "wlc98_driver.ko",
         "wc68.ko",
+	"ln8411_driver.ko",
 
         # "max77729.ko",
         # "max77759.ko",

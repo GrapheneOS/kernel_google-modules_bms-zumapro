@@ -21,7 +21,8 @@ GBMS_MODULES =	GOOGLE_BMS \
 		PCA9468 \
 		MAX20339 \
 		STWLC98 \
-		STWC68
+		STWC68 \
+		LN8411
 
 obj-$(CONFIG_GOOGLE_BMS)	+= google-bms.o
 google-bms-objs += google_bms.o
@@ -115,6 +116,9 @@ obj-$(CONFIG_STWC68)	+= wc68.o
 wc68-objs += wc68_driver.o
 wc68-objs += wc68_gbms_pps.o
 wc68-objs += google_dc_pps.o
+
+# LN8411 DC Charge pump
+obj-$(CONFIG_LN8411)	+= ln8411_driver.o
 
 # prevent warnings
 WENUMS=-Wno-enum-conversion -Wno-switch

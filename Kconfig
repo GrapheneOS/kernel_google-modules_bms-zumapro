@@ -131,3 +131,9 @@ config STWC68
 	depends on I2C && OF
 	help
 	  Say Y to enable support for the ST WC68 direct charger.
+
+config LN8411
+	tristate "LN8411 Direct charger"
+	depends on I2C && OF
+	help
+	  Say Y to enable support for the LN8411 direct charger.
