@@ -80,6 +80,9 @@
 /* TODO: move to configuration */
 #define DC_VBATT_HEADROOM_MV	500000
 
+static const int GCPM_FCC_RETRIES = 200;
+static const int GCPM_FCC_RETRY_INTERVAL = 1000;
+
 enum gcpm_dc_state_t {
 	DC_DISABLED = -1,
 	DC_IDLE = 0,
@@ -256,6 +259,12 @@ struct gcpm_drv  {
 	struct dentry *debug_entry;
 
 	int wlc_dc_fcc;
+
+	/* fcc retry */
+	int fcc_retries;
+	int fcc_retry_limit;
+	struct delayed_work fcc_retry_work;
+
 };
 
 #define gcpm_psy_name(psy) \
@@ -3073,9 +3082,16 @@ static int gcpm_fcc_callback(struct gvotable_election *el, const char *reason,
 
 	ret = GPSY_SET_PROP(cp_psy, POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
 			    limit);
+
 	if (ret < 0)
 		pr_err("MSC_GCPM_FCC: cannot apply cp_limit to cc_max=%d (%d)\n",
 		       limit, ret);
+
+	if (ret == -EAGAIN) {
+		gcpm->fcc_retries = GCPM_FCC_RETRIES;
+		gcpm->fcc_retry_limit = limit;
+		mod_delayed_work(system_wq, &gcpm->fcc_retry_work, GCPM_FCC_RETRY_INTERVAL);
+	}
 
 	pr_debug("MSC_GCPM_FCC: applied new cp_limit=%d cp_min=%d ret=%d\n",
 		 limit, cp_min, ret);
@@ -3346,6 +3362,38 @@ static void gcpm_init_work(struct work_struct *work)
 
 	/* might run along set_property() */
 	mod_delayed_work(system_wq, &gcpm->select_work, 0);
+}
+
+static void gcpm_fcc_retry_work(struct work_struct *work)
+{
+	struct gcpm_drv *gcpm = container_of(work, struct gcpm_drv,
+					     fcc_retry_work.work);
+	int ret = 0;
+	struct power_supply *cp_psy;
+
+	mutex_lock(&gcpm->chg_psy_lock);
+
+	if (gcpm->fcc_retries--) {
+		cp_psy = gcpm_chg_get_active_cp(gcpm);
+		if (!cp_psy) {
+			pr_debug("MSC_GCPM_FCC_RETRY: not active limit=%d\n", gcpm->fcc_retry_limit);
+			goto exit;
+		}
+
+		ret = GPSY_SET_PROP(cp_psy, POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
+			gcpm->fcc_retry_limit);
+
+		if (ret < 0)
+			pr_err("MSC_GCPM_FCC_RETRY: cannot apply cp_limit to cc_max=%d (%d)\n",
+			gcpm->fcc_retry_limit, ret);
+
+		if (ret == -EAGAIN)
+			schedule_delayed_work(&gcpm->fcc_retry_work, GCPM_FCC_RETRY_INTERVAL);
+	}
+
+exit:
+	mutex_unlock(&gcpm->chg_psy_lock);
+
 }
 
 /* ------------------------------------------------------------------------ */
@@ -3885,6 +3933,7 @@ static int google_cpm_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&gcpm->pps_work, gcpm_pps_wlc_dc_work);
 	INIT_DELAYED_WORK(&gcpm->select_work, gcpm_chg_select_work);
 	INIT_DELAYED_WORK(&gcpm->init_work, gcpm_init_work);
+	INIT_DELAYED_WORK(&gcpm->fcc_retry_work, gcpm_fcc_retry_work);
 	mutex_init(&gcpm->chg_psy_lock);
 
 	/* this is my name */
