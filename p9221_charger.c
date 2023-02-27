@@ -6041,6 +6041,9 @@ static int p9221_parse_dt(struct device *dev,
 	} else if (of_device_is_compatible(node, "idt,p9222")) {
 		dev_info(dev, "selecting p9222\n");
 		pdata->chip_id = P9222_CHIP_ID;
+	} else if (of_device_is_compatible(node, "idt,ra9530")) {
+		dev_info(dev, "selecting ra9530\n");
+		pdata->chip_id = RA9530_CHIP_ID;
 	}
 
 	/* QI_EN_L: enable/disable WLC chip */
@@ -7112,6 +7115,7 @@ static struct of_device_id p9221_charger_match_table[] = {
 	{ .compatible = "idt,p9222",},
 	{ .compatible = "idt,p9382",},
 	{ .compatible = "idt,p9412",},
+	{ .compatible = "idt,ra9530",},
 	{},
 };
 #else

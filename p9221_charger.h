@@ -527,6 +527,10 @@
 #define P9412_MOT_40PCT				0x10
 #define P9412_MOT_65PCT				0x1A
 
+/* RA9530 */
+
+#define RA9530_CHIP_ID				0x9530
+
 /* Features */
 typedef enum {
     WLCF_DISABLE_ALL_FEATURE     = 0x00,
