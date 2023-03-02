@@ -141,8 +141,10 @@ void logbuffer_logk(struct logbuffer *instance, int loglevel, const char *fmt, .
 	va_start(args, fmt);
 	scnprintf(log, LOG_BUFFER_ENTRY_SIZE, "[%5u] %s", index, fmt);
 	logbuffer_vlog(instance, log, args);
+#if IS_ENABLED(CONFIG_PRINTK)
 	scnprintf(log, LOG_BUFFER_ENTRY_SIZE, "%s: [%5u] %s\n", instance->name, index, fmt);
 	vprintk_emit(0, loglevel, NULL, log, args);
+#endif
 	va_end(args);
 }
 EXPORT_SYMBOL_GPL(logbuffer_logk);
