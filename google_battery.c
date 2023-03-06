@@ -187,6 +187,9 @@ struct batt_ssoc_state {
 	/* Save/Restore fake capacity */
 	bool save_soc_available;
 	u16 save_soc;
+
+	/* adjust SOC */
+	int point_full_ui_soc;
 };
 
 struct gbatt_ccbin_data {
@@ -530,6 +533,7 @@ struct batt_drv {
 	struct gvotable_election *fcc_votable;
 	struct gvotable_election *fv_votable;
 	struct gvotable_election *temp_dryrun_votable;
+	struct gvotable_election *point_full_ui_soc_votable;
 
 	/* FAN level */
 	struct gvotable_election *fan_level_votable;
@@ -877,6 +881,9 @@ static void ssoc_uicurve_splice(struct ssoc_uicurve *curve, qnum_t real,
 	/* splice only when real is within the curve range */
 	curve[1].real = real;
 	curve[1].ui = ui;
+
+	if (curve[1].real > curve[UICURVE_MAX - 1].real)
+		curve[UICURVE_MAX - 1].real = ssoc_point_full;
 }
 
 static void ssoc_uicurve_dup(struct ssoc_uicurve *dst,
@@ -885,6 +892,22 @@ static void ssoc_uicurve_dup(struct ssoc_uicurve *dst,
 	if (dst != curve)
 		memcpy(dst, curve, sizeof(*dst)*UICURVE_MAX);
 }
+
+/* "optimized" to work on 3 element curves */
+static void ssoc_uicurve_splice_full(struct ssoc_uicurve *curve,
+				     qnum_t real,qnum_t ui)
+{
+	/*
+	 * for case: curve:[15.00 15.00][99.00 99.00][98.00 100.00]
+	 * the calculation in ssoc_uicurve_map causes minus value
+	 */
+	if (curve[1].real > real)
+		return;
+
+	curve[UICURVE_MAX - 1].real = real;
+	curve[UICURVE_MAX - 1].ui = ui;
+}
+
 
 
 /* ------------------------------------------------------------------------- */
@@ -1071,6 +1094,7 @@ static void ssoc_update(struct batt_ssoc_state *ssoc, qnum_t soc)
  * QC could need:
  *	QG_CC_SOC, QG_Raw_SOC, QG_Bat_SOC, QG_Sys_SOC, QG_Mon_SOC
  */
+#define DISABLE_POINT_FULL_UI_SOC (-1)
 static int ssoc_work(struct batt_ssoc_state *ssoc_state,
 		     struct power_supply *fg_psy)
 {
@@ -8647,6 +8671,35 @@ static int batt_set_shutdown_flag(struct batt_drv *batt_drv)
 	return (ret < 0) ? -EIO : 0;
 }
 
+static int point_full_ui_soc_cb(struct gvotable_election *el,
+			      const char *reason, void *vote)
+{
+	struct batt_drv *batt_drv = gvotable_get_data(el);
+	struct batt_ssoc_state *ssoc_state = &batt_drv->ssoc_state;
+	int ssoc = ssoc_get_capacity(ssoc_state);
+	int soc = GVOTABLE_PTR_TO_INT(vote);
+
+	if (ssoc_state->point_full_ui_soc == soc)
+		return 0;
+
+	dev_info(batt_drv->device, "update point_full_ui_soc: %d -> %d\n",
+		 ssoc_state->point_full_ui_soc, soc);
+
+	ssoc_state->point_full_ui_soc = soc;
+
+	if (ssoc_state->point_full_ui_soc != DISABLE_POINT_FULL_UI_SOC &&
+	    ssoc < SSOC_FULL && ssoc_state->buck_enabled == 1) {
+		struct ssoc_uicurve *curve = ssoc_state->ssoc_curve;
+		const qnum_t full = qnum_fromint(ssoc_state->point_full_ui_soc);
+
+		ssoc_uicurve_splice_full(curve, full, ssoc_point_full);
+		dump_ssoc_state(&batt_drv->ssoc_state, batt_drv->ssoc_log);
+		ssoc_state->point_full_ui_soc = DISABLE_POINT_FULL_UI_SOC;
+	}
+
+	return 0;
+}
+
 /*
  * poll the battery, run SOC%, dead battery, critical.
  * scheduled from psy_changed and from timer
@@ -10159,6 +10212,19 @@ static int google_battery_probe(struct platform_device *pdev)
 	gvotable_set_vote2str(batt_drv->csi_type_votable, gvotable_v2s_int);
 	gvotable_election_set_name(batt_drv->csi_type_votable, VOTABLE_CSI_TYPE);
 
+	batt_drv->point_full_ui_soc_votable =
+		gvotable_create_int_election(NULL, gvotable_comparator_int_min,
+					     point_full_ui_soc_cb, batt_drv);
+	if (IS_ERR_OR_NULL(batt_drv->point_full_ui_soc_votable)) {
+		ret = PTR_ERR(batt_drv->point_full_ui_soc_votable);
+		dev_err(batt_drv->device, "Fail to create point_full_ui_soc_votable\n");
+		batt_drv->point_full_ui_soc_votable = NULL;
+	} else {
+		gvotable_set_vote2str(batt_drv->point_full_ui_soc_votable, gvotable_v2s_int);
+		gvotable_set_default(batt_drv->point_full_ui_soc_votable, (void *)DISABLE_POINT_FULL_UI_SOC);
+		gvotable_election_set_name(batt_drv->point_full_ui_soc_votable, VOTABLE_CHARGING_UISOC);
+	}
+
 	/* AACR server side */
 	batt_drv->aacr_cycle_grace = AACR_START_CYCLE_DEFAULT;
 	batt_drv->aacr_cycle_max = AACR_MAX_CYCLE_DEFAULT;
@@ -10226,11 +10292,13 @@ static int google_battery_remove(struct platform_device *pdev)
 	gvotable_destroy_election(batt_drv->fan_level_votable);
 	gvotable_destroy_election(batt_drv->csi_status_votable);
 	gvotable_destroy_election(batt_drv->csi_type_votable);
+	gvotable_destroy_election(batt_drv->point_full_ui_soc_votable);
 
 	batt_drv->fan_level_votable = NULL;
 	batt_drv->csi_status_votable = NULL;
 	batt_drv->csi_type_votable = NULL;
 	batt_drv->charging_policy_votable = NULL;
+	batt_drv->point_full_ui_soc_votable = NULL;
 
 	return 0;
 }
