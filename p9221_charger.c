@@ -612,6 +612,21 @@ static void p9221_abort_transfers(struct p9221_charger_data *charger)
 	sysfs_notify(&charger->dev->kobj, NULL, "rxdone");
 }
 
+#define FORCE_FULL_SOC 98
+static void p9xxx_ll_adjust_soc(struct p9221_charger_data *charger, int soc)
+{
+	if (!charger->point_full_ui_soc_votable) {
+		charger->point_full_ui_soc_votable = gvotable_election_get_handle(VOTABLE_CHARGING_UISOC);
+		if (!charger->point_full_ui_soc_votable) {
+			dev_err(&charger->client->dev, "Could not get votable: CHARGING_UISOC\n");
+			return;
+		}
+	}
+
+	gvotable_cast_long_vote(charger->point_full_ui_soc_votable, LL_BPP_CEP_VOTER,
+				FORCE_FULL_SOC, charger->ll_bpp_cep == 1 && soc >= FORCE_FULL_SOC);
+}
+
 /*
  * Put the default ICL back to BPP, reset OCP voter
  * @pre charger && charger->dc_icl_votable && charger->client->dev
@@ -619,6 +634,8 @@ static void p9221_abort_transfers(struct p9221_charger_data *charger)
 static void p9221_vote_defaults(struct p9221_charger_data *charger)
 {
 	int ret, ocp_icl;
+
+	p9xxx_ll_adjust_soc(charger, FORCE_FULL_SOC);
 
 	if (!charger->dc_icl_votable) {
 		dev_err(&charger->client->dev,
@@ -2605,6 +2622,9 @@ static void p9221_ll_bpp_cep(struct p9221_charger_data *charger, int capacity)
 		icl_ua = 600000;
 	if (capacity > 98)
 		icl_ua = 300000;
+
+	if (capacity >= FORCE_FULL_SOC)
+		p9xxx_ll_adjust_soc(charger, capacity);
 
 	gvotable_cast_int_vote(charger->dc_icl_votable,
 			       DD_VOTER, icl_ua, icl_ua > 0);

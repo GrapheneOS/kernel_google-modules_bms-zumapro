@@ -476,6 +476,7 @@ const char *gbms_chg_ev_adapter_s(int adapter);
 #define VOTABLE_CSI_TYPE	"CSI_TYPE"
 
 #define VOTABLE_CHARGING_POLICY	"CHARGING_POLICY"
+#define VOTABLE_CHARGING_UISOC	"CHARGING_UISOC"
 
 #define VOTABLE_DC_CHG_AVAIL	"DC_AVAIL"
 #define REASON_DC_DRV		"DC_DRV"
