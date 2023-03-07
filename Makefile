@@ -133,7 +133,10 @@ obj-$(CONFIG_MAX77779_SP)	+= max77779-sp.o
 max77779-sp-objs += max77779_sp.o
 
 # LN8411 DC Charge pump
-obj-$(CONFIG_LN8411)	+= ln8411_driver.o
+obj-$(CONFIG_LN8411)	+= ln8411.o
+ln8411-objs += ln8411_driver.o
+ln8411-objs += ln8411_gbms_pps.o
+ln8411-objs += google_dc_pps.o
 
 # prevent warnings
 WENUMS=-Wno-enum-conversion -Wno-switch
@@ -156,6 +159,7 @@ CFLAGS_wc68_driver.o += $(WENUMS)
 CFLAGS_wc68_gbms_pps.o += $(WENUMS)
 CFLAGS_p9221_charger.o += $(WENUMS)
 CFLAGS_max77779_sp.o += -Wno-unused-function $(WENUMS)
+CFLAGS_ln8411_driver.o += $(WENUMS)
 
 KERNEL_SRC ?= /lib/modules/$(shell uname -r)/build
 M ?= $(shell pwd)
