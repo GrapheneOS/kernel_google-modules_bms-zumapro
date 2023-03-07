@@ -22,6 +22,7 @@ GBMS_MODULES =	GOOGLE_BMS \
 		MAX_M5 \
 		PCA9468 \
 		MAX20339 \
+		MAX77779_PMIC \
 		STWLC98 \
 		STWC68 \
 		LN8411
@@ -131,6 +132,9 @@ wc68-objs += google_dc_pps.o
 # max77779 Scratch Space
 obj-$(CONFIG_MAX77779_SP)	+= max77779-sp.o
 max77779-sp-objs += max77779_sp.o
+
+# MAX77779 PMIC
+obj-$(CONFIG_MAX77779_PMIC) += max77779_pmic.o
 
 # LN8411 DC Charge pump
 obj-$(CONFIG_LN8411)	+= ln8411.o

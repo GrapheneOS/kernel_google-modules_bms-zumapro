@@ -143,3 +143,10 @@ config LN8411
 	depends on I2C && OF
 	help
 	  Say Y to enable support for the LN8411 direct charger.
+
+config MAX77779_PMIC
+	tristate "Maxim 77779 PMIC"
+	depends on OF
+	help
+	  Handle IRQs for Sequoia
+
