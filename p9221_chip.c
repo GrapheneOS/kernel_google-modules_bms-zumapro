@@ -60,6 +60,19 @@ static int p9412_chip_get_rx_ilim(struct p9221_charger_data *chgr, u32 *ma)
 	return 0;
 }
 
+static int ra9530_chip_get_rx_ilim(struct p9221_charger_data *chgr, u32 *ma)
+{
+	int ret;
+	u16 val;
+
+	ret = chgr->reg_read_16(chgr, RA9530_ILIM_REG, &val);
+	if (ret)
+		return ret;
+
+	*ma = val;
+	return 0;
+}
+
 static int p9222_chip_get_rx_ilim(struct p9221_charger_data *chgr, u32 *ma)
 {
 	int ret;
@@ -102,6 +115,17 @@ static int p9412_chip_set_rx_ilim(struct p9221_charger_data *chgr, u32 ma)
 
 	val = (ma / 100) - 1;
 	return chgr->reg_write_8(chgr, P9221R5_ILIM_SET_REG, val);
+}
+
+static int ra9530_chip_set_rx_ilim(struct p9221_charger_data *chgr, u32 ma)
+{
+	u16 val;
+
+	if (ma > P9412_RX_ILIM_MAX_MA)
+		return -EINVAL;
+
+	val = ma;
+	return chgr->reg_write_16(chgr, RA9530_ILIM_REG, val);
 }
 
 static int p9222_chip_set_rx_ilim(struct p9221_charger_data *chgr, u32 ma)
@@ -225,7 +249,7 @@ static int p9222_chip_get_die_temp(struct p9221_charger_data *chgr, int *mc)
 }
 
 /*
- * chip_get_iout
+ * chipeget_iout
  *
  * get measure of current out (mA).
  */
@@ -550,6 +574,16 @@ static int p9412_get_data_buf(struct p9221_charger_data *chgr,
 	return chgr->reg_read_n(chgr, P9412_DATA_BUF_START, data, len);
 }
 
+static int ra9530_get_data_buf(struct p9221_charger_data *chgr,
+			      u8 data[], size_t len)
+{
+	if (!len || len > RA9530_DATA_BUF_SIZE)
+		return -EINVAL;
+
+	return chgr->reg_read_n(chgr, RA9530_DATA_BUF_READ_START, data, len);
+
+}
+
 /* set the data buf for send */
 static int p9221_set_data_buf(struct p9221_charger_data *chgr,
 			      const u8 data[], size_t len)
@@ -587,6 +621,14 @@ static int p9412_set_data_buf(struct p9221_charger_data *chgr,
 	return chgr->reg_write_n(chgr, P9412_DATA_BUF_START, data, len);
 }
 
+static int ra9530_set_data_buf(struct p9221_charger_data *chgr,
+				   const u8 data[], size_t len)
+{
+	if (!len || len > RA9530_DATA_BUF_SIZE)
+		return -EINVAL;
+
+	return chgr->reg_write_n(chgr, RA9530_DATA_BUF_WRITE_START, data, len);
+}
 /* receive size */
 static int p9221_get_cc_recv_size(struct p9221_charger_data *chgr, size_t *len)
 {
@@ -1696,6 +1738,32 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 		chgr->ints.pppsent_bit = P9412_STAT_PPPSENT;
 		chgr->ints.ocp_ping_bit = P9412_STAT_OCP_PING;
 		break;
+	case RA9530_CHIP_ID:
+		// Mostly Same as 9412
+		chgr->ints.over_curr_bit = P9412_STAT_OVC;
+		chgr->ints.over_volt_bit = P9412_STAT_OVV; // TODO: check if 9412 issue still occur in HPP
+		chgr->ints.over_temp_bit = P9412_STAT_OVT;
+		chgr->ints.over_uv_bit = 0;
+		chgr->ints.cc_send_busy_bit = P9412_STAT_CCSENDBUSY;
+		chgr->ints.cc_data_rcvd_bit = P9412_STAT_CCDATARCVD;
+		chgr->ints.pp_rcvd_bit = P9412_STAT_PPRCVD;
+		chgr->ints.cc_error_bit = P9412_STAT_CCERROR;
+		chgr->ints.cc_reset_bit = 0;
+		chgr->ints.propmode_stat_bit = P9412_PROP_MODE_STAT_INT;
+		chgr->ints.cdmode_change_bit = 0; // No capdiv mode
+		chgr->ints.cdmode_err_bit = 0; // No capdiv mode
+		chgr->ints.extended_mode_bit = 0;
+
+		chgr->ints.hard_ocp_bit = P9412_STAT_OVC;
+		chgr->ints.tx_conflict_bit = P9412_STAT_TXCONFLICT;
+		chgr->ints.csp_bit = P9412_STAT_CSP;
+		chgr->ints.rx_connected_bit = P9412_STAT_RXCONNECTED;
+		chgr->ints.tx_fod_bit = 0;
+		chgr->ints.tx_underpower_bit = 0;
+		chgr->ints.tx_uvlo_bit = 0;
+		chgr->ints.pppsent_bit = P9412_STAT_PPPSENT;
+		chgr->ints.ocp_ping_bit = P9412_STAT_OCP_PING;
+		break;
 	case P9382A_CHIP_ID:
 		chgr->ints.over_curr_bit = P9221R5_STAT_OVC;
 		chgr->ints.over_volt_bit = P9221R5_STAT_OVV;
@@ -1816,6 +1884,18 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_csp_addr = P9221R5_CHARGE_STAT_REG;
 		chgr->reg_light_load_addr = 0;
 		break;
+	case RA9530_CHIP_ID:
+		chgr->reg_tx_id_addr = P9412_PROP_TX_ID_REG;
+		chgr->reg_tx_mfg_code_addr = P9382_EPP_TX_MFG_CODE_REG;
+		chgr->reg_packet_type_addr = P9412_COM_PACKET_TYPE_ADDR;
+		chgr->reg_set_pp_buf_addr = P9412_PP_SEND_BUF_START;
+		chgr->reg_get_pp_buf_addr = P9412_PP_RECV_BUF_START;
+		chgr->set_cmd_ccactivate_bit = P9412_COM_CCACTIVATE;
+		chgr->reg_set_fod_addr = P9221R5_FOD_REG;
+		chgr->reg_q_factor_addr = P9221R5_EPP_Q_FACTOR_REG;
+		chgr->reg_csp_addr = P9221R5_CHARGE_STAT_REG;
+		chgr->reg_light_load_addr = 0;
+		break;
 	case P9382A_CHIP_ID:
 		chgr->reg_tx_id_addr = P9382_PROP_TX_ID_REG;
 		chgr->reg_tx_mfg_code_addr = P9382_EPP_TX_MFG_CODE_REG;
@@ -1892,6 +1972,36 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->chip_send_txid = p9xxx_send_txid;
 		chgr->chip_send_csp_in_txmode = p9xxx_send_csp_in_txmode;
 		chgr->chip_capdiv_en = p9412_capdiv_en;
+		break;
+	case RA9530_CHIP_ID:
+		chgr->rtx_state = RTX_NOTSUPPORTED; // TODO(270976020): update when RTX support
+		chgr->rx_buf_size = RA9530_DATA_BUF_SIZE;
+		chgr->tx_buf_size = RA9530_DATA_BUF_SIZE;
+		chgr->chip_get_rx_ilim = ra9530_chip_get_rx_ilim;
+		chgr->chip_set_rx_ilim = ra9530_chip_set_rx_ilim;
+
+		chgr->chip_get_tx_ilim = p9221_chip_get_tx_ilim; // TODO(270976020): update when RTX support
+		chgr->chip_set_tx_ilim = p9221_chip_set_tx_ilim; // TODO(270976020): update when RTX support
+		chgr->chip_get_die_temp = p9412_chip_get_die_temp;
+		chgr->chip_get_vout_max = p9412_chip_get_vout_max;
+		chgr->chip_set_vout_max = p9412_chip_set_vout_max;
+		chgr->chip_tx_mode_en = p9221_chip_tx_mode; // TODO(270976020): update when RTX support
+		chgr->chip_get_data_buf = ra9530_get_data_buf;
+		chgr->chip_set_data_buf = ra9530_set_data_buf;
+		chgr->chip_get_cc_recv_size = p9412_get_cc_recv_size; // TODO(273593546): implement
+		chgr->chip_set_cc_send_size = p9412_set_cc_send_size; // TODO(273593546): implement
+		chgr->chip_get_align_x = p9412_get_align_x; // TODO(273593970): implement
+		chgr->chip_get_align_y = p9412_get_align_y; // TODO(273593970): implement
+		chgr->chip_send_ccreset = p9412_send_ccreset; // TODO(273593546): implement
+		chgr->chip_send_eop = p9412_send_eop;
+		chgr->chip_get_sys_mode = p9412_chip_get_sys_mode;
+		chgr->chip_renegotiate_pwr = p9412_chip_renegotiate_pwr;
+		chgr->chip_prop_mode_en = p9221_prop_mode_enable; // TODO(272392035): write custom function for HPP
+		chgr->chip_check_neg_power = p9xxx_check_neg_power;
+		chgr->chip_send_txid = p9221_send_txid; // TODO(270976020): update when RTX support
+		chgr->chip_send_csp_in_txmode = p9221_send_csp_in_txmode; // TODO(270976020): update when RTX support
+
+		chgr->chip_capdiv_en = p9221_capdiv_en;
 		break;
 	case P9382A_CHIP_ID:
 		chgr->rtx_state = RTX_AVAILABLE;

@@ -530,6 +530,10 @@
 /* RA9530 */
 
 #define RA9530_CHIP_ID				0x9530
+#define RA9530_DATA_BUF_SIZE			0x400 /* 1024 bytes */
+#define RA9530_DATA_BUF_READ_START		0x800 /* 0x800 ~ 0xBFF */
+#define RA9530_DATA_BUF_WRITE_START		0x400 /* 0x400 ~ 0x7FF */
+#define RA9530_ILIM_REG				0x2C0 /* 0x400 ~ 0x7FF */
 
 /* Features */
 typedef enum {
