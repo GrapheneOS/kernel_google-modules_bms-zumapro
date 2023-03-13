@@ -2678,6 +2678,32 @@ static const struct regmap_config max77759_chg_regmap_cfg = {
 
 };
 
+static void max77759_aicl_changed(struct max77759_chgr_data *data)
+{
+	uint8_t int_ok;
+	int ret;
+	bool aicl_active;
+
+	ret = max77759_reg_read(data->regmap, MAX77759_CHG_INT_OK, &int_ok);
+	if (ret) {
+		dev_err(data->dev,  "%s:Failed to read MAX77759_CHG_INT_OK.AICL_OK ret:%d\n", __func__, ret);
+		return;
+	}
+
+	aicl_active = !(int_ok & MAX77759_CHG_INT_OK_AICL_OK);
+
+	if (IS_ERR_OR_NULL(data->aicl_active_el))
+		data->aicl_active_el =
+				gvotable_election_get_handle("AICL_ACTIVE_EL");
+
+	if (IS_ERR_OR_NULL(data->aicl_active_el)) {
+		dev_err(data->dev,  "AICL_ACTIVE_EL get failed %ld\n",
+			PTR_ERR(data->aicl_active_el));
+		return;
+	}
+
+	gvotable_cast_long_vote(data->aicl_active_el, "BMS_VOTER", aicl_active, aicl_active);
+}
 
 /*
  * int[0]
@@ -2705,9 +2731,14 @@ static const struct regmap_config max77759_chg_regmap_cfg = {
  *   MAX77759_CHG_INT2_MASK_CHG_STA_CC_M |
  *   MAX77759_CHG_INT2_MASK_CHG_STA_CV_M |
  *   MAX77759_CHG_INT_MASK_CHG_M
+ *
+ * TODO: MAX77759_CHG_INT_MASK_AICL_M needs to be throttled
+ * if system keeps going in and out of AICL regulation.
+ * No evidenvce of this happening so far.
  */
 static u8 max77759_int_mask[MAX77759_CHG_INT_COUNT] = {
-	~(MAX77759_CHG_INT_MASK_CHGIN_M |
+	(u8)~(MAX77759_CHG_INT_MASK_AICL_M |
+	  MAX77759_CHG_INT_MASK_CHGIN_M |
 	  MAX77759_CHG_INT_MASK_WCIN_M |
 	  MAX77759_CHG_INT_MASK_BAT_M |
 	  MAX77759_CHG_INT_MASK_THM2_M_MASK),
@@ -2816,6 +2847,11 @@ static irqreturn_t max77759_chgr_irq(int irq, void *client)
 
 		pr_debug("%s: CHARGE DONE charge_done=%d->%d\n", __func__,
 			 charge_done, data->charge_done);
+	}
+
+	if (chg_int[0] & MAX77759_CHG_INT_AICL_I) {
+		pr_debug("%s: AICL state change\n", __func__);
+		max77759_aicl_changed(data);
 	}
 
 	/* wired input is changed */

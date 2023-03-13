@@ -66,6 +66,8 @@ struct max77759_chgr_data {
 	/* debug interface, register to read or write */
 	u32 debug_reg_address;
 
+	struct gvotable_election *aicl_active_el;
+
 	/* thermal BCL */
 #if IS_ENABLED(CONFIG_GOOGLE_BCL)
 	struct bcl_device *bcl_dev;
