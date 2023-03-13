@@ -86,6 +86,9 @@ struct dual_fg_drv {
 
 	u32 vsec_offset;
 	u32 vsec_offset_max_idx;
+
+	int base_soc;
+	int sec_soc;
 };
 
 static int gdbatt_resume_check(struct dual_fg_drv *dual_fg_drv) {
@@ -375,6 +378,25 @@ static int gdbatt_get_capacity(struct dual_fg_drv *dual_fg_drv, int base_soc, in
 	return (base_soc * base_full + sec_soc * sec_full) / full_sum;
 }
 
+#define MONITOR_SOC_DIFF	10
+static void gdbatt_fg_logging(struct dual_fg_drv *dual_fg_drv, int base_soc_raw, int sec_soc_raw)
+{
+	const int base_soc = qnum_toint(qnum_from_q8_8(base_soc_raw));
+	const int sec_soc = qnum_toint(qnum_from_q8_8(sec_soc_raw));
+
+	if (dual_fg_drv->base_soc == base_soc && dual_fg_drv->sec_soc == sec_soc)
+		return;
+
+	/* Dump registers */
+	if (abs(base_soc - sec_soc) >= MONITOR_SOC_DIFF) {
+		GPSY_SET_PROP(dual_fg_drv->first_fg_psy, GBMS_PROP_FG_REG_LOGGING, true);
+		GPSY_SET_PROP(dual_fg_drv->second_fg_psy, GBMS_PROP_FG_REG_LOGGING, true);
+	}
+
+	dual_fg_drv->base_soc = base_soc;
+	dual_fg_drv->sec_soc = sec_soc;
+}
+
 static void google_dual_batt_work(struct work_struct *work)
 {
 	struct dual_fg_drv *dual_fg_drv = container_of(work, struct dual_fg_drv,
@@ -386,23 +408,29 @@ static void google_dual_batt_work(struct work_struct *work)
 	mutex_lock(&dual_fg_drv->fg_lock);
 
 	if (!dual_fg_drv->init_complete)
-		goto error_done;
+		goto done;
 
 	if (!base_psy || !sec_psy)
-		goto error_done;
+		goto done;
 
 	gdbatt_select_cc_max(dual_fg_drv);
+
+	if (dual_fg_drv->base_charge_full && dual_fg_drv->sec_charge_full)
+		goto done;
 
 	base_data = GPSY_GET_PROP(base_psy, POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN);
 	sec_data = GPSY_GET_PROP(sec_psy, POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN);
 
 	if (base_data <= 0 || sec_data <= 0)
-		goto error_done;
+		goto done;
+
+	dev_info(dual_fg_drv->device, "update base_charge_full:%d->%d, sec_charge_full:%d->%d\n",
+		 dual_fg_drv->base_charge_full, base_data, dual_fg_drv->sec_charge_full, sec_data);
 
 	dual_fg_drv->base_charge_full = base_data;
 	dual_fg_drv->sec_charge_full = sec_data;
 
-error_done:
+done:
 	mod_delayed_work(system_wq, &dual_fg_drv->gdbatt_work,
 			 msecs_to_jiffies(DUAL_FG_WORK_PERIOD_MS));
 
@@ -470,6 +498,9 @@ static int gdbatt_get_property(struct power_supply *psy,
 		val->intval = (fg_1.intval + fg_2.intval)/2;
 		break;
 	case GBMS_PROP_CAPACITY_RAW:
+		val->intval = gdbatt_get_capacity(dual_fg_drv, fg_1.intval, fg_2.intval);
+		gdbatt_fg_logging(dual_fg_drv, fg_1.intval, fg_2.intval);
+		break;
 	case POWER_SUPPLY_PROP_CAPACITY:
 		val->intval = gdbatt_get_capacity(dual_fg_drv, fg_1.intval, fg_2.intval);
 		break;
@@ -774,6 +805,8 @@ static void google_dual_batt_gauge_init_work(struct work_struct *work)
 
 	dual_fg_drv->init_complete = true;
 	dual_fg_drv->resume_complete = true;
+	dual_fg_drv->base_charge_full = 0;
+	dual_fg_drv->sec_charge_full = 0;
 	mod_delayed_work(system_wq, &dual_fg_drv->gdbatt_work, 0);
 	dev_info(dual_fg_drv->device, "google_dual_batt_gauge_init_work done\n");
 

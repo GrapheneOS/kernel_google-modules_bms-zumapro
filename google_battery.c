@@ -1564,6 +1564,7 @@ static void cev_stats_init(struct gbms_charging_event *ce_data,
 	gbms_tier_stats_init(&ce_data->overheat_stats, GBMS_STATS_BD_TI_OVERHEAT_TEMP);
 	gbms_tier_stats_init(&ce_data->cc_lvl_stats, GBMS_STATS_BD_TI_CUSTOM_LEVELS);
 	gbms_tier_stats_init(&ce_data->trickle_stats, GBMS_STATS_BD_TI_TRICKLE_CLEARED);
+	gbms_tier_stats_init(&ce_data->temp_filter_stats, GBMS_STATS_TEMP_FILTER);
 }
 
 static void batt_chg_stats_start(struct batt_drv *batt_drv)
@@ -1743,6 +1744,15 @@ static void batt_chg_stats_update(struct batt_drv *batt_drv, int temp_idx,
 		gbms_stats_update_tier(temp_idx, ibatt_ma, temp, elap, cc,
 				       &batt_drv->chg_state, msc_state, soc_in,
 				       &ce_data->cc_lvl_stats);
+		tier = NULL;
+	}
+
+	if (batt_drv->temp_filter.enable) {
+		struct batt_temp_filter *temp_filter = &batt_drv->temp_filter;
+		int no_filter_temp = temp_filter->sample[temp_filter->last_idx];
+		gbms_stats_update_tier(temp_idx, ibatt_ma, no_filter_temp, elap, cc,
+				       &batt_drv->chg_state, msc_state, soc_in,
+				       &ce_data->temp_filter_stats);
 		tier = NULL;
 	}
 
@@ -2115,6 +2125,11 @@ static int batt_chg_stats_cstr(char *buff, int size,
 	if (ce_data->cc_lvl_stats.soc_in != -1)
 		len += gbms_tier_stats_cstr(&buff[len], size - len,
 					    &ce_data->cc_lvl_stats,
+					    verbose);
+
+	if (ce_data->temp_filter_stats.soc_in != -1)
+		len += gbms_tier_stats_cstr(&buff[len], size - len,
+					    &ce_data->temp_filter_stats,
 					    verbose);
 
 	/* If bd_clear triggers, we need to know about it even if trickle hasn't
@@ -8002,6 +8017,7 @@ static int google_battery_init_hist_work(struct batt_drv *batt_drv )
 #define TEMP_FILTER_DEFAULT_INTERVAL_MS 30000
 #define TEMP_FILTER_FAST_INTERVAL_MS 3000
 #define TEMP_FILTER_RESUME_DELAY_MS 1500
+#define TEMP_FILTER_LOG_DIFF 50
 static void batt_init_temp_filter(struct batt_drv *batt_drv)
 {
 	struct batt_temp_filter *temp_filter = &batt_drv->temp_filter;
@@ -8069,6 +8085,13 @@ static void google_battery_temp_filter_work(struct work_struct *work)
 	if (err != 0)
 		goto done;
 
+	/* logging if big difference */
+	if (abs(val.intval - temp_filter->sample[temp_filter->last_idx]) > TEMP_FILTER_LOG_DIFF)
+		pr_info("temperture filter: [%d, %d, %d, %d, %d] val:%d idx:%d interval=%dms\n",
+			temp_filter->sample[0], temp_filter->sample[1], temp_filter->sample[2],
+			temp_filter->sample[3], temp_filter->sample[4], val.intval,
+			temp_filter->last_idx, interval);
+
 	mutex_lock(&temp_filter->lock);
 	if (temp_filter->force_update) {
 		temp_filter->force_update = false;
@@ -8081,6 +8104,9 @@ static void google_battery_temp_filter_work(struct work_struct *work)
 	mutex_unlock(&temp_filter->lock);
 
 done:
+	pr_debug("temperture filter: [%d, %d, %d, %d, %d] interval=%dms\n",
+		 temp_filter->sample[0], temp_filter->sample[1], temp_filter->sample[2],
+		 temp_filter->sample[3], temp_filter->sample[4], interval);
 	mod_delayed_work(system_wq, &temp_filter->work, msecs_to_jiffies(interval));
 }
 
