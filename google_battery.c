@@ -8731,29 +8731,20 @@ static int gbatt_set_health(struct batt_drv *batt_drv, int health)
 	return 0;
 }
 
-#define RESTORE_SOC_THRESHOLD	5
 static int gbatt_restore_capacity(struct batt_drv *batt_drv)
 {
 	struct batt_ssoc_state *ssoc_state = &batt_drv->ssoc_state;
-	int ret = 0, save_soc, gdf_soc;
+	int ret = 0;
 
 	ret = gbms_storage_read(GBMS_TAG_RSOC, &ssoc_state->save_soc,
-						sizeof(ssoc_state->save_soc));
+				sizeof(ssoc_state->save_soc));
 
 	if (ret < 0)
 		return ret;
 
-	if (ssoc_state->save_soc) {
-		save_soc = (int)ssoc_state->save_soc;
-		gdf_soc = qnum_toint(ssoc_state->ssoc_gdf);
-		pr_info("save_soc:%d, gdf:%d", save_soc, gdf_soc);
-
-		if ((save_soc < gdf_soc) ||
-		    (save_soc - gdf_soc) > RESTORE_SOC_THRESHOLD)
-			return ret;
-
-		gbatt_reset_curve(batt_drv, save_soc);
-	}
+	pr_info("save_soc:%d", ssoc_state->save_soc);
+	if (ssoc_state->save_soc <= SSOC_FULL)
+		gbatt_reset_curve(batt_drv, ssoc_state->save_soc);
 
 	return ret;
 }
