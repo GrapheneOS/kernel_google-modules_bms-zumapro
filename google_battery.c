@@ -384,6 +384,7 @@ struct health_data
 	/* recalibration */
 	u8 cal_mode;
 	u8 cal_state;
+	int cal_target;
 };
 
 #define POWER_METRICS_MAX_DATA	50
@@ -4373,6 +4374,90 @@ static int bhi_cycle_count_residency(struct gbatt_ccbin_data *ccd , int soc_limi
 	return (under * BHI_ALGO_FULL_HEALTH) / (under + over);
 }
 
+/*
+ * initial or done   detect abnormal      FG reset/learning    FG learning done
+ * STATE_OK    --->  STATE_SCHEDULED ---> STATE_SCHEDULED ---> STATE_OK
+ * MODE_RESET  --->  MODE_BEST_TIME  ---> MODE_RESTART    ---> MODE_RESET
+ *                  (MODE_IMMEDIATE)
+ */
+#define MAX_CAPACITY_RATIO 115
+static int batt_bhi_update_recalibration_status(struct batt_drv *batt_drv)
+{
+	const int design_capacity = batt_drv->battery_capacity; /* mAh */
+	u8 cal_state = batt_drv->health_data.cal_state;
+	u8 cal_mode = batt_drv->health_data.cal_mode;
+	int full_cap_nom = 0, recal_state, ret = 0;
+	bool is_best_time = false;
+
+	recal_state = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_RECAL_FG);
+	if (recal_state < 0)
+		return recal_state;
+	if (recal_state != 0) {
+		cal_state = REC_STATE_SCHEDULED;
+		cal_mode = REC_MODE_RESTART;
+		goto done;
+	}
+
+	if (cal_mode == REC_MODE_BEST_TIME) {
+		if (batt_drv->msc_state == MSC_HEALTH_PAUSE)
+			is_best_time = true;
+		if (batt_drv->chg_done == true)
+			is_best_time = true;
+	}
+
+	if (cal_mode == REC_MODE_IMMEDIATE)
+		is_best_time = true;
+
+	if (is_best_time) {
+		ret = GPSY_SET_PROP(batt_drv->fg_psy, GBMS_PROP_RECAL_FG,
+				    batt_drv->health_data.cal_target);
+		if (ret == 0) {
+			cal_state = REC_STATE_SCHEDULED;
+			cal_mode = REC_MODE_RESTART;
+		}
+		goto done;
+	}
+
+	if (cal_mode == REC_MODE_RESTART && recal_state == 0) {
+		cal_state = REC_STATE_OK;
+		cal_mode = REC_MODE_RESET;
+		goto done;
+	}
+
+	/* read full capacity value */
+	ret = GPSY_GET_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_CHARGE_FULL);
+	if (ret < 0)
+		goto done;
+	full_cap_nom = ret / 1000;
+
+	/*
+	 * compare with design value, allow to reset FG if conditions match
+	 * and wait for appropriate time to execute
+	 */
+	if (full_cap_nom > (design_capacity * MAX_CAPACITY_RATIO / 100)) {
+		cal_state = REC_STATE_SCHEDULED;
+		cal_mode = REC_MODE_BEST_TIME;
+	}
+
+done:
+	if (batt_drv->health_data.cal_state != cal_state ||
+	    batt_drv->health_data.cal_mode != cal_mode) {
+		gbms_logbuffer_prlog(batt_drv->ttf_stats.ttf_log, LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG,
+				     "RE_CAL: cal_state: %d -> %d, cal_mode:%d -> %d\n",
+				     batt_drv->health_data.cal_state, cal_state,
+				     batt_drv->health_data.cal_mode, cal_mode);
+		batt_drv->health_data.cal_state = cal_state;
+		batt_drv->health_data.cal_mode = cal_mode;
+		if (full_cap_nom)
+			gbms_logbuffer_prlog(batt_drv->ttf_stats.ttf_log,
+					     LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG,
+					     "RE_CAL: full_cap_nom:%d, design_capacity:%d\n",
+					     full_cap_nom, design_capacity);
+	}
+
+	return ret;
+}
+
 /* call holding mutex_lock(&batt_drv->chg_lock)  */
 static int batt_bhi_stats_update_all(struct batt_drv *batt_drv)
 {
@@ -7628,9 +7713,21 @@ static ssize_t health_set_cal_mode_store(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	/* TODO: implement set recalibration mode */
-	batt_drv->health_data.cal_mode = value;
+	mutex_lock(&batt_drv->chg_lock);
+	if (batt_drv->health_data.cal_state == REC_STATE_SCHEDULED)
+		goto exit_done;
 
+	gbms_logbuffer_prlog(batt_drv->ttf_stats.ttf_log, LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG,
+			     "RE_CAL: cal_state: %d, cal_mode:%d -> %d\n",
+			     batt_drv->health_data.cal_state,
+			     batt_drv->health_data.cal_mode, value);
+	batt_drv->health_data.cal_mode = value;
+	ret = batt_bhi_update_recalibration_status(batt_drv);
+	if (ret < 0)
+		count = ret;
+
+exit_done:
+	mutex_unlock(&batt_drv->chg_lock);
 	return count;
 }
 
@@ -9185,6 +9282,11 @@ static void google_battery_work(struct work_struct *work)
 		}
 	}
 
+	/* check recalibration conditions */
+	ret = batt_bhi_update_recalibration_status(batt_drv);
+	if (ret < 0)
+		pr_err("bhi update recalibration not available (%d)\n", ret);
+
 	mutex_unlock(&batt_drv->chg_lock);
 
 	/* TODO: we might not need to do this all the time */
@@ -9895,6 +9997,9 @@ static int batt_bhi_init(struct batt_drv *batt_drv)
 	health_data->bhi_debug_imp_index = 0;
 	health_data->bhi_debug_sd_index = 0;
 	health_data->bhi_debug_health_index = 0;
+	/* TODO: restore cal_state/cal_mode if reboot */
+	health_data->cal_state = REC_STATE_OK;
+	health_data->cal_mode = REC_MODE_RESET;
 
 	return 0;
 }

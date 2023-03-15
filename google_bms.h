@@ -645,6 +645,18 @@ struct bhi_weight {
 	int w_sd;
 };
 
+enum bhi_fg_recalibration_mode {
+	REC_MODE_RESET = 0,
+	REC_MODE_BEST_TIME,
+	REC_MODE_IMMEDIATE,
+	REC_MODE_RESTART,
+};
+
+enum bhi_fg_recalibration_state {
+	REC_STATE_OK = 0,
+	REC_STATE_SCHEDULED,
+};
+
 /* Charging Speed */
 enum csi_type {
 	CSI_TYPE_UNKNOWN = -1,
