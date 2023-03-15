@@ -3767,10 +3767,12 @@ charge_stats_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct chg_drv *chg_drv = dev_get_drvdata(dev);
 	struct gbms_ce_tier_stats *dd_stats = &chg_drv->dd_stats;
+	uint32_t time_sum;
 	ssize_t len = 0;
 
 	mutex_lock(&chg_drv->stats_lock);
-	if (dd_stats->soc_in != -1)
+	time_sum = dd_stats->time_fast + dd_stats->time_other + dd_stats->time_taper;
+	if (time_sum > 0)
 		len = gbms_tier_stats_cstr(&buf[len], PAGE_SIZE, dd_stats, false);
 	mutex_unlock(&chg_drv->stats_lock);
 
