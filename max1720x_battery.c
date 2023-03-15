@@ -267,6 +267,10 @@ struct max1720x_chip {
 	/* battery current criteria for report status charge */
 	u32 status_charge_threshold_ma;
 
+	/* re-calibration */
+	int bhi_recalibration_algo; /* 0:release, 1:internal */
+	int bhi_target_capacity;
+
 	struct wakeup_source *get_prop_ws;
 
 	int timerh_base;
@@ -1647,6 +1651,10 @@ static int max1720x_update_cycle_count(struct max1720x_chip *chip)
 	if (err < 0)
 		return err;
 
+	if (chip->gauge_type == MAX_M5_GAUGE_TYPE)
+		if (max_m5_recal_state(chip->model_data))
+			reg_cycle += max_m5_recal_cycle(chip->model_data);
+
 	cycle_count = reg_to_cycles((u32)reg_cycle, chip->gauge_type);
 	if ((chip->cycle_count == -1) ||
 	    ((cycle_count + chip->cycle_count_offset) < chip->cycle_count))
@@ -2446,6 +2454,10 @@ static int max1720x_get_property(struct power_supply *psy,
 	case GBMS_PROP_BATT_ID:
 		val->intval = chip->batt_id;
 		break;
+	case GBMS_PROP_RECAL_FG:
+		if (chip->gauge_type == MAX_M5_GAUGE_TYPE)
+			val->intval = max_m5_recal_state(chip->model_data);
+		break;
 	default:
 		err = -EINVAL;
 		break;
@@ -2533,6 +2545,24 @@ static void max1720x_fixup_capacity(struct max1720x_chip *chip, int plugged)
 
 }
 
+static int max1720x_set_recalibration(struct max1720x_chip *chip, int cap)
+{
+	int rc = 0;
+
+	if (chip->gauge_type != MAX_M5_GAUGE_TYPE || max_m5_recal_state(chip->model_data))
+		return 0;
+
+	if (cap)
+		chip->bhi_target_capacity = cap;
+
+	rc = m5_init_custom_parameters(chip->dev, chip->model_data, chip->batt_node ?
+				       chip->batt_node : chip->dev->of_node);
+	if (rc == 0)
+		rc = max_m5_recalibration(chip->model_data, chip->bhi_recalibration_algo,
+					  (u16)chip->bhi_target_capacity);
+	return rc;
+}
+
 static int max1720x_set_property(struct power_supply *psy,
 				 enum power_supply_property psp,
 				 const union power_supply_propval *val)
@@ -2596,6 +2626,9 @@ static int max1720x_set_property(struct power_supply *psy,
 		break;
 	case GBMS_PROP_FG_REG_LOGGING:
 		max1720x_monitor_log_data(chip, !!val->intval);
+		break;
+	case GBMS_PROP_RECAL_FG:
+		max1720x_set_recalibration(chip, val->intval);
 		break;
 	default:
 		return -EINVAL;
@@ -3029,6 +3062,10 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 			pr_debug("Force power_supply_change in storm\n");
 		} else {
 			max1720x_monitor_log_data(chip, false);
+			if (chip->gauge_type == MAX_M5_GAUGE_TYPE)
+				max_m5_check_recal_state(chip->model_data,
+							 chip->bhi_recalibration_algo,
+							 chip->eeprom_cycle);
 			max1720x_update_cycle_count(chip);
 		}
 
@@ -3647,6 +3684,12 @@ static int max1720x_init_model(struct max1720x_chip *chip)
 			 chip->drift_data.algo_ver);
 	}
 
+	/* reset state (if needed) */
+	if (chip->model_data) {
+		devm_kfree(chip->dev, chip->model_data);
+		chip->model_data = NULL;
+	}
+
 	/* TODO: split allocation and initialization */
 	model_data = max_m5_init_data(chip->dev, chip->batt_node ?
 				      chip->batt_node : chip->dev->of_node,
@@ -3690,9 +3733,6 @@ static int debug_batt_id_set(void *data, u64 val)
 
 	mutex_lock(&chip->model_lock);
 
-	/* reset state (if needed) */
-	if (chip->model_data)
-		max_m5_free_data(chip->model_data);
 	chip->batt_id = val;
 
 	/* re-init the model data (lookup in DT) */
@@ -4188,6 +4228,9 @@ static int max17x0x_init_sysfs(struct max1720x_chip *chip)
 	if (chip->gauge_type == MAX_M5_GAUGE_TYPE) {
 		debugfs_create_file("cnhs_reset", 0400, de, chip, &debug_reset_cnhs_fops);
 		debugfs_create_file("gmsr_reset", 0400, de, chip, &debug_reset_gmsr_fops);
+		debugfs_create_u32("bhi_target_capacity", 0644, de, &chip->bhi_target_capacity);
+		debugfs_create_u32("bhi_recalibration_algo", 0644, de,
+				   &chip->bhi_recalibration_algo);
 	}
 
 	/* capacity fade */
@@ -4401,7 +4444,7 @@ static int max1720x_set_next_update(struct max1720x_chip *chip)
 	int rc;
 	u16 reg_cycle;
 
-	/* do not save data when battery ID not clearly */
+	/* do not save data when battery ID not clearly or under recalibration */
 	if (chip->batt_id == DEFAULT_BATTERY_ID)
 		return 0;
 
@@ -4498,8 +4541,9 @@ static void max1720x_model_work(struct work_struct *work)
 				 rc);
 
 			/* TODO: keep trying to clear POR if the above fail */
+			if (max_m5_recal_state(chip->model_data) == RE_CAL_STATE_IDLE)
+				max1720x_restore_battery_cycle(chip);
 
-			max1720x_restore_battery_cycle(chip);
 			rc = REGMAP_READ(&chip->regmap, MAX1720X_CYCLES, &reg_cycle);
 			if (rc == 0 && reg_cycle >= 0) {
 				chip->model_reload = MAX_M5_LOAD_MODEL_IDLE;
