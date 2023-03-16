@@ -7610,7 +7610,7 @@ static void batt_init_temp_filter(struct batt_drv *batt_drv)
 	temp_filter->force_update = true;
 	mod_delayed_work(system_wq, &temp_filter->work, 0);
 
-	pr_info("temperture filter: default:%ds, fast:%ds, resume:%dms\n",
+	pr_info("temperature filter: default:%ds, fast:%ds, resume:%dms\n",
 		temp_filter->default_interval / 1000, temp_filter->fast_interval / 1000,
 		temp_filter->resume_delay_time);
 }
@@ -7648,7 +7648,7 @@ static void google_battery_temp_filter_work(struct work_struct *work)
 
 	/* logging if big difference */
 	if (abs(val.intval - temp_filter->sample[temp_filter->last_idx]) > TEMP_FILTER_LOG_DIFF)
-		pr_info("temperture filter: [%d, %d, %d, %d, %d] val:%d idx:%d interval=%dms\n",
+		pr_info("temperature filter: [%d, %d, %d, %d, %d] val:%d idx:%d interval=%dms\n",
 			temp_filter->sample[0], temp_filter->sample[1], temp_filter->sample[2],
 			temp_filter->sample[3], temp_filter->sample[4], val.intval,
 			temp_filter->last_idx, interval);
@@ -7665,7 +7665,7 @@ static void google_battery_temp_filter_work(struct work_struct *work)
 	mutex_unlock(&temp_filter->lock);
 
 done:
-	pr_debug("temperture filter: [%d, %d, %d, %d, %d] interval=%dms\n",
+	pr_debug("temperature filter: [%d, %d, %d, %d, %d] interval=%dms\n",
 		 temp_filter->sample[0], temp_filter->sample[1], temp_filter->sample[2],
 		 temp_filter->sample[3], temp_filter->sample[4], interval);
 	mod_delayed_work(system_wq, &temp_filter->work, msecs_to_jiffies(interval));
