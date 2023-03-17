@@ -2381,7 +2381,7 @@ static ssize_t show_fship_dtls(struct device *dev,
 	if (data->fship_dtls != -1)
 		goto exit_done;
 
-	if(max77759_resume_check(data))
+	if (max77759_resume_check(data))
 		return -EAGAIN;
 
 	ret = max77759_find_pmic(data);
