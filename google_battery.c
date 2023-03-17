@@ -3873,7 +3873,7 @@ static int msc_logic(struct batt_drv *batt_drv)
 
 		/* seed voltage and charging table on connect or temp_idx change, book 0 time */
 		if (batt_drv->vbatt_idx == -1 || temp_idx != batt_drv->temp_idx)
-			vbatt_idx = gbms_msc_voltage_idx(profile, vbatt);
+			vbatt_idx = gbms_msc_voltage_idx_merge_tiers(profile, vbatt, temp_idx);
 
 		batt_prlog(BATT_PRLOG_ALWAYS,
 			   "MSC_SEED temp=%d vb=%d temp_idx:%d->%d, vbatt_idx:%d->%d\n",
@@ -3897,7 +3897,7 @@ static int msc_logic(struct batt_drv *batt_drv)
 		 * NOTE: same vbat_idx will not change fv_uv
 		 */
 		msc_state = MSC_DSG;
-		vbatt_idx = gbms_msc_voltage_idx(profile, vbatt);
+		vbatt_idx = gbms_msc_voltage_idx_merge_tiers(profile, vbatt, temp_idx);
 
 		batt_prlog(batt_prlog_level(log_level),
 			   "MSC_DSG vbatt_idx:%d->%d vt=%d fv_uv=%d vb=%d ib=%d cv_cnt=%d ov_cnt=%d\n",
@@ -4023,10 +4023,6 @@ static int msc_logic(struct batt_drv *batt_drv)
 
 	/* need a new fv_uv only on a new voltage tier.  */
 	if (vbatt_idx != batt_drv->vbatt_idx || temp_idx != batt_drv->temp_idx) {
-		vbatt_idx = gbms_msc_merge_tiers(profile, vbatt_idx, temp_idx);
-		if (vbatt_idx == -EINVAL)
-			return -EINVAL;
-
 		fv_uv = profile->volt_limits[vbatt_idx];
 		batt_drv->checked_tier_switch_cnt = 0;
 		batt_drv->checked_ov_cnt = 0;
