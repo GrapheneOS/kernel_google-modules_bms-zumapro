@@ -273,6 +273,7 @@ enum chg_health_state {
 	CHG_HEALTH_PAUSE,
 };
 
+#define STATS_TH_SIZE 10
 /* tier index used to log the session */
 enum gbms_stats_tier_idx_t {
 	GBMS_STATS_AC_TI_DISABLE_DIALOG = -6,
@@ -668,6 +669,29 @@ enum csi_status {
 	CSI_STATUS_NotCharging = 100,	// There will be a more specific reason
 	CSI_STATUS_Charging = 200,	// All good
 };
+
+#define CSI_TYPE_MASK_UNKNOWN		(1 << 0)
+#define CSI_TYPE_MASK_NONE		(1 << 1)
+#define CSI_TYPE_MASK_FAULT		(1 << 2)
+#define CSI_TYPE_MASK_JEITA		(1 << 3)
+#define CSI_TYPE_MASK_LONGLIFE		(1 << 4)
+#define CSI_TYPE_MASK_ADAPTIVE		(1 << 5)
+#define CSI_TYPE_MASK_NORMAL		(1 << 6)
+
+#define CSI_STATUS_MASK_UNKNOWN		(1 << 0)
+#define CSI_STATUS_MASK_HEALTH_COLD	(1 << 1)
+#define CSI_STATUS_MASK_HEALTH_HOT	(1 << 2)
+#define CSI_STATUS_MASK_SYS_THERMALS	(1 << 3)
+#define CSI_STATUS_MASK_SYS_LOAD	(1 << 4)
+#define CSI_STATUS_MASK_ADA_AUTH	(1 << 5)
+#define CSI_STATUS_MASK_ADA_POWER	(1 << 6)
+#define CSI_STATUS_MASK_ADA_QUALITY	(1 << 7)
+#define CSI_STATUS_MASK_DEFEND_TEMP	(1 << 8)
+#define CSI_STATUS_MASK_DEFEND_DWELL	(1 << 9)
+#define CSI_STATUS_MASK_DEFEND_TRICLE	(1 << 10)
+#define CSI_STATUS_MASK_DEFEND_DOCK	(1 << 11)
+#define CSI_STATUS_MASK_NOTCHARGING	(1 << 12)
+#define CSI_STATUS_MASK_CHARGING	(1 << 13)
 
 enum charging_state {
        BATTERY_STATUS_UNKNOWN = -1,

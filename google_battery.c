@@ -398,6 +398,7 @@ struct power_metrics {
 	struct delayed_work work;
 };
 
+#define CSI_THERMAL_SEVERITY_MAX 5
 struct csi_stats {
 	int ssoc;
 
@@ -411,6 +412,24 @@ struct csi_stats {
 	int speed_sum;
 
 	ktime_t last_update;
+
+	uint8_t ad_type;
+	uint8_t ad_voltage;
+	uint8_t ad_amperage;
+	uint16_t ssoc_in;
+	uint16_t ssoc_out;
+	ktime_t time_sum;
+	ktime_t time_effective;
+	ktime_t time_stat_last_update;
+	uint16_t aggregate_status;
+	uint16_t aggregate_type;
+	int8_t temp_min;
+	int8_t temp_max;
+	uint16_t vol_in;
+	uint16_t vol_out;
+	uint16_t cc_in;
+	uint16_t cc_out;
+	ktime_t thermal_severity[CSI_THERMAL_SEVERITY_MAX];
 };
 
 #define TEMP_SAMPLE_SIZE 5
@@ -584,6 +603,7 @@ struct batt_drv {
 	int csi_current_type;
 	int csi_current_speed;
 	int fake_charging_speed;
+	struct gvotable_election *thermal_level_votable;
 
 	/* battery power metrics */
 	struct power_metrics power_metrics;
@@ -2317,6 +2337,187 @@ static void batt_res_work(struct batt_drv *batt_drv)
 
 /* ------------------------------------------------------------------------- */
 
+static uint16_t batt_csi_status_mask(int status)
+{
+	uint16_t status_mask = 0;
+
+	switch (status) {
+	case CSI_STATUS_UNKNOWN:
+		status_mask = CSI_STATUS_MASK_UNKNOWN;
+		break;
+	case CSI_STATUS_Health_Cold:
+		status_mask = CSI_STATUS_MASK_HEALTH_COLD;
+		break;
+	case CSI_STATUS_Health_Hot:
+		status_mask = CSI_STATUS_MASK_HEALTH_HOT;
+		break;
+	case CSI_STATUS_System_Thermals:
+		status_mask = CSI_STATUS_MASK_SYS_THERMALS;
+		break;
+	case CSI_STATUS_System_Load:
+		status_mask = CSI_STATUS_MASK_SYS_LOAD;
+		break;
+	case CSI_STATUS_Adapter_Auth:
+		status_mask = CSI_STATUS_MASK_ADA_AUTH;
+		break;
+	case CSI_STATUS_Adapter_Power:
+		status_mask = CSI_STATUS_MASK_ADA_POWER;
+		break;
+	case CSI_STATUS_Adapter_Quality:
+		status_mask = CSI_STATUS_MASK_ADA_QUALITY;
+		break;
+	case CSI_STATUS_Defender_Temp:
+		status_mask = CSI_STATUS_MASK_DEFEND_TEMP;
+		break;
+	case CSI_STATUS_Defender_Dwell:
+		status_mask = CSI_STATUS_MASK_DEFEND_DWELL;
+		break;
+	case CSI_STATUS_Defender_Trickle:
+		status_mask = CSI_STATUS_MASK_DEFEND_TRICLE;
+		break;
+	case CSI_STATUS_Defender_Dock:
+		status_mask = CSI_STATUS_MASK_DEFEND_DOCK;
+		break;
+	case CSI_STATUS_NotCharging:
+		status_mask = CSI_STATUS_MASK_NOTCHARGING;
+		break;
+	case CSI_STATUS_Charging:
+		status_mask = CSI_STATUS_MASK_CHARGING;
+		break;
+	default:
+		break;
+	}
+
+	return status_mask;
+}
+
+static uint16_t batt_csi_type_mask(int type)
+{
+	uint16_t type_mask = 0;
+
+	switch (type) {
+	case CSI_TYPE_UNKNOWN:
+		type_mask = CSI_TYPE_MASK_UNKNOWN;
+		break;
+	case CSI_TYPE_None:
+		type_mask = CSI_TYPE_MASK_NONE;
+		break;
+	case CSI_TYPE_Fault:
+		type_mask = CSI_TYPE_MASK_FAULT;
+		break;
+	case CSI_TYPE_JEITA:
+		type_mask = CSI_TYPE_MASK_JEITA;
+		break;
+	case CSI_TYPE_LongLife:
+		type_mask = CSI_TYPE_MASK_LONGLIFE;
+		break;
+	case CSI_TYPE_Adaptive:
+		type_mask = CSI_TYPE_MASK_ADAPTIVE;
+		break;
+	case CSI_TYPE_Normal:
+		type_mask = CSI_TYPE_MASK_NORMAL;
+		break;
+	default:
+		break;
+	}
+
+	return type_mask;
+}
+
+static void batt_init_csi_stat(struct batt_drv *batt_drv)
+{
+	struct csi_stats *csi_stats = &batt_drv->csi_stats;
+
+	csi_stats->vol_in = 0;
+	csi_stats->cc_in = 0;
+	csi_stats->ssoc_in = 0;
+	csi_stats->cc_out = 0;
+	csi_stats->vol_out = 0;
+	csi_stats->ssoc_out = 0;
+	csi_stats->temp_min = 0;
+	csi_stats->temp_max = 0;
+	csi_stats->time_sum = 0;
+	csi_stats->time_effective = 0;
+	csi_stats->time_stat_last_update = 0;
+	csi_stats->aggregate_type = 0;
+	csi_stats->aggregate_status = 0;
+	memset(csi_stats->thermal_severity, 0,
+	       sizeof(csi_stats->thermal_severity));
+
+
+}
+
+static void batt_update_csi_stat(struct batt_drv *batt_drv)
+{
+	const union gbms_ce_adapter_details *ad = &batt_drv->ce_data.adapter_details;
+	const int ssoc = ssoc_get_capacity(&batt_drv->ssoc_state);
+	struct csi_stats *csi_stats = &batt_drv->csi_stats;
+	struct power_supply *fg_psy = batt_drv->fg_psy;
+	const int8_t batt_temp = batt_drv->batt_temp / 10;
+	const ktime_t now = get_boot_sec();
+	int thermal_level = 0;
+	ktime_t elap;
+
+	if (chg_state_is_disconnected(&batt_drv->chg_state) && csi_stats->vol_in != 0) {
+		/* update disconnected data */
+		const int vol_out = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
+		const int cc_out = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_CHARGE_COUNTER);
+
+		if (vol_out < 0 || cc_out < 0)
+			return;
+
+		csi_stats->vol_out = vol_out / 1000;
+		csi_stats->cc_out = cc_out / 1000;
+		csi_stats->ssoc_out = ssoc;
+
+		return;
+	}
+
+	/* initial connected data */
+	if (csi_stats->time_stat_last_update == 0) {
+		const int vol_in = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
+		const int cc_in = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_CHARGE_COUNTER);
+
+		if (vol_in < 0 || cc_in < 0)
+			return;
+
+		csi_stats->ssoc_in = ssoc;
+		csi_stats->temp_min = batt_temp;
+		csi_stats->temp_max = batt_temp;
+		csi_stats->vol_in =  vol_in / 1000;
+		csi_stats->cc_in = cc_in / 1000;
+		csi_stats->time_stat_last_update = now;
+	}
+
+	csi_stats->aggregate_status |= batt_csi_status_mask(batt_drv->csi_current_status);
+	csi_stats->aggregate_type |= batt_csi_type_mask(batt_drv->csi_current_type);
+	elap = now - csi_stats->time_stat_last_update;
+	csi_stats->time_sum += elap;
+	csi_stats->ad_type = ad->ad_type;
+	csi_stats->ad_voltage = ad->ad_voltage;
+	csi_stats->ad_amperage = ad->ad_amperage;
+	if (batt_drv->csi_current_type == CSI_TYPE_Normal && ssoc != 100)
+		csi_stats->time_effective += elap;
+
+	if (batt_temp < csi_stats->temp_min)
+		csi_stats->temp_min = batt_temp;
+	if (batt_temp > csi_stats->temp_max)
+		csi_stats->temp_max = batt_temp;
+
+	if (!batt_drv->thermal_level_votable)
+		batt_drv->thermal_level_votable = gvotable_election_get_handle(VOTABLE_THERMAL_LVL);
+	if (batt_drv->thermal_level_votable)
+		thermal_level = gvotable_get_current_int_vote(batt_drv->thermal_level_votable);
+
+	if (thermal_level >= CSI_THERMAL_SEVERITY_MAX)
+		thermal_level = CSI_THERMAL_SEVERITY_MAX - 1;
+	if (thermal_level < 0)
+		thermal_level = 0;
+
+	csi_stats->thermal_severity[thermal_level] += elap;
+	csi_stats->time_stat_last_update = now;
+}
+
 static void batt_log_csi_ttf_info(struct batt_drv *batt_drv)
 {
 	struct csi_stats *csi_stats = &batt_drv->csi_stats;
@@ -2331,6 +2532,10 @@ static void batt_log_csi_ttf_info(struct batt_drv *batt_drv)
 
 	if (!batt_drv->init_complete)
 		return;
+
+	/* if record disconnected data, wait clear for next session */
+	if (csi_stats->vol_out == 0)
+		batt_update_csi_stat(batt_drv);
 
 	if (chg_state_is_disconnected(&batt_drv->chg_state))
 		goto log_and_done;
@@ -7256,6 +7461,49 @@ static ssize_t charging_speed_show(struct device *dev,
 
 static const DEVICE_ATTR_RW(charging_speed);
 
+
+static ssize_t csi_stats_store(struct device *dev, struct device_attribute *attr,
+			       const char *buf, size_t count)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+
+	if (count < 1)
+		return -ENODATA;
+
+	if (buf[0] == '0')
+		batt_init_csi_stat(batt_drv);
+
+	return count;
+}
+
+static ssize_t csi_stats_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	struct csi_stats *stats = &batt_drv->csi_stats;
+	int ver = 0;
+
+	if (stats->time_stat_last_update == 0 || stats->time_sum == 0)
+		return 0;
+
+	return scnprintf(buf, PAGE_SIZE,
+			"%d,%s,%d,%d,%d,%d,%lld,%d,%d,%lld,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+			 ver, gbms_chg_ev_adapter_s(stats->ad_type), stats->ad_voltage * 100,
+			 stats->ad_amperage * 100, stats->ssoc_in, stats->ssoc_out,
+			 stats->time_sum / 60, stats->aggregate_type, stats->aggregate_status,
+			 stats->time_effective / 60, stats->temp_min, stats->temp_max,
+			 stats->vol_in, stats->vol_out, stats->cc_in, stats->cc_out,
+			 (int)(stats->thermal_severity[0] * 100 / stats->time_sum),
+			 (int)(stats->thermal_severity[1] * 100 / stats->time_sum),
+			 (int)(stats->thermal_severity[2] * 100 / stats->time_sum),
+			 (int)(stats->thermal_severity[3] * 100 / stats->time_sum),
+			 (int)(stats->thermal_severity[4] * 100 / stats->time_sum));
+}
+
+static const DEVICE_ATTR_RW(csi_stats);
+
 static ssize_t power_metrics_polling_rate_store(struct device *dev,
 						struct device_attribute *attr,
 						const char *buf, size_t count)
@@ -7702,6 +7950,9 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_charging_speed);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create charging speed\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_csi_stats);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create csi_stats\n");
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_power_metrics_polling_rate);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create power_metrics_polling_rate\n");
@@ -9478,6 +9729,7 @@ static void google_battery_init_work(struct work_struct *work)
 
 	cev_stats_init(&batt_drv->ce_data, &batt_drv->chg_profile);
 	cev_stats_init(&batt_drv->ce_qual, &batt_drv->chg_profile);
+	batt_init_csi_stat(batt_drv);
 
 	batt_drv->fg_nb.notifier_call = psy_changed;
 	ret = power_supply_reg_notifier(&batt_drv->fg_nb);
