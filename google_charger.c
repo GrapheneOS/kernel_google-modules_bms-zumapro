@@ -208,6 +208,12 @@ struct bd_data {
 	ktime_t dd_last_update;
 
 	struct logbuffer *bd_log;
+
+	/* charge stats */
+	struct gbms_ce_tier_stats bd_pretrigger_stats;
+	ktime_t bd_pretrigger_stats_last_update;
+	struct gbms_ce_tier_stats bd_resume_stats;
+	ktime_t bd_resume_stats_last_update;
 };
 
 struct chg_drv {
@@ -426,11 +432,20 @@ static void chg_stats_init(struct gbms_ce_tier_stats *tier, int8_t idx)
 	gbms_tier_stats_init(tier, idx);
 }
 
-static void dd_stats_init(struct chg_drv *chg_drv)
+static void bd_dd_stats_init(struct chg_drv *chg_drv)
 {
+	ktime_t now = get_boot_sec();
+
 	mutex_lock(&chg_drv->stats_lock);
+	/* Dock Defend */
 	chg_stats_init(&chg_drv->dd_stats, GBMS_STATS_BD_TI_DOCK);
-	chg_drv->dd_stats_last_update = get_boot_sec();
+	chg_drv->dd_stats_last_update = now;
+	/* Temp Defend pretrigger */
+	chg_stats_init(&chg_drv->bd_state.bd_pretrigger_stats, GBMS_STATS_BD_TI_TEMP_PRETRIGGER);
+	chg_drv->bd_state.bd_pretrigger_stats_last_update = now;
+	/* Temp Defend resume */
+	chg_stats_init(&chg_drv->bd_state.bd_resume_stats, GBMS_STATS_BD_TI_TEMP_RESUME);
+	chg_drv->bd_state.bd_resume_stats_last_update = 0;
 	mutex_unlock(&chg_drv->stats_lock);
 }
 
@@ -1561,10 +1576,20 @@ static int msc_temp_defend_dryrun_cb(struct gvotable_election *el,
 	return 0;
 }
 
-/* bd_state->triggered = 1 when charging needs to be disabled */
-static int bd_update_stats(struct bd_data *bd_state,
-			   struct power_supply *bat_psy)
+static void bd_resume(struct chg_drv *chg_drv)
 {
+	struct bd_data *bd_state = &chg_drv->bd_state;
+
+	bd_reset(bd_state);
+	chg_stats_update(chg_drv, &bd_state->bd_resume_stats,
+			 &bd_state->bd_resume_stats_last_update);
+}
+
+/* bd_state->triggered = 1 when charging needs to be disabled */
+static int bd_update_stats(struct chg_drv *chg_drv)
+{
+	struct bd_data *bd_state = &chg_drv->bd_state;
+	struct power_supply *bat_psy = chg_drv->bat_psy;
 	const bool triggered = bd_state->triggered;
 	const ktime_t now = get_boot_sec();
 	int ret, vbatt, temp;
@@ -1599,6 +1624,10 @@ static int bd_update_stats(struct bd_data *bd_state,
 	bd_state->last_temp = temp;
 	bd_state->last_update = now;
 
+	if (bd_state->time_sum != 0 && !triggered)
+		chg_stats_update(chg_drv, &chg_drv->bd_state.bd_pretrigger_stats,
+				 &chg_drv->bd_state.bd_pretrigger_stats_last_update);
+
 	/* wait until we have at least bd_trigger_time */
 	if (bd_state->time_sum < bd_state->bd_trigger_time)
 		return 0;
@@ -1609,7 +1638,7 @@ static int bd_update_stats(struct bd_data *bd_state,
 		gbms_logbuffer_prlog(bd_state->bd_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
 			"MSC_BD: resume time_sum=%lld, temp_sum=%lld, temp_avg=%lld",
 			bd_state->time_sum, bd_state->temp_sum, temp_avg);
-		bd_reset(bd_state);
+		bd_resume(chg_drv);
 	} else if (!triggered && temp_avg >= bd_state->bd_trigger_temp) {
 		gbms_logbuffer_prlog(bd_state->bd_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
 			"MSC_BD: trigger time_sum=%lld, temp_sum=%lld, temp_avg=%lld",
@@ -1787,13 +1816,12 @@ static void bd_work(struct work_struct *work)
 	    soc < bd_state->bd_resume_soc) {
 		gbms_logbuffer_prlog(bd_state->bd_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
 			"MSC_BD_WORK: done soc=%d limit=%d", soc, bd_state->bd_resume_soc);
-
-		bd_reset(bd_state);
+		bd_resume(chg_drv);
 		goto bd_rerun;
 	}
 
 	/* set on time and temperature, reset on abs temperature */
-	ret = bd_update_stats(bd_state, chg_drv->bat_psy);
+	ret = bd_update_stats(chg_drv);
 	if (ret < 0) {
 		pr_err("MSC_BD_WORK: update stats: %d\n", ret);
 		interval_ms = 1000;
@@ -1814,8 +1842,7 @@ static void bd_work(struct work_struct *work)
 				"MSC_BD_WORK: done time=%lld limit=%d, temp=%d limit=%d",
 				delta_time, bd_state->bd_resume_time,
 				temp, bd_state->bd_resume_temp);
-
-			bd_reset(&chg_drv->bd_state);
+			bd_resume(chg_drv);
 			goto bd_rerun;
 		}
 	}
@@ -2054,7 +2081,7 @@ static int chg_run_defender(struct chg_drv *chg_drv)
 			if (rc < 0)
 				pr_err("MSC_BD resume (%d)\n", rc);
 
-			bd_reset(&chg_drv->bd_state);
+			bd_resume(chg_drv);
 		}
 
 		/* force TEMP-DEFEND off */
@@ -2069,7 +2096,7 @@ static int chg_run_defender(struct chg_drv *chg_drv)
 		const bool was_triggered = bd_state->triggered;
 
 		/* bd_work() is not running here */
-		rc = bd_update_stats(bd_state, bat_psy);
+		rc = bd_update_stats(chg_drv);
 		if (rc < 0)
 			pr_debug("MSC_DB BD update stats: %d\n", rc);
 
@@ -3782,6 +3809,8 @@ charge_stats_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct chg_drv *chg_drv = dev_get_drvdata(dev);
 	struct gbms_ce_tier_stats *dd_stats = &chg_drv->dd_stats;
+	struct gbms_ce_tier_stats *bd_p_stats = &chg_drv->bd_state.bd_pretrigger_stats;
+	struct gbms_ce_tier_stats *bd_r_stats = &chg_drv->bd_state.bd_resume_stats;
 	uint32_t time_sum;
 	ssize_t len = 0;
 
@@ -3789,6 +3818,11 @@ charge_stats_show(struct device *dev, struct device_attribute *attr, char *buf)
 	time_sum = dd_stats->time_fast + dd_stats->time_other + dd_stats->time_taper;
 	if (time_sum > 0)
 		len = gbms_tier_stats_cstr(&buf[len], PAGE_SIZE, dd_stats, false);
+	time_sum = bd_p_stats->time_fast + bd_p_stats->time_other + bd_p_stats->time_taper;
+	if (time_sum > 0)
+		len += gbms_tier_stats_cstr(&buf[len], PAGE_SIZE, bd_p_stats, false);
+	if (chg_drv->bd_state.bd_resume_stats_last_update > 0)
+		len += gbms_tier_stats_cstr(&buf[len], PAGE_SIZE, bd_r_stats, false);
 	mutex_unlock(&chg_drv->stats_lock);
 
 	return len;
@@ -3804,7 +3838,7 @@ static ssize_t charge_stats_store(struct device *dev,
 		return -ENODATA;
 
 	if (buf[0] == '0')
-		dd_stats_init(chg_drv);
+		bd_dd_stats_init(chg_drv);
 
 	return count;
 }
@@ -5444,7 +5478,7 @@ static void google_charger_init_work(struct work_struct *work)
 	if (chg_drv->ext_psy)
 		bd_dd_init(chg_drv);
 	/* Initialize stats no matter which device, as soc_in needs to be -1 */
-	dd_stats_init(chg_drv);
+	bd_dd_stats_init(chg_drv);
 
 	chg_drv->psy_nb.notifier_call = chg_psy_changed;
 	ret = power_supply_reg_notifier(&chg_drv->psy_nb);
