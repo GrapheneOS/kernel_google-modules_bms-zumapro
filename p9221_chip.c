@@ -663,6 +663,17 @@ static int p9412_get_cc_recv_size(struct p9221_charger_data *chgr, size_t *len)
 	return ret;
 }
 
+static int ra9530_get_cc_recv_size(struct p9221_charger_data *chgr, size_t *len)
+{
+	int ret;
+	u16 len16;
+
+	ret = chgr->reg_read_16(chgr, RA9530_CC_READ_SIZE_REG, &len16);
+	if (!ret)
+		*len = len16;
+	return ret;
+}
+
 /* send size */
 static int p9221_set_cc_send_size(struct p9221_charger_data *chgr, size_t len)
 {
@@ -728,6 +739,33 @@ static int p9412_set_cc_send_size(struct p9221_charger_data *chgr, size_t len)
 	return chgr->reg_write_16(chgr, P9412_COM_CHAN_SEND_SIZE_REG, len);
 }
 
+static int ra9530_set_cc_send_size(struct p9221_charger_data *chgr, size_t len)
+{
+	int ret;
+
+	/* set as ADT type(Authentication) */
+	if (chgr->auth_type != 0) {
+		ret = chgr->reg_write_8(chgr, RA9530_CC_WRITE_TYPE_REG,
+					(P9412_ADT_TYPE_AUTH << RA9530_CC_TYPE_SHIFT) |
+					(chgr->tx_len >> 8));
+		ret |= chgr->reg_write_8(chgr, RA9530_CC_WRITE_TYPE_REG + 1,
+					 chgr->tx_len & 0xFF);
+		chgr->auth_type = 0;
+	} else {
+		/* set packet type(BiDi 0x98) to 0x800 */
+		ret = chgr->reg_write_8(chgr, P9412_COM_PACKET_TYPE_ADDR,
+					BIDI_COM_PACKET_TYPE);
+	}
+
+	if (ret) {
+		dev_err(&chgr->client->dev,
+			"Failed to write packet type %d\n", ret);
+		return ret;
+	}
+
+	return chgr->reg_write_16(chgr, RA9530_CC_WRITE_SIZE_REG, len);
+}
+
 /* get align x */
 static int p9221_get_align_x(struct p9221_charger_data *chgr, u8 *x)
 {
@@ -739,6 +777,13 @@ static int p9412_get_align_x(struct p9221_charger_data *chgr, u8 *x)
 	return chgr->reg_read_8(chgr, P9412_ALIGN_X_REG, x);
 }
 
+static int ra9530_get_align_x(struct p9221_charger_data *chgr, u8 *x)
+{
+	// Not support
+	*x = 0;
+	return 0;
+}
+
 /* get align y */
 static int p9221_get_align_y(struct p9221_charger_data *chgr, u8 *y)
 {
@@ -748,6 +793,13 @@ static int p9221_get_align_y(struct p9221_charger_data *chgr, u8 *y)
 static int p9412_get_align_y(struct p9221_charger_data *chgr, u8 *y)
 {
 	return chgr->reg_read_8(chgr, P9412_ALIGN_Y_REG, y);
+}
+
+static int ra9530_get_align_y(struct p9221_charger_data *chgr, u8 *y)
+{
+	// Not support
+	*y = 0;
+	return 0;
 }
 
 /* Simple Chip Specific Logic Functions */
@@ -989,6 +1041,55 @@ static int p9412_send_ccreset(struct p9221_charger_data *chgr)
 	ret = chgr->reg_write_8(chgr, P9412_COM_PACKET_TYPE_ADDR,
 				CHANNEL_RESET_PACKET_TYPE);
 	ret |= chgr->reg_write_8(chgr, P9412_COM_CHAN_SEND_SIZE_REG, 0);
+	if (ret == 0)
+		ret = chgr->chip_set_cmd(chgr, P9412_COM_CCACTIVATE);
+
+	mutex_unlock(&chgr->cmd_lock);
+
+	if (ret < 0) {
+		chgr->cc_reset_pending = false;
+		goto error_done;
+	}
+
+	/* ccreset needs 100ms, so set the timeout to 500ms */
+	wait_event_timeout(chgr->ccreset_wq, chgr->cc_reset_pending == false,
+			   msecs_to_jiffies(500));
+
+	if (chgr->cc_reset_pending) {
+		/* TODO: offline or command failed? */
+		chgr->cc_reset_pending = false;
+		ret = -ETIMEDOUT;
+	}
+
+error_done:
+	if (ret != 0)
+		dev_err(&chgr->client->dev, "Error sending CC reset (%d)\n",
+			ret);
+	return ret;
+}
+
+static int ra9530_send_ccreset(struct p9221_charger_data *chgr)
+{
+	int ret = 0;
+
+	dev_info(&chgr->client->dev, "%s CC reset\n",
+		 chgr->is_mfg_google? "Send" : "Ignore");
+
+	if (chgr->is_mfg_google == false)
+		return 0;
+
+	mutex_lock(&chgr->cmd_lock);
+
+	if (chgr->cc_reset_pending) {
+		mutex_unlock(&chgr->cmd_lock);
+		goto error_done;
+	}
+
+	chgr->cc_reset_pending = true;
+
+	ret = chgr->reg_write_8(chgr, RA9530_CC_WRITE_TYPE_REG,
+				CHANNEL_RESET_PACKET_TYPE);
+	ret |= chgr->reg_write_8(chgr, RA9530_CC_WRITE_SIZE_REG, 0);
 	if (ret == 0)
 		ret = chgr->chip_set_cmd(chgr, P9412_COM_CCACTIVATE);
 
@@ -1988,11 +2089,11 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->chip_tx_mode_en = p9221_chip_tx_mode; // TODO(270976020): update when RTX support
 		chgr->chip_get_data_buf = ra9530_get_data_buf;
 		chgr->chip_set_data_buf = ra9530_set_data_buf;
-		chgr->chip_get_cc_recv_size = p9412_get_cc_recv_size; // TODO(273593546): implement
-		chgr->chip_set_cc_send_size = p9412_set_cc_send_size; // TODO(273593546): implement
-		chgr->chip_get_align_x = p9412_get_align_x; // TODO(273593970): implement
-		chgr->chip_get_align_y = p9412_get_align_y; // TODO(273593970): implement
-		chgr->chip_send_ccreset = p9412_send_ccreset; // TODO(273593546): implement
+		chgr->chip_get_cc_recv_size = ra9530_get_cc_recv_size;
+		chgr->chip_set_cc_send_size = ra9530_set_cc_send_size;
+		chgr->chip_get_align_x = ra9530_get_align_x;
+		chgr->chip_get_align_y = ra9530_get_align_y;
+		chgr->chip_send_ccreset = ra9530_send_ccreset;
 		chgr->chip_send_eop = p9412_send_eop;
 		chgr->chip_get_sys_mode = p9412_chip_get_sys_mode;
 		chgr->chip_renegotiate_pwr = p9412_chip_renegotiate_pwr;
