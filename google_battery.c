@@ -2783,14 +2783,15 @@ static void batt_update_csi_status(struct batt_drv *batt_drv)
 
 	gvotable_cast_long_vote(batt_drv->csi_status_votable, "CSI_STATUS_DSG",
 				CSI_STATUS_NotCharging,
-				!is_disconnected && batt_drv->msc_state == MSC_DSG);
+				!is_disconnected && batt_drv->msc_state == MSC_DSG &&
+				!batt_drv->chg_done);
 
 	gvotable_cast_long_vote(batt_drv->csi_status_votable, "CSI_STATUS_100",
 				CSI_STATUS_Charging,
-				!is_disconnected && batt_drv->chg_done);
+				!is_disconnected && batt_drv->batt_full && !batt_drv->chg_done);
 
 	gvotable_cast_long_vote(batt_drv->csi_status_votable, "CSI_STATUS_CHG",
-					CSI_STATUS_Charging, !is_disconnected);
+				CSI_STATUS_Charging, !is_disconnected);
 }
 
 #define CSI_CHG_SPEED_MAX 100
