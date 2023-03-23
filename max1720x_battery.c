@@ -2115,8 +2115,12 @@ static int max1720x_get_age(struct max1720x_chip *chip)
 	u16 timerh;
 	int ret;
 
+	/* model not ready */
+	if (chip->por)
+		return -ENODATA;
+
 	ret = REGMAP_READ(&chip->regmap, MAX1720X_TIMERH, &timerh);
-	if (ret < 0 || timerh == 0)
+	if (ret < 0)
 		return -ENODATA;
 
 	return reg_to_time_hr(timerh, chip);
