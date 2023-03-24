@@ -90,6 +90,12 @@ config CHARGER_MAX77759
 	help
 	  Say Y to enable support for the Maxim MAX77759 battery charger.
 
+config CHARGER_MAX77779
+	tristate "Maxim MAX77779 battery charger driver"
+	depends on I2C && OF
+	help
+	  Say Y to enable support for the Maxim MAX77779 battery charger.
+
 config PMIC_MAX77729
 	tristate "Maxim MAX77729 PMIC driver"
 	depends on I2C && OF

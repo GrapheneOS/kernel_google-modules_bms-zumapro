@@ -14,6 +14,7 @@ GBMS_MODULES =	GOOGLE_BMS \
 		UIC_MAX77729 \
 		CHARGER_MAX77729 \
 		CHARGER_MAX77759 \
+		CHARGER_MAX77779 \
 		MAXQ_MAX77759 \
 		MAX77779_SP \
 		CHARGER_P9221 \
@@ -35,7 +36,6 @@ google-bms-objs += gbms_storage.o
 # obj-$(CONFIG_GOOGLE_BEE)	+= google_eeprom.o
 google-bms-objs += google_eeprom.o
 google-bms-objs += google_eeprom_01.o
-google-bms-objs += gs101_usecase.o
 
 # Battery
 obj-$(CONFIG_GOOGLE_BATTERY) += google-battery.o
@@ -69,8 +69,16 @@ max77729-pmic-objs += max77759_maxq.o
 
 obj-$(CONFIG_UIC_MAX77729)	+= max77729_uic.o
 obj-$(CONFIG_CHARGER_MAX77729)	+= max77729_charger.o
-# Muirwoods drivers for the single SSID (max77729_pmic is shared)
-obj-$(CONFIG_CHARGER_MAX77759)	+= max77759_charger.o
+
+# max77759 if-pmic based device (todo use the standalone)
+obj-$(CONFIG_CHARGER_MAX77759)	+= max77759-charger.o
+max77759-charger-objs += max77759_charger.o
+max77759-charger-objs += max77759_usecase.o
+
+# max77779 if-pmic based device (todo use the standalone)
+obj-$(CONFIG_CHARGER_MAX77779)  += max77779-charger.o
+max77779-charger-objs += max77779_charger.o
+max77779-charger-objs += max77779_usecase.o
 
 # Wireless charging
 obj-$(CONFIG_CHARGER_P9221)	+= p9221.o
@@ -83,23 +91,25 @@ pca9468-objs += pca9468_charger.o
 pca9468-objs += pca9468_gbms_pps.o
 pca9468-objs += google_dc_pps.o
 
-obj-$(CONFIG_PCA9468_GOOGLE)  += pca9468-google.o
-pca9468-google-objs += pca_charger.o
-pca9468-google-objs += pca9468_gbms_pps.o
-pca9468-google-objs += google_dc_pps.o
-
 # Alternate (untested) standalone for max77729f sans FG
+# needs the usecases
 obj-$(CONFIG_MAX77729)		+= max77729.o
 max77729-objs += max77729_pmic.o
 max77729-objs += max77729_uic.o
 max77729-objs += max77729_charger.o
 
 # Alternate (untested) standalone for max77759 sans FG
+# needs the usecases
 obj-$(CONFIG_MAX77759)		+= max77759.o
 max77759-objs += max77729_pmic.o
 max77759-objs += max77729_uic.o
-max77759-objs += max77729_charger.o
+max77759-objs += max77759_charger.o
 max77759-objs += max77759_maxq.o
+
+# Alternate (untested) standalone for max77779 sans FG
+# needs the usecases
+obj-$(CONFIG_MAX77779)		+= max77779.o
+max77779-objs += max77779_charger.o
 
 obj-$(CONFIG_MAX1720X_BATTERY)  += max1720x-battery.o
 max1720x-battery-objs += max1720x_battery.o
@@ -129,6 +139,7 @@ obj-$(CONFIG_LN8411)	+= ln8411_driver.o
 WENUMS=-Wno-enum-conversion -Wno-switch
 
 CFLAGS_max77759_charger.o += -Wno-unused-function $(WENUMS)
+CFLAGS_max77779_charger.o += -Wno-unused-function $(WENUMS)
 CFLAGS_max77729_charger.o += -Wno-unused-function $(WENUMS)
 CFLAGS_max1720x_battery.o += $(WENUMS)
 CFLAGS_pca9468_charger.o += $(WENUMS)
