@@ -1796,7 +1796,7 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 		chgr->ints.over_uv_bit = 0;
 		chgr->ints.cc_send_busy_bit = P9221R5_STAT_CCSENDBUSY;
 		chgr->ints.cc_data_rcvd_bit = P9221R5_STAT_CCDATARCVD;
-		chgr->ints.pp_rcvd_bit = 0; /* TODO: b/200114045 */
+		chgr->ints.pp_rcvd_bit = P9222_STAT_PPRCVD;
 		chgr->ints.cc_error_bit = P9222_STAT_CCERROR;
 		chgr->ints.cc_reset_bit = 0;
 		chgr->ints.propmode_stat_bit = 0;
@@ -1883,6 +1883,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_q_factor_addr = P9221R5_EPP_Q_FACTOR_REG;
 		chgr->reg_csp_addr = P9221R5_CHARGE_STAT_REG;
 		chgr->reg_light_load_addr = 0;
+		chgr->reg_mot_addr = P9412_MOT_REG;
 		break;
 	case RA9530_CHIP_ID:
 		chgr->reg_tx_id_addr = P9412_PROP_TX_ID_REG;
@@ -1907,18 +1908,20 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_q_factor_addr = P9221R5_EPP_Q_FACTOR_REG;
 		chgr->reg_csp_addr = P9221R5_CHARGE_STAT_REG;
 		chgr->reg_light_load_addr = 0;
+		chgr->reg_mot_addr = 0;
 		break;
 	case P9222_CHIP_ID:
 		chgr->reg_tx_id_addr = P9222RE_PROP_TX_ID_REG;
 		chgr->reg_tx_mfg_code_addr = P9222RE_TX_MFG_CODE_REG;
 		chgr->reg_packet_type_addr = P9222RE_COM_PACKET_TYPE_ADDR;
-		chgr->reg_set_pp_buf_addr = P9221R5_DATA_SEND_BUF_START;
-		chgr->reg_get_pp_buf_addr = P9221R5_DATA_RECV_BUF_START;
+		chgr->reg_set_pp_buf_addr = P9222RE_PP_SEND_BUF_START;
+		chgr->reg_get_pp_buf_addr = P9222RE_PP_RECV_BUF_START;
 		chgr->set_cmd_ccactivate_bit = P9222RE_COM_CCACTIVATE;
 		chgr->reg_set_fod_addr = P9222RE_FOD_REG;
 		chgr->reg_q_factor_addr = P9222RE_EPP_Q_FACTOR_REG;
 		chgr->reg_csp_addr = P9222RE_CHARGE_STAT_REG;
 		chgr->reg_light_load_addr = P9222_RX_CALIBRATION_LIGHT_LOAD;
+		chgr->reg_mot_addr = 0;
 		break;
 	default:
 		chgr->reg_tx_id_addr = P9221R5_PROP_TX_ID_REG;
@@ -1931,6 +1934,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_q_factor_addr = P9221R5_EPP_Q_FACTOR_REG;
 		chgr->reg_csp_addr = P9221R5_CHARGE_STAT_REG;
 		chgr->reg_light_load_addr = 0;
+		chgr->reg_mot_addr = 0;
 		break;
 	}
 }

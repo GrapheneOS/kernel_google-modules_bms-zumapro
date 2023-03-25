@@ -295,11 +295,17 @@ enum gbms_stats_tier_idx_t {
 	GBMS_STATS_AC_TI_V2_PREDICT_SUCCESS = 19,
 	GBMS_STATS_AC_TI_DONE_AON = 20,
 
-	/* Thermal stats, reported from google_charger */
+	/* Thermal stats, reported from google_charger - reserved 50-59 */
 	GBMS_STATS_TH_LVL0 = 50,
 	GBMS_STATS_TH_LVL1 = 51,
 	GBMS_STATS_TH_LVL2 = 52,
 	GBMS_STATS_TH_LVL3 = 53,
+	GBMS_STATS_TH_LVL4 = 54,
+	GBMS_STATS_TH_LVL5 = 55,
+	GBMS_STATS_TH_LVL6 = 56,
+	GBMS_STATS_TH_LVL7 = 57,
+	GBMS_STATS_TH_LVL8 = 58,
+	GBMS_STATS_TH_LVL9 = 59,
 
 	/* TODO: rename, these are not really related to AC */
 	GBMS_STATS_AC_TI_FULL_CHARGE = 100,
@@ -313,6 +319,7 @@ enum gbms_stats_tier_idx_t {
 
 	GBMS_STATS_BD_TI_TRICKLE_CLEARED = 122,
 	GBMS_STATS_BD_TI_DOCK_CLEARED = 123,
+	GBMS_STATS_TEMP_FILTER = 124,
 };
 
 /* health state */
@@ -378,6 +385,7 @@ struct gbms_charging_event {
 	struct gbms_ce_tier_stats overheat_stats;
 	struct gbms_ce_tier_stats cc_lvl_stats;
 	struct gbms_ce_tier_stats trickle_stats;
+	struct gbms_ce_tier_stats temp_filter_stats;
 };
 
 #define GBMS_CCCM_LIMITS_SET(profile, ti, vi) \
@@ -457,6 +465,7 @@ const char *gbms_chg_ev_adapter_s(int adapter);
 #define VOTABLE_DEAD_BATTERY	"DEAD_BATTERY"
 #define VOTABLE_TEMP_DRYRUN	"MSC_TEMP_DRYRUN"
 #define VOTABLE_MSC_LAST	"MSC_LAST"
+#define VOTABLE_MDIS		"CHG_MDIS"
 
 #define VOTABLE_CSI_STATUS	"CSI_STATUS"
 #define VOTABLE_CSI_TYPE	"CSI_TYPE"
@@ -576,7 +585,8 @@ enum gbms_charger_modes {
 
 	GBMS_CHGR_MODE_WLC_TX	= 0x40,
 
-	GBMS_CHGR_MODE_VOUT	= 0x50,
+	GBMS_POGO_VIN		= 0x50,
+	GBMS_POGO_VOUT		= 0x51,
 };
 
 #define GBMS_MODE_VOTABLE "CHARGER_MODE"
@@ -600,6 +610,7 @@ enum bhi_algo {
 
 	BHI_ALGO_MIX_N_MATCH 	= 6,
 	BHI_ALGO_DEBUG		= 7,
+	BHI_ALGO_INDI		= 8, /* individual conditions check */
 	BHI_ALGO_MAX,
 };
 

@@ -174,6 +174,9 @@ struct gcpm_drv  {
 	int chg_psy_active;
 	int chg_psy_count;
 
+	/* wakelock */
+	struct wakeup_source *gcpm_ws;
+
 	/* force a charger, this might have side effects */
 	int force_active;
 
@@ -422,6 +425,11 @@ static int gcpm_chg_offline(struct gcpm_drv *gcpm, int index)
 	const int active_index = gcpm->chg_psy_active;
 	struct power_supply *chg_psy;
 	int ret;
+
+	ret = gcpm_update_gcpm_fcc(gcpm, "CC_MAX", gcpm->cc_max, false);
+	if (ret < 0)
+		pr_debug("PPS_DC: offline cannot update cp_fcc (%d)\n", ret);
+
 
 	chg_psy = gcpm_chg_get_charger(gcpm, index);
 	if (!chg_psy)
@@ -709,6 +717,10 @@ static int gcpm_dc_start(struct gcpm_drv *gcpm, int index)
 	if (ret < 0)
 		pr_debug("PPS_DC: start cannot update votes (%d)\n", ret);
 
+	ret = gcpm_update_gcpm_fcc(gcpm, "CC_MAX", gcpm->cc_max, true);
+	if (ret < 0)
+		pr_debug("PPS_DC: start cannot update cp_fcc (%d)\n", ret);
+
 	if (gcpm->pps_index == PPS_INDEX_WLC) {
 		gcpm_update_gcpm_fcc(gcpm, "WLC_FCC", gcpm->wlc_dc_fcc, gcpm->wlc_dc_fcc > 0);
 		pr_info("PPS_DC: index=%d vote gcpm_fcc to %d\n",
@@ -825,7 +837,7 @@ static int gcpm_chg_select_by_demand(struct gcpm_drv *gcpm)
 	 * done holding a lock on &gcpm->chg_psy_lock (cc_max will become the
 	 * same as gcpm->cp_fcc_hold_limit on exit).
 	 */
-	if (gcpm->cp_fcc_hold && gcpm->cp_fcc_hold_limit >= 0) {
+	if (gcpm->cp_fcc_hold && gcpm->cp_fcc_hold_limit >= 0 && cc_max != 0) {
 		/*
 		 * ->cp_fcc_hold is set when a thermal limit caused the switch
 		 * from CP to main-charger. In this case ->cp_fcc_hold_limit
@@ -1409,6 +1421,9 @@ static int gcpm_chg_select_logic(struct gcpm_drv *gcpm)
 		/* grace period of 500ms, PPS Work not called during grace */
 		gcpm->dc_start_time = dc_start_time;
 		schedule_pps_interval = DC_ENABLE_DELAY_MS;
+
+		__pm_stay_awake(gcpm->gcpm_ws);
+		pr_debug("%s: pm gcpm stay awake\n", __func__);
 	}
 
 	if (schedule_pps_interval >= 0) {
@@ -1575,8 +1590,8 @@ static void gcpm_pps_wlc_dc_work(struct work_struct *work)
 		 gcpm->dc_index, gcpm->dc_state, gcpm->dc_start_time);
 
 	if (!gcpm->resume_complete || !gcpm->init_complete) {
-		/* TODO: should probably reschedule */
-		goto pps_dc_done;
+		pps_ui = DC_ERROR_RETRY_MS;
+		goto pps_dc_reschedule;
 	}
 
 	/* disconnect, gcpm_chg_check() and most errors reset ->dc_index */
@@ -1608,6 +1623,9 @@ static void gcpm_pps_wlc_dc_work(struct work_struct *work)
 				     dc_disable ? "for the session " : " ",
 				     elap, gcpm->dc_state, active_index,
 				     gcpm->chg_psy_active);
+
+		pr_debug("%s: pm gcpm relax\n", __func__);
+		__pm_relax(gcpm->gcpm_ws);
 
 		/* TODO: send a ps event? */
 		goto pps_dc_done;
@@ -1671,6 +1689,9 @@ static void gcpm_pps_wlc_dc_work(struct work_struct *work)
 			 } else {
 				pr_err("PPS_Work: dc offline\n");
 				pps_ui = 0;
+
+				pr_debug("%s: pm gcpm relax\n", __func__);
+				__pm_relax(gcpm->gcpm_ws);
 			}
 		}
 
@@ -1781,6 +1802,9 @@ static void gcpm_pps_wlc_dc_work(struct work_struct *work)
 		} else if (pps_ui > DC_ERROR_RETRY_MS) {
 			pps_ui = DC_ERROR_RETRY_MS;
 		}
+
+		pr_debug("%s: pm gcpm relax\n", __func__);
+		__pm_relax(gcpm->gcpm_ws);
 	} else {
 		struct power_supply *pps_psy = pps_data->pps_psy;
 
@@ -2601,7 +2625,7 @@ static int gcpm_update_mdis_charge_cntl_limit(struct mdis_thermal_device *tdev,
 					      unsigned long lvl)
 {
 	struct gcpm_drv *gcpm = tdev->gcpm;
-	int online = 0, budget = -1, in_idx = -1;
+	int online = 0, in_idx = -1;
 	int msc_fcc, dc_icl, cp_fcc, ret;
 	bool mdis_crit_lvl;
 
@@ -2613,18 +2637,15 @@ static int gcpm_update_mdis_charge_cntl_limit(struct mdis_thermal_device *tdev,
 	tdev->current_level = lvl;
 	mdis_crit_lvl = lvl == tdev->thermal_levels || tdev->thermal_mitigation[lvl] == 0;
 	if (mdis_crit_lvl) {
-		budget = msc_fcc = dc_icl = cp_fcc = 0;
+		msc_fcc = dc_icl = cp_fcc = 0;
 		gcpm->cp_fcc_hold_limit = gcpm_chg_select_check_cp_limit(gcpm);
 		gcpm->cp_fcc_hold = true;
 	} else if (tdev->current_level == 0) {
-		budget = tdev->thermal_mitigation[0];
 		msc_fcc = dc_icl = cp_fcc = -1;
 		/* mdis callback will clear hold and re-evaluate PPS */
 		gcpm->cp_fcc_hold_limit = -1;
 	} else {
 		int cp_min = -1;
-
-		budget = tdev->thermal_mitigation[lvl];
 
 		/* 0 always is the main-charger */
 		dc_icl = gcpm->mdis_out_limits[0][lvl + tdev->thermal_levels];
@@ -2723,9 +2744,9 @@ static int gcpm_update_mdis_charge_cntl_limit(struct mdis_thermal_device *tdev,
 	/*  fix the disable, run another charging loop */
 	if (gcpm->mdis_votable) {
 		ret = gvotable_cast_int_vote(gcpm->mdis_votable, "MDIS",
-					     budget, budget >= 0);
+					     lvl, lvl >= 0);
 		if (ret < 0)
-			pr_err("%s: cannot update budget (%d)", __func__, ret);
+			pr_err("%s: cannot update MDIS level (%d)", __func__, ret);
 
 	}
 
@@ -3264,7 +3285,7 @@ static int gcpm_init_mdis(struct gcpm_drv *gcpm)
 
 	gvotable_set_default(gcpm->mdis_votable, (void *)-1);
 	gvotable_set_vote2str(gcpm->mdis_votable, gvotable_v2s_int);
-	gvotable_election_set_name(gcpm->mdis_votable, "CHG_MDIS");
+	gvotable_election_set_name(gcpm->mdis_votable, VOTABLE_MDIS);
 
 	/* race with above */
 	ret = mdis_tdev_register(MDIS_OF_CDEV_NAME, MDIS_CDEV_NAME,
@@ -3329,7 +3350,7 @@ static void gcpm_init_work(struct work_struct *work)
 
 			/* PPS charging: needs an APDO */
 			ret = pps_init(&gcpm->tcpm_pps_data, gcpm->device,
-				       gcpm->tcpm_psy);
+				       gcpm->tcpm_psy, "wired-pps");
 			if (ret == 0 && gcpm->debug_entry)
 				pps_init_fs(&gcpm->tcpm_pps_data, gcpm->debug_entry);
 			if (ret < 0) {
@@ -3367,7 +3388,7 @@ static void gcpm_init_work(struct work_struct *work)
 
 			/* PPS charging: needs an APDO */
 			ret = pps_init(&gcpm->wlc_pps_data, gcpm->device,
-					gcpm->wlc_dc_psy);
+					gcpm->wlc_dc_psy, "wireless-pps");
 			if (ret == 0 && gcpm->debug_entry)
 				pps_init_fs(&gcpm->wlc_pps_data, gcpm->debug_entry);
 			if (ret < 0) {
@@ -4032,6 +4053,12 @@ static int google_cpm_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&gcpm->fcc_retry_work, gcpm_fcc_retry_work);
 	mutex_init(&gcpm->chg_psy_lock);
 
+	gcpm->gcpm_ws = wakeup_source_register(NULL, "google-cpm");
+	if (!gcpm->gcpm_ws) {
+		dev_err(gcpm->device, "Failed to register wakeup source\n");
+		return -ENODEV;
+	}
+
 	/* this is my name */
 	ret = of_property_read_string(pdev->dev.of_node, "google,psy-name",
 				      &tmp_name);
@@ -4308,6 +4335,8 @@ static int google_cpm_remove(struct platform_device *pdev)
 
 	pps_free(&gcpm->wlc_pps_data);
 	pps_free(&gcpm->tcpm_pps_data);
+
+	wakeup_source_unregister(gcpm->gcpm_ws);
 
 	if (gcpm->wlc_dc_psy)
 		power_supply_put(gcpm->wlc_dc_psy);
