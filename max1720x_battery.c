@@ -113,6 +113,7 @@ struct max1720x_rc_switch {
 
 #define DEFAULT_BATTERY_ID		0
 #define DEFAULT_BATTERY_ID_RETRIES	5
+#define DUMMY_BATTERY_ID		170
 
 #define DEFAULT_CAP_SETTLE_INTERVAL	3
 #define DEFAULT_CAP_FILTER_LENGTH	12
@@ -4902,6 +4903,12 @@ static int max1720x_init_chip(struct max1720x_chip *chip)
 	} else {
 		dev_info(chip->dev, "device battery RID: %d kohm\n",
 			 chip->batt_id);
+	}
+
+	if (chip->batt_id == DEFAULT_BATTERY_ID || chip->batt_id == DUMMY_BATTERY_ID) {
+		ret = REGMAP_WRITE(&chip->regmap, MAX17X0X_TAG_cnfg, 0x0);
+		if (ret < 0)
+			dev_warn(chip->dev, "Cannot write 0x0 to Config(%d)\n", ret);
 	}
 
 	/* fuel gauge model needs to know the batt_id */
