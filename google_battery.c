@@ -423,7 +423,7 @@ struct batt_temp_filter {
 	int resume_delay_time;
 	int last_idx;
 };
-
+#define NB_FAN_BT_LIMITS 4
 /* battery driver state */
 struct batt_drv {
 	struct device *device;
@@ -558,6 +558,7 @@ struct batt_drv {
 
 	/* Fan control */
 	int fan_level;
+	int fan_bt_limits[NB_FAN_BT_LIMITS];
 
 	/* AACR: Aged Adjusted Charging Rate */
 	enum batt_aacr_state aacr_state;
@@ -1142,13 +1143,13 @@ static int fan_bt_calculate_level(struct batt_drv *batt_drv)
 		return level;
 	}
 
-	if (temp <= FAN_BT_LIMIT_NOT_CARE)
+	if (temp <= batt_drv->fan_bt_limits[0])
 		level = FAN_LVL_NOT_CARE;
-	else if (temp <= FAN_BT_LIMIT_LOW)
+	else if (temp <= batt_drv->fan_bt_limits[1])
 		level = FAN_LVL_LOW;
-	else if (temp <= FAN_BT_LIMIT_MED)
-		level = FAN_LVL_LOW;
-	else if (temp <= FAN_BT_LIMIT_HIGH)
+	else if (temp <= batt_drv->fan_bt_limits[2])
+		level = FAN_LVL_MED;
+	else if (temp <= batt_drv->fan_bt_limits[3])
 		level = FAN_LVL_HIGH;
 	else
 		level = FAN_LVL_ALARM;
@@ -8139,7 +8140,7 @@ static void batt_init_temp_filter(struct batt_drv *batt_drv)
 	temp_filter->force_update = true;
 	mod_delayed_work(system_wq, &temp_filter->work, 0);
 
-	pr_info("temperture filter: default:%ds, fast:%ds, resume:%dms\n",
+	pr_info("temperature filter: default:%ds, fast:%ds, resume:%dms\n",
 		temp_filter->default_interval / 1000, temp_filter->fast_interval / 1000,
 		temp_filter->resume_delay_time);
 }
@@ -8177,7 +8178,7 @@ static void google_battery_temp_filter_work(struct work_struct *work)
 
 	/* logging if big difference */
 	if (abs(val.intval - temp_filter->sample[temp_filter->last_idx]) > TEMP_FILTER_LOG_DIFF)
-		pr_info("temperture filter: [%d, %d, %d, %d, %d] val:%d idx:%d interval=%dms\n",
+		pr_info("temperature filter: [%d, %d, %d, %d, %d] val:%d idx:%d interval=%dms\n",
 			temp_filter->sample[0], temp_filter->sample[1], temp_filter->sample[2],
 			temp_filter->sample[3], temp_filter->sample[4], val.intval,
 			temp_filter->last_idx, interval);
@@ -8194,7 +8195,7 @@ static void google_battery_temp_filter_work(struct work_struct *work)
 	mutex_unlock(&temp_filter->lock);
 
 done:
-	pr_debug("temperture filter: [%d, %d, %d, %d, %d] interval=%dms\n",
+	pr_debug("temperature filter: [%d, %d, %d, %d, %d] interval=%dms\n",
 		 temp_filter->sample[0], temp_filter->sample[1], temp_filter->sample[2],
 		 temp_filter->sample[3], temp_filter->sample[4], interval);
 	mod_delayed_work(system_wq, &temp_filter->work, msecs_to_jiffies(interval));
@@ -9132,6 +9133,38 @@ static int batt_bhi_init(struct batt_drv *batt_drv)
 	return 0;
 }
 
+static void batt_fan_bt_init(struct batt_drv *batt_drv) {
+	int nb_fan_bt, ret;
+
+	nb_fan_bt = of_property_count_elems_of_size(batt_drv->device->of_node,
+						    "google,fan-bt-limits", sizeof(u32));
+	if (nb_fan_bt == NB_FAN_BT_LIMITS) {
+		ret = of_property_read_u32_array(batt_drv->device->of_node,
+						 "google,fan-bt-limits",
+						 batt_drv->fan_bt_limits,
+						 nb_fan_bt);
+		if (ret == 0) {
+			int i;
+
+			pr_info("FAN_BT_LIMITS: ");
+			for (i = 0; i < nb_fan_bt; i++)
+				pr_info("%d ", batt_drv->fan_bt_limits[i]);
+
+			return;
+		} else {
+			pr_err("Fail to read google,fan-bt-limits from dtsi, ret=%d\n", ret);
+		}
+	}
+	batt_drv->fan_bt_limits[0] = FAN_BT_LIMIT_NOT_CARE;
+	batt_drv->fan_bt_limits[1] = FAN_BT_LIMIT_LOW;
+	batt_drv->fan_bt_limits[2] = FAN_BT_LIMIT_MED;
+	batt_drv->fan_bt_limits[3] = FAN_BT_LIMIT_HIGH;
+
+	pr_info("Use default FAN_BT_LIMITS: %d %d %d %d\n", batt_drv->fan_bt_limits[0],
+							    batt_drv->fan_bt_limits[1],
+							    batt_drv->fan_bt_limits[2],
+							    batt_drv->fan_bt_limits[3]);
+}
 
 static int batt_prop_iter(int index, gbms_tag_t *tag, void *ptr)
 {
@@ -9622,6 +9655,8 @@ static int google_battery_probe(struct platform_device *pdev)
 		thermal_zone_device_update(batt_drv->tz_dev, THERMAL_DEVICE_UP);
 	}
 
+	/* Fan levels limits from battery temperature */
+	batt_fan_bt_init(batt_drv);
 	batt_drv->fan_level = -1;
 	batt_drv->fan_last_level = -1;
 	batt_drv->fan_level_votable =
