@@ -4804,15 +4804,14 @@ static int ln8411_probe(struct i2c_client *client,
 
 	ln8411_charger->regmap = devm_regmap_init_i2c(client, &ln8411_regmap);
 	if (IS_ERR(ln8411_charger->regmap)) {
-		ret = -EINVAL;
-		goto error;
+		dev_err(&client->dev, "ERROR: Cannot probe i2c!\n");
+		return -EINVAL;
 	}
 
 	ret = get_chip_info(ln8411_charger);
 	if (ret) {
-		dev_err(ln8411_charger->dev, "ERROR: Cannot read chip info!\n");
-		ret = -ENODEV;
-		goto error;
+		dev_err(&client->dev, "ERROR: Cannot read chip info!\n");
+		return -ENODEV;
 	}
 
 	mutex_init(&ln8411_charger->lock);
@@ -4828,6 +4827,7 @@ static int ln8411_probe(struct i2c_client *client,
 	ln8411_charger->dc_wq = alloc_ordered_workqueue("ln8411_dc_wq", WQ_MEM_RECLAIM);
 	if (ln8411_charger->dc_wq == NULL) {
 		dev_err(ln8411_charger->dev, "failed to create work queue\n");
+		mutex_destroy(&ln8411_charger->lock);
 		return -ENOMEM;
 	}
 
@@ -4835,6 +4835,8 @@ static int ln8411_probe(struct i2c_client *client,
 		wakeup_source_register(NULL, "ln8411-charger-monitor");
 	if (!ln8411_charger->monitor_wake_lock) {
 		dev_err(dev, "Failed to register wakeup source\n");
+		destroy_workqueue(ln8411_charger->dc_wq);
+		mutex_destroy(&ln8411_charger->lock);
 		return -ENODEV;
 	}
 
