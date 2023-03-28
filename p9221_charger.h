@@ -548,6 +548,7 @@
 #define RA9530_CC_WRITE_INDEX_REG		0x3F4
 #define RA9530_CC_READ_SIZE_REG			0x3FA
 #define RA9530_CC_READ_INDEX_REG		0x3FC
+#define RA9530_BIDI_COM_PACKET_TYPE		0x13
 
 /* Features */
 typedef enum {

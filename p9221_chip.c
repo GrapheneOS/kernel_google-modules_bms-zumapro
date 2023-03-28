@@ -753,8 +753,11 @@ static int ra9530_set_cc_send_size(struct p9221_charger_data *chgr, size_t len)
 		chgr->auth_type = 0;
 	} else {
 		/* set packet type(BiDi 0x98) to 0x800 */
-		ret = chgr->reg_write_8(chgr, P9412_COM_PACKET_TYPE_ADDR,
-					BIDI_COM_PACKET_TYPE);
+		ret = chgr->reg_write_8(chgr, RA9530_CC_WRITE_TYPE_REG,
+					(RA9530_BIDI_COM_PACKET_TYPE << RA9530_CC_TYPE_SHIFT) |
+					(chgr->tx_len >> 8));
+		ret |= chgr->reg_write_8(chgr, RA9530_CC_WRITE_TYPE_REG + 1,
+					 chgr->tx_len & 0xFF);
 	}
 
 	if (ret) {
