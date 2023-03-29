@@ -8080,7 +8080,7 @@ static int gbatt_save_capacity(struct batt_ssoc_state *ssoc_state)
 		return ret;
 
 	if (ui_soc == gdf_soc)
-		save_now = 0;
+		save_now = 0xffff;
 	else
 		save_now = ui_soc;
 
