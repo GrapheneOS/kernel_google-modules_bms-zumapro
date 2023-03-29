@@ -693,6 +693,7 @@ struct p9221_charger_platform_data {
 	bool				apbst_en;
 	bool				has_sw_ramp;
 	bool				hw_ocp_det;
+	bool				needs_align_check;
 	/* phone type for tx_id*/
 	u8				phone_type;
 	u32				epp_icl;

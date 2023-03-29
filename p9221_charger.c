@@ -1302,7 +1302,8 @@ static void p9xxx_align_check(struct p9221_charger_data *charger)
 
 	if (charger->alignment != charger->alignment_last) {
 		logbuffer_log(charger->log,
-			      "align: alignment=%i. op_freq=%u. current_avg=%u",
+			      "align: freq_thres=%d, alignment=%i. op_freq=%u. current_avg=%u",
+			      wlc_freq_threshold,
 			      charger->alignment, wlc_freq,
 			      charger->current_filtered);
 		charger->alignment_last = charger->alignment;
@@ -2294,6 +2295,9 @@ exit:
 static int p9xxx_check_alignment(struct p9221_charger_data *charger)
 {
 	int ret = 0;
+
+	if (charger->pdata->needs_align_check == 0)
+		return ret;
 
 	if (charger->alignment == 100) {
 		dev_dbg(&charger->client->dev, "Alignment check OK\n");
@@ -6578,8 +6582,8 @@ static int p9221_parse_dt(struct device *dev,
 
 	/* Calibrate light load */
 	pdata->light_load = of_property_read_bool(node, "google,light_load");
-
 	pdata->ll_vout_not_set = of_property_read_bool(node, "google,ll-bpp-vout-not-set");
+	pdata->needs_align_check = of_property_read_bool(node, "google,align_check");
 
 	return 0;
 }
@@ -7063,6 +7067,8 @@ static int p9221_charger_probe(struct i2c_client *client,
 				   &charger->rtx_ocp_chk_ms);
 		debugfs_create_u32("de_rtx_delay_ms", 0644, charger->debug_entry,
 				   &charger->rtx_total_delay);
+		debugfs_create_bool("needs_align_check", 0644, charger->debug_entry,
+				    &charger->pdata->needs_align_check);
 	}
 
 	/* can independently read battery capacity */
