@@ -143,7 +143,7 @@ int ln8411_usbpd_setup(struct ln8411_charger *ln8411)
 	}
 
 	/* not needed if tcpm-power-supply is not there */
-	ret = pps_init(&ln8411->pps_data, ln8411->dev, tcpm_psy);
+	ret = pps_init(&ln8411->pps_data, ln8411->dev, tcpm_psy, "pca-pps");
 	if (ret == 0) {
 		pps_set_logbuffer(&ln8411->pps_data, ln8411->log);
 		pps_init_state(&ln8411->pps_data);
