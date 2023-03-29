@@ -143,7 +143,7 @@ int wc68_usbpd_setup(struct wc68_charger *wc68)
 	}
 
 	/* not needed if tcpm-power-supply is not there */
-	ret = pps_init(&wc68->pps_data, wc68->dev, tcpm_psy);
+	ret = pps_init(&wc68->pps_data, wc68->dev, tcpm_psy, "pca-pps");
 	if (ret == 0) {
 		pps_set_logbuffer(&wc68->pps_data, wc68->log);
 		pps_init_state(&wc68->pps_data);

@@ -98,7 +98,7 @@ static int google_dock_set_pogo_vout(struct dock_drv *dock,
 
 	return gvotable_cast_long_vote(dock->chg_mode_votable,
 				       DOCK_VOUT_VOTER,
-				       GBMS_CHGR_MODE_VOUT,
+				       GBMS_POGO_VOUT,
 				       enabled != 0);
 }
 
@@ -452,9 +452,6 @@ static int dock_set_property(struct power_supply *psy,
 					     val->intval, true);
 		changed = true;
 		break;
-	case GBMS_PROP_POGO_VOUT_ENABLED:
-		ret = google_dock_set_pogo_vout(dock, val->intval);
-		break;
 	default:
 		return -EINVAL;
 	}
@@ -473,7 +470,6 @@ static int dock_property_is_writeable(struct power_supply *psy,
 {
 	switch (psp) {
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
-	case GBMS_PROP_POGO_VOUT_ENABLED:
 		return 1;
 	default:
 		break;

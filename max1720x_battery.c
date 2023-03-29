@@ -272,6 +272,7 @@ struct max1720x_chip {
 
 static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj);
 static int max1720x_set_next_update(struct max1720x_chip *chip);
+static int max1720x_monitor_log_data(struct max1720x_chip *chip, bool force_log);
 
 static bool max17x0x_reglog_init(struct max1720x_chip *chip)
 {
@@ -1471,14 +1472,7 @@ static void max1720x_handle_update_filtercfg(struct max1720x_chip *chip,
 	if ((filtercfg_val != filtercfg->curr_val) &&
 	    (filtercfg->curr_val == 0 || temp < filtercfg->temp ||
 	     temp >= hysteresis_temp)) {
-		struct max17x0x_regmap *regmap;
-
-		if (chip->gauge_type == MAX_M5_GAUGE_TYPE)
-			regmap = &chip->regmap;
-		else
-			regmap = &chip->regmap_nvram;
-
-		REGMAP_WRITE(regmap, MAX1720X_FILTERCFG, filtercfg_val);
+		REGMAP_WRITE(&chip->regmap, MAX1720X_FILTERCFG, filtercfg_val);
 		dev_info(chip->dev, "updating filtercfg to 0x%04x as temp is %d\n",
 			 filtercfg_val, temp);
 		filtercfg->curr_val = filtercfg_val;
@@ -2131,6 +2125,7 @@ static int max1720x_get_age(struct max1720x_chip *chip)
 static int max1720x_get_fade_rate(struct max1720x_chip *chip)
 {
 	struct max17x0x_eeprom_history hist = { 0 };
+	int bhi_fcn_count = chip->bhi_fcn_count;
 	int ret, ratio, i, fcn_sum = 0;
 	u16 hist_idx;
 
@@ -2142,10 +2137,20 @@ static int max1720x_get_fade_rate(struct max1720x_chip *chip)
 
 	dev_info(chip->dev, "%s: hist_idx=%d\n", __func__, hist_idx);
 
-	if (hist_idx < chip->bhi_fcn_count)
-		return -ENODATA;
+	/* no fade for new battery (less than 30 cycles) */
+	if (hist_idx < bhi_fcn_count)
+		return 0;
 
-	for (i = chip->bhi_fcn_count; i ; i--, hist_idx--) {
+	while (hist_idx >= BATT_MAX_HIST_CNT && bhi_fcn_count > 1) {
+		hist_idx--;
+		bhi_fcn_count--;
+		if (bhi_fcn_count == 1) {
+			hist_idx = BATT_MAX_HIST_CNT - 1;
+			break;
+		}
+	}
+
+	for (i = bhi_fcn_count; i ; i--, hist_idx--) {
 		ret = gbms_storage_read_data(GBMS_TAG_HIST, &hist,
 					     sizeof(hist), hist_idx);
 
@@ -2160,7 +2165,7 @@ static int max1720x_get_fade_rate(struct max1720x_chip *chip)
 	}
 
 	/* convert from max17x0x_eeprom_history to percent */
-	ratio = fcn_sum / (chip->bhi_fcn_count * 8);
+	ratio = fcn_sum / (bhi_fcn_count * 8);
 	if (ratio > 100)
 		ratio = 100;
 
@@ -2532,6 +2537,9 @@ static int max1720x_set_property(struct power_supply *psy,
 		rc = max1720x_health_update_ai(chip, val->intval);
 		mutex_unlock(&chip->model_lock);
 		break;
+	case GBMS_PROP_FG_REG_LOGGING:
+		max1720x_monitor_log_data(chip, !!val->intval);
+		break;
 	default:
 		return -EINVAL;
 	}
@@ -2556,11 +2564,11 @@ static int max1720x_property_is_writeable(struct power_supply *psy,
 	return 0;
 }
 
-static int max1720x_monitor_log_data(struct max1720x_chip *chip)
+static int max1720x_monitor_log_data(struct max1720x_chip *chip, bool force_log)
 {
 	u16 data, repsoc, vfsoc, avcap, repcap, fullcap, fullcaprep;
 	u16 fullcapnom, qh0, qh, dqacc, dpacc, qresidual, fstat;
-	u16 learncfg, tempco;
+	u16 learncfg, tempco, filtercfg;
 	int ret = 0, charge_counter = -1;
 
 	ret = REGMAP_READ(&chip->regmap, MAX1720X_REPSOC, &data);
@@ -2568,7 +2576,7 @@ static int max1720x_monitor_log_data(struct max1720x_chip *chip)
 		return ret;
 
 	repsoc = (data >> 8) & 0x00FF;
-	if (repsoc == chip->pre_repsoc)
+	if (repsoc == chip->pre_repsoc && !force_log)
 		return ret;
 
 	ret = REGMAP_READ(&chip->regmap, MAX1720X_VFSOC, &vfsoc);
@@ -2627,13 +2635,17 @@ static int max1720x_monitor_log_data(struct max1720x_chip *chip)
 	if (ret < 0)
 		return ret;
 
+	ret = REGMAP_READ(&chip->regmap, MAX1720X_FILTERCFG, &filtercfg);
+	if (ret < 0)
+		return ret;
+
 	ret = max1720x_update_battery_qh_based_capacity(chip);
 	if (ret == 0)
 		charge_counter = reg_to_capacity_uah(chip->current_capacity, chip);
 
 	gbms_logbuffer_prlog(chip->monitor_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
 			     "%s %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
-			     " %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
+			     " %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
 			     " %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X CC:%d",
 			     chip->max1720x_psy_desc.name, MAX1720X_REPSOC, data, MAX1720X_VFSOC,
 			     vfsoc, MAX1720X_AVCAP, avcap, MAX1720X_REPCAP, repcap,
@@ -2642,7 +2654,7 @@ static int max1720x_monitor_log_data(struct max1720x_chip *chip)
 			     MAX1720X_QH, qh, MAX1720X_DQACC, dqacc, MAX1720X_DPACC, dpacc,
 			     MAX1720X_QRESIDUAL, qresidual, MAX1720X_FSTAT, fstat,
 			     MAX1720X_LEARNCFG, learncfg, MAX1720X_TEMPCO, tempco,
-			     charge_counter);
+			     MAX1720X_FILTERCFG, filtercfg, charge_counter);
 
 	chip->pre_repsoc = repsoc;
 
@@ -2931,7 +2943,7 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 		if (storm)
 			pr_debug("Force power_supply_change in storm\n");
 		else
-			max1720x_monitor_log_data(chip);
+			max1720x_monitor_log_data(chip, false);
 
 		storm = false;
 	}

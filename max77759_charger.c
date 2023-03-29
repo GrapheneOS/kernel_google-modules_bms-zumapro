@@ -631,11 +631,18 @@ static int max77759_foreach_callback(void *data, const char *reason,
 		pr_debug("%s: WLC_TX vote=%x\n", __func__, mode);
 		cb_data->wlc_tx += 1;
 		break;
+	/* pogo vin */
+	case GBMS_POGO_VIN:
+		if (!cb_data->pogo_vin)
+			cb_data->reason = reason;
+		pr_debug("%s: POGO VIN vote=%x\n", __func__, mode);
+		cb_data->pogo_vin += 1;
+		break;
 	/* pogo vout */
-	case GBMS_CHGR_MODE_VOUT:
+	case GBMS_POGO_VOUT:
 		if (!cb_data->pogo_vout)
 			cb_data->reason = reason;
-		pr_debug("%s: VOUT vote=%x\n", __func__, mode);
+		pr_debug("%s: POGO VOUT vote=%x\n", __func__, mode);
 		cb_data->pogo_vout += 1;
 		break;
 
@@ -870,7 +877,23 @@ static int max77759_get_usecase(struct max77759_foreach_cb_data *cb_data,
 	return usecase;
 }
 
-static int max77759_wcin_is_valid(struct max77759_chgr_data *data);
+static void max77759_set_pogo_ovp_en(struct max77759_usecase_data *uc_data,
+				     const int enabled)
+{
+	const int gpio_en = gpio_get_value_cansleep(uc_data->pogo_ovp_en);
+	const bool pogo_ovp_en = uc_data->pogo_ovp_en_act_low ?
+				 (gpio_en == 0) : (gpio_en == 1);
+
+	/* return if pogo_ovp_en has been set */
+	if ((enabled && pogo_ovp_en) || (!enabled && !pogo_ovp_en))
+		return;
+
+	/* turn on/off pogo_ovp_en */
+	gpio_set_value_cansleep(uc_data->pogo_ovp_en, enabled ?
+				!uc_data->pogo_ovp_en_act_low :
+				uc_data->pogo_ovp_en_act_low);
+}
+
 /*
  * adjust *INSEL (only one source can be enabled at a given time)
  * NOTE: providing compatibility with input_suspend makes this more complex
@@ -928,15 +951,9 @@ static int max77759_set_insel(struct max77759_chgr_data *data,
 		/* turn off pogo_ovp */
 		if (uc_data->pogo_ovp_en > 0)
 			gpio_set_value_cansleep(uc_data->pogo_ovp_en, uc_data->pogo_ovp_en_act_low);
-	} else if (uc_data->dcin_is_dock && max77759_wcin_is_valid(data) && !cb_data->wlcin_off) {
+	} else if (cb_data->pogo_vin && !cb_data->wlcin_off) {
 		/* always disable USB when Dock is present */
 		insel_value &= ~MAX77759_CHG_CNFG_12_CHGINSEL;
-		/* b/232723240: charge over USB-C
-		 *              set to 1 for POGO_OVP_EN
-		 *              set to 0 for POGO_OVP_EN_L
-		 */
-		if (uc_data->pogo_ovp_en > 0)
-			gpio_set_value_cansleep(uc_data->pogo_ovp_en, !uc_data->pogo_ovp_en_act_low);
 		insel_value |= MAX77759_CHG_CNFG_12_WCINSEL;
 	}
 
@@ -958,6 +975,9 @@ static int max77759_set_insel(struct max77759_chgr_data *data,
 
 	/* changing [CHGIN|WCIN]_INSEL: works when protection is disabled  */
 	ret = max77759_chg_insel_write(uc_data->client, insel_mask, insel_value);
+
+	if (uc_data->pogo_ovp_en > 0)
+		max77759_set_pogo_ovp_en(uc_data, cb_data->pogo_vin);
 
 	pr_debug("%s: usecase=%d->%d mask=%x insel=%x wlc_on=%d force_wlc=%d (%d)\n",
 		 __func__, from_uc, use_case, insel_mask, insel_value, wlc_on,
@@ -1098,7 +1118,7 @@ static int max77759_mode_callback(struct gvotable_election *el,
 	       !cb_data.chgr_on && !cb_data.buck_on && ! cb_data.boost_on &&
 	       !cb_data.otg_on && !cb_data.uno_on && !cb_data.wlc_tx &&
 	       !cb_data.wlc_rx && !cb_data.wlcin_off && !cb_data.chgin_off &&
-	       !cb_data.usb_wlc && !cb_data.pogo_vout;
+	       !cb_data.usb_wlc && !cb_data.pogo_vout && !cb_data.pogo_vin;
 	if (nope) {
 		pr_debug("%s: nope callback\n", __func__);
 		goto unlock_done;
@@ -1106,12 +1126,13 @@ static int max77759_mode_callback(struct gvotable_election *el,
 
 	dev_info(data->dev, "%s:%s full=%d raw=%d stby_on=%d, dc_on=%d, chgr_on=%d, buck_on=%d,"
 		" boost_on=%d, otg_on=%d, uno_on=%d wlc_tx=%d wlc_rx=%d usb_wlc=%d"
-		" chgin_off=%d wlcin_off=%d frs_on=%d pogo_vout=%d\n",
+		" chgin_off=%d wlcin_off=%d frs_on=%d pogo_vout=%d pogo_vin=%d\n",
 		__func__, trigger ? trigger : "<>",
 		data->charge_done, cb_data.use_raw, cb_data.stby_on, cb_data.dc_on,
 		cb_data.chgr_on, cb_data.buck_on, cb_data.boost_on, cb_data.otg_on,
 		cb_data.uno_on, cb_data.wlc_tx, cb_data.wlc_rx, cb_data.usb_wlc,
-		cb_data.chgin_off, cb_data.wlcin_off, cb_data.frs_on, cb_data.pogo_vout);
+		cb_data.chgin_off, cb_data.wlcin_off, cb_data.frs_on, cb_data.pogo_vout,
+		cb_data.pogo_vin);
 
 	/* just use raw "as is", no changes to switches etc */
 	if (cb_data.use_raw) {
@@ -3004,7 +3025,7 @@ done_relax:
 	__pm_relax(data->otg_fccm_wake_lock);
 }
 
-#define MAX77759_FCCM_UPPERBD_VOL 4400
+#define MAX77759_FCCM_UPPERBD_VOL 4600
 #define MAX77759_FCCM_LOWERBD_VOL 3600
 static int max77759_charger_probe(struct i2c_client *client,
 				  const struct i2c_device_id *id)

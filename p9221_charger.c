@@ -59,8 +59,6 @@
 #define P9XXX_VOUT_5000MV	5000
 #define P9XXX_FOD_CHK_DELAY_MS	2000
 
-#define P9XXX_VOUT_5480MV	5480
-
 enum wlc_align_codes {
 	WLC_ALIGN_CHECKING = 0,
 	WLC_ALIGN_MOVE,
@@ -228,6 +226,26 @@ static bool p9221_is_hpp(struct p9221_charger_data *charger)
 	return ((ret == 0) && (reg == P9XXX_SYS_OP_MODE_PROPRIETARY));
 }
 
+static bool p9221_check_wpc_rev13(struct p9221_charger_data *charger)
+{
+	int ret;
+	u8 val8;
+
+	ret = p9221_reg_read_8(charger, P9412_WPC_SPEC_REV_REG, &val8);
+	if (ret < 0)
+		return false;
+
+	if (val8 == P9XXX_WPC_REV_13) {
+		logbuffer_log(charger->log, "WPC rev is %#02x", val8);
+		return true;
+	}
+
+	if (charger->is_mfg_google || charger->mfg == WLC_MFG_108_FOR_GOOGLE)
+		return true;
+
+	return false;
+}
+
 bool p9221_is_epp(struct p9221_charger_data *charger)
 {
 	int ret;
@@ -331,6 +349,11 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 				    "HPP_0", "HPP_1", "HPP_2", "HPP_3",
 				    "HPP_4", "HPP_5", "HPP_6", "HPP_7" };
 
+	mutex_lock(&charger->fod_lock);
+
+	if (charger->fod_cnt)
+		goto done;
+
 	if (charger->no_fod)
 		goto no_fod;
 
@@ -383,7 +406,7 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 		if (ret) {
 			dev_err(&charger->client->dev,
 				"Could not write FOD: %d\n", ret);
-			return;
+			goto unlock;
 		}
 
 		/* Verify the FOD has been written properly */
@@ -391,7 +414,7 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 		if (ret) {
 			dev_err(&charger->client->dev,
 				"Could not read back FOD: %d\n", ret);
-			return;
+			goto unlock;
 		}
 
 		if (memcmp(fod, fod_read, fod_count) == 0)
@@ -413,6 +436,8 @@ done:
 	if (charger->pdata->fod_fsw)
 		mod_delayed_work(system_wq, &charger->chk_fod_work,
 				 msecs_to_jiffies(P9XXX_FOD_CHK_DELAY_MS));
+unlock:
+	mutex_unlock(&charger->fod_lock);
 }
 
 #define CC_DATA_LOCK_MS		250
@@ -784,9 +809,9 @@ static int p9221_reset_wlc_dc(struct p9221_charger_data *charger)
 		p9221_write_fod(charger);
 	}
 
-	ret = p9221_reg_write_8(charger, P9412_MOT_REG, P9412_MOT_65PCT);
+	ret = p9221_reg_write_8(charger, P9412_CMFET_L_REG, P9412_CMFET_DEFAULT);
 	if (ret < 0)
-		dev_warn(&charger->client->dev, "Fail to set MOT register(%d)\n", ret);
+		dev_warn(&charger->client->dev, "Fail to set comm cap(%d)\n", ret);
 
 	return ret;
 }
@@ -1138,6 +1163,8 @@ static void force_set_fod(struct p9221_charger_data *charger)
 	u8 fod[P9221R5_NUM_FOD] = { 0 };
 	int ret;
 
+	mutex_lock(&charger->fod_lock);
+
 	if (p9221_is_hpp(charger)) {
 		dev_info(&charger->client->dev,
 			"power_mitigate: send EOP for revert to BPP\n");
@@ -1149,6 +1176,8 @@ static void force_set_fod(struct p9221_charger_data *charger)
 	if (ret)
 		dev_err(&charger->client->dev,
 			"power_mitigate: failed, ret=%d\n", ret);
+
+	mutex_unlock(&charger->fod_lock);
 }
 
 static void p9221_power_mitigation_work(struct work_struct *work)
@@ -1172,11 +1201,17 @@ static void p9221_power_mitigation_work(struct work_struct *work)
 	if (!p9221_is_epp(charger)) {
 		/* only for LL */
 		if (charger->trigger_power_mitigation && charger->ll_bpp_cep == 1) {
-			dev_info(&charger->client->dev,
-				 "power_mitigate: change Vout to %d mV and disable CMFET\n",
-				 P9XXX_VOUT_5480MV);
-			ret = charger->chip_set_vout_max(charger, P9XXX_VOUT_5480MV);
-			ret |= p9221_reg_write_8(charger, P9412_CMFET_L_REG, 0);
+			if (!charger->pdata->ll_vout_not_set) {
+				dev_info(&charger->client->dev,
+				      "power_mitigate: change Vout to %d mV and disable CMFET\n",
+				      P9XXX_VOUT_5480MV);
+				ret = charger->chip_set_vout_max(charger, P9XXX_VOUT_5480MV);
+				if (ret < 0)
+					dev_err(&charger->client->dev,
+						"Fail to configure Vout to %d mV\n",
+						P9XXX_VOUT_5480MV);
+			}
+			ret = p9221_reg_write_8(charger, P9412_CMFET_L_REG, 0);
 			if (ret < 0)
 				dev_err(&charger->client->dev, "Fail to configure LL\n");
 			p9221_ll_bpp_cep(charger, charger->last_capacity);
@@ -1215,13 +1250,15 @@ static void p9221_power_mitigation_work(struct work_struct *work)
 
 static void p9221_init_align(struct p9221_charger_data *charger)
 {
+	const bool disabled = charger->prop_mode_en || charger->pdata->disable_align;
+
 	/* Reset values used for alignment */
 	charger->alignment_last = -1;
 	charger->current_filtered = 0;
 	charger->current_sample_cnt = 0;
 	charger->mfg_check_count = 0;
 	/* Disable misaligned message in high power mode, b/159066422 */
-	if (!charger->online || charger->prop_mode_en == true) {
+	if (!charger->online || disabled) {
 		charger->align = WLC_ALIGN_CENTERED;
 		return;
 	}
@@ -1874,7 +1911,7 @@ static void p9221_check_adapter_type(struct p9221_charger_data *charger)
 		u8 id_type = (charger->tx_id & TXID_TYPE_MASK) >> TXID_TYPE_SHIFT;
 
 		if (id_type != charger->chg_data.adapter_type)
-			pr_debug("%s: tx_id=%08x, adapter_type=%x->%x\n", __func__,
+			pr_info("%s: tx_id=%08x, adapter_type=%x->%x\n", __func__,
 				 charger->tx_id, charger->chg_data.adapter_type,
 				 id_type);
 
@@ -2070,6 +2107,26 @@ static int p9221_get_property(struct power_supply *psy,
 
 		if (rc)
 			val->intval = rc;
+		break;
+	case GBMS_PROP_WLC_OP_FREQ:
+		rc = p9221_ready_to_read(charger);
+		if (!rc) {
+			rc = charger->chip_get_op_freq(charger, &temp);
+			if (!rc)
+				val->intval = P9221_KHZ_TO_HZ(temp);
+		}
+		if (rc)
+			val->intval = 0;
+		break;
+	case GBMS_PROP_WLC_VRECT:
+		rc = p9221_ready_to_read(charger);
+		if (!rc) {
+			rc = charger->chip_get_vrect(charger, &temp);
+			if (!rc)
+				val->intval = P9221_MV_TO_UV(temp);
+		}
+		if (rc)
+			val->intval = 0;
 		break;
 
 	default:
@@ -2386,10 +2443,9 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 
 		p9221_set_switch_reg(charger, true);
 
-		/* Adjusting the minimum on time(MOT) for mitigate LC node voltage overshoot */
-		ret = p9221_reg_write_8(charger, P9412_MOT_REG, P9412_MOT_40PCT);
+		ret = p9221_reg_write_8(charger, P9412_CMFET_L_REG, P9412_CMFET_2_COMM);
 		if (ret < 0)
-			dev_warn(&charger->client->dev, "Fail to adjust MOT(%d)\n", ret);
+			dev_warn(&charger->client->dev, "Fail to set comm cap(%d)\n", ret);
 
 		return 1;
 	} else if (wlc_dc_enabled) {
@@ -2439,8 +2495,20 @@ static void p9221_dream_defend(struct p9221_charger_data *charger)
 		return;
 	}
 
-	threshold = charger->mitigate_threshold > 0 ? charger->mitigate_threshold :
-		    charger->pdata->power_mitigate_threshold;
+	if (!charger->csi_type_votable)
+		charger->csi_type_votable = gvotable_election_get_handle(VOTABLE_CSI_TYPE);
+
+	if (charger->mitigate_threshold > 0)
+		threshold = charger->mitigate_threshold;
+	else if (charger->csi_type_votable &&
+		 charger->pdata->power_mitigate_threshold > 0 &&
+		 gvotable_get_current_int_vote(charger->csi_type_votable) == CSI_TYPE_Adaptive)
+		threshold = charger->last_capacity - 1; /* Run dream defend when AC trigger */
+	else
+		threshold = charger->pdata->power_mitigate_threshold;
+
+	pr_debug("dream_defend soc:%d threshold:%d\n", charger->last_capacity, threshold);
+
 	if (!threshold)
 		return;
 
@@ -3356,8 +3424,17 @@ static void p9221_notifier_check_dc(struct p9221_charger_data *charger)
 	 * Always write FOD, check dc_icl, send CSP
 	 */
 	if (dc_in) {
-		if (p9221_is_epp(charger))
+		if (p9221_is_epp(charger)) {
 			charger->chip_check_neg_power(charger);
+			/*
+			 * When WLC online && EPP, adjust minimum on time(MOT) to 40%
+			 * for mitigate LC node voltage overshoot
+			 */
+			ret = p9xxx_chip_set_mot_reg(charger, P9412_MOT_40PCT);
+			if (ret < 0)
+				dev_warn(&charger->client->dev,
+					 "Fail to set MOT register(%d)\n", ret);
+		}
 
 		if (charger->pdata->has_sw_ramp && !charger->sw_ramp_done) {
 			gvotable_cast_int_vote(charger->dc_icl_votable,
@@ -4423,7 +4500,7 @@ static ssize_t wpc_ready_show(struct device *dev,
 	struct p9221_charger_data *charger = i2c_get_clientdata(client);
 
 	/* Skip it on BPP */
-	if (!p9221_is_epp(charger) || !charger->pdata->has_wlc_dc)
+	if (!p9221_is_epp(charger) || !charger->pdata->has_wlc_dc || !p9221_check_wpc_rev13(charger))
 		return scnprintf(buf, PAGE_SIZE, "N\n");
 
 	return scnprintf(buf, PAGE_SIZE, "%c\n",
@@ -6429,56 +6506,49 @@ static int p9221_parse_dt(struct device *dev,
 	ret = of_property_read_u32(node, "google,alignment_scalar_low_current",
 				   &data);
 	if (ret < 0)
-		pdata->alignment_scalar_low_current =
-			WLC_ALIGN_DEFAULT_SCALAR_LOW_CURRENT;
+		pdata->alignment_scalar_low_current = 0;
 	else
 		pdata->alignment_scalar_low_current = data;
-
-	dev_info(dev, "google,alignment_scalar_low_current set to: %d\n",
-		 pdata->alignment_scalar_low_current);
 
 	ret = of_property_read_u32(node, "google,alignment_scalar_high_current",
 				   &data);
 	if (ret < 0)
-		pdata->alignment_scalar_high_current =
-			  WLC_ALIGN_DEFAULT_SCALAR_HIGH_CURRENT;
+		pdata->alignment_scalar_high_current = 0;
 	else
 		pdata->alignment_scalar_high_current = data;
-
-	dev_info(dev, "google,alignment_scalar_high_current set to: %d\n",
-		 pdata->alignment_scalar_high_current);
 
 	ret = of_property_read_u32(node, "google,alignment_offset_low_current",
 				   &data);
 	if (ret < 0)
-		pdata->alignment_offset_low_current =
-			WLC_ALIGN_DEFAULT_OFFSET_LOW_CURRENT;
+		pdata->alignment_offset_low_current = 0;
 	else
 		pdata->alignment_offset_low_current = data;
-
-	dev_info(dev, "google,alignment_offset_low_current set to: %d\n",
-		 pdata->alignment_offset_low_current);
 
 	ret = of_property_read_u32(node, "google,alignment_offset_high_current",
 				   &data);
 	if (ret < 0)
-		pdata->alignment_offset_high_current =
-			WLC_ALIGN_DEFAULT_OFFSET_HIGH_CURRENT;
+		pdata->alignment_offset_high_current = 0;
 	else
 		pdata->alignment_offset_high_current = data;
-
-	dev_info(dev, "google,alignment_offset_high_current set to: %d\n",
-		 pdata->alignment_offset_high_current);
 
 	ret = of_property_read_u32(node, "google,alignment_current_threshold",
 				   &data);
 	if (ret < 0)
-		pdata->alignment_current_threshold = WLC_ALIGN_CURRENT_THRESHOLD;
+		pdata->alignment_current_threshold = 0;
 	else
 		pdata->alignment_current_threshold = data;
 
-	dev_info(dev, "google,alignment_current_threshold set to: %d\n",
-		 pdata->alignment_current_threshold);
+	pdata->disable_align = !(pdata->alignment_scalar_low_current &&
+				 pdata->alignment_scalar_high_current &&
+				 pdata->alignment_offset_low_current &&
+				 pdata->alignment_offset_high_current &&
+				 pdata->alignment_current_threshold);
+	dev_info(dev, "align:%s, scalar_low=%d, scalar_high=%d, "
+		 "offset_low=%d, offset_high=%d, current_thres=%d\n",
+		 pdata->disable_align ? "disable" : "enable", pdata->alignment_scalar_low_current,
+		 pdata->alignment_scalar_high_current, pdata->alignment_offset_low_current,
+		 pdata->alignment_offset_high_current, pdata->alignment_current_threshold);
+
 
 	ret = of_property_read_u32(node, "google,power_mitigate_threshold",
 				   &data);
@@ -6508,6 +6578,8 @@ static int p9221_parse_dt(struct device *dev,
 
 	/* Calibrate light load */
 	pdata->light_load = of_property_read_bool(node, "google,light_load");
+
+	pdata->ll_vout_not_set = of_property_read_bool(node, "google,ll-bpp-vout-not-set");
 
 	return 0;
 }
@@ -6593,13 +6665,6 @@ int p9221_wlc_disable(struct p9221_charger_data *charger, int disable, u8 reason
 	pr_debug("%s: disable=%d, ept_reason=%d ret=%d\n", __func__,
 		 disable, disable ? reason : -1, ret);
 
-	if (charger->last_disable != disable) {
-		pr_info("%s[%d]: disable=%d, ept_reason=%d ret=%d\n", __func__,
-			charger->online, disable, reason, ret);
-		logbuffer_log(charger->log, "Set wlc_disable=%d", disable);
-	}
-
-	charger->last_disable = disable;
 	return ret;
 }
 
@@ -6609,6 +6674,11 @@ static int p9221_wlc_disable_callback(struct gvotable_election *el,
 	struct p9221_charger_data *charger = gvotable_get_data(el);
 	int disable = GVOTABLE_PTR_TO_INT(vote);
 	u8 val = P9221_EOP_UNKNOWN;
+
+	if (charger->last_disable != disable)
+		logbuffer_prlog(charger->log, "set wlc %s, vote=%s",
+				disable ? "disable" : "enable", reason);
+	charger->last_disable = disable;
 
 	if (charger->pdata->wlc_en == charger->pdata->qien_gpio) {
 		int value;
@@ -6746,6 +6816,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	mutex_init(&charger->rtx_lock);
 	mutex_init(&charger->auth_lock);
 	mutex_init(&charger->renego_lock);
+	mutex_init(&charger->fod_lock);
 	timer_setup(&charger->vrect_timer, p9221_vrect_timer_handler, 0);
 	timer_setup(&charger->align_timer, p9221_align_timer_handler, 0);
 	INIT_DELAYED_WORK(&charger->dcin_work, p9221_dcin_work);
