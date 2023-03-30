@@ -241,6 +241,7 @@ struct batt_bpst {
 };
 
 #define DEV_SN_LENGTH 20
+#define PAIRING_RETRIES 20
 enum batt_paired_state {
 	BATT_PAIRING_WRITE_ERROR = -4,
 	BATT_PAIRING_READ_ERROR = -3,
@@ -544,6 +545,7 @@ struct batt_drv {
 	/* used to detect battery replacements and reset statistics */
 	enum batt_paired_state pairing_state;
 	char dev_sn[DEV_SN_LENGTH];
+	uint8_t pairing_state_retry_cnt;
 
 	/* collect battery history/lifetime data (history) */
 	enum batt_lfcollect_status blf_state;
@@ -8549,9 +8551,11 @@ static void google_battery_work(struct work_struct *work)
 		switch (state) {
 		/* somethig is wrong with eeprom comms, HW problem? */
 		case BATT_PAIRING_READ_ERROR:
-			break;
-		/* somethig is wrong with eeprom, HW problem? */
 		case BATT_PAIRING_WRITE_ERROR:
+			if (batt_drv->pairing_state_retry_cnt > 0)
+				batt_drv->pairing_state_retry_cnt -= 1;
+			else
+				batt_drv->pairing_state = state;
 			break;
 		default:
 			batt_drv->pairing_state = state;
@@ -9549,10 +9553,12 @@ static void google_battery_init_work(struct work_struct *work)
 		pr_info("battery votes disabled\n");
 
 	/* pairing battery vs. device */
-	if (of_property_read_bool(node, "google,eeprom-pairing"))
+	if (of_property_read_bool(node, "google,eeprom-pairing")) {
 		batt_drv->pairing_state = BATT_PAIRING_ENABLED;
-	else
+		batt_drv->pairing_state_retry_cnt = PAIRING_RETRIES;
+	} else {
 		batt_drv->pairing_state = BATT_PAIRING_DISABLED;
+	}
 
 	/* use delta cycle count to adjust collecting period */
 	ret = of_property_read_u32(batt_drv->device->of_node,
