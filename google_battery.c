@@ -8699,6 +8699,11 @@ static int gbatt_get_status(struct batt_drv *batt_drv,
 		return 0;
 	}
 
+	if (batt_drv->batt_fast_update_cnt) {
+		val->intval = POWER_SUPPLY_STATUS_CHARGING;
+		return 0;
+	}
+
 	if (batt_drv->msc_state == MSC_HEALTH_PAUSE) {
 		/* Expect AC to discharge in PAUSE. However, UI must persist */
 		val->intval = POWER_SUPPLY_STATUS_CHARGING;
