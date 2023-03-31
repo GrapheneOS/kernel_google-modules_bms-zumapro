@@ -139,6 +139,7 @@ enum gbms_msc_states_t {
 	MSC_RSTC,	/* in taper */
 	MSC_NEXT,	/* in taper */
 	MSC_NYET,	/* in taper */
+	MSC_DONE,
 	MSC_HEALTH,
 	MSC_HEALTH_PAUSE,
 	MSC_HEALTH_ALWAYS_ON,

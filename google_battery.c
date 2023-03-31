@@ -48,6 +48,7 @@
 #define DEFAULT_BD_TRICKLE_RL_SOC_THRESHOLD	90
 #define DEFAULT_BD_TRICKLE_RESET_SEC		(5 * 60)
 #define DEFAULT_HIGH_TEMP_UPDATE_THRESHOLD	550
+#define DEFAULT_CV_MAX_TEMPERATURE		0
 
 #define DEFAULT_HEALTH_SAFETY_MARGIN	(30 * 60)
 
@@ -480,6 +481,8 @@ struct batt_drv {
 	/* update high temperature in time */
 	int batt_temp;
 	u32 batt_update_high_temp_threshold;
+	/* max temperature for cv mode before stopping charging*/
+	u32 cv_max_temp;
 	/* fake battery temp for thermal testing */
 	int fake_temp;
 	/* triger for recharge logic next update from charger */
@@ -3490,6 +3493,7 @@ static int msc_pm_hold(int msc_state)
 	case MSC_FAST:
 	case MSC_NYET:
 	case MSC_STEADY:
+	case MSC_DONE:
 		pm_state = 0;  /* pm_relax */
 		break;
 	default:
@@ -4266,6 +4270,18 @@ static int msc_logic(struct batt_drv *batt_drv)
 		/* Debounce tier switch only when not already switching */
 		if (batt_drv->checked_tier_switch_cnt == 0)
 			batt_drv->checked_cv_cnt = profile->cv_debounce_cnt;
+	} else if (batt_drv->msc_state == MSC_DONE) {
+		const int vtier = profile->volt_limits[vbatt_idx];
+
+		/* 4300 - 200 = 4100 */
+		if (vbatt < (vtier - 200000)) {
+			batt_prlog(BATT_PRLOG_ALWAYS, "MSC_DONE restart vbatt=%d margin=%d\n",
+			           vbatt, 200000);
+			msc_state = MSC_DSG;
+		} else {
+			msc_state = MSC_DONE;
+			batt_prlog(BATT_PRLOG_ALWAYS, "MSC_DONE propagate vbatt=%d\n", vbatt);
+		}
 	} else if (ibatt > 0) {
 		const int vtier = profile->volt_limits[vbatt_idx];
 		const bool log_level = batt_drv->msc_state != MSC_DSG ||
@@ -4328,6 +4344,7 @@ static int msc_logic(struct batt_drv *batt_drv)
 		const int switch_cnt = profile->cv_tier_switch_cnt;
 		const int cc_next_max = GBMS_CCCM_LIMITS(profile, temp_idx,
 							vbatt_idx + 1);
+		const int chg_type = batt_drv->chg_state.f.chg_type;
 
 		/* book elapsed time to previous tier & msc_irdrop_state */
 		msc_state = msc_logic_irdrop(batt_drv,
@@ -4365,7 +4382,7 @@ static int msc_logic(struct batt_drv *batt_drv)
 				batt_drv->checked_tier_switch_cnt = 0;
 
 			msc_state = MSC_WAIT;
-		} else if (-ibatt > cc_next_max) {
+		} else if (cc_next_max && -ibatt > cc_next_max) {
 
 			/* current over next tier, reset tier switch count */
 			batt_prlog(BATT_PRLOG_ALWAYS,
@@ -4375,6 +4392,17 @@ static int msc_logic(struct batt_drv *batt_drv)
 
 			batt_drv->checked_tier_switch_cnt = 0;
 			msc_state = MSC_RSTC;
+		} else if ((cc_next_max == 0) &&
+				   (chg_type == POWER_SUPPLY_CHARGE_TYPE_TAPER_EXT) &&
+				   (temp >= batt_drv->cv_max_temp)) {
+
+			vbatt_idx = batt_drv->vbatt_idx + 1;
+
+			batt_prlog(BATT_PRLOG_ALWAYS,
+				   "MSC_DONE s:%d->%d tier vb=%d ib=%d vbatt_idx=%d->%d\n",
+				   msc_state, MSC_DONE, vbatt, ibatt,
+				   batt_drv->vbatt_idx, vbatt_idx);
+			msc_state = MSC_DONE;
 		} else if (batt_drv->checked_tier_switch_cnt >= switch_cnt) {
 			/* next tier, fv_uv detemined at MSC_SET */
 			vbatt_idx = batt_drv->vbatt_idx + 1;
@@ -9685,6 +9713,10 @@ static void google_battery_init_work(struct work_struct *work)
 		pr_err("Unable to read swelling data, ret=%d\n", ret);
 		batt_drv->sd.is_enable = false;
 	}
+
+	ret = of_property_read_u32(node, "google,cv-max-temp", &batt_drv->cv_max_temp);
+	if (ret < 0)
+		batt_drv->cv_max_temp = DEFAULT_CV_MAX_TEMPERATURE;
 
 	/* init bpst setting */
 	ret = batt_init_bpst_profile(batt_drv);
