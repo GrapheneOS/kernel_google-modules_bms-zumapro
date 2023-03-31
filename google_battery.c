@@ -333,9 +333,10 @@ struct bhi_data
 	int swell_cumulative;		/* from swell data */
 	int ccbin_index;		/* from SOC residency */
 
-	/* battery manufacture date */
+	/* battery manufacture and activation date */
 	struct bm_date bm_date;		/* from eeprom SN */
 	u8 act_date[BATT_EEPROM_TAG_XYMD_LEN];
+	int first_usage_date;
 
 	/* set trend points and low boundary */
 	u16 trend[BHI_TREND_POINTS_SIZE];
@@ -6884,6 +6885,9 @@ static ssize_t manufacturing_date_show(struct device *dev,
 
 static const DEVICE_ATTR_RO(manufacturing_date);
 
+#define FIRST_USAGE_DATE_DEFAULT	1606780800 //2020-12-01
+#define FIRST_USAGE_DATE_MAX		2147483647 //2038-01-19
+
 static ssize_t first_usage_date_store(struct device *dev,
 				      struct device_attribute *attr,
 				      const char *buf, size_t count)
@@ -6897,21 +6901,47 @@ static ssize_t first_usage_date_store(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	/* set: YYMMDD */
-	if (value > 0) {
+	/* return if the device tree is set */
+	if (bhi_data->first_usage_date)
+		return count > 0 ? count : 0;
+
+	/*
+	 * set: epoch
+	 * when value is 0, set by local time; otherwise, set by system call.
+	 */
+	if (value == 0 ||
+	    (value >= FIRST_USAGE_DATE_DEFAULT && value <= FIRST_USAGE_DATE_MAX)) {
 		u8 act_date[BATT_EEPROM_TAG_XYMD_LEN];
-		uint32_t date = value;
+		unsigned long long date_in_epoch = value;
+		struct rtc_time tm;
 
 		ret = gbms_storage_read(GBMS_TAG_AYMD, act_date, sizeof(act_date));
 		if (ret < 0)
 			return -EINVAL;
 
-		if (act_date[0] != 0xff)
+		if (act_date[0] != 0xff || act_date[1] != 0xff || act_date[2] != 0xff)
 			return count > 0 ? count : 0;
 
-		act_date[0] = date_to_xymd((date >> 16) & 0xff - 20);
-		act_date[1] = date_to_xymd((date >> 8) & 0xff);
-		act_date[2] = date_to_xymd(date & 0xff);
+		if (date_in_epoch == 0) {
+			struct timespec64 ts;
+
+			/* set by local time */
+			ktime_get_real_ts64(&ts);
+			rtc_time64_to_tm(ts.tv_sec - (sys_tz.tz_minuteswest * 60), &tm);
+		} else {
+			/* set by system call */
+			rtc_time64_to_tm(date_in_epoch, &tm);
+		}
+
+		/* convert epoch to date
+		 * for example:
+		 * epoch: 1643846400 -> tm_year/tm_mon/tm_mday: 122/01/03
+		 *                   -> date: 2/02/03 (LAST DIGIT OF YEAR)
+		 *                   -> act_date: ASCII 2/2/3
+		 */
+		act_date[0] = date_to_xymd(tm.tm_year - 100 - 20);	// base is 1900
+		act_date[1] = date_to_xymd(tm.tm_mon + 1);		// 0 is Jan ... 11 is Dec
+		act_date[2] = date_to_xymd(tm.tm_mday);			// 1st ... 31th
 
 		ret = gbms_storage_write(GBMS_TAG_AYMD, act_date, sizeof(act_date));
 		if (ret < 0)
@@ -6919,6 +6949,8 @@ static ssize_t first_usage_date_store(struct device *dev,
 
 		/* update bhi_data->act_date */
 		memcpy(&bhi_data->act_date, act_date, sizeof(act_date));
+	} else {
+		pr_warn("%s: input value is invalid %d\n", __func__, value);
 	}
 
 	return count > 0 ? count : 0;
@@ -6933,6 +6965,10 @@ static ssize_t first_usage_date_show(struct device *dev,
 	struct bm_date date;
 	struct rtc_time tm;
 
+	/* return if the device tree is set */
+	if (bhi_data->first_usage_date)
+		return scnprintf(buf, PAGE_SIZE, "%d\n", bhi_data->first_usage_date);
+
 	/* read activation date when data is not successfully read in probe */
 	if (bhi_data->act_date[0] == 0) {
 		int ret;
@@ -6942,7 +6978,12 @@ static ssize_t first_usage_date_show(struct device *dev,
 			return scnprintf(buf, PAGE_SIZE, "%d\n", ret);
 	}
 
-	/* format: YYMMDD */
+	/* convert date to epoch
+	 * for example:
+	 * act_date: ASCII 2/2/3 -> bm_y/bm_m/bm_d: 22/02/03
+	 *                       -> tm_year/tm_mon/tm_mday: 122/01/03
+	 *                       -> epoch: 164384640
+	 */
 	date.bm_y = xymd_to_date(bhi_data->act_date[0]) + 20;
 	date.bm_m = xymd_to_date(bhi_data->act_date[1]);
 	date.bm_d = xymd_to_date(bhi_data->act_date[2]);
@@ -9558,6 +9599,11 @@ static void google_battery_init_work(struct work_struct *work)
 	if (batt_drv->allow_higher_fv)
 		pr_info("allow higher fv is enabled\n");
 
+	ret = of_property_read_u32(node, "google,first-usage-date",
+				   &batt_drv->health_data.bhi_data.first_usage_date);
+	if (ret < 0)
+		batt_drv->health_data.bhi_data.first_usage_date = 0;
+
 	/* single battery disconnect */
 	(void)batt_bpst_init_debugfs(batt_drv);
 
@@ -9798,7 +9844,7 @@ static int google_battery_probe(struct platform_device *pdev)
 	if (!batt_drv->health_data.bhi_data.act_date[0]) {
 		ret = batt_get_activation_date(&batt_drv->health_data.bhi_data);
 		if (ret < 0)
-			pr_warn("cannot get battery activation date, ret=%d\n", ret);;
+			pr_warn("cannot get battery activation date, ret=%d\n", ret);
 	}
 
 	return 0;
