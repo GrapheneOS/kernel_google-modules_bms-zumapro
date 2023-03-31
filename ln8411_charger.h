@@ -12,6 +12,7 @@
 #include <linux/thermal.h>
 #include <linux/pm_runtime.h>
 #include <linux/kernel.h>
+#include <linux/gpio/driver.h>
 
 /* Google integration */
 #include "gbms_power_supply.h"
@@ -277,6 +278,10 @@ struct ln8411_charger {
 	struct ln8411_chip_info chip_info;
 	struct attribute_group 	attrs;    /* SysFS attributes */
 	struct delayed_work 	init_hw_work;
+
+#if IS_ENABLED(CONFIG_GPIOLIB)
+	struct gpio_chip gpio;
+#endif
 	/* Google Integration END */
 
 	/* Temporary, only for A1 silicon */

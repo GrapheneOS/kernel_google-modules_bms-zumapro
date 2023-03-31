@@ -104,19 +104,29 @@
 #define CBUS_OCP_WARN_DFT		2500000 /* 2.5A */
 #define IBUS_OCP_DFT_4_1		0xE /* 2.3A */
 #define IBUS_OCP_DFT_2_1		0x4 /* 3.5A */
+#define IBUS_OCP_DFT_1_2		0x5 /* 1.4A */
 #define VUSB_OVP_DFT_4_1		0x8b /* 22V */
 #define VUSB_OVP_DFT_2_1		0x81 /* 12V */
 #define IBUS_UCP_DFT_4_1		0x10
 #define IBUS_UCP_DFT_1_2		0x90
 #define PMID2OUT_UVP_DFT_4_1		0x4 /* 10% */
 #define PMID2OUT_UVP_DFT_1_2		0x84 /* Disable */
-#define REG5A_DFT_4_1			0x1
-#define REG5A_DFT_2_1			0x0
+#define PMID2OUT_UVP_DFT_EN_1_2	0x4
+#define CFG_10_DFT_4_1			0x1
+#define CFG_10_DFT_2_1			0x0
 #define PMID2OUT_UVP			0x84 /* 10% */
+#define PMID_SWITCH_OK_DIS		0x78
+#define LN8411_INFET_OFF_DET_DIS	0x7D
 #define VBAT_ALARM_CFG_DELTA		50000 /* 50mV */
 #define IBUS_ALARM_CFG_DELTA		200000 /* 200mA */
 
 #define ADC_EN_RETRIES			400
+
+/* GPIO support for 1_2 mode */
+#define LN8411_NUM_GPIOS	1
+#define LN8411_MIN_GPIO		0
+#define LN8411_MAX_GPIO		0
+#define LN8411_GPIO_1_2_EN	0
 
 /* Status */
 enum sts_mode_t {
@@ -159,38 +169,46 @@ enum batt_info_t {
 };
 
 /* Reg, val, mask (if update) */
-static u8 mode_settings[3][6][3] = {
+static u8 mode_settings[3][8][3] = {
 	/* 2 to 1 */
 	{
 		{LN8411_VUSB_OVP, VUSB_OVP_DFT_2_1, 0x0},
 		{LN8411_VWPC_OVP, VUSB_OVP_DFT_2_1, 0x0},
-		{LN8411_REG_5A, REG5A_DFT_2_1, 0x1},
+		{LN8411_CFG_10, CFG_10_DFT_2_1, 0x1},
 		{LN8411_IBUS_OCP, IBUS_OCP_DFT_2_1, 0x0},
 		{LN8411_IBUS_UCP, IBUS_UCP_DFT_4_1, 0x0},
 		{LN8411_PMID2OUT_UVP, PMID2OUT_UVP_DFT_4_1, 0x0},
+		{0x0, 0x0, 0x0},
+		{0x0, 0x0, 0x0},
 	},
 	/* 4 to 1 */
 	{
 		{LN8411_VUSB_OVP, VUSB_OVP_DFT_4_1, 0x0},
 		{LN8411_VWPC_OVP, VUSB_OVP_DFT_4_1, 0x0},
-		{LN8411_REG_5A, REG5A_DFT_4_1, 0x1},
+		{LN8411_CFG_10, CFG_10_DFT_4_1, 0x1},
 		{LN8411_IBUS_OCP, IBUS_OCP_DFT_4_1, 0x0},
 		{LN8411_IBUS_UCP, IBUS_UCP_DFT_4_1, 0x0},
 		{LN8411_PMID2OUT_UVP, PMID2OUT_UVP_DFT_4_1, 0x0},
+		{0x0, 0x0, 0x0},
+		{0x0, 0x0, 0x0},
 	},
 	/* 1 to 2 */
 	{
-		{LN8411_VUSB_OVP, VUSB_OVP_DFT_2_1, 0x0},
 		{LN8411_VWPC_OVP, VUSB_OVP_DFT_2_1, 0x0},
-		{LN8411_REG_5A, REG5A_DFT_4_1, 0x1},
-		{LN8411_IBUS_OCP, IBUS_OCP_DFT_4_1, 0x0},
-		{LN8411_IBUS_UCP, IBUS_UCP_DFT_1_2, 0x0},
+		{LN8411_CFG_10, CFG_10_DFT_4_1, 0x1},
+		{LN8411_IBUS_OCP, IBUS_OCP_DFT_1_2, 0x0},
 		{LN8411_PMID2OUT_UVP, PMID2OUT_UVP_DFT_1_2, 0x0},
+		{LN8411_IBUS_UCP, IBUS_UCP_DFT_1_2, 0x0},
+		{LN8411_LION_COMP_CTRL_1, PMID_SWITCH_OK_DIS, 0x0},
+		{LN8411_LION_COMP_CTRL_2, LN8411_VWPC_UVP_DIS, 0x0},
+		{LN8411_LION_COMP_CTRL_4, LN8411_INFET_OFF_DET_DIS, 0x0},
 	},
 };
 
 static int ln8411_hw_init(struct ln8411_charger *ln8411);
 static int ln8411_irq_init(struct ln8411_charger *ln8411);
+static int ln8411_start_1_2_mode(struct ln8411_charger *ln8411);
+static int ln8411_stop_1_2_mode(struct ln8411_charger *ln8411);
 
 static inline int conv_chg_mode(const struct ln8411_charger *ln8411, int val)
 {
@@ -320,6 +338,31 @@ static int write_reg(void *data, u64 val)
 	return 0;
 }
 DEFINE_SIMPLE_ATTRIBUTE(register_debug_ops_ln8411, read_reg, write_reg, "%#02llx\n");
+
+static int ln8411_read_1_2_mode(void *data, u64 *val)
+{
+	struct ln8411_charger *ln8411 = data;
+
+	*val = ln8411->chg_mode == CHG_1TO2_DC_MODE;
+	return 0;
+}
+
+static int ln8411_write_1_2_mode(void *data, u64 val)
+{
+	struct ln8411_charger *ln8411 = data;
+	int rc;
+
+	if (val)
+		rc = ln8411_start_1_2_mode(ln8411);
+	else
+		rc = ln8411_stop_1_2_mode(ln8411);
+	if (rc) {
+		dev_err(ln8411->dev, "Couldn't %s 1_2 mode\n", val ? "enable" :  "disable");
+		return -EAGAIN;
+	}
+	return 0;
+}
+DEFINE_SIMPLE_ATTRIBUTE(ln8411_1_2_mode_ops, ln8411_read_1_2_mode, ln8411_write_1_2_mode, "%#02llx\n");
 /* ------------------------------------------------------------------------ */
 
 static int ln8411_set_lion_ctrl(const struct ln8411_charger *ln8411, enum ln8411_keys key)
@@ -611,6 +654,9 @@ static int ln8411_set_mode(struct ln8411_charger *ln8411, const int val)
 	case CHG_4TO1_DC_MODE:
 		mode = LN8411_FWD4TO1;
 		break;
+	case CHG_1TO2_DC_MODE:
+		mode = LN8411_REV1TO2;
+		break;
 	case CHG_NO_DC_MODE:
 		mode = LN8411_FWD1TO1;
 		break;
@@ -622,8 +668,9 @@ static int ln8411_set_mode(struct ln8411_charger *ln8411, const int val)
 	if (ret)
 		goto done;
 
-	/* Workaround for A1 for 2:1 mode */
-	if (val == CHG_2TO1_DC_MODE && ln8411->chip_info.chip_rev == 1) {
+	/* Workaround for A1 for 2:1 and 1:2 mode */
+	if ((val == CHG_2TO1_DC_MODE || val == CHG_1TO2_DC_MODE)
+	     && ln8411->chip_info.chip_rev == 1) {
 		ret = ln8411_set_lion_ctrl(ln8411, LN8411_LION_CTRL_EN_SW_OVERRIDE);
 		if (ret)
 			goto done;
@@ -664,6 +711,10 @@ static int ln8411_set_prot_by_chg_mode(const struct ln8411_charger *ln8411)
 	int mode_idx, i;
 
 	mode_idx = ln8411->chg_mode - 1;
+	if (mode_idx < 0 || mode_idx >= CHG_1TO2_DC_MODE) {
+		dev_info(ln8411->dev, "%s: Invalid mode: %d\n", __func__, mode_idx + 1);
+		return -EINVAL;
+	}
 
 	/* unlock private register space */
 	ret = ln8411_set_lion_ctrl(ln8411, LN8411_LION_CTRL_EN_SW_OVERRIDE);
@@ -673,6 +724,9 @@ static int ln8411_set_prot_by_chg_mode(const struct ln8411_charger *ln8411)
 	}
 
 	for (i = 0; i < sizeof(mode_settings[0]) / sizeof(mode_settings[0][0]); i++) {
+		if (!mode_settings[mode_idx][i][0])
+			continue;
+
 		if (mode_settings[mode_idx][i][2])
 			ret = regmap_update_bits(ln8411->regmap, mode_settings[mode_idx][i][0],
 						 mode_settings[mode_idx][i][2],
@@ -812,26 +866,18 @@ error:
 static int ln8411_check_state(struct ln8411_charger *ln8411, int loglevel)
 {
 	int ret;
-	unsigned int int_flag=0, int_stat=0, comp_flag0=0, comp_flag1=0;
+	unsigned int int_flag = 0, int_stat = 0, comp_flag0 = 0, comp_flag1 = 0, ctrl5 = 0;
 
 	ret = regmap_read(ln8411->regmap, LN8411_INT_FLAG, &int_flag);
-	if (ret < 0)
-		goto done;
+	ret |= regmap_read(ln8411->regmap, LN8411_INT_STAT, &int_stat);
+	ret |= regmap_read(ln8411->regmap, LN8411_COMP_FLAG0, &comp_flag0);
+	ret |= regmap_read(ln8411->regmap, LN8411_COMP_FLAG1, &comp_flag1);
+	ret |= regmap_read(ln8411->regmap, LN8411_CTRL5, &ctrl5);
 
-	ret = regmap_read(ln8411->regmap, LN8411_INT_STAT, &int_stat);
-	if (ret < 0)
-		goto done;
-
-	ret = regmap_read(ln8411->regmap, LN8411_COMP_FLAG0, &comp_flag0);
-	if (ret < 0)
-		goto done;
-
-	ret = regmap_read(ln8411->regmap, LN8411_COMP_FLAG1, &comp_flag1);
-
-done:
 	logbuffer_prlog(ln8411, loglevel,
 			"%s: ret: %d, INT_FLAG: %#02x, STAT: %#02x, COMP_FLAG0: %#02x, COMP_FLAG1: %#02x\n",
 			__func__, ret, int_flag, int_stat, comp_flag0, comp_flag1);
+	logbuffer_prlog(ln8411, loglevel, "%s: CTRL5: %#02x\n", __func__, ctrl5);
 
 	return ret;
 }
@@ -876,7 +922,7 @@ int ln8411_check_active(struct ln8411_charger *ln8411)
 	if (ln8411->chg_mode == CHG_4TO1_DC_MODE)
 		val = (reg == (LN8411_PMID_SWITCH_OK_STS | LN8411_INFET_OK_STS
 		       | LN8411_SWITCHING41_ACTIVE_STS));
-	else if (ln8411->chg_mode == CHG_2TO1_DC_MODE)
+	else if (ln8411->chg_mode == CHG_2TO1_DC_MODE || ln8411->chg_mode == CHG_1TO2_DC_MODE)
 		val = (reg == (LN8411_PMID_SWITCH_OK_STS | LN8411_INFET_OK_STS
 		       | LN8411_SWITCHING21_ACTIVE_STS));
 	else
@@ -910,56 +956,49 @@ int ln8411_check_active(struct ln8411_charger *ln8411)
  */
 static int ln8411_check_error(struct ln8411_charger *ln8411)
 {
-	int ret = 0;
+	int ret = -EINVAL, vbatt;
 	unsigned int val;
 
 	/* LN8411 is active state */
-	if (ln8411_check_active(ln8411) > 0) {
-		int vbatt;
+	if (ln8411_check_active(ln8411) <= 0)
+		goto error;
 
-		/* LN8411 is charging */
-
-		/* Check whether the battery voltage is over the minimum */
-		vbatt = ln8411_read_adc(ln8411, ADCCH_VBAT);
-		if (vbatt > LN8411_DC_VBAT_MIN) {
-			/* Normal charging battery level */
-			/* Check temperature regulation loop */
-			ret = regmap_read(ln8411->regmap, LN8411_SAFETY_STS, &val);
-			if (ret < 0) {
-				dev_err(ln8411->dev, "%s: cannot read LN8411_SAFETY_STS (%d)\n",
-					__func__, ret);
-			} else if ((val & LN8411_TEMP_FAULT_DETECTED)
-				  || (val & LN8411_TEMP_MAX_STS)) {
-				/* Over temperature protection */
-				dev_err(ln8411->dev, "%s: In temperature regulation %#02X\n",
-					__func__, val);
-				ret = -EINVAL;
-			}
-		} else {
-			/* Abnormal battery level */
-			dev_err(ln8411->dev, "%s: Error abnormal battery voltage=%d\n",
-				__func__, vbatt);
-			ret = -EINVAL;
-		}
-
-		dev_dbg(ln8411->dev, "%s: Active Status ok=%d (ret=%d)\n", __func__,
-			 ret == 0, ret);
-		return ret;
+	/* LN8411 is charging */
+	/* Check whether the battery voltage is over the minimum */
+	vbatt = ln8411_read_adc(ln8411, ADCCH_VBAT);
+	if (vbatt <= LN8411_DC_VBAT_MIN) {
+		/* Abnormal battery level */
+		dev_err(ln8411->dev, "%s: Error abnormal battery voltage=%d\n",	__func__, vbatt);
+		goto error;
 	}
 
+	/* Normal charging battery level */
+	/* Check temperature regulation loop */
+	ret = regmap_read(ln8411->regmap, LN8411_SAFETY_STS, &val);
+	if (ret < 0) {
+		dev_err(ln8411->dev, "%s: cannot read LN8411_SAFETY_STS (%d)\n", __func__, ret);
+		goto error;
+	} else if ((val & LN8411_TEMP_FAULT_DETECTED) || (val & LN8411_TEMP_MAX_STS)) {
+		/* Over temperature protection */
+		dev_err(ln8411->dev, "%s: In temperature regulation %#02X\n", __func__, val);
+		goto error;
+	}
+
+	dev_dbg(ln8411->dev, "%s: Active Status ok=%d (ret=%d)\n", __func__, ret == 0, ret);
+	return ret;
+
+error:
 	ln8411_check_state(ln8411, LOGLEVEL_ERR);
 	ln8411_check_not_active(ln8411, LOGLEVEL_ERR);
 
-	if (ln8411->charging_state == DC_STATE_NO_CHARGING) {
-		/*
-		 * Sometimes battery driver might call set_property function
-		 * to stop charging during msleep. At this case, charging
-		 * state would change DC_STATE_NO_CHARGING. LN8411 should
-		 * stop checking RCP condition and exit timer_work
-		 */
+	/*
+	 * Sometimes battery driver might call set_property function
+	 * to stop charging during msleep. At this case, charging
+	 * state would change DC_STATE_NO_CHARGING. LN8411 should
+	 * stop checking RCP condition and exit timer_work
+	 */
+	if (ln8411->charging_state == DC_STATE_NO_CHARGING)
 		dev_err(ln8411->dev, "%s: other driver forced stop\n", __func__);
-		ret = -EINVAL;
-	}
 
 	dev_dbg(ln8411->dev, "%s: Not Active Status=%d\n", __func__, -EINVAL);
 	return -EINVAL;
@@ -3460,13 +3499,13 @@ static int ln8411_check_active_state(struct ln8411_charger *ln8411)
 		}
 	}
 
+exit_done:
 	if (ret) {
 		int ret1 = dump_all_regs(ln8411);
-		if (ret1)
-			dev_err(ln8411->dev, "%s: Error dumping regs\n", __func__);
-	}
 
-exit_done:
+		if (ret1)
+			dev_err(ln8411->dev, "%s: Error dumping regs (%d)\n", __func__, ret1);
+	}
 
 	/* Implement error handler function if it is needed */
 	if (ret < 0) {
@@ -4202,6 +4241,232 @@ static int ln8411_set_charging_enabled(struct ln8411_charger *ln8411, int index)
 	return 0;
 }
 
+/* call holding mutex_lock(&ln8411->lock); */
+static int ln8411_init_1_2_mode(struct ln8411_charger *ln8411)
+{
+	int ret, ret1;
+
+	dev_dbg(ln8411->dev, "%s: =========START=========\n", __func__);
+
+	if (ln8411->chg_mode != CHG_NO_DC_MODE) {
+		dev_info(ln8411->dev, "%s: chg_mode is not NO_DC_MODE. Not initing 1_2 mode=%d\n",
+			 __func__, ln8411->chg_mode);
+		ret = -EINVAL;
+		goto error;
+	}
+	ln8411->chg_mode = CHG_1TO2_DC_MODE;
+
+	ret = ln8411_set_lion_ctrl(ln8411, LN8411_LION_CTRL_EN_SW_OVERRIDE);
+	if (ret) {
+		dev_info(ln8411->dev, "%s: Error setting EN_SW_OVERRIDE (%d)\n", __func__, ret);
+		goto error;
+	}
+
+	ret = ln8411_set_mode(ln8411, CHG_1TO2_DC_MODE);
+	if (ret) {
+		dev_info(ln8411->dev, "%s: Error setting Rev 1:2 mode (%d)\n", __func__, ret);
+		goto error;
+	}
+
+	ret = regmap_clear_bits(ln8411->regmap, LN8411_CFG_1, LN8411_DEVICE_MODE);
+	if (ret) {
+		dev_info(ln8411->dev, "%s: Error clearing DEVICE_MODE (%d)\n", __func__, ret);
+		goto error;
+	}
+
+	ret =regmap_set_bits(ln8411->regmap, LN8411_REG_49, LN8411_REVERT_LSNS);
+	if (ret) {
+		dev_info(ln8411->dev, "%s: Error setting LSNS (%d)\n", __func__, ret);
+		goto error;
+	}
+
+error:
+	ret1 = ln8411_set_lion_ctrl(ln8411, LN8411_LION_CTRL_LOCK);
+	if (ret1) {
+		dev_info(ln8411->dev, "%s: Error locking private regs (%d)\n", __func__, ret1);
+		ret = ret1;
+	}
+
+	return ret;
+}
+
+/* call holding mutex_lock(&ln8411->lock); */
+static int ln8411_enable_1_2_mode(struct ln8411_charger *ln8411)
+{
+	int ret, ret1;
+
+	dev_dbg(ln8411->dev, "%s: =========START=========\n", __func__);
+
+	ret = ln8411_set_prot_by_chg_mode(ln8411);
+	if (ret) {
+		dev_info(ln8411->dev, "%s: Error settings protections (%d)\n", __func__, ret);
+		goto error;
+	}
+
+	ret = ln8411_set_status_charging(ln8411);
+	if (ret) {
+		dev_info(ln8411->dev, "%s: Error starting charging (%d)\n", __func__, ret);
+		goto error;
+	}
+
+	msleep(200);
+
+	if (!(ln8411_check_active(ln8411) == 1))
+		goto error;
+
+	/* Enable PMID2OUT_UVP */
+	ret = regmap_write(ln8411->regmap, LN8411_PMID2OUT_UVP, PMID2OUT_UVP_DFT_EN_1_2);
+	if (ret) {
+		dev_info(ln8411->dev, "%s: Error enabling PMID2OUT_UVP (%d)\n", __func__, ret);
+		goto error;
+	}
+
+	ret = regmap_set_bits(ln8411->regmap, LN8411_CTRL1, LN8411_WPCGATE_EN);
+	if (ret) {
+		dev_info(ln8411->dev, "%s: Error enabling WPCGATE (%d)\n", __func__, ret);
+		goto error;
+	}
+
+	msleep(10);
+
+	ret = ln8411_set_lion_ctrl(ln8411, LN8411_LION_CTRL_EN_SW_OVERRIDE);
+	if (ret) {
+		dev_info(ln8411->dev, "%s: Error setting EN_SW_OVERRIDE (%d)\n", __func__, ret);
+		goto error;
+	}
+
+	/* Enable WPC_UVP */
+	ret = regmap_write(ln8411->regmap, LN8411_LION_COMP_CTRL_2, 0x0);
+	if (ret) {
+		dev_info(ln8411->dev, "%s: Error enabling WPC_UVP (%d)\n", __func__, ret);
+		goto error;
+	}
+
+	ret = ln8411_check_active(ln8411) <= 0;
+
+error:
+	ret1 = ln8411_set_lion_ctrl(ln8411, LN8411_LION_CTRL_LOCK);
+	if (ret1) {
+		dev_info(ln8411->dev, "%s: Error locking private regs (%d)\n", __func__, ret1);
+		ret = ret1;
+	}
+
+	return ret;
+}
+
+/* call holding mutex_lock(&ln8411->lock); */
+static int ln8411_stop_1_2_mode(struct ln8411_charger *ln8411)
+{
+	int ret, ret1;
+
+	dev_dbg(ln8411->dev, "%s: =========START=========\n", __func__);
+	ret = regmap_clear_bits(ln8411->regmap, LN8411_CTRL1, LN8411_CP_EN);
+	if (ret < 0)
+		goto error;
+
+	msleep(60);
+
+	ret = regmap_clear_bits(ln8411->regmap, LN8411_CTRL1, LN8411_QB_EN);
+	if (ret < 0)
+		goto error;
+
+	ln8411->chg_mode = CHG_NO_DC_MODE;
+
+error:
+	ln8411->hw_init_done = false;
+	ret1 = ln8411_hw_init(ln8411);
+	if (ret1 < 0) {
+		dev_info(ln8411->dev, "%s: Error initializing HW (%d)\n", __func__, ret1);
+		ret = ret1;
+	} else {
+		ln8411->hw_init_done = true;
+	}
+
+	return ret;
+}
+
+static int ln8411_start_1_2_mode(struct ln8411_charger *ln8411)
+{
+	int ret, rc;
+
+	dev_dbg(ln8411->dev, "%s: =========START=========\n", __func__);
+	mutex_lock(&ln8411->lock);
+
+	ret = ln8411_init_1_2_mode(ln8411);
+	if (ret) {
+		dev_info(ln8411->dev, "%s: Error initializing 1_2 mode (%d)\n", __func__, ret);
+		goto error;
+	}
+
+	ret = ln8411_enable_1_2_mode(ln8411);
+	if (ret) {
+		dev_info(ln8411->dev, "%s: Error enabling 1_2 mode (%d)\n", __func__, ret);
+		goto error;
+	}
+
+error:
+	if (ret) {
+		rc = ln8411_stop_1_2_mode(ln8411);
+		if (rc)
+			dev_info(ln8411->dev, "%s: Error disabling 1_2 mode (%d)\n", __func__, ret);
+	}
+
+	mutex_unlock(&ln8411->lock);
+	return ret;
+}
+
+#if IS_ENABLED(CONFIG_GPIOLIB)
+static int ln8411_gpio_get_direction(struct gpio_chip *chip, unsigned int offset)
+{
+	return GPIOF_DIR_OUT;
+}
+
+static int ln8411_gpio_get(struct gpio_chip *chip, unsigned int offset)
+{
+	return 0;
+}
+
+static void ln8411_gpio_set(struct gpio_chip *chip, unsigned int offset, int value)
+{
+	struct ln8411_charger *ln8411 = gpiochip_get_data(chip);
+	int ret = 0;
+
+	switch (offset) {
+	case LN8411_GPIO_1_2_EN:
+		if (value) {
+			ret = ln8411_start_1_2_mode(ln8411);
+		} else {
+			mutex_lock(&ln8411->lock);
+			ret = ln8411_stop_1_2_mode(ln8411);
+			mutex_unlock(&ln8411->lock);
+		}
+		break;
+
+	default:
+		ret = -EINVAL;
+		break;
+	}
+
+	pr_debug("%s: GPIO offset=%d value=%d ret:%d\n", __func__,
+		 offset, value, ret);
+
+	if (ret < 0)
+		dev_err(&ln8411->client->dev, "GPIO%d: value=%d ret:%d\n", offset, value, ret);
+}
+
+static void ln8411_gpio_init(struct ln8411_charger *ln8411)
+{
+	ln8411->gpio.owner = THIS_MODULE;
+	ln8411->gpio.label = "ln8411_gpio";
+	ln8411->gpio.get_direction = ln8411_gpio_get_direction;
+	ln8411->gpio.get = ln8411_gpio_get;
+	ln8411->gpio.set = ln8411_gpio_set;
+	ln8411->gpio.base = -1;
+	ln8411->gpio.ngpio = LN8411_NUM_GPIOS;
+	ln8411->gpio.can_sleep = true;
+}
+#endif
+
 static int ln8411_mains_set_property(struct power_supply *psy,
 				      enum power_supply_property prop,
 				      const union power_supply_propval *val)
@@ -4741,6 +5006,7 @@ static int ln8411_create_fs_entries(struct ln8411_charger *chip)
 	debugfs_create_file("data", 0644, chip->debug_root, chip, &register_debug_ops_ln8411);
 	debugfs_create_x32("address", 0644, chip->debug_root, &chip->debug_address);
 
+	debugfs_create_file("1_2_mode", 0664, chip->debug_root, chip, &ln8411_1_2_mode_ops);
 	debugfs_create_u32("iin_max_offset", 0644, chip->debug_root,
 			   &chip->pdata->iin_max_offset);
 	debugfs_create_u32("iin_cc_comp_offset", 0644, chip->debug_root,
@@ -4879,6 +5145,18 @@ static int ln8411_probe(struct i2c_client *client,
 	ret = ln8411_create_fs_entries(ln8411_charger);
 	if (ret < 0)
 		dev_err(dev, "error while registering debugfs %d\n", ret);
+
+#if IS_ENABLED(CONFIG_GPIOLIB)
+	ln8411_gpio_init(ln8411_charger);
+	ln8411_charger->gpio.parent = &client->dev;
+	ln8411_charger->gpio.of_node = of_find_node_by_name(client->dev.of_node,
+							    ln8411_charger->gpio.label);
+	if (!ln8411_charger->gpio.of_node)
+		dev_err(&client->dev, "Failed to find %s DT node\n", ln8411_charger->gpio.label);
+
+	ret = devm_gpiochip_add_data(&client->dev, &ln8411_charger->gpio, ln8411_charger);
+	dev_info(&client->dev, "%d GPIOs registered ret: %d\n", ln8411_charger->gpio.ngpio, ret);
+#endif
 
 #if IS_ENABLED(CONFIG_THERMAL)
 	if (pdata->usb_tz_name) {
