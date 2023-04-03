@@ -1,10 +1,4 @@
-# NOTE: THIS FILE IS EXPERIMENTAL FOR THE BAZEL MIGRATION AND NOT USED FOR
-# YOUR BUILDS CURRENTLY.
-#
-# It is not yet the source of truth for your build. If you're looking to modify
-# the build file, modify the Android.bp file instead. Do *not* modify this file
-# unless you have coordinated with the team managing the Soong to Bazel
-# migration.
+# SPDX-License-Identifier: GPL-2.0-or-later
 
 load("//build/kernel/kleaf:kernel.bzl", "kernel_module")
 
@@ -19,13 +13,13 @@ filegroup(
 )
 
 kernel_module(
-    name = "bms.slider",
+    name = "bms",
     srcs = glob([
         "**/*.c",
         "**/*.h",
         "Kbuild",
     ]) + [
-        "//private/google-modules/soc/gs:gs101_soc_headers",
+        "//private/google-modules/soc/gs:gs_soc_headers",
     ],
     outs = [
         "google-battery.ko",
@@ -43,17 +37,13 @@ kernel_module(
         "overheat_mitigation.ko",
         "p9221.ko",
         "pca9468.ko",
-
-        # "max77729.ko",
-        # "max77759.ko",
-        # "pca9468-google.ko",
     ],
-    kernel_build = "//private/google-modules/soc/gs:slider",
+    kernel_build = "//private/google-modules/soc/gs:gs_kernel_build",
     visibility = [
         "//private/google-modules/power/reset:__subpackages__",
         "//private/google-modules/soc/gs:__pkg__",
     ],
     deps = [
-        "//private/google-modules/soc/gs:gs101_soc",
+        "//private/google-modules/soc/gs:gs_soc_module",
     ],
 )
