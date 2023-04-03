@@ -2831,7 +2831,7 @@ static int max77779_charger_probe(struct i2c_client *client,
 	const char *tmp;
 	u32 usb_otg_mv;
 	int ret = 0;
-	u8 pmic_id;
+	u8 ping;
 
 	regmap = devm_regmap_init_i2c(client, &max77779_chg_regmap_cfg);
 	if (IS_ERR(regmap)) {
@@ -2839,8 +2839,8 @@ static int max77779_charger_probe(struct i2c_client *client,
 		return -EINVAL;
 	}
 
-	ret = max77779_reg_read(regmap, MAX77779_PMIC_ID, &pmic_id);
-	if (ret < 0 || pmic_id != MAX77779_PMIC_ID_SEQ)
+	ret = max77779_reg_read(regmap, MAX77779_CHG_CNFG_00, &ping);
+	if (ret < 0)
 		return -ENODEV;
 
 	/* TODO: PING or read HW version from PMIC */
