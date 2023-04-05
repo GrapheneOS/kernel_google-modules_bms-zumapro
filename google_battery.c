@@ -2064,7 +2064,7 @@ static int batt_health_stats_cstr(char *buff, int size,
 /* doesn't output hc stats */
 static int batt_chg_stats_cstr(char *buff, int size,
 			       const struct gbms_charging_event *ce_data,
-			       bool verbose)
+			       bool verbose, int state_capacity)
 {
 	int i, len = 0;
 
@@ -2081,13 +2081,13 @@ static int batt_chg_stats_cstr(char *buff, int size,
 				ce_data->adapter_details.ad_voltage * 100,
 				ce_data->adapter_details.ad_amperage * 100);
 
-	len += scnprintf(&buff[len], size - len, "%s%hu,%hu, %hu,%hu %u",
+	len += scnprintf(&buff[len], size - len, "%s%hu,%hu, %hu,%hu %d",
 				(verbose) ?  "\nS: " : ", ",
 				ce_data->charging_stats.ssoc_in,
 				ce_data->charging_stats.voltage_in,
 				ce_data->charging_stats.ssoc_out,
 				ce_data->charging_stats.voltage_out,
-				ce_data->chg_profile->capacity_ma);
+				state_capacity);
 
 
 	if (verbose) {
@@ -3400,6 +3400,12 @@ static u32 aacr_get_capacity(struct batt_drv *batt_drv)
 
 exit_done:
 	return (u32)capacity;
+}
+
+static u32 aacr_filtered_capacity(struct batt_drv *batt_drv, struct gbms_charging_event *ce)
+{
+	return (batt_drv->aacr_state < BATT_AACR_ENABLED) ? batt_drv->aacr_state :
+							    ce->chg_profile->capacity_ma;
 }
 
 /* BHI -------------------------------------------------------------------- */
@@ -5644,7 +5650,8 @@ static ssize_t batt_show_chg_stats_actual(struct device *dev,
 	int len;
 
 	mutex_lock(&batt_drv->stats_lock);
-	len = batt_chg_stats_cstr(buf, PAGE_SIZE, &batt_drv->ce_data, false);
+	len = batt_chg_stats_cstr(buf, PAGE_SIZE, &batt_drv->ce_data, false,
+			aacr_filtered_capacity(batt_drv, &batt_drv->ce_data));
 	mutex_unlock(&batt_drv->stats_lock);
 
 	return len;
@@ -5680,11 +5687,11 @@ static ssize_t batt_ctl_chg_stats(struct device *dev,
 /* regular and health stats */
 static ssize_t batt_chg_qual_stats_cstr(char *buff, int size,
 					struct gbms_charging_event *ce_qual,
-					bool verbose)
+					bool verbose, int state_capacity)
 {
 	ssize_t len = 0;
 
-	len += batt_chg_stats_cstr(&buff[len], size - len, ce_qual, verbose);
+	len += batt_chg_stats_cstr(&buff[len], size - len, ce_qual, verbose, state_capacity);
 	if (ce_qual->ce_health.rest_state != CHG_HEALTH_INACTIVE)
 		len += batt_health_stats_cstr(&buff[len], size - len,
 					      ce_qual, verbose);
@@ -5702,7 +5709,8 @@ static ssize_t batt_show_chg_stats(struct device *dev,
 
 	mutex_lock(&batt_drv->stats_lock);
 	if (ce_qual->last_update - ce_qual->first_update)
-		len = batt_chg_qual_stats_cstr(buf, PAGE_SIZE, ce_qual, false);
+		len = batt_chg_qual_stats_cstr(buf, PAGE_SIZE, ce_qual, false,
+					aacr_filtered_capacity(batt_drv, ce_qual));
 	mutex_unlock(&batt_drv->stats_lock);
 
 	return len;
@@ -5726,7 +5734,8 @@ static ssize_t batt_show_chg_details(struct device *dev,
 	mutex_lock(&batt_drv->stats_lock);
 
 	/* this is the current one */
-	len += batt_chg_stats_cstr(&buf[len], PAGE_SIZE - len, ce_data, true);
+	len += batt_chg_stats_cstr(&buf[len], PAGE_SIZE - len, ce_data, true,
+				   aacr_filtered_capacity(batt_drv, ce_data));
 
 	/*
 	 * stats are accumulated in ce_data->health_stats, rest_* fields
@@ -5761,8 +5770,9 @@ static ssize_t batt_show_chg_details(struct device *dev,
 
 	/* this was the last one (if present) */
 	if (qual_valid) {
-		len += batt_chg_qual_stats_cstr(&buf[len], PAGE_SIZE - len,
-						&batt_drv->ce_qual, true);
+		len += batt_chg_qual_stats_cstr(
+			&buf[len], PAGE_SIZE - len, &batt_drv->ce_qual, true,
+			aacr_filtered_capacity(batt_drv, &batt_drv->ce_qual));
 		len += scnprintf(&buf[len], PAGE_SIZE - len, "\n");
 	}
 
