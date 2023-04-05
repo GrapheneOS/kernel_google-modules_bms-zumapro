@@ -75,7 +75,7 @@
 /* TA maximum voltage that can support CC in Constant Power Mode */
 #define LN8411_TA_MAX_VOL_CP		10250000
 /* Offset for cc_max / 2 */
-#define LN8411_IIN_MAX_OFFSET		0
+#define LN8411_IIN_MAX_OFFSET		25000 /* uA */
 
 
 /* maximum retry counter for restarting charging */
@@ -90,7 +90,7 @@
 /* Maximum WCRX voltage threshold */
 #define LN8411_WCRX_MAX_VOL		9750000 /* uV */
 /* WCRX voltage Step */
-#define WCRX_VOL_STEP			100000	/* uV */
+#define WCRX_VOL_STEP			40000	/* uV */
 
 /* Default value for protections */
 #define VBAT_REV_UVP_DFT		3500000 /* 3.5V */
@@ -884,7 +884,7 @@ static int ln8411_check_state(struct ln8411_charger *ln8411, int loglevel)
 
 static int ln8411_check_not_active(struct ln8411_charger *ln8411, int loglevel)
 {
-	int ret;
+	int ret, rc = -EINVAL;
 	unsigned int reg;
 	u8 safety_sts[4];
 
@@ -892,10 +892,15 @@ static int ln8411_check_not_active(struct ln8411_charger *ln8411, int loglevel)
 	if (ret < 0)
 		goto done;
 
-	if (reg & LN8411_STANDBY_STS)
+	if (reg & LN8411_STANDBY_STS) {
+		rc = -EAGAIN;
 		logbuffer_prlog(ln8411, loglevel, "%s: in standby\n", __func__);
-	else if (reg & LN8411_SHUTDOWN_STS)
+	} else if (reg & LN8411_SHUTDOWN_STS) {
+		rc = -EINVAL;
 		logbuffer_prlog(ln8411, loglevel, "%s: in shutdown\n", __func__);
+	} else {
+		rc = 0;
+	}
 
 	ret = regmap_bulk_read(ln8411->regmap, LN8411_SAFETY_STS, safety_sts, 4);
 
@@ -904,7 +909,7 @@ done:
 			"%s: ret: %d, LN8411_SAFETY_STS 0x99:%#02x, 0x9a:%#02x, 0x9b:%#02x, 0x9c:%#02x\n",
 			__func__, ret, safety_sts[0], safety_sts[1], safety_sts[2], safety_sts[3]);
 
-	return ret;
+	return rc;
 }
 
 int ln8411_check_active(struct ln8411_charger *ln8411)
@@ -931,9 +936,6 @@ int ln8411_check_active(struct ln8411_charger *ln8411)
 	if (!val) {
 		dev_err(ln8411->dev, "%s: CP Not switching LN8411_SYS_STS: %#02X\n",
 			__func__, reg);
-
-		ln8411_check_state(ln8411, LOGLEVEL_ERR);
-		ln8411_check_not_active(ln8411, LOGLEVEL_ERR);
 		return -EINVAL;
 	}
 
@@ -957,39 +959,22 @@ int ln8411_check_active(struct ln8411_charger *ln8411)
 static int ln8411_check_error(struct ln8411_charger *ln8411)
 {
 	int ret = -EINVAL, vbatt;
-	unsigned int val;
 
 	/* LN8411 is active state */
-	if (ln8411_check_active(ln8411) <= 0)
-		goto error;
+	if (ln8411_check_active(ln8411) == 1) {
+		dev_dbg(ln8411->dev, "%s: Active Status ok\n", __func__);
+		return 0;
+	}
 
 	/* LN8411 is charging */
 	/* Check whether the battery voltage is over the minimum */
 	vbatt = ln8411_read_adc(ln8411, ADCCH_VBAT);
-	if (vbatt <= LN8411_DC_VBAT_MIN) {
+	if (vbatt <= LN8411_DC_VBAT_MIN)
 		/* Abnormal battery level */
 		dev_err(ln8411->dev, "%s: Error abnormal battery voltage=%d\n",	__func__, vbatt);
-		goto error;
-	}
 
-	/* Normal charging battery level */
-	/* Check temperature regulation loop */
-	ret = regmap_read(ln8411->regmap, LN8411_SAFETY_STS, &val);
-	if (ret < 0) {
-		dev_err(ln8411->dev, "%s: cannot read LN8411_SAFETY_STS (%d)\n", __func__, ret);
-		goto error;
-	} else if ((val & LN8411_TEMP_FAULT_DETECTED) || (val & LN8411_TEMP_MAX_STS)) {
-		/* Over temperature protection */
-		dev_err(ln8411->dev, "%s: In temperature regulation %#02X\n", __func__, val);
-		goto error;
-	}
-
-	dev_dbg(ln8411->dev, "%s: Active Status ok=%d (ret=%d)\n", __func__, ret == 0, ret);
-	return ret;
-
-error:
 	ln8411_check_state(ln8411, LOGLEVEL_ERR);
-	ln8411_check_not_active(ln8411, LOGLEVEL_ERR);
+	ret = ln8411_check_not_active(ln8411, LOGLEVEL_ERR);
 
 	/*
 	 * Sometimes battery driver might call set_property function
@@ -1000,8 +985,8 @@ error:
 	if (ln8411->charging_state == DC_STATE_NO_CHARGING)
 		dev_err(ln8411->dev, "%s: other driver forced stop\n", __func__);
 
-	dev_dbg(ln8411->dev, "%s: Not Active Status=%d\n", __func__, -EINVAL);
-	return -EINVAL;
+	dev_dbg(ln8411->dev, "%s: Not Active Status=%d\n", __func__, ret);
+	return ret;
 }
 
 static int ln8411_get_iin(struct ln8411_charger *ln8411, int *iin)
@@ -1556,10 +1541,16 @@ static int ln8411_set_ta_current_comp2(struct ln8411_charger *ln8411)
 
 			/* Check IIN_ADC < IIN_CC - 50mA */
 			if (iin < iin_cc_lb) {
-				const unsigned int ta_max_vol =
-				    ln8411->pdata->ta_max_vol * ln8411->chg_mode;
+				unsigned int ta_max_vol = 0;
 				unsigned int iin_apdo;
 				unsigned int val;
+
+				if (ln8411->chg_mode == CHG_4TO1_DC_MODE)
+					ta_max_vol =
+						   ln8411->pdata->ta_max_vol_4_1 * CHG_4TO1_DC_MODE;
+				else if (ln8411->chg_mode == CHG_2TO1_DC_MODE)
+					ta_max_vol =
+						   ln8411->pdata->ta_max_vol_2_1 * CHG_2TO1_DC_MODE;
 
 				/* Set new IIN_CC to IIN_CC - 50mA */
 				ln8411->iin_cc = ln8411->iin_cc -
@@ -1856,7 +1847,7 @@ static int ln8411_set_wireless_dc(struct ln8411_charger *ln8411, int vbat)
 /* recalculate ->ta_vol and ->ta_cur looking at demand (cc_max) */
 static int ln8411_set_wired_dc(struct ln8411_charger *ln8411, int vbat)
 {
-	const unsigned long ta_max_vol = ln8411->pdata->ta_max_vol * ln8411->chg_mode;
+	const unsigned long ta_max_vol = ln8411->ta_max_vol;
 	unsigned long val;
 	int iin_cc;
 
@@ -2831,13 +2822,19 @@ static int ln8411_charge_ccmode(struct ln8411_charger *ln8411)
 					ln8411->ta_vol);
 		} else {
 			const int ta_max_vol = ln8411->ta_max_vol;
+			int ta_max_vol_cp = 0;
+
+			if (ln8411->chg_mode == CHG_4TO1_DC_MODE)
+				ta_max_vol_cp = ln8411->pdata->ta_max_vol_4_1 * CHG_4TO1_DC_MODE;
+			else if (ln8411->chg_mode == CHG_2TO1_DC_MODE)
+				ta_max_vol_cp = ln8411->pdata->ta_max_vol_2_1 * CHG_2TO1_DC_MODE;
 
 			/* Check TA current with TA_MIN_CUR */
 			if (ln8411->ta_cur <= LN8411_TA_MIN_CUR) {
 				ln8411->ta_cur = LN8411_TA_MIN_CUR;
 
 				ret = ln8411_set_ta_voltage_comp(ln8411);
-			} else if (ta_max_vol >= ln8411->pdata->ta_max_vol_cp) {
+			} else if (ta_max_vol >= ta_max_vol_cp) {
 				ret = ln8411_set_ta_current_comp(ln8411);
 			} else {
 				/* constant power mode */
@@ -3252,7 +3249,6 @@ static int ln8411_set_chg_mode_by_apdo(struct ln8411_charger *ln8411)
 				      LN8411_TA_MAX_CUR_4_1);
 	if (ret == 0) {
 		ln8411->chg_mode = CHG_4TO1_DC_MODE;
-		ln8411->pdata->ta_max_vol = ln8411->pdata->ta_max_vol_4_1;
 		goto done;
 	}
 
@@ -3263,7 +3259,6 @@ static int ln8411_set_chg_mode_by_apdo(struct ln8411_charger *ln8411)
 				      LN8411_TA_MAX_CUR);
 	if (ret == 0) {
 		ln8411->chg_mode = CHG_2TO1_DC_MODE;
-		ln8411->pdata->ta_max_vol = ln8411->pdata->ta_max_vol_2_1;
 		goto done;
 	}
 
@@ -3273,13 +3268,12 @@ static int ln8411_set_chg_mode_by_apdo(struct ln8411_charger *ln8411)
 	ret = ln8411_get_apdo_max_power(ln8411, ln8411->pdata->ta_max_vol_2_1 * CHG_2TO1_DC_MODE, 0);
 	if (ret == 0) {
 		ln8411->chg_mode = CHG_2TO1_DC_MODE;
-		ln8411->pdata->ta_max_vol = ln8411->pdata->ta_max_vol_2_1;
 		goto done;
 	}
 
 	dev_err(ln8411->dev, "%s: No APDO to support 2:1\n", __func__);
 	ln8411->chg_mode = CHG_NO_DC_MODE;
-	ln8411->pdata->ta_max_vol = 0;
+	ln8411->ta_max_vol = 0;
 
 done:
 	return ret;
@@ -3475,28 +3469,8 @@ static int ln8411_check_active_state(struct ln8411_charger *ln8411)
 		ln8411->retry_cnt = 0;
 		ln8411->timer_id = TIMER_ADJUST_CCMODE;
 		ln8411->timer_period = 0;
-	} else if (ret == -EAGAIN) {
-
-		/* try restarting only */
-		if (ln8411->retry_cnt >= LN8411_MAX_RETRY_CNT) {
-			dev_err(ln8411->dev, "%s: retry failed\n", __func__);
-			ret = -EINVAL;
+	} else {
 			goto exit_done;
-		}
-
-		/*
-		 * Disable charging to retry enabling it later, return 0 here
-		 * and the timer loop will figure out that there is something
-		 * wrong and will retry.
-		 */
-		ret = ln8411_set_charging(ln8411, false);
-		dev_err(ln8411->dev, "%s: retry cnt=%d, (%d)\n", __func__,
-		       ln8411->retry_cnt, ret);
-		if (ret == 0) {
-			ln8411->timer_id = TIMER_PRESET_DC;
-			ln8411->timer_period = 0;
-			ln8411->retry_cnt++;
-		}
 	}
 
 exit_done:
@@ -3636,7 +3610,7 @@ static int ln8411_send_message(struct ln8411_charger *ln8411)
 
 	/* Adjust TA current and voltage step */
 	if (ln8411->ta_type == TA_TYPE_WIRELESS) {
-		/* RX voltage resolution is 100mV */
+		/* RX voltage resolution is 40mV */
 		val = ln8411->ta_vol / WCRX_VOL_STEP;
 		ln8411->ta_vol = val * WCRX_VOL_STEP;
 
@@ -4078,7 +4052,8 @@ static int ln8411_hw_init(struct ln8411_charger *ln8411)
 	if (!adc_done)
 		dev_err(ln8411->dev, "%s: Error enabling adc\n", __func__);
 #endif
-
+	if (!ret)
+		dev_dbg(ln8411->dev, "HW init done");
 error_done:
 	return ret;
 }
@@ -4317,7 +4292,8 @@ static int ln8411_enable_1_2_mode(struct ln8411_charger *ln8411)
 
 	msleep(200);
 
-	if (!(ln8411_check_active(ln8411) == 1))
+	ret = ln8411_check_error(ln8411);
+	if (ret)
 		goto error;
 
 	/* Enable PMID2OUT_UVP */
@@ -4348,7 +4324,9 @@ static int ln8411_enable_1_2_mode(struct ln8411_charger *ln8411)
 		goto error;
 	}
 
-	ret = ln8411_check_active(ln8411) <= 0;
+	ret = ln8411_check_error(ln8411);
+	if (ret)
+		goto error;
 
 error:
 	ret1 = ln8411_set_lion_ctrl(ln8411, LN8411_LION_CTRL_LOCK);
@@ -4758,12 +4736,6 @@ static int of_ln8411_dt(struct device *dev,
 	if (ret) {
 		dev_warn(dev, "ln8411,ta-max-vol_2_1 is Empty\n");
 		pdata->ta_max_vol_2_1 = LN8411_TA_MAX_VOL_2_1;
-	}
-	ret = of_property_read_u32(np_ln8411, "ln8411,ta-max-vol-cp",
-				   &pdata->ta_max_vol_cp);
-	if (ret) {
-		dev_warn(dev, "ln8411,ta-max-vol-cp is Empty\n");
-		pdata->ta_max_vol_cp = pdata->ta_max_vol;
 	}
 
 	/* charging float voltage */
