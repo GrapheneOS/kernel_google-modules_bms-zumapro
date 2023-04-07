@@ -469,6 +469,7 @@ const char *gbms_chg_ev_adapter_s(int adapter);
 #define VOTABLE_TEMP_DRYRUN	"MSC_TEMP_DRYRUN"
 #define VOTABLE_MSC_LAST	"MSC_LAST"
 #define VOTABLE_MDIS		"CHG_MDIS"
+#define VOTABLE_THERMAL_LVL	"CHG_THERM_LVL"
 
 #define VOTABLE_CSI_STATUS	"CSI_STATUS"
 #define VOTABLE_CSI_TYPE	"CSI_TYPE"
