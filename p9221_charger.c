@@ -304,6 +304,10 @@ bool p9xxx_is_capdiv_en(struct p9221_charger_data *charger)
 	int ret;
 	u8 cdmode;
 
+	/* 9530 doesn't require capdiv mode */
+	if (charger->chip_id == RA9530_CHIP_ID)
+		return true;
+
 	if (charger->chip_id != P9412_CHIP_ID)
 		return false;
 
@@ -671,14 +675,15 @@ static int p9xxx_set_bypass_mode(struct p9221_charger_data *charger)
 
 	if (!charger->online)
 		return 0;
+	if (charger->chip_id == P9412_CHIP_ID) {
+		/* Check it's in Cap Div mode */
+		ret = charger->reg_read_8(charger, P9412_CDMODE_STS_REG, &cdmode);
+		if (ret || (cdmode & CDMODE_BYPASS_MODE))
+			return ret;
+		dev_info(&charger->client->dev, "cdmode_reg=%02x\n", cdmode);
 
-	/* Check it's in Cap Div mode */
-	ret = charger->reg_read_8(charger, P9412_CDMODE_STS_REG, &cdmode);
-	if (ret || (cdmode & CDMODE_BYPASS_MODE))
-		return ret;
-	dev_info(&charger->client->dev, "cdmode_reg=%02x\n", cdmode);
-
-	usleep_range(500 * USEC_PER_MSEC, 510 * USEC_PER_MSEC);
+		usleep_range(500 * USEC_PER_MSEC, 510 * USEC_PER_MSEC);
+	}
 	/* Ramp down WLC Vout to 15.3V */
 	while (true) {
 		ret = charger->chip_get_vout(charger, &vout_now);
@@ -748,21 +753,23 @@ static int p9xxx_set_bypass_mode(struct p9221_charger_data *charger)
 	}
 
 	if (count == 3) {
-		dev_err(&charger->client->dev, "%s: timeout for change to bypass mode\n", __func__);
+		dev_err(&charger->client->dev, "%s: timeout for exit from high power mode\n", __func__);
 		return -ETIMEDOUT;
 	}
 
-	/* Request Bypass mode */
-	ret = charger->chip_capdiv_en(charger, CDMODE_BYPASS_MODE);
-	if (ret) {
-		u8 mode_sts = 0, err_sts = 0;
-		int rc;
+	if (charger->chip_id == P9412_CHIP_ID) {
+		/* Request Bypass mode */
+		ret = charger->chip_capdiv_en(charger, CDMODE_BYPASS_MODE);
+		if (ret) {
+			u8 mode_sts = 0, err_sts = 0;
+			int rc;
 
-		rc = charger->reg_read_8(charger, P9412_PROP_MODE_STATUS_REG, &mode_sts);
-		rc |= charger->reg_read_8(charger, P9412_PROP_MODE_ERR_STS_REG, &err_sts);
-		dev_err(&charger->client->dev,
-			"Fail to change to bypass mode(%d), rc=%d sts=%02x, err=%02x\n",
-			ret, rc, mode_sts, err_sts);
+			rc = charger->reg_read_8(charger, P9412_PROP_MODE_STATUS_REG, &mode_sts);
+			rc |= charger->reg_read_8(charger, P9412_PROP_MODE_ERR_STS_REG, &err_sts);
+			dev_err(&charger->client->dev,
+				"Fail to change to bypass mode(%d), rc=%d sts=%02x, err=%02x\n",
+				ret, rc, mode_sts, err_sts);
+		}
 	}
 
 	return ret;
@@ -2201,12 +2208,15 @@ unlock_done:
 	mutex_unlock(&charger->stats_lock);
 }
 
-static bool p9412_is_calibration_done(struct p9221_charger_data *charger)
+static bool is_epp_calibration_done(struct p9221_charger_data *charger)
 {
 	u8 reg;
 	int ret;
 
 	ret = p9221_reg_read_8(charger, P9412_EPP_CAL_STATE_REG, &reg);
+
+	if (charger->chip_id == RA9530_CHIP_ID)
+		return ((ret == 0) && ((reg & RA9530_EPP_CAL_STATE_MASK) == 0));
 
 	dev_info(&charger->client->dev, "EPP_CAL_STATE_REG=%02x\n", reg);
 
@@ -2332,15 +2342,14 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 	if (online < 0 || online > PPS_PSY_PROG_ONLINE)
 		return -EINVAL;
 
+	pr_info("%s: online=%d, enabled=%d wlc_dc_enabled=%d prop_mode_en=%d\n",
+		__func__, online, enabled, wlc_dc_enabled,
+		charger->prop_mode_en);
 	/* online = 2 enable LL, return < 0 if NOT on LL */
 	if (online == PPS_PSY_PROG_ONLINE) {
 		const int extben_gpio = charger->pdata->ext_ben_gpio;
 		bool feat_enable;
 		u8 val8;
-
-		pr_info("%s: online=%d, enabled=%d wlc_dc_enabled=%d prop_mode_en=%d\n",
-			__func__, online, enabled, wlc_dc_enabled,
-			charger->prop_mode_en);
 
 		if (!enabled) {
 			dev_warn(&charger->client->dev,
@@ -2370,7 +2379,7 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 			return -EOPNOTSUPP;
 
 		/* need to check calibration is done before re-negotiate */
-		if (!p9412_is_calibration_done(charger)) {
+		if (!is_epp_calibration_done(charger)) {
 			dev_warn(&charger->client->dev, "Calibrating\n");
 			return -EAGAIN;
 		}
@@ -2392,6 +2401,7 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 			pr_debug("%s: Feature check OK\n", __func__);
 		} else if (charger->auth_delay) {
 			mutex_unlock(&charger->auth_lock);
+			dev_info(&charger->client->dev, "Auth delay\n");
 			return -EAGAIN;
 		} else {
 			dev_warn(&charger->client->dev, "Feature check failed\n");
@@ -2420,8 +2430,10 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 		 */
 		if (!(charger->prop_mode_en && p9xxx_is_capdiv_en(charger))) {
 			ret = set_renego_state(charger, P9XXX_ENABLE_PROPMODE);
-			if (ret == -EAGAIN)
+			if (ret == -EAGAIN) {
+				dev_dbg(&charger->client->dev, "Set renego state retry\n");
 				return ret;
+			}
 			ret = charger->chip_prop_mode_en(charger, HPP_MODE_PWR_REQUIRE);
 			if (ret == -EAGAIN) {
 				dev_warn(&charger->client->dev, "PROP Mode retry\n");
@@ -2445,7 +2457,7 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 				dev_warn(&charger->client->dev,
 					 "Cannot disable HPP_VOTER (%d)\n", ret);
 
-			pr_debug("%s: HPP not supported\n", __func__);
+			dev_dbg(&charger->client->dev, "%s: HPP not supported\n", __func__);
 			return -EOPNOTSUPP;
 		}
 
@@ -4518,7 +4530,7 @@ static ssize_t wpc_ready_show(struct device *dev,
 		return scnprintf(buf, PAGE_SIZE, "N\n");
 
 	return scnprintf(buf, PAGE_SIZE, "%c\n",
-			 p9412_is_calibration_done(charger) ? 'Y' : 'N');
+			 is_epp_calibration_done(charger) ? 'Y' : 'N');
 }
 
 static DEVICE_ATTR_RO(wpc_ready);
