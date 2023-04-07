@@ -175,6 +175,14 @@ static const struct mfd_cell max77779_pmic_devs[] = {
 		.name = "max77779-pmic-irq",
 		.of_compatible = "max77779-pmic-irq",
 	},
+	{
+		.name = "max77779-pinctrl",
+		.of_compatible = "max77779-pinctrl",
+	},
+	{
+		.name = "max77779-pmic-sgpio",
+		.of_compatible = "max77779-pmic-sgpio",
+	},
 };
 
 static int max77779_pmic_probe(struct i2c_client *client,

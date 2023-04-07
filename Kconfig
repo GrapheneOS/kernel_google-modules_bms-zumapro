@@ -156,3 +156,15 @@ config MAX77779_PMIC_IRQ
 	help
 	  Handle IRQs for Sequoia
 
+config MAX77779_PMIC_PINCTRL
+	tristate "Maxim 77779 PMIC PINCTRL"
+	depends on OF && MAX77779_PMIC
+	help
+	  Handle PINCTRL for Sequoia
+
+config MAX77779_PMIC_SGPIO
+	tristate "Maxim 77779 PMIC SGPIO"
+	depends on OF && MAX77779_PMIC
+	help
+	  Handle GPIOS for Sequoia
+
