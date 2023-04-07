@@ -316,6 +316,7 @@ struct chg_drv {
 	/* CSI */
 	struct gvotable_election *csi_status_votable;
 	struct gvotable_election *csi_type_votable;
+	struct gvotable_election *thermal_level_votable;
 
 	/* debug */
 	struct dentry *debug_entry;
@@ -1556,6 +1557,10 @@ static void thermal_stats_update(struct chg_drv *chg_drv) {
 	/* Note; we do not report level 0 (eg. mdis_level == 0) */
 	if (i >= STATS_THERMAL_LEVELS_MAX)
 		return;
+
+	/* better to use i - 1 ? */
+	gvotable_cast_int_vote(chg_drv->thermal_level_votable,
+			       "THERMAL_UPDATE", i, true);
 
 	chg_stats_update(chg_drv,
 			 &chg_drv->thermal_stats[i],
@@ -4336,6 +4341,7 @@ static void chg_destroy_votables(struct chg_drv *chg_drv)
 	gvotable_destroy_election(chg_drv->msc_pwr_disable_votable);
 	gvotable_destroy_election(chg_drv->msc_temp_dry_run_votable);
 	gvotable_destroy_election(chg_drv->charging_policy_votable);
+	gvotable_destroy_election(chg_drv->thermal_level_votable);
 
 	chg_drv->msc_fv_votable = NULL;
 	chg_drv->msc_fcc_votable = NULL;
@@ -4346,6 +4352,7 @@ static void chg_destroy_votables(struct chg_drv *chg_drv)
 	chg_drv->csi_status_votable = NULL;
 	chg_drv->csi_type_votable = NULL;
 	chg_drv->charging_policy_votable = NULL;
+	chg_drv->thermal_level_votable = NULL;
 }
 
 /* TODO: qcom/battery.c mostly handles PL charging: we don't need it.
@@ -4455,6 +4462,19 @@ static int chg_create_votables(struct chg_drv *chg_drv)
 				   VOTABLE_CHARGING_POLICY);
 	gvotable_cast_long_vote(chg_drv->charging_policy_votable,
 				"DEFAULT", CHARGING_POLICY_DEFAULT, true);
+
+	chg_drv->thermal_level_votable =
+		gvotable_create_int_election(NULL, gvotable_comparator_least_recent,
+					     NULL, chg_drv);
+	if (IS_ERR_OR_NULL(chg_drv->thermal_level_votable)) {
+		ret = PTR_ERR(chg_drv->thermal_level_votable);
+		chg_drv->thermal_level_votable = NULL;
+		goto error_exit;
+	}
+
+	gvotable_set_default(chg_drv->thermal_level_votable, (void *)0);
+	gvotable_set_vote2str(chg_drv->thermal_level_votable, gvotable_v2s_int);
+	gvotable_election_set_name(chg_drv->thermal_level_votable, VOTABLE_THERMAL_LVL);
 
 	return 0;
 
