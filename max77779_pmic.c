@@ -13,6 +13,7 @@
 #include <linux/of_irq.h>
 #include <linux/gpio.h>
 #include <linux/gpio/driver.h>
+#include <linux/mfd/core.h>
 #include <linux/module.h>
 #include <linux/regmap.h>
 #include <linux/interrupt.h>
@@ -169,6 +170,13 @@ static const struct regmap_config max77779_pmic_regmap_cfg = {
 	.volatile_reg = max77779_pmic_is_volatile,
 };
 
+static const struct mfd_cell max77779_pmic_devs[] = {
+	{
+		.name = "max77779-pmic-irq",
+		.of_compatible = "max77779-pmic-irq",
+	},
+};
+
 static int max77779_pmic_probe(struct i2c_client *client,
 			       const struct i2c_device_id *id)
 {
@@ -199,6 +207,9 @@ static int max77779_pmic_probe(struct i2c_client *client,
 		dev_err(dev, "Unsupported Device ID (%#02x)\n", pmic_id);
 		return -ENODEV;
 	}
+
+	mfd_add_devices(dev, PLATFORM_DEVID_AUTO, max77779_pmic_devs,
+			ARRAY_SIZE(max77779_pmic_devs), NULL, 0, NULL);
 
 	dbg_init_fs(info);
 

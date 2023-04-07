@@ -40,6 +40,7 @@ kernel_module(
         "p9221.ko",
         "pca9468.ko",
         "max77779_pmic.ko",
+        "max77779_pmic_irq.ko",
         "wlc98_driver.ko",
         "wc68.ko",
         "max77779-sp.ko",

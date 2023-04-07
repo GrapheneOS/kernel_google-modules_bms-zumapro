@@ -23,6 +23,7 @@ GBMS_MODULES =	GOOGLE_BMS \
 		PCA9468 \
 		MAX20339 \
 		MAX77779_PMIC \
+		MAX77779_PMIC_IRQ \
 		STWLC98 \
 		STWC68 \
 		LN8411
@@ -135,6 +136,7 @@ max77779-sp-objs += max77779_sp.o
 
 # MAX77779 PMIC
 obj-$(CONFIG_MAX77779_PMIC) += max77779_pmic.o
+obj-$(CONFIG_MAX77779_PMIC_IRQ) += max77779_pmic_irq.o
 
 # LN8411 DC Charge pump
 obj-$(CONFIG_LN8411)	+= ln8411.o

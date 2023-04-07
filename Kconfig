@@ -150,3 +150,9 @@ config MAX77779_PMIC
 	help
 	  Handle IRQs for Sequoia
 
+config MAX77779_PMIC_IRQ
+	tristate "Maxim 77779 PMIC IRQ"
+	depends on OF && MAX77779_PMIC
+	help
+	  Handle IRQs for Sequoia
+
