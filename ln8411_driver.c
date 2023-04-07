@@ -172,32 +172,32 @@ enum batt_info_t {
 static u8 mode_settings[3][8][3] = {
 	/* 2 to 1 */
 	{
-		{LN8411_VUSB_OVP, VUSB_OVP_DFT_2_1, 0x0},
-		{LN8411_VWPC_OVP, VUSB_OVP_DFT_2_1, 0x0},
+		{LN8411_VUSB_OVP, VUSB_OVP_DFT_2_1, 0xcf},
+		{LN8411_VWPC_OVP, VUSB_OVP_DFT_2_1, 0xcf},
 		{LN8411_CFG_10, CFG_10_DFT_2_1, 0x1},
 		{LN8411_IBUS_OCP, IBUS_OCP_DFT_2_1, 0x0},
 		{LN8411_IBUS_UCP, IBUS_UCP_DFT_4_1, 0x0},
-		{LN8411_PMID2OUT_UVP, PMID2OUT_UVP_DFT_4_1, 0x0},
+		{LN8411_PMID2OUT_UVP, PMID2OUT_UVP_DFT_4_1, 0x9f},
 		{0x0, 0x0, 0x0},
 		{0x0, 0x0, 0x0},
 	},
 	/* 4 to 1 */
 	{
-		{LN8411_VUSB_OVP, VUSB_OVP_DFT_4_1, 0x0},
-		{LN8411_VWPC_OVP, VUSB_OVP_DFT_4_1, 0x0},
+		{LN8411_VUSB_OVP, VUSB_OVP_DFT_4_1, 0xcf},
+		{LN8411_VWPC_OVP, VUSB_OVP_DFT_4_1, 0xcf},
 		{LN8411_CFG_10, CFG_10_DFT_4_1, 0x1},
 		{LN8411_IBUS_OCP, IBUS_OCP_DFT_4_1, 0x0},
 		{LN8411_IBUS_UCP, IBUS_UCP_DFT_4_1, 0x0},
-		{LN8411_PMID2OUT_UVP, PMID2OUT_UVP_DFT_4_1, 0x0},
+		{LN8411_PMID2OUT_UVP, PMID2OUT_UVP_DFT_4_1, 0x9f},
 		{0x0, 0x0, 0x0},
 		{0x0, 0x0, 0x0},
 	},
 	/* 1 to 2 */
 	{
-		{LN8411_VWPC_OVP, VUSB_OVP_DFT_2_1, 0x0},
+		{LN8411_VWPC_OVP, VUSB_OVP_DFT_2_1, 0xcf},
 		{LN8411_CFG_10, CFG_10_DFT_4_1, 0x1},
 		{LN8411_IBUS_OCP, IBUS_OCP_DFT_1_2, 0x0},
-		{LN8411_PMID2OUT_UVP, PMID2OUT_UVP_DFT_1_2, 0x0},
+		{LN8411_PMID2OUT_UVP, PMID2OUT_UVP_DFT_1_2, 0x9f},
 		{LN8411_IBUS_UCP, IBUS_UCP_DFT_1_2, 0x0},
 		{LN8411_LION_COMP_CTRL_1, PMID_SWITCH_OK_DIS, 0x0},
 		{LN8411_LION_COMP_CTRL_2, LN8411_VWPC_UVP_DIS, 0x0},
@@ -3946,9 +3946,10 @@ static int ln8411_cfg_adc(struct ln8411_charger *ln8411)
 	ret = regmap_set_bits(ln8411->regmap, LN8411_ADC_CTRL2, 0xC0);
 
 #ifdef POLL_ADC
-	ret = regmap_write(ln8411->regmap, LN8411_ADC_CTRL, LN8411_ADC_EN);
+	ret = regmap_update_bits(ln8411->regmap, LN8411_ADC_CTRL, 0xc9, LN8411_ADC_EN);
 #else
-	ret = regmap_write(ln8411->regmap, LN8411_ADC_CTRL, LN8411_ADC_EN | LN8411_ADC_DONE_MASK);
+	ret = regmap_update_bits(ln8411->regmap, LN8411_ADC_CTRL, 0xc9,
+				 LN8411_ADC_EN | LN8411_ADC_DONE_MASK);
 #endif
 	if (ret)
 		return ret;
@@ -3983,7 +3984,12 @@ static int ln8411_hw_init(struct ln8411_charger *ln8411)
 			disable_irq(ln8411->client->irq);
 	}
 
-	/* Integration guide V1.0 Section 4.2 */
+	/* Integration guide V1.2 Section 4.2 */
+	dev_dbg(ln8411->dev, "%s: Enable TSBAT_EN_PIN\n", __func__);
+	ret = regmap_set_bits(ln8411->regmap, LN8411_CTRL4, LN8411_TSBAT_EN_PIN);
+	if (ret)
+		goto error_done;
+
 	/* Turn OFF both OVP and WPC gates to prevent wrong input detection */
 	dev_dbg(ln8411->dev, "%s: turn OFF gates\n", __func__);
 	ret = regmap_clear_bits(ln8411->regmap, LN8411_CTRL1, LN8411_OVPGATE_EN | LN8411_WPCGATE_EN);
@@ -3991,7 +3997,7 @@ static int ln8411_hw_init(struct ln8411_charger *ln8411)
 		goto error_done;
 
 	/* 685kHz, enable spread spectrum */
-	ret = regmap_write(ln8411->regmap, LN8411_CTRL2, 0x9A);
+	ret = regmap_update_bits(ln8411->regmap, LN8411_CTRL2, 0xfe, 0x9A);
 	if (ret)
 		goto error_done;
 
@@ -4029,7 +4035,7 @@ static int ln8411_hw_init(struct ln8411_charger *ln8411)
 		goto error_done;
 
 	dev_dbg(ln8411->dev, "%s: pmid2out ovp to 13%%\n", __func__);
-	ret = regmap_write(ln8411->regmap, LN8411_PMID2OUT_OVP, 0x4);
+	ret = regmap_update_bits(ln8411->regmap, LN8411_PMID2OUT_OVP, 0x9f, 0x4);
 	if (ret)
 		goto error_done;
 
@@ -4315,7 +4321,7 @@ static int ln8411_enable_1_2_mode(struct ln8411_charger *ln8411)
 		goto error;
 
 	/* Enable PMID2OUT_UVP */
-	ret = regmap_write(ln8411->regmap, LN8411_PMID2OUT_UVP, PMID2OUT_UVP_DFT_EN_1_2);
+	ret = regmap_update_bits(ln8411->regmap, LN8411_PMID2OUT_UVP, 0x9f, PMID2OUT_UVP_DFT_EN_1_2);
 	if (ret) {
 		dev_info(ln8411->dev, "%s: Error enabling PMID2OUT_UVP (%d)\n", __func__, ret);
 		goto error;

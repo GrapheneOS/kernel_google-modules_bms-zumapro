@@ -145,6 +145,7 @@
 #define LN8411_SYNC_MASK		(LN8411_SYNC_FUNCTION_EN | LN8411_SYNC_MASTER_EN)
 #define LN8411_VBUS_OVP_SET             BIT(5)
 #define LN8411_SET_IBAT_SNS_RES         BIT(4)
+#define LN8411_TSBAT_EN_PIN		BIT(3)
 #define LN8411_MODE_MASK                GENMASK(2, 0)
 
 #define LN8411_CTRL5                    0xe
