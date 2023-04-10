@@ -2129,6 +2129,16 @@ static int p9221_get_property(struct power_supply *psy,
 		if (rc)
 			val->intval = 0;
 		break;
+	case GBMS_PROP_WLC_VCPOUT:
+		rc = p9221_ready_to_read(charger);
+		if (!rc) {
+			rc = charger->chip_get_vcpout(charger, &temp);
+			if (!rc)
+				val->intval = P9221_MV_TO_UV(temp);
+		}
+		if (rc)
+			val->intval = 0;
+		break;
 
 	default:
 		ret = -EINVAL;

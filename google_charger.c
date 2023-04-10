@@ -697,14 +697,15 @@ static int info_wlc_state(union gbms_ce_adapter_details *ad,
 	voltage_max = GPSY_GET_PROP(wlc_psy, POWER_SUPPLY_PROP_VOLTAGE_MAX);
 	amperage_max = GPSY_GET_PROP(wlc_psy, POWER_SUPPLY_PROP_CURRENT_MAX);
 
-	pr_info("wlcv=%d wlcc=%d wlcMv=%d wlcMc=%d wlct=%d vrect=%d opfreq=%d\n",
+	pr_info("wlcv=%d wlcc=%d wlcMv=%d wlcMc=%d wlct=%d vrect=%d opfreq=%d, vcpout=%d\n",
 		GPSY_GET_PROP(wlc_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW) / 1000,
 		GPSY_GET_PROP(wlc_psy, POWER_SUPPLY_PROP_CURRENT_NOW) / 1000,
 		voltage_max / 1000,
 		amperage_max / 1000,
 		GPSY_GET_PROP(wlc_psy, POWER_SUPPLY_PROP_TEMP),
 		GPSY_GET_PROP(wlc_psy, GBMS_PROP_WLC_VRECT) / 1000,
-		GPSY_GET_PROP(wlc_psy, GBMS_PROP_WLC_OP_FREQ) / 1000);
+		GPSY_GET_PROP(wlc_psy, GBMS_PROP_WLC_OP_FREQ) / 1000,
+		GPSY_GET_PROP(wlc_psy, GBMS_PROP_WLC_VCPOUT) / 1000);
 
 	if (!ad)
 		return 0;
