@@ -434,6 +434,7 @@
 #define P9412_DIE_TEMP_REG			0x46 /* 2 byte in C */
 #define P9412_V5P0AP_SWITCH_REG			0x81
 #define V5P0AP_SWITCH_EN			BIT(7)
+#define P9412_VCPOUT_VOL_REG			0x10C
 
 #define P9412_CMFET_L_REG			0xF4
 #define P9412_CDMODE_STS_REG			0x100
@@ -890,6 +891,7 @@ struct p9221_charger_data {
 	int (*chip_get_vout)(struct p9221_charger_data *chgr, u32 *mv);
 	int (*chip_get_iout)(struct p9221_charger_data *chgr, u32 *ma);
 	int (*chip_get_op_freq)(struct p9221_charger_data *chgr, u32 *khz);
+	int (*chip_get_vcpout)(struct p9221_charger_data *chgr, u32 *mv);
 	int (*chip_set_cmd)(struct p9221_charger_data *chgr, u16 cmd);
 	int (*chip_get_rx_ilim)(struct p9221_charger_data *chgr, u32 *ma);
 	int (*chip_set_rx_ilim)(struct p9221_charger_data *chgr, u32 ma);

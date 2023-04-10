@@ -348,6 +348,28 @@ static int p9222_chip_get_op_freq(struct p9221_charger_data *chgr, u32 *khz)
 	*khz = (u32) val;
 	return 0;
 }
+/*
+ * chip_get_vcpout
+ *
+ *   Get CPout voltage(mV)
+ */
+static int p9412_chip_get_vcpout(struct p9221_charger_data *chgr, u32 *mv)
+{
+	int ret;
+	u16 val;
+
+	ret = chgr->reg_read_16(chgr, P9412_VCPOUT_VOL_REG, &val);
+	if (ret)
+		return ret;
+
+	*mv = (u32) val;
+	return 0;
+}
+static int p9xxx_chip_get_vcpout(struct p9221_charger_data *chgr, u32 *mv)
+{
+	return -ENOTSUPP;
+}
+
 
 /*
  * chip_get_vout_max
@@ -1822,6 +1844,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 	chgr->chip_set_cmd = p9xxx_chip_set_cmd_reg;
 	chgr->chip_get_op_freq = p9xxx_chip_get_op_freq;
 	chgr->chip_get_vrect = p9xxx_chip_get_vrect;
+	chgr->chip_get_vcpout = p9xxx_chip_get_vcpout;
 
 	switch (chip_id) {
 	case P9412_CHIP_ID:
@@ -1852,6 +1875,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->chip_send_txid = p9xxx_send_txid;
 		chgr->chip_send_csp_in_txmode = p9xxx_send_csp_in_txmode;
 		chgr->chip_capdiv_en = p9412_capdiv_en;
+		chgr->chip_get_vcpout = p9412_chip_get_vcpout;
 		break;
 	case P9382A_CHIP_ID:
 		chgr->rtx_state = RTX_AVAILABLE;
