@@ -287,6 +287,7 @@ struct max1720x_dyn_filtercfg {
 	u16 default_val;
 	u16 adjust_val;
 	struct mutex lock;
+	bool disable_dynamic_filtercfg;
 };
 
 extern int max1720x_fixup_comp(struct max1720x_drift_data *ddata,

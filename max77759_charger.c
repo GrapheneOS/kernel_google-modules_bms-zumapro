@@ -588,11 +588,18 @@ static int max77759_foreach_callback(void *data, const char *reason,
 		pr_debug("%s: WLC_TX vote=%x\n", __func__, mode);
 		cb_data->wlc_tx += 1;
 		break;
+	/* pogo vin */
+	case GBMS_POGO_VIN:
+		if (!cb_data->pogo_vin)
+			cb_data->reason = reason;
+		pr_debug("%s: POGO VIN vote=%x\n", __func__, mode);
+		cb_data->pogo_vin += 1;
+		break;
 	/* pogo vout */
-	case GBMS_CHGR_MODE_VOUT:
+	case GBMS_POGO_VOUT:
 		if (!cb_data->pogo_vout)
 			cb_data->reason = reason;
-		pr_debug("%s: VOUT vote=%x\n", __func__, mode);
+		pr_debug("%s: POGO VOUT vote=%x\n", __func__, mode);
 		cb_data->pogo_vout += 1;
 		break;
 
@@ -704,12 +711,6 @@ static int max77759_get_usecase(struct max77759_foreach_cb_data *cb_data,
 			return -EINVAL;
 		}
 
-		if (dc_on) {
-			pr_warn("%s: no wlc_tx with dc_on for now\n", __func__);
-			/* TODO: GSU_MODE_USB_DC_WLC_TX */
-			wlc_tx = 0;
-		}
-
 		if (uc_data->ext_otg_only && cb_data->otg_on) {
 			pr_warn("%s: no wlc_tx with otg_on for now\n", __func__);
 			wlc_tx = 0;
@@ -759,14 +760,10 @@ static int max77759_get_usecase(struct max77759_foreach_cb_data *cb_data,
 		dc_on = false;
 	} else if (wlc_tx) {
 
+		/* Disable DC when Rtx is on will handle by dc_avail_votable */
 		if (!buck_on) {
 			mode = MAX77759_CHGR_MODE_ALL_OFF;
 			usecase = GSU_MODE_WLC_TX;
-		} else if (dc_on) {
-			/* TODO: turn off DC and run off MW */
-			pr_err("WLC_TX+DC is not supported yet\n");
-			mode = MAX77759_CHGR_MODE_ALL_OFF;
-			usecase = GSU_MODE_USB_DC;
 		} else if (chgr_on) {
 			mode = MAX77759_CHGR_MODE_CHGR_BUCK_ON;
 			usecase = GSU_MODE_USB_CHG_WLC_TX;
@@ -824,6 +821,12 @@ static int max77759_get_usecase(struct max77759_foreach_cb_data *cb_data,
 
 	}
 
+	if (!cb_data->dc_avail_votable)
+		cb_data->dc_avail_votable = gvotable_election_get_handle(VOTABLE_DC_CHG_AVAIL);
+	if (cb_data->dc_avail_votable)
+		gvotable_cast_int_vote(cb_data->dc_avail_votable,
+				       "WLC_TX", wlc_tx? 0 : 1, wlc_tx);
+
 	/* reg might be ignored later */
 	cb_data->reg = _chg_cnfg_00_cp_en_set(cb_data->reg, dc_on);
 	cb_data->reg = _chg_cnfg_00_mode_set(cb_data->reg, mode);
@@ -831,7 +834,23 @@ static int max77759_get_usecase(struct max77759_foreach_cb_data *cb_data,
 	return usecase;
 }
 
-static int max77759_wcin_is_valid(struct max77759_chgr_data *data);
+static void max77759_set_pogo_ovp_en(struct max77759_usecase_data *uc_data,
+				     const int enabled)
+{
+	const int gpio_en = gpio_get_value_cansleep(uc_data->pogo_ovp_en);
+	const bool pogo_ovp_en = uc_data->pogo_ovp_en_act_low ?
+				 (gpio_en == 0) : (gpio_en == 1);
+
+	/* return if pogo_ovp_en has been set */
+	if ((enabled && pogo_ovp_en) || (!enabled && !pogo_ovp_en))
+		return;
+
+	/* turn on/off pogo_ovp_en */
+	gpio_set_value_cansleep(uc_data->pogo_ovp_en, enabled ?
+				!uc_data->pogo_ovp_en_act_low :
+				uc_data->pogo_ovp_en_act_low);
+}
+
 /*
  * adjust *INSEL (only one source can be enabled at a given time)
  * NOTE: providing compatibility with input_suspend makes this more complex
@@ -889,15 +908,9 @@ static int max77759_set_insel(struct max77759_chgr_data *data,
 		/* turn off pogo_ovp */
 		if (uc_data->pogo_ovp_en > 0)
 			gpio_set_value_cansleep(uc_data->pogo_ovp_en, uc_data->pogo_ovp_en_act_low);
-	} else if (uc_data->dcin_is_dock && max77759_wcin_is_valid(data) && !cb_data->wlcin_off) {
+	} else if (cb_data->pogo_vin && !cb_data->wlcin_off) {
 		/* always disable USB when Dock is present */
 		insel_value &= ~MAX77759_CHG_CNFG_12_CHGINSEL;
-		/* b/232723240: charge over USB-C
-		 *              set to 1 for POGO_OVP_EN
-		 *              set to 0 for POGO_OVP_EN_L
-		 */
-		if (uc_data->pogo_ovp_en > 0)
-			gpio_set_value_cansleep(uc_data->pogo_ovp_en, !uc_data->pogo_ovp_en_act_low);
 		insel_value |= MAX77759_CHG_CNFG_12_WCINSEL;
 	}
 
@@ -919,6 +932,9 @@ static int max77759_set_insel(struct max77759_chgr_data *data,
 
 	/* changing [CHGIN|WCIN]_INSEL: works when protection is disabled  */
 	ret = max77759_chg_insel_write(uc_data->client, insel_mask, insel_value);
+
+	if (uc_data->pogo_ovp_en > 0)
+		max77759_set_pogo_ovp_en(uc_data, cb_data->pogo_vin);
 
 	pr_debug("%s: usecase=%d->%d mask=%x insel=%x wlc_on=%d force_wlc=%d (%d)\n",
 		 __func__, from_uc, use_case, insel_mask, insel_value, wlc_on,
@@ -1059,7 +1075,7 @@ static int max77759_mode_callback(struct gvotable_election *el,
 	       !cb_data.chgr_on && !cb_data.buck_on && ! cb_data.boost_on &&
 	       !cb_data.otg_on && !cb_data.uno_on && !cb_data.wlc_tx &&
 	       !cb_data.wlc_rx && !cb_data.wlcin_off && !cb_data.chgin_off &&
-	       !cb_data.usb_wlc && !cb_data.pogo_vout;
+	       !cb_data.usb_wlc && !cb_data.pogo_vout && !cb_data.pogo_vin;
 	if (nope) {
 		pr_debug("%s: nope callback\n", __func__);
 		goto unlock_done;
@@ -1067,12 +1083,13 @@ static int max77759_mode_callback(struct gvotable_election *el,
 
 	dev_info(data->dev, "%s:%s full=%d raw=%d stby_on=%d, dc_on=%d, chgr_on=%d, buck_on=%d,"
 		" boost_on=%d, otg_on=%d, uno_on=%d wlc_tx=%d wlc_rx=%d usb_wlc=%d"
-		" chgin_off=%d wlcin_off=%d frs_on=%d pogo_vout=%d\n",
+		" chgin_off=%d wlcin_off=%d frs_on=%d pogo_vout=%d pogo_vin=%d\n",
 		__func__, trigger ? trigger : "<>",
 		data->charge_done, cb_data.use_raw, cb_data.stby_on, cb_data.dc_on,
 		cb_data.chgr_on, cb_data.buck_on, cb_data.boost_on, cb_data.otg_on,
 		cb_data.uno_on, cb_data.wlc_tx, cb_data.wlc_rx, cb_data.usb_wlc,
-		cb_data.chgin_off, cb_data.wlcin_off, cb_data.frs_on, cb_data.pogo_vout);
+		cb_data.chgin_off, cb_data.wlcin_off, cb_data.frs_on, cb_data.pogo_vout,
+		cb_data.pogo_vin);
 
 	/* just use raw "as is", no changes to switches etc */
 	if (cb_data.use_raw) {
@@ -2661,6 +2678,32 @@ static const struct regmap_config max77759_chg_regmap_cfg = {
 
 };
 
+static void max77759_aicl_changed(struct max77759_chgr_data *data)
+{
+	uint8_t int_ok;
+	int ret;
+	bool aicl_active;
+
+	ret = max77759_reg_read(data->regmap, MAX77759_CHG_INT_OK, &int_ok);
+	if (ret) {
+		dev_err(data->dev,  "%s:Failed to read MAX77759_CHG_INT_OK.AICL_OK ret:%d\n", __func__, ret);
+		return;
+	}
+
+	aicl_active = !(int_ok & MAX77759_CHG_INT_OK_AICL_OK);
+
+	if (IS_ERR_OR_NULL(data->aicl_active_el))
+		data->aicl_active_el =
+				gvotable_election_get_handle("AICL_ACTIVE_EL");
+
+	if (IS_ERR_OR_NULL(data->aicl_active_el)) {
+		dev_err(data->dev,  "AICL_ACTIVE_EL get failed %ld\n",
+			PTR_ERR(data->aicl_active_el));
+		return;
+	}
+
+	gvotable_cast_long_vote(data->aicl_active_el, "BMS_VOTER", aicl_active, aicl_active);
+}
 
 /*
  * int[0]
@@ -2688,9 +2731,14 @@ static const struct regmap_config max77759_chg_regmap_cfg = {
  *   MAX77759_CHG_INT2_MASK_CHG_STA_CC_M |
  *   MAX77759_CHG_INT2_MASK_CHG_STA_CV_M |
  *   MAX77759_CHG_INT_MASK_CHG_M
+ *
+ * TODO: MAX77759_CHG_INT_MASK_AICL_M needs to be throttled
+ * if system keeps going in and out of AICL regulation.
+ * No evidenvce of this happening so far.
  */
 static u8 max77759_int_mask[MAX77759_CHG_INT_COUNT] = {
-	~(MAX77759_CHG_INT_MASK_CHGIN_M |
+	(u8)~(MAX77759_CHG_INT_MASK_AICL_M |
+	  MAX77759_CHG_INT_MASK_CHGIN_M |
 	  MAX77759_CHG_INT_MASK_WCIN_M |
 	  MAX77759_CHG_INT_MASK_BAT_M |
 	  MAX77759_CHG_INT_MASK_THM2_M_MASK),
@@ -2799,6 +2847,11 @@ static irqreturn_t max77759_chgr_irq(int irq, void *client)
 
 		pr_debug("%s: CHARGE DONE charge_done=%d->%d\n", __func__,
 			 charge_done, data->charge_done);
+	}
+
+	if (chg_int[0] & MAX77759_CHG_INT_AICL_I) {
+		pr_debug("%s: AICL state change\n", __func__);
+		max77759_aicl_changed(data);
 	}
 
 	/* wired input is changed */
@@ -2982,7 +3035,7 @@ done_relax:
 	__pm_relax(data->otg_fccm_wake_lock);
 }
 
-#define MAX77759_FCCM_UPPERBD_VOL 4400
+#define MAX77759_FCCM_UPPERBD_VOL 4600
 #define MAX77759_FCCM_LOWERBD_VOL 3600
 static int max77759_charger_probe(struct i2c_client *client,
 				  const struct i2c_device_id *id)

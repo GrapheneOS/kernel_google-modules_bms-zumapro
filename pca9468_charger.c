@@ -20,6 +20,7 @@
 #include <linux/i2c.h>
 #include <linux/regmap.h>
 #include <linux/rtc.h>
+#include <misc/gvotable.h>
 
 #include "pca9468_regs.h"
 #include "pca9468_charger.h"
@@ -1527,6 +1528,8 @@ static int pca9468_set_ta_current_comp2(struct pca9468_charger *pca9468)
 
 			/* Check IIN_ADC < IIN_CC - 50mA */
 			if (iin < iin_cc_lb) {
+				const unsigned int ta_max_vol =
+				    pca9468->pdata->ta_max_vol * pca9468->chg_mode;
 				unsigned int iin_apdo;
 				unsigned int val;
 
@@ -1545,8 +1548,7 @@ static int pca9468_set_ta_current_comp2(struct pca9468_charger *pca9468)
 				val = val * PD_MSG_TA_VOL_STEP; /* uV */
 
 				/* Set new TA_MAX_VOL */
-				pca9468->ta_max_vol = min(val, (unsigned)PCA9468_TA_MAX_VOL *
-							  pca9468->chg_mode);
+				pca9468->ta_max_vol = min(val, ta_max_vol);
 
 				/* Increase TA voltage(40mV) */
 				pca9468->ta_vol = pca9468->ta_vol + PD_MSG_TA_VOL_STEP * 2;
@@ -1833,6 +1835,7 @@ static int pca9468_set_wireless_dc(struct pca9468_charger *pca9468, int vbat)
 /* recalculate ->ta_vol and ->ta_cur looking at demand (cc_max) */
 static int pca9468_set_wired_dc(struct pca9468_charger *pca9468, int vbat)
 {
+	const unsigned long ta_max_vol = pca9468->pdata->ta_max_vol * pca9468->chg_mode;
 	unsigned long val;
 	int iin_cc;
 
@@ -1847,8 +1850,7 @@ static int pca9468_set_wired_dc(struct pca9468_charger *pca9468, int vbat)
 	/* Adjust values with APDO resolution(20mV) */
 	val = val * 1000 / PD_MSG_TA_VOL_STEP;
 	val = val * PD_MSG_TA_VOL_STEP; /* uV */
-	pca9468->ta_max_vol = min(val, (unsigned long)PCA9468_TA_MAX_VOL *
-				  pca9468->chg_mode);
+	pca9468->ta_max_vol = min(val, ta_max_vol);
 
 	/* MAX[8000mV * chg_mode, 2 * VBAT_ADC * chg_mode + 500 mV] */
 	pca9468->ta_vol = max(PCA9468_TA_MIN_VOL_PRESET * pca9468->chg_mode,
@@ -2849,7 +2851,7 @@ static int pca9468_charge_ccmode(struct pca9468_charger *pca9468)
 				pca9468->ta_cur = PCA9468_TA_MIN_CUR;
 
 				ret = pca9468_set_ta_voltage_comp(pca9468);
-			} else if (ta_max_vol >= PCA9468_TA_MAX_VOL_CP) {
+			} else if (ta_max_vol >= pca9468->pdata->ta_max_vol_cp) {
 				ret = pca9468_set_ta_current_comp(pca9468);
 			} else {
 				/* constant power mode */
@@ -3340,7 +3342,7 @@ static int pca9468_preset_dcmode(struct pca9468_charger *pca9468)
 				pca9468->ta_max_vol, pca9468->ta_max_cur, pca9468->ta_max_pwr,
 				pca9468->iin_cc, pca9468->chg_mode);
 	} else {
-		const unsigned int ta_max_vol = PCA9468_TA_MAX_VOL * pca9468->chg_mode;
+		const unsigned int ta_max_vol = pca9468->pdata->ta_max_vol * pca9468->chg_mode;
 
 		/*
 		 * Get the APDO max for 2:1 mode.
@@ -3353,9 +3355,25 @@ static int pca9468_preset_dcmode(struct pca9468_charger *pca9468)
 				PCA9468_TA_MAX_CUR);
 			ret = pca9468_get_apdo_max_power(pca9468, ta_max_vol, 0);
 		}
+
 		if (ret < 0) {
+			int ret1;
+
 			pr_err("%s: No APDO to support 2:1\n", __func__);
 			pca9468->chg_mode = CHG_NO_DC_MODE;
+
+			if (!pca9468->dc_avail)
+				pca9468->dc_avail =
+					gvotable_election_get_handle(VOTABLE_DC_CHG_AVAIL);
+
+			if (pca9468->dc_avail) {
+				ret1 = gvotable_cast_int_vote(pca9468->dc_avail,
+							      REASON_DC_DRV, 0, 1);
+				if (ret1 < 0)
+					dev_err(pca9468->dev,
+						"Unable to cast vote for DC Chg avail (%d)\n",
+						ret1);
+			}
 			goto error;
 		}
 
@@ -3860,6 +3878,7 @@ error:
 			"%s: timer_id=%d->%d, charging_state=%u->%u, period=%ld ret=%d",
 			__func__, timer_id, pca9468->timer_id, charging_state,
 			pca9468->charging_state, pca9468->timer_period, ret);
+
 	pca9468_stop_charging(pca9468);
 }
 
@@ -4307,6 +4326,20 @@ static int pca9468_mains_set_property(struct power_supply *psy,
 				       __func__, ret);
 
 			pca9468->mains_online = false;
+
+			/* Reset DC Chg un-avail on disconnect */
+			if (!pca9468->dc_avail)
+				pca9468->dc_avail =
+				gvotable_election_get_handle(VOTABLE_DC_CHG_AVAIL);
+
+			if (pca9468->dc_avail) {
+				ret = gvotable_cast_int_vote(pca9468->dc_avail,
+							     REASON_DC_DRV, 1, 1);
+				if (ret < 0)
+					dev_err(pca9468->dev,
+						"Unable to cast vote for DC Chg avail (%d)\n",
+						ret);
+			}
 		} else if (pca9468->mains_online == false) {
 			pca9468->mains_online = true;
 		}
@@ -4572,6 +4605,20 @@ static int of_pca9468_dt(struct device *dev,
 	pdata->iin_cfg = pdata->iin_cfg_max;
 	pr_info("%s: pca9468,iin_cfg is %u\n", __func__, pdata->iin_cfg);
 
+	/* TA max voltage limit */
+	ret = of_property_read_u32(np_pca9468, "pca9468,ta-max-vol",
+				   &pdata->ta_max_vol);
+	if (ret) {
+		pr_warn("%s: pca9468,ta-max-vol is Empty\n", __func__);
+		pdata->ta_max_vol = PCA9468_TA_MAX_VOL;
+	}
+	ret = of_property_read_u32(np_pca9468, "pca9468,ta-max-vol-cp",
+				   &pdata->ta_max_vol_cp);
+	if (ret) {
+		pr_warn("%s: pca9468,ta-max-vol-cp is Empty\n", __func__);
+		pdata->ta_max_vol_cp = pdata->ta_max_vol;
+	}
+
 	/* charging float voltage */
 	ret = of_property_read_u32(np_pca9468, "pca9468,float-voltage",
 				   &pdata->v_float_dt);
@@ -4790,6 +4837,28 @@ static int debug_pps_index_set(void *data, u64 val)
 DEFINE_SIMPLE_ATTRIBUTE(debug_pps_index_ops, debug_pps_index_get,
 			debug_pps_index_set, "%llu\n");
 
+static int debug_ta_max_vol_set(void *data, u64 val)
+{
+	struct pca9468_charger *pca9468 = data;
+
+	pca9468->pdata->ta_max_vol = val;
+	pca9468->pdata->ta_max_vol_cp = val;
+
+	pca9468->ta_max_vol = val * pca9468->chg_mode;
+
+	return 0;
+}
+
+static int debug_ta_max_vol_get(void *data, u64 *val)
+{
+	struct pca9468_charger *pca9468 = data;
+
+	*val = pca9468->pdata->ta_max_vol;
+	return 0;
+}
+DEFINE_SIMPLE_ATTRIBUTE(debug_ta_max_vol_ops, debug_ta_max_vol_get,
+			debug_ta_max_vol_set, "%llu\n");
+
 static ssize_t show_sts_ab(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct pca9468_charger *pca9468 = dev_get_drvdata(dev);
@@ -4920,6 +4989,9 @@ static int pca9468_create_fs_entries(struct pca9468_charger *chip)
 	debugfs_create_file("apply_offsets", 0644, chip->debug_root, chip,
 			    &apply_offsets_debug_ops);
 
+	debugfs_create_file("ta_vol_max", 0644, chip->debug_root, chip,
+			   &debug_ta_max_vol_ops);
+
 	chip->debug_adc_channel = ADCCH_VOUT;
 	debugfs_create_file("adc_chan", 0644, chip->debug_root, chip,
 			    &debug_adc_chan_ops);
@@ -4982,7 +5054,7 @@ static int pca9468_probe(struct i2c_client *client,
 	pca9468_chg->pdata = pdata;
 	pca9468_chg->charging_state = DC_STATE_NO_CHARGING;
 	pca9468_chg->wlc_ramp_out_iin = true;
-	pca9468_chg->wlc_ramp_out_vout_target = 15300000; /* 15.3V as default */
+	pca9468_chg->wlc_ramp_out_vout_target = 0; /* use Vbatt*4 as default */
 	pca9468_chg->wlc_ramp_out_delay = 250; /* 250 ms default */
 
 	/* Create a work queue for the direct charger */
@@ -5083,6 +5155,9 @@ static int pca9468_probe(struct i2c_client *client,
 		}
 	}
 #endif
+
+	pca9468_chg->dc_avail = NULL;
+
 	pca9468_chg->init_done = true;
 	pr_info("pca9468: probe_done\n");
 	pr_debug("%s: =========END=========\n", __func__);

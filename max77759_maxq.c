@@ -66,7 +66,9 @@
 
 #define RSBM_ADDR				0
 #define RSBR_ADDR				4
+#define SUFG_ADDR				8
 #define RS_TAG_LENGTH				4
+#define SU_TAG_LENGTH				1
 #define RS_TAG_OFFSET_ADDR			0
 #define RS_TAG_OFFSET_LENGTH			1
 #define RS_TAG_OFFSET_DATA			2
@@ -314,42 +316,54 @@ static int maxq_user_space_write(struct max77759_maxq *maxq, u8 *data)
 
 static int maxq_rs_read(struct max77759_maxq *maxq, gbms_tag_t tag, u8 *data)
 {
-	int ret;
+	int ret, len;
 	u8 buff[OPCODE_USER_SPACE_R_RES_LEN];
 
-	if (tag == GBMS_TAG_RSBM)
+	if (tag == GBMS_TAG_RSBM) {
 		buff[RS_TAG_OFFSET_ADDR] = RSBM_ADDR;
-	else if (tag == GBMS_TAG_RSBR)
+		len = RS_TAG_LENGTH;
+	} else if (tag == GBMS_TAG_RSBR) {
 		buff[RS_TAG_OFFSET_ADDR] = RSBM_ADDR;
-	else
+		len = RS_TAG_LENGTH;
+	} else if (tag == GBMS_TAG_SUFG) {
+		buff[RS_TAG_OFFSET_ADDR] = SUFG_ADDR;
+		len = SU_TAG_LENGTH;
+	} else {
 		return -EINVAL;
+	}
 
-	buff[RS_TAG_OFFSET_LENGTH] = RS_TAG_LENGTH;
+	buff[RS_TAG_OFFSET_LENGTH] = len;
 
 	ret = maxq_user_space_read(maxq, buff);
 	if (ret < 0)
 		return ret;
 
-	memcpy(data, buff, RS_TAG_LENGTH);
+	memcpy(data, buff, len);
 
 	return ret;
 }
 
 static int maxq_rs_write(struct max77759_maxq *maxq, gbms_tag_t tag, u8 *data)
 {
-	int ret;
+	int ret, len;
 	u8 buff[OPCODE_USER_SPACE_W_REQ_LEN];
 
-	if (tag == GBMS_TAG_RSBM)
+	if (tag == GBMS_TAG_RSBM) {
 		buff[RS_TAG_OFFSET_ADDR] = RSBM_ADDR;
-	else if (tag == GBMS_TAG_RSBR)
+		len = RS_TAG_LENGTH;
+	} else if (tag == GBMS_TAG_RSBR) {
 		buff[RS_TAG_OFFSET_ADDR] = RSBR_ADDR;
-	else
+		len = RS_TAG_LENGTH;
+	} else if (tag == GBMS_TAG_SUFG) {
+		buff[RS_TAG_OFFSET_ADDR] = SUFG_ADDR;
+		len = SU_TAG_LENGTH;
+	} else {
 		return -EINVAL;
+	}
 
-	buff[RS_TAG_OFFSET_LENGTH] = RS_TAG_LENGTH;
+	buff[RS_TAG_OFFSET_LENGTH] = len;
 
-	memcpy(&buff[RS_TAG_OFFSET_DATA], data, RS_TAG_LENGTH);
+	memcpy(&buff[RS_TAG_OFFSET_DATA], data, len);
 
 	ret = maxq_user_space_write(maxq, buff);
 
@@ -371,6 +385,11 @@ static int maxq_storage_read(gbms_tag_t tag, void *buff, size_t size,
 	case GBMS_TAG_RSBM:
 	case GBMS_TAG_RSBR:
 		if (size && size > RS_TAG_LENGTH)
+			return -EINVAL;
+		ret = maxq_rs_read(maxq, tag, buff);
+		break;
+	case GBMS_TAG_SUFG:
+		if (size && size > SU_TAG_LENGTH)
 			return -EINVAL;
 		ret = maxq_rs_read(maxq, tag, buff);
 		break;
@@ -397,6 +416,11 @@ static int maxq_storage_write(gbms_tag_t tag, const void *buff, size_t size,
 	case GBMS_TAG_RSBM:
 	case GBMS_TAG_RSBR:
 		if (size && size > RS_TAG_LENGTH)
+			return -EINVAL;
+		ret = maxq_rs_write(maxq, tag, (void *)buff);
+		break;
+	case GBMS_TAG_SUFG:
+		if (size && size > SU_TAG_LENGTH)
 			return -EINVAL;
 		ret = maxq_rs_write(maxq, tag, (void *)buff);
 		break;
