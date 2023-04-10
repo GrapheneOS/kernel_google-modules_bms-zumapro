@@ -4892,7 +4892,7 @@ static int max1720x_init_chip(struct max1720x_chip *chip)
 	}
 
 	if (chip->batt_id == DEFAULT_BATTERY_ID || chip->batt_id == DUMMY_BATTERY_ID) {
-		ret = REGMAP_WRITE(&chip->regmap, MAX17X0X_TAG_cnfg, 0x0);
+		ret = REGMAP_WRITE(&chip->regmap, MAX_M5_CONFIG2, 0x0);
 		if (ret < 0)
 			dev_warn(chip->dev, "Cannot write 0x0 to Config(%d)\n", ret);
 	}
