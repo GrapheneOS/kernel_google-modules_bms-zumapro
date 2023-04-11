@@ -4,8 +4,8 @@
  *
  */
 
-#ifndef GS101_USECASE_H_
-#define GS101_USECASE_H_
+#ifndef MAX77759_USECASE_H_
+#define MAX77759_USECASE_H_
 
 struct max77759_usecase_data {
 	int is_a1;

@@ -4,16 +4,15 @@
  *
  */
 
-#ifndef MAX77759_CHARGER_H_
-#define MAX77759_CHARGER_H_
+#ifndef MAX77779_CHARGER_H_
+#define MAX77779_CHARGER_H_
 
 #if IS_ENABLED(CONFIG_GOOGLE_BCL)
 #include <soc/google/bcl.h>
 #endif
+#include "max77779_usecase.h"
 
-#include "max77759_usecase.h"
-
-struct max77759_chgr_data {
+struct max77779_chgr_data {
 	struct device *dev;
 
 	struct power_supply *psy;
@@ -24,7 +23,7 @@ struct max77759_chgr_data {
 	struct regmap *regmap;
 
 	struct gvotable_election *mode_votable;
-	struct max77759_usecase_data uc_data;
+	struct max77779_usecase_data uc_data;
 	struct delayed_work mode_rerun_work;
 
 	struct gvotable_election *dc_icl_votable;
@@ -60,11 +59,6 @@ struct max77759_chgr_data {
 
 	/* Force to change FCCM mode during OTG at high battery voltage */
 	bool otg_changed;
-	bool otg_fccm_reset;
-	int otg_fccm_vbatt_lowerbd;
-	int otg_fccm_vbatt_upperbd;
-	struct delayed_work otg_fccm_worker;
-	struct wakeup_source *otg_fccm_wake_lock;
 
 	/* debug interface, register to read or write */
 	u32 debug_reg_address;

@@ -10,22 +10,22 @@
 
 #include <linux/i2c.h>
 
-#define CONFIG_SCNPRINTF_DEBUG 1
+//#define CONFIG_SCNPRINTF_DEBUG 0
 #include "max77779_regs.h"
 
-#define MAX77779_CHG_INT_COUNT 2
+#define MAX77779_CHG_INT_COUNT 3
 
 #define MAX77779_PMIC_REV_A0		0x01
 #define MAX77779_PMIC_REV_A1		0x02
 
-#define MAX77779_PMIC_PMIC_ID_MW	0x3b
+#define MAX77779_PMIC_ID_SEQ	0x79
 
-int max77779_pmic_get_id(struct i2c_client *client, u8 *id, u8 *rev);
-int max77779_pmic_reg_read(struct i2c_client *client,
+int max777x9_pmic_get_id(struct i2c_client *client, u8 *id, u8 *rev);
+int max777x9_pmic_reg_read(struct i2c_client *client,
 			   u8 addr, u8 *val, int len);
-int max77779_pmic_reg_write(struct i2c_client *client,
+int max777x9_pmic_reg_write(struct i2c_client *client,
 			    u8 addr, const u8 *val, int len);
-int max77779_pmic_reg_update(struct i2c_client *client,
+int max777x9_pmic_reg_update(struct i2c_client *client,
 			     u8 reg, u8 mask, u8 value);
 
 /* write to a register */
@@ -35,7 +35,7 @@ int max77779_chg_reg_read(struct i2c_client *client, u8 reg, u8 *value);
 /* update a register */
 int max77779_chg_reg_update(struct i2c_client *client, u8 reg, u8 mask, u8 value);
 /* change the mode register */
-int max77779_chg_mode_write(struct i2c_client *client, enum max77759_charger_modes mode);
+int max77779_chg_mode_write(struct i2c_client *client, enum max77779_charger_modes mode);
 /* change the insel register */
 int max77779_chg_insel_write(struct i2c_client *client, u8 mask, u8 value);
 /* read the insel register */
@@ -97,39 +97,33 @@ struct max77779_foreach_cb_data {
 	bool buck_on;	/* wired power in (chgin_on) from TCPCI */
 
 	bool otg_on;	/* power out, usually external */
-	bool frs_on;	/* power out, fast role swap (internal) */
 
 	bool wlc_rx;	/* charging wireless */
 	bool wlc_tx;	/* battery share */
 
 	bool dc_on;	/* DC requested - wired or wireless */
 
-	bool boost_on;	/* Compat: old for WLC program */
-	bool uno_on;	/* Compat: old for WLC program */
-
 	u8 raw_value;	/* hard override */
 	bool use_raw;
 
-	bool pogo_vout;	/* pogo 5v vout */
-
 	u8 reg;
+
+	struct gvotable_election *dc_avail_votable;	/* DC_AVAIL */
 };
 
 /* internal system values */
 enum {
 	/* Charging disabled (go to mode 0) */
-	GBMS_CHGR_MODE_STBY_ON		= 0x10 + MAX77759_CHGR_MODE_ALL_OFF,
+	GBMS_CHGR_MODE_STBY_ON		= 0x10 + MAX77779_CHGR_MODE_ALL_OFF,
 	/* USB inflow off */
-	GBMS_CHGR_MODE_CHGIN_OFF	= 0x11 + MAX77759_CHGR_MODE_ALL_OFF,
+	GBMS_CHGR_MODE_CHGIN_OFF	= 0x11 + MAX77779_CHGR_MODE_ALL_OFF,
 	/* WCIN inflow off */
-	GBMS_CHGR_MODE_WLCIN_OFF	= 0x12 + MAX77759_CHGR_MODE_ALL_OFF,
+	GBMS_CHGR_MODE_WLCIN_OFF	= 0x12 + MAX77779_CHGR_MODE_ALL_OFF,
 	/* USB + WLC_RX mode */
-	GBMS_CHGR_MODE_USB_WLC_RX	= 0x13 + MAX77759_CHGR_MODE_ALL_OFF,
+	GBMS_CHGR_MODE_USB_WLC_RX	= 0x13 + MAX77779_CHGR_MODE_ALL_OFF,
 
 	/* charging enabled (charging current != 0) */
-	GBMS_CHGR_MODE_CHGR_BUCK_ON	= 0x10 + MAX77759_CHGR_MODE_CHGR_BUCK_ON,
-	/* Compat: old for programmging */
-	GBMS_CHGR_MODE_BOOST_UNO_ON	= 0x10 + MAX77759_CHGR_MODE_BOOST_UNO_ON,
+	GBMS_CHGR_MODE_CHGR_BUCK_ON	= 0x10 + MAX77779_CHGR_MODE_CHGR_BUCK_ON,
 };
 
 
