@@ -2997,15 +2997,13 @@ static int max77779_charger_probe(struct i2c_client *client,
 	return 0;
 }
 
-static int max77779_charger_remove(struct i2c_client *client)
+static void max77779_charger_remove(struct i2c_client *client)
 {
 	struct max77779_chgr_data *data = i2c_get_clientdata(client);
 
 	if (data->de)
 		debugfs_remove(data->de);
 	wakeup_source_unregister(data->usecase_wake_lock);
-
-	return 0;
 }
 
 

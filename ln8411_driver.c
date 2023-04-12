@@ -5164,7 +5164,7 @@ error:
 	return ret;
 }
 
-static int ln8411_remove(struct i2c_client *client)
+static void ln8411_remove(struct i2c_client *client)
 {
 	struct ln8411_charger *ln8411_charger = i2c_get_clientdata(client);
 
@@ -5187,8 +5187,6 @@ static int ln8411_remove(struct i2c_client *client)
 	if (ln8411_charger->log)
 		logbuffer_unregister(ln8411_charger->log);
 	pps_free(&ln8411_charger->pps_data);
-
-	return 0;
 }
 
 static const struct i2c_device_id ln8411_id[] = {

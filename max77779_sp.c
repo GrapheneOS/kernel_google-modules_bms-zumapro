@@ -229,13 +229,12 @@ static int max77779_sp_probe(struct i2c_client *client,
 	return 0;
 }
 
-static int max77779_sp_remove(struct i2c_client *client)
+static void max77779_sp_remove(struct i2c_client *client)
 {
 	struct max77779_sp_data *data = i2c_get_clientdata(client);
 
 	if (data->de)
 		debugfs_remove(data->de);
-	return 0;
 }
 
 
