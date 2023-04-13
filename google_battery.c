@@ -4183,6 +4183,7 @@ static int msc_logic(struct batt_drv *batt_drv)
 
 	/* need a new fv_uv only on a new voltage tier.  */
 	if (vbatt_idx != batt_drv->vbatt_idx || temp_idx != batt_drv->temp_idx) {
+		vbatt_idx = gbms_msc_voltage_idx_merge_tiers(profile, vbatt, temp_idx);
 		fv_uv = profile->volt_limits[vbatt_idx];
 		batt_drv->checked_tier_switch_cnt = 0;
 		batt_drv->checked_ov_cnt = 0;
