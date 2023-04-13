@@ -616,12 +616,21 @@ enum bhi_algo {
 	BHI_ALGO_MAX,
 };
 
+/*
+ * Report battery health from health status (for health hal aidl v2)
+ * BH_NOMINAL		: BATTERY_HEALTH_GOOD
+ * BH_MARGINAL		: BATTERY_HEALTH_FAIR
+ * BH_NEEDS_REPLACEMENT	: BATTERY_HEALTH_DEAD
+ * BH_FAILED		: BATTERY_HEALTH_UNSPECIFIED_FAILURE
+ * BH_NOT_AVAILABLE	: BATTERY_HEALTH_NOT_AVAILABLE
+ */
 enum bhi_status {
 	BH_UNKNOWN = -1,
 	BH_NOMINAL,
 	BH_MARGINAL,
 	BH_NEEDS_REPLACEMENT,
 	BH_FAILED,
+	BH_NOT_AVAILABLE,
 };
 
 struct bhi_weight {

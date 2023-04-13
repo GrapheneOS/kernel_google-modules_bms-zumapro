@@ -371,6 +371,8 @@ struct health_data
 	int bhi_debug_health_index;
 	/* algo BHI_ALGO_INDI capacity threshold */
 	int bhi_indi_cap;
+	/* algo BHI_ALGO_ACHI_B bounds check */
+	int bhi_cycle_grace;
 
 	/* current battery state */
 	struct bhi_data bhi_data;
@@ -3816,6 +3818,13 @@ static enum bhi_status bhi_calc_health_status(int algo, int health_index,
 
 	if (algo == BHI_ALGO_DISABLED)
 		return BH_UNKNOWN;
+
+	if (algo == BHI_ALGO_ACHI_B || algo == BHI_ALGO_ACHI_RAVG_B) {
+		const int cycle_count = data->bhi_data.cycle_count;
+
+		if (data->bhi_cycle_grace && cycle_count < data->bhi_cycle_grace)
+			return BH_NOT_AVAILABLE;
+	}
 
 	if (health_index < 0)
 		health_status = BH_UNKNOWN;
@@ -9254,6 +9263,12 @@ static int batt_bhi_init(struct batt_drv *batt_drv)
 				   &health_data->bhi_indi_cap);
 	if (ret < 0)
 		health_data->bhi_indi_cap = BHI_INDI_CAP_DEFAULT;
+
+	/* algorithm BHI_ALGO_ACHI_B bounds check */
+	ret = of_property_read_u32(batt_drv->device->of_node, "google,bhi-cycle-grace",
+				   &health_data->bhi_cycle_grace);
+	if (ret < 0)
+		health_data->bhi_cycle_grace = 0;
 
 	/* design is the value used to build the charge table */
 	health_data->bhi_data.capacity_design = batt_drv->battery_capacity;
