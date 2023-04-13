@@ -59,6 +59,8 @@
 #define P9XXX_VOUT_5000MV	5000
 #define P9XXX_FOD_CHK_DELAY_MS	2000
 
+#define P9XXX_SET_RF_DELAY_MS	330
+
 enum wlc_align_codes {
 	WLC_ALIGN_CHECKING = 0,
 	WLC_ALIGN_MOVE,
@@ -3528,6 +3530,21 @@ done:
 	return relax;
 }
 
+/* Resonance Frequency: This new value needed for Qi 1.3 */
+static void p9xxx_write_resonance_freq(struct p9221_charger_data *charger)
+{
+	const int rf_value = charger->pdata->rf_value;
+	int ret;
+
+	if (rf_value == -1)
+		return;
+
+	ret = p9xxx_chip_set_resonance_freq_reg(charger, rf_value);
+	if (ret < 0)
+		dev_err(&charger->client->dev, "cannot write resonance_freq=%d (%d)\n",
+			rf_value, ret);
+}
+
 static void p9xxx_write_q_factor(struct p9221_charger_data *charger)
 {
 	int ret, q_factor;
@@ -3590,6 +3607,8 @@ static void p9221_notifier_work(struct work_struct *work)
 	if (charger->pdata->light_load)
 		p9xxx_chip_set_light_load_reg(charger, P9222_LIGHT_LOAD_VALUE);
 
+	if (charger->pdata->rf_value != -1)
+		p9xxx_write_resonance_freq(charger);
 	p9xxx_write_q_factor(charger);
 	if (charger->pdata->tx_4191q > 0)
 		p9xxx_update_q_factor(charger);
@@ -6018,6 +6037,9 @@ static irqreturn_t p9221_irq_thread(int irq, void *irq_data)
 			charger->check_det = true;
 			pm_stay_awake(charger->dev);
 
+			if (charger->pdata->rf_value != -1)
+				mod_delayed_work(system_wq, &charger->set_rf_work,
+						 msecs_to_jiffies(P9XXX_SET_RF_DELAY_MS));
 			if (!schedule_delayed_work(&charger->notifier_work,
 				msecs_to_jiffies(P9221_NOTIFIER_DELAY_MS))) {
 				pm_relax(charger->dev);
@@ -6068,6 +6090,17 @@ static irqreturn_t p9221_irq_det_thread(int irq, void *irq_data)
 	pm_stay_awake(charger->dev);
 
 	return IRQ_HANDLED;
+}
+
+static void p9xxx_set_rf_work(struct work_struct *work)
+{
+	struct p9221_charger_data *charger = container_of(work,
+			struct p9221_charger_data, set_rf_work.work);
+
+	if (!charger->online)
+		return;
+
+	p9xxx_write_resonance_freq(charger);
 }
 
 static void p9xxx_chk_fod_work(struct work_struct *work)
@@ -6434,6 +6467,14 @@ static int p9221_parse_dt(struct device *dev,
 	} else {
 		pdata->q_value = data;
 		dev_info(dev, "dt q_value:%d\n", pdata->q_value);
+	}
+
+	ret = of_property_read_u32(node, "google,rf_value", &data);
+	if (ret < 0) {
+		pdata->rf_value = -1;
+	} else {
+		pdata->rf_value = data;
+		dev_info(dev, "dt rf_value:%d\n", pdata->rf_value);
 	}
 
 	ret = of_property_read_u32(node, "google,tx4191_q", &data);
@@ -6860,6 +6901,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	INIT_DELAYED_WORK(&charger->chk_rp_work, p9xxx_chk_rp_work);
 	INIT_DELAYED_WORK(&charger->chk_rtx_ocp_work, p9412_chk_rtx_ocp_work);
 	INIT_DELAYED_WORK(&charger->chk_fod_work, p9xxx_chk_fod_work);
+	INIT_DELAYED_WORK(&charger->set_rf_work, p9xxx_set_rf_work);
 	INIT_WORK(&charger->uevent_work, p9221_uevent_work);
 	INIT_WORK(&charger->rtx_disable_work, p9382_rtx_disable_work);
 	INIT_WORK(&charger->rtx_reset_work, p9xxx_rtx_reset_work);
@@ -7175,6 +7217,7 @@ static int p9221_charger_remove(struct i2c_client *client)
 	cancel_delayed_work_sync(&charger->chk_rp_work);
 	cancel_delayed_work_sync(&charger->chk_rtx_ocp_work);
 	cancel_delayed_work_sync(&charger->chk_fod_work);
+	cancel_delayed_work_sync(&charger->set_rf_work);
 	cancel_work_sync(&charger->uevent_work);
 	cancel_work_sync(&charger->rtx_disable_work);
 	cancel_work_sync(&charger->rtx_reset_work);

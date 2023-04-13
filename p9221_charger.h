@@ -309,6 +309,7 @@
 #define P9222RE_EPP_REQ_NEGOTIATED_POWER_REG	0xBD
 #define P9222RE_EPP_REQ_MAXIMUM_POWER_REG	0xBE
 #define P9222RE_EPP_Q_FACTOR_REG		0xD2
+#define P9222RE_RESONANCE_FREQ_REG		0xD3
 #define P9222RE_TX_MFG_CODE_REG			0x106
 #define P9222RE_PROP_TX_ID_REG			0x118
 #define P9222RE_DIE_TEMP_ADC_REG		0x12A
@@ -674,6 +675,7 @@ struct p9221_charger_platform_data {
 	int				fod_fsw_high;
 	int				fod_fsw_low;
 	int				q_value;
+	int				rf_value;
 	int				tx_4191q;
 	int				epp_rp_value;
 	int				epp_rp_low_value;
@@ -776,6 +778,7 @@ struct p9221_charger_data {
 	struct delayed_work		chk_rp_work;
 	struct delayed_work		chk_rtx_ocp_work;
 	struct delayed_work		chk_fod_work;
+	struct delayed_work		set_rf_work;
 	struct work_struct		uevent_work;
 	struct work_struct		rtx_disable_work;
 	struct work_struct		rtx_reset_work;
@@ -901,6 +904,7 @@ struct p9221_charger_data {
 	u16				reg_get_pp_buf_addr;
 	u16				reg_set_fod_addr;
 	u16				reg_q_factor_addr;
+	u16				reg_rf_value_addr;
 	u16				reg_csp_addr;
 	u16				reg_light_load_addr;
 	u16				reg_mot_addr;
@@ -1023,6 +1027,8 @@ enum p9xxx_renego_state {
       -ENOTSUPP : chgr->reg_read_n(chgr, chgr->reg_set_fod_addr, data, len))
 #define p9xxx_chip_set_q_factor_reg(chgr, data) (chgr->reg_q_factor_addr == 0 ? \
       -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_q_factor_addr, data))
+#define p9xxx_chip_set_resonance_freq_reg(chgr, data) (chgr->reg_rf_value_addr == 0 ? \
+      -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_rf_value_addr, data))
 #define p9xxx_chip_set_light_load_reg(chgr, data) (chgr->reg_light_load_addr == 0 ? \
       -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_light_load_addr, data))
 #define p9xxx_chip_set_mot_reg(chgr, data) (chgr->reg_mot_addr == 0 ? \
