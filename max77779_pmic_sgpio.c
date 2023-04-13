@@ -17,9 +17,20 @@
 
 #include "max77779_pmic.h"
 
-#define MAX77779_SGPIO_CNFGx_MODE_INPUT  0b01
-#define MAX77779_SGPIO_CNFGx_MODE_OUTPUT 0b10
+#define MAX77779_SGPIO_CNFGx_MODE_INPUT		0b01
+#define MAX77779_SGPIO_CNFGx_MODE_OUTPUT	0b10
 
+#define MAX77779_SGPIO_CNFG_DBNC_DISABLE	0x0
+#define MAX77779_SGPIO_CNFG_DBNC_7MS		0x1
+#define MAX77779_SGPIO_CNFG_DBNC_15MS		0x2
+#define MAX77779_SGPIO_CNFG_DBNC_31MS		0x3
+
+#define MAX77779_SGPIO_CNFG_IRQ_DISABLE		0b00
+#define MAX77779_SGPIO_CNFG_IRQ_FALLING		0b01
+#define MAX77779_SGPIO_CNFG_IRQ_RISING		0b10
+#define MAX77779_SGPIO_CNFG_IRQ_BOTH		0b11
+
+#define MAX77779_SGPIO_NUM_GPIOS		8
 struct max77779_pmic_sgpio_info {
 	struct device		*dev;
 	struct device		*core;
@@ -27,11 +38,13 @@ struct max77779_pmic_sgpio_info {
 	struct irq_chip		irq_chip;
 	struct mutex		lock;
 
+	int			irq;
+
 	unsigned int		mask;
 	unsigned int		mask_u;
 
-	unsigned int		trig_type;
 	unsigned int		trig_type_u;
+	unsigned int		trig_type[MAX77779_SGPIO_NUM_GPIOS];
 };
 
 static int max77779_pmic_sgpio_get_direction(struct gpio_chip *gc,
@@ -137,22 +150,19 @@ static void max77779_pmic_sgpio_set(struct gpio_chip *gc,
 	max77779_pmic_reg_update(core, reg, mask, val);
 }
 
-static __maybe_unused
-void max77779_pmic_sgpio_set_irq_valid_mask(struct gpio_chip *gc,
+static void max77779_pmic_sgpio_set_irq_valid_mask(struct gpio_chip *gc,
 	unsigned long *valid_mask, unsigned int ngpios)
 {
 	bitmap_clear(valid_mask, 0, ngpios);
 	bitmap_set(valid_mask, 0, ngpios);
 }
 
-static __maybe_unused
-int max77779_pmic_sgpio_irq_init_hw(struct gpio_chip *gc)
+static int max77779_pmic_sgpio_irq_init_hw(struct gpio_chip *gc)
 {
 	return 0;
 }
 
-static __maybe_unused
-void max77779_pmic_sgpio_irq_mask(struct irq_data *d)
+static void max77779_pmic_sgpio_irq_mask(struct irq_data *d)
 {
 	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
 	struct max77779_pmic_sgpio_info *info = gpiochip_get_data(gc);
@@ -161,8 +171,7 @@ void max77779_pmic_sgpio_irq_mask(struct irq_data *d)
 	info->mask_u |= BIT(d->hwirq);
 }
 
-static __maybe_unused
-void max77779_pmic_sgpio_irq_unmask(struct irq_data *d)
+static void max77779_pmic_sgpio_irq_unmask(struct irq_data *d)
 {
 	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
 	struct max77779_pmic_sgpio_info *info = gpiochip_get_data(gc);
@@ -171,34 +180,37 @@ void max77779_pmic_sgpio_irq_unmask(struct irq_data *d)
 	info->mask_u |= BIT(d->hwirq);
 }
 
-static __maybe_unused
-void max77779_pmic_sgpio_irq_disable(struct irq_data *d)
+static void max77779_pmic_sgpio_irq_disable(struct irq_data *d)
 {
 	max77779_pmic_sgpio_irq_mask(d);
 }
 
-static __maybe_unused
-void max77779_pmic_sgpio_irq_enable(struct irq_data *d)
+static void max77779_pmic_sgpio_irq_enable(struct irq_data *d)
 {
 	max77779_pmic_sgpio_irq_unmask(d);
 }
 
-static __maybe_unused
-int max77779_pmic_sgpio_set_irq_type(struct irq_data *d, unsigned int type)
+static int max77779_pmic_sgpio_set_irq_type(struct irq_data *d,
+		unsigned int type)
 {
 	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
 	struct max77779_pmic_sgpio_info *info = gpiochip_get_data(gc);
 
 	switch (type) {
 	case IRQF_TRIGGER_NONE:
+		info->trig_type[d->hwirq] = MAX77779_SGPIO_CNFG_IRQ_DISABLE;
+		break;
 	case IRQF_TRIGGER_RISING:
+		info->trig_type[d->hwirq] = MAX77779_SGPIO_CNFG_IRQ_RISING;
+		break;
 	case IRQF_TRIGGER_FALLING:
+		info->trig_type[d->hwirq] = MAX77779_SGPIO_CNFG_IRQ_FALLING;
+		break;
+	case (IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING):
+		info->trig_type[d->hwirq] = MAX77779_SGPIO_CNFG_IRQ_BOTH;
+		break;
 	case IRQF_TRIGGER_HIGH:
 	case IRQF_TRIGGER_LOW:
-		info->trig_type &= (0xf << (d->hwirq * 4));
-		info->trig_type |= (type << (d->hwirq * 4));
-		info->trig_type_u |= (1 << d->hwirq);
-		break;
 	default:
 		return -EINVAL;
 	}
@@ -208,7 +220,6 @@ int max77779_pmic_sgpio_set_irq_type(struct irq_data *d, unsigned int type)
 
 static void max77779_pmic_sgpio_bus_lock(struct irq_data *d)
 {
-	/* called in atomic context */
 	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
 	struct max77779_pmic_sgpio_info *info = gpiochip_get_data(gc);
 
@@ -219,11 +230,36 @@ static void max77779_pmic_sgpio_bus_sync_unlock(struct irq_data *d)
 {
 	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
 	struct max77779_pmic_sgpio_info *info = gpiochip_get_data(gc);
+	struct device *core = info->core;
+	unsigned int id;
+	unsigned int reg;
+	unsigned int unmasked;
 
-	/* TODO(jwylder): Once the Datasheet defines the meaning of the IRQ_SEL
-	 * field.  map the trig and mask settings to appropriate field values
-	 */
+	if (!(info->trig_type_u | info->mask_u))
+		goto unlock_out;
 
+	while (info->trig_type_u) {
+		id = __ffs(info->trig_type_u);
+		unmasked = !(info->mask & BIT(id));
+
+		if (unmasked)
+			info->mask_u |= BIT(id);
+		info->trig_type_u &= ~BIT(id);
+	}
+
+	while (info->mask_u) {
+		id = __ffs(info->mask_u);
+		unmasked = !(info->mask & BIT(id));
+		reg = MAX77779_SGPIO_CNFG0 + id;
+
+		if (unmasked)
+			max77779_pmic_reg_update(core, reg,
+					MAX77779_SGPIO_CNFG0_IRQ_SEL_MASK,
+					info->trig_type[id]);
+		info->mask_u &= ~BIT(id);
+	}
+
+unlock_out:
 	mutex_unlock(&info->lock);
 }
 
@@ -243,15 +279,22 @@ static int max77779_pmic_sgpio_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct max77779_pmic_sgpio_info *info;
 	struct gpio_chip *gpio_chip;
+	int irq_in;
 	int err;
-	u32 ngpios;
 
 	if (!dev->of_node)
 		return -ENODEV;
 
+	irq_in = platform_get_irq(pdev, 0);
+	if (irq_in < 0) {
+		dev_err(dev, "%s failed to get irq ret = %d\n", __func__, irq_in);
+		return -ENODEV;
+	}
+
 	info = devm_kzalloc(dev, sizeof(*info), GFP_KERNEL);
 	if (!info)
 		return -ENOMEM;
+	info->irq = irq_in;
 	info->dev = dev;
 	info->core = dev->parent;
 	mutex_init(&info->lock);
@@ -272,12 +315,7 @@ static int max77779_pmic_sgpio_probe(struct platform_device *pdev)
 	gpio_chip->base = -1;
 	gpio_chip->can_sleep = true;
 	gpio_chip->of_node = dev->of_node;
-	err = of_property_read_u32(dev->of_node, "ngpios", &ngpios);
-	if (err) {
-		dev_err(dev, "Failed to get ngpios %d\n", err);
-		return err;
-	}
-	gpio_chip->ngpio = ngpios;
+	gpio_chip->ngpio = MAX77779_SGPIO_NUM_GPIOS;
 
 	gpio_chip->irq.chip = &max77779_pmic_sgpio_irq_chip;
 	gpio_chip->irq.default_type = IRQ_TYPE_NONE;
