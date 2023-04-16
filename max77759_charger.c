@@ -238,44 +238,52 @@ static int max77759_set_uvlo_lvl(struct i2c_client *client, uint8_t mode, unsign
 	return 0;
 }
 
-static int max77759_get_and_clr_bcl_irq(struct i2c_client *client, u8 *irq_val)
+static int max77759_get_bcl_irq(struct i2c_client *client, u8 *irq_val)
 {
-	struct max77759_chgr_data *data;
 	u8 chg_int;
 	u8 ret;
+	const u8 clr_bcl_irq_mask = (MAX77759_CHG_INT2_BAT_OILO_I |
+			MAX77759_CHG_INT2_SYS_UVLO1_I |
+			MAX77759_CHG_INT2_SYS_UVLO2_I);
 
-	if (!client)
-		return -ENODEV;
-
-	data = i2c_get_clientdata(client);
-	if (!data || !data->regmap)
-		return -ENODEV;
-
-	if (max77759_resume_check(data))
-		return -EAGAIN;
-
-	ret = max77759_reg_read(data->regmap, MAX77759_CHG_INT2, &chg_int);
+	ret = max77759_chg_reg_read(client, MAX77759_CHG_INT2, &chg_int);
 	if (ret < 0)
 		return IRQ_NONE;
 
-	if ((chg_int & ~MAX77759_CHG_INT2_BAT_OILO_I) &
-		(chg_int & ~MAX77759_CHG_INT2_SYS_UVLO1_I) &
-		(chg_int & ~MAX77759_CHG_INT2_SYS_UVLO2_I) == 0)
+	/* Return if chg_int has all of BAT_OILO, SYS_UVLO1, SYS_UVLO2 cleared */
+	if ((chg_int & clr_bcl_irq_mask) == 0)
 		return IRQ_NONE;
 
+	/* UVLO2 has the highest priority and then BATOILO, then UVLO1 */
 	if (chg_int & MAX77759_CHG_INT2_SYS_UVLO2_I)
 		*irq_val = UVLO2;
 	else if (chg_int & MAX77759_CHG_INT2_BAT_OILO_I)
 		*irq_val = BATOILO;
 	else if (chg_int & MAX77759_CHG_INT2_SYS_UVLO1_I)
 		*irq_val = UVLO1;
-	else
-		*irq_val = 0;
 
-	ret = max77759_reg_write(data->regmap, MAX77759_CHG_INT2, chg_int);
-	if (ret < 0)
+	return ret;
+}
+
+static int max77759_clr_bcl_irq(struct i2c_client *client)
+{
+	u8 irq_val = 0;
+	u8 chg_int = 0;
+	int ret;
+
+	if (max77759_get_bcl_irq(client, &irq_val) != 0)
 		return IRQ_NONE;
 
+	if (irq_val == UVLO2)
+		chg_int = MAX77759_CHG_INT2_SYS_UVLO2_I;
+	else if (irq_val == UVLO1)
+		chg_int = MAX77759_CHG_INT2_SYS_UVLO1_I;
+	else if (irq_val == BATOILO)
+		chg_int = MAX77759_CHG_INT2_BAT_OILO_I;
+
+	ret = max77759_chg_reg_write(client, MAX77759_CHG_INT2, chg_int);
+	if (ret < 0)
+		return IRQ_NONE;
 	return ret;
 }
 
@@ -285,7 +293,8 @@ static const struct bcl_ifpmic_ops bcl_ifpmic_ops = {
 	max77759_get_uvlo_lvl,
 	max77759_set_batoilo_lvl,
 	max77759_get_batoilo_lvl,
-	max77759_get_and_clr_bcl_irq,
+	max77759_get_bcl_irq,
+	max77759_clr_bcl_irq,
 };
 #endif /* CONFIG_GOOGLE_BCL */
 
