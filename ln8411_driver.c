@@ -2773,7 +2773,7 @@ static int ln8411_apply_new_limits(struct ln8411_charger *ln8411)
 /* 2:1 Direct Charging CC MODE control */
 static int ln8411_charge_ccmode(struct ln8411_charger *ln8411)
 {
-	int ccmode, vin_vol, iin, ret = 0;
+	int ccmode = -1, vin_vol, iin, ret = 0;
 
 	dev_dbg(ln8411->dev, "%s: ======START======= \n", __func__);
 

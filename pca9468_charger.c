@@ -2786,7 +2786,7 @@ static int pca9468_apply_new_limits(struct pca9468_charger *pca9468)
 /* 2:1 Direct Charging CC MODE control */
 static int pca9468_charge_ccmode(struct pca9468_charger *pca9468)
 {
-	int ccmode, vin_vol, iin, ret = 0;
+	int ccmode = -1, vin_vol, iin, ret = 0;
 	bool apply_ircomp = false;
 
 	pr_debug("%s: ======START======= \n", __func__);
