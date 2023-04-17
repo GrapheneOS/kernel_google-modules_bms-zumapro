@@ -1034,7 +1034,7 @@ static int pca9468_irdrop_limit(struct pca9468_charger *pca9468, int fv_uv)
 static int pca9468_apply_irdrop(struct pca9468_charger *pca9468, int fv_uv)
 {
 	const int delta_limit = pca9468_irdrop_limit(pca9468, fv_uv);
-	int ret, vbat, pca_vbat = 0, delta = 0;
+	int ret = -1, vbat, pca_vbat = 0, delta = 0;
 	const bool adaptive = false;
 
 	/* use classic irdrop */
