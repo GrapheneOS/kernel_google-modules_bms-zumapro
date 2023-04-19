@@ -665,6 +665,7 @@ struct p9221_charger_platform_data {
 	bool				light_load;
 	bool				disable_align;
 	bool				ll_vout_not_set;
+	bool				disable_repeat_eop;
 };
 
 struct p9221_charger_ints_bit {

@@ -6591,6 +6591,8 @@ static int p9221_parse_dt(struct device *dev,
 
 	pdata->ll_vout_not_set = of_property_read_bool(node, "google,ll-bpp-vout-not-set");
 
+	pdata->disable_repeat_eop = of_property_read_bool(node, "google,disable-repeat-eop");
+
 	return 0;
 }
 
