@@ -712,6 +712,7 @@ struct p9221_charger_platform_data {
 	bool				disable_align;
 	bool				ll_vout_not_set;
 	int				align_delta;
+	bool				disable_repeat_eop;
 };
 
 struct p9221_charger_ints_bit {
