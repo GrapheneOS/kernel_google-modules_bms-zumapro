@@ -886,6 +886,7 @@ struct p9221_charger_data {
 	int				hpp_fod_level;
 	int				fod_mode;
 	enum p9xxx_chk_rp		check_rp;
+	bool				extended_int_recv;
 
 #if IS_ENABLED(CONFIG_GPIOLIB)
 	struct gpio_chip gpio;

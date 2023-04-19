@@ -89,6 +89,7 @@ static int p9221_set_bpp_vout(struct p9221_charger_data *charger);
 static int p9221_set_hpp_dc_icl(struct p9221_charger_data *charger, bool enable);
 static void p9221_ll_bpp_cep(struct p9221_charger_data *charger, int capacity);
 static int p9221_ll_check_id(struct p9221_charger_data *charger);
+static int p9221_has_dc_in(struct p9221_charger_data *charger);
 
 static char *align_status_str[] = {
 	"...", "M2C", "OK", "-1"
@@ -526,6 +527,18 @@ static int p9221_send_csp(struct p9221_charger_data *charger, u8 stat)
 	}
 
 	if (charger->online) {
+		int wcin;
+
+		wcin = p9221_has_dc_in(charger);
+		if (wcin <= 0 ||
+		    (p9221_is_epp(charger) &&
+		     charger->ints.extended_mode_bit && !charger->extended_int_recv)) {
+			charger->last_capacity = -1;
+			dev_dbg(&charger->client->dev,
+				"skip to send CSP=%d wcin=%d extended_int_recv=%d\n",
+				stat, wcin, charger->extended_int_recv);
+			goto exit;
+		}
 		ret = p9221_reg_write_8(charger, charger->reg_csp_addr, stat);
 		if (ret == 0)
 			ret = charger->chip_set_cmd(charger, P9221R5_COM_SENDCSP);
@@ -533,7 +546,7 @@ static int p9221_send_csp(struct p9221_charger_data *charger, u8 stat)
 			dev_info(&charger->client->dev, "Send CSP status=%d (%d)\n",
 				 stat, ret);
 	}
-
+exit:
 	mutex_unlock(&charger->cmd_lock);
 	return ret;
 }
@@ -1010,6 +1023,7 @@ static void p9221_set_offline(struct p9221_charger_data *charger)
 	charger->prop_mode_en = false;
 	charger->hpp_hv = false;
 	charger->fod_mode = -1;
+	charger->extended_int_recv = false;
 	set_renego_state(charger, P9XXX_AVAILABLE);
 
 	/* Reset PP buf so we can get a new serial number next time around */
@@ -5964,6 +5978,7 @@ static void p9221_irq_handler(struct p9221_charger_data *charger, u16 irq_src)
 
 	/* This only necessary for P9222 */
 	if (irq_src & charger->ints.extended_mode_bit) {
+		charger->extended_int_recv = true;
 		if (charger->check_rp == RP_NOTSET &&
 		    charger->pdata->epp_rp_value != -1) {
 			pm_stay_awake(charger->dev);
@@ -6878,6 +6893,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	charger->irq_at = 0;
 	charger->ll_bpp_cep = -EINVAL;
 	charger->check_rp = RP_NOTSET;
+	charger->extended_int_recv = false;
 	mutex_init(&charger->io_lock);
 	mutex_init(&charger->cmd_lock);
 	mutex_init(&charger->stats_lock);
