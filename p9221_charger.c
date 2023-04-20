@@ -3605,15 +3605,18 @@ static void p9221_notifier_work(struct work_struct *work)
 	}
 
 	if (charger->log) {
-		u32 vrect_mv;
+		u32 vrect_mv, tx_pwr;
+		int rc;
 
 		ret = charger->chip_get_vrect(charger, &vrect_mv);
+		rc = charger->chip_get_tx_epp_guarpwr(charger, &tx_pwr);
 		logbuffer_log(charger->log,
-			      "notifier: on:%d ben:%d dc:%d det:%d VRECT=%uuV (%d)",
+			      "notifier: on:%d ben:%d dc:%d det:%d VRECT=%uuV TxGuarPwr=%uW (%d)",
 			      charger->online,
 			      charger->ben_state,
 			      charger->check_dc, charger->check_det,
-			      (ret == 0) ? P9221_MV_TO_UV(vrect_mv) : 0, ret);
+			      (ret == 0) ? P9221_MV_TO_UV(vrect_mv) : 0,
+			      (rc == 0) ? tx_pwr / 1000 : 0, ret);
 		}
 
 	if (charger->check_det)

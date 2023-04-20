@@ -489,6 +489,25 @@ static int p9222_chip_set_vout_max(struct p9221_charger_data *chgr, u32 mv)
 	return ret;
 }
 
+/*
+ * chip_get_tx_epp_guarpwr
+ *
+ *   get EPP Tx GuarPwr (W)
+ */
+static int p9xxx_get_tx_epp_guarpwr(struct p9221_charger_data *chgr, u32 *tx_pwr)
+{
+	u8 val8;
+	int ret;
+
+	ret = chgr->reg_read_8(chgr, chgr->reg_epp_tx_guarpwr_addr, &val8);
+	if (ret)
+		return ret;
+
+	*tx_pwr = P9412_HW_TO_MW(val8);
+
+	return 0;
+}
+
 /* system mode register */
 static int p9221_chip_get_sys_mode(struct p9221_charger_data *chgr, u8 *mode)
 {
@@ -2165,6 +2184,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_csp_addr = P9221R5_CHARGE_STAT_REG;
 		chgr->reg_light_load_addr = 0;
 		chgr->reg_mot_addr = P9412_MOT_REG;
+		chgr->reg_epp_tx_guarpwr_addr = P9221R5_EPP_TX_GUARANTEED_POWER_REG;
 		break;
 	case RA9530_CHIP_ID:
 		chgr->reg_tx_id_addr = P9412_PROP_TX_ID_REG;
@@ -2177,6 +2197,8 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_q_factor_addr = P9221R5_EPP_Q_FACTOR_REG;
 		chgr->reg_csp_addr = P9221R5_CHARGE_STAT_REG;
 		chgr->reg_light_load_addr = 0;
+		chgr->reg_mot_addr = 0;
+		chgr->reg_epp_tx_guarpwr_addr = P9221R5_EPP_TX_GUARANTEED_POWER_REG;
 		break;
 	case P9382A_CHIP_ID:
 		chgr->reg_tx_id_addr = P9382_PROP_TX_ID_REG;
@@ -2190,6 +2212,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_csp_addr = P9221R5_CHARGE_STAT_REG;
 		chgr->reg_light_load_addr = 0;
 		chgr->reg_mot_addr = 0;
+		chgr->reg_epp_tx_guarpwr_addr = P9221R5_EPP_TX_GUARANTEED_POWER_REG;
 		break;
 	case P9222_CHIP_ID:
 		chgr->reg_tx_id_addr = P9222RE_PROP_TX_ID_REG;
@@ -2203,6 +2226,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_csp_addr = P9222RE_CHARGE_STAT_REG;
 		chgr->reg_light_load_addr = P9222_RX_CALIBRATION_LIGHT_LOAD;
 		chgr->reg_mot_addr = 0;
+		chgr->reg_epp_tx_guarpwr_addr = P9222RE_EPP_TX_GUARANTEED_POWER_REG;
 		break;
 	default:
 		chgr->reg_tx_id_addr = P9221R5_PROP_TX_ID_REG;
@@ -2216,6 +2240,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_csp_addr = P9221R5_CHARGE_STAT_REG;
 		chgr->reg_light_load_addr = 0;
 		chgr->reg_mot_addr = 0;
+		chgr->reg_epp_tx_guarpwr_addr = P9221R5_EPP_TX_GUARANTEED_POWER_REG;
 		break;
 	}
 }
@@ -2228,6 +2253,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 	chgr->chip_get_op_freq = p9xxx_chip_get_op_freq;
 	chgr->chip_get_vrect = p9xxx_chip_get_vrect;
 	chgr->chip_get_vcpout = p9xxx_chip_get_vcpout;
+	chgr->chip_get_tx_epp_guarpwr = p9xxx_get_tx_epp_guarpwr;
 
 	switch (chip_id) {
 	case P9412_CHIP_ID:
