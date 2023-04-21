@@ -194,7 +194,7 @@ struct gcpm_drv  {
 	struct power_supply *wlc_dc_psy;
 	struct pd_pps_data wlc_pps_data;
 	u32 wlc_phandle;
-
+	bool no_init_wlc_ta_vol;
 	struct delayed_work select_work;
 
 	/* set to force PPS negotiation */
@@ -1083,14 +1083,14 @@ static struct pd_pps_data *gcpm_pps_data(struct gcpm_drv *gcpm)
 static int gcpm_pps_wait_for_ready(struct gcpm_drv *gcpm)
 {
 	struct pd_pps_data *pps_data = gcpm_pps_data(gcpm);
-	int pps_ui, vout = -1, iout = -1;
+	int pps_ui = 0, vout = -1, iout = -1;
 	bool pwr_ok = false;
 
 	if (!pps_data)
 		return -ENODEV;
 
 	/* determine the limit/levels if needed */
-	if (gcpm->pps_index == PPS_INDEX_WLC) {
+	if (gcpm->pps_index == PPS_INDEX_WLC && !gcpm->no_init_wlc_ta_vol) {
 		struct power_supply *chg_psy = gcpm_chg_get_active(gcpm);
 		int vbatt = -1;
 
@@ -1103,7 +1103,8 @@ static int gcpm_pps_wait_for_ready(struct gcpm_drv *gcpm)
 	}
 
 	/* always need to ping */
-	pps_ui = pps_update_adapter(pps_data, vout, iout, pps_data->pps_psy);
+	if (gcpm->pps_index != PPS_INDEX_WLC || !gcpm->no_init_wlc_ta_vol)
+		pps_ui = pps_update_adapter(pps_data, vout, iout, pps_data->pps_psy);
 	if (pps_ui < 0) {
 		pr_err("PPS_Work: pps update, dc_state=%d (%d)\n",
 			gcpm->dc_state, pps_ui);
@@ -4191,6 +4192,9 @@ static int google_cpm_probe(struct platform_device *pdev)
 				   &gcpm->wlc_dc_fcc);
 	if (ret < 0)
 		gcpm->wlc_dc_fcc = 0;
+
+	gcpm->no_init_wlc_ta_vol = of_property_read_bool(pdev->dev.of_node,
+							"google,no-init-wlc-ta-vol");
 
 	dev_info(gcpm->device, "taper ts_m=%d ts_ccs=%d ts_i=%d ts_cnt=%d ts_g=%d ts_v=%d ts_c=%d\n",
 		 gcpm->taper_step_fv_margin, gcpm->taper_step_cc_step,
