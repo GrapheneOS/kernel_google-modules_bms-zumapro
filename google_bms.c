@@ -495,14 +495,29 @@ int gbms_msc_round_fv_uv(const struct gbms_chg_profile *profile,
 EXPORT_SYMBOL_GPL(gbms_msc_round_fv_uv);
 
 /* skip tiers that have same c-rate */
-int gbms_msc_merge_tiers(const struct gbms_chg_profile *profile,
-			  int vbatt_idx, int temp_idx)
+int gbms_msc_voltage_idx_merge_tiers(const struct gbms_chg_profile *profile,
+			  int vbatt, int temp_idx)
 {
 	int cc_max;
+	int vbatt_idx = 0;
 
-	if (!profile || vbatt_idx < 0 || vbatt_idx >= profile->volt_nb_limits
-	    || temp_idx < 0 || temp_idx >= profile->temp_nb_limits)
-		return -EINVAL;
+	if (!profile)
+		return 0;
+
+	while (vbatt_idx < profile->volt_nb_limits - 1 &&
+	       vbatt > profile->volt_limits[vbatt_idx])
+		vbatt_idx++;
+
+	if (vbatt_idx != profile->volt_nb_limits - 1) {
+		const int vt = profile->volt_limits[vbatt_idx];
+		const int headr = profile->fv_uv_resolution * 3;
+
+		if ((vt - vbatt) < headr)
+			vbatt_idx += 1;
+	}
+
+	if (temp_idx < 0 || temp_idx >= profile->temp_nb_limits)
+		return vbatt_idx;
 
 	cc_max = GBMS_CCCM_LIMITS(profile, temp_idx, vbatt_idx);
 	while (vbatt_idx < profile->volt_nb_limits - 1 &&
@@ -511,7 +526,7 @@ int gbms_msc_merge_tiers(const struct gbms_chg_profile *profile,
 
 	return vbatt_idx;
 }
-EXPORT_SYMBOL_GPL(gbms_msc_merge_tiers);
+EXPORT_SYMBOL_GPL(gbms_msc_voltage_idx_merge_tiers);
 
 /* charge profile idx based on the battery temperature
  * TODO: return -1 when temperature is lower than profile->temp_limits[0] or

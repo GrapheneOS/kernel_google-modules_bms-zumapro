@@ -20,6 +20,7 @@
 #include <linux/i2c.h>
 #include <linux/regmap.h>
 #include <linux/rtc.h>
+#include <misc/gvotable.h>
 
 #include "pca9468_regs.h"
 #include "pca9468_charger.h"
@@ -4830,6 +4831,28 @@ static int debug_pps_index_set(void *data, u64 val)
 DEFINE_SIMPLE_ATTRIBUTE(debug_pps_index_ops, debug_pps_index_get,
 			debug_pps_index_set, "%llu\n");
 
+static int debug_ta_max_vol_set(void *data, u64 val)
+{
+	struct pca9468_charger *pca9468 = data;
+
+	pca9468->pdata->ta_max_vol = val;
+	pca9468->pdata->ta_max_vol_cp = val;
+
+	pca9468->ta_max_vol = val * pca9468->chg_mode;
+
+	return 0;
+}
+
+static int debug_ta_max_vol_get(void *data, u64 *val)
+{
+	struct pca9468_charger *pca9468 = data;
+
+	*val = pca9468->pdata->ta_max_vol;
+	return 0;
+}
+DEFINE_SIMPLE_ATTRIBUTE(debug_ta_max_vol_ops, debug_ta_max_vol_get,
+			debug_ta_max_vol_set, "%llu\n");
+
 static ssize_t show_sts_ab(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct pca9468_charger *pca9468 = dev_get_drvdata(dev);
@@ -4960,6 +4983,9 @@ static int pca9468_create_fs_entries(struct pca9468_charger *chip)
 			   &chip->pdata->iin_cc_comp_offset);
 	debugfs_create_file("apply_offsets", 0644, chip->debug_root, chip,
 			    &apply_offsets_debug_ops);
+
+	debugfs_create_file("ta_vol_max", 0644, chip->debug_root, chip,
+			   &debug_ta_max_vol_ops);
 
 	chip->debug_adc_channel = ADCCH_VOUT;
 	debugfs_create_file("adc_chan", 0644, chip->debug_root, chip,

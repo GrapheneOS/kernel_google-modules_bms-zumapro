@@ -35,6 +35,7 @@
 #define P9221_RAMP_VOTER			"WLC_RAMP_VOTER"
 #define P9221_HPP_VOTER				"EPP_HPP_VOTER"
 #define WLC_MFG_GOOGLE				0x72
+#define WLC_MFG_108_FOR_GOOGLE			0x108
 #define P9221_DC_ICL_BPP_UA			700000
 #define P9221_DC_ICL_BPP_RAMP_DEFAULT_UA	900000
 #define P9221_DC_ICL_BPP_RAMP_DELAY_DEFAULT_MS	(7 * 60 * 1000)  /* 7 mins */
@@ -315,6 +316,8 @@
 #define P9222RE_COM_CHAN_SEND_SIZE_REG		0x601
 #define P9222RE_DATA_BUF_START			0x604
 #define P9222RE_DATA_BUF_SIZE			0x100
+#define P9222RE_PP_SEND_BUF_START		0x64
+#define P9222RE_PP_RECV_BUF_START		0x6C
 
 #define P9222RE_COM_CCACTIVATE			BIT(9)
 
@@ -420,6 +423,7 @@
 #define P9412_ALIGN_X_REG			0xB0 /* 1 byte 8 bit raw */
 #define P9412_ALIGN_Y_REG			0xB1 /* 1 byte 8 bit raw */
 #define P9412_EPP_CAL_STATE_REG			0xB8
+#define P9412_WPC_SPEC_REV_REG			0xB9
 #define P9412_PROP_TX_POTEN_PWR_REG		0xC4
 #define P9412_PROP_REQ_PWR_REG			0xC5
 #define P9412_PROP_CURR_PWR_REG			0xC6
@@ -493,6 +497,8 @@
 						 P9412_CAL_STATE_2)
 /* Rx Communication Modulation FET(CMFET) */
 #define P9412_CMFET_DISABLE_ALL			(0xF0) /* CM-A/B-1/2: REG[7:4]=0b1111 */
+#define P9412_CMFET_DEFAULT			(0x30) /* REG[7:4]=0b0011 */
+#define P9412_CMFET_2_COMM			(0xC0) /* REG[7:4]=0b1100 */
 
 #define P9221_CRC8_POLYNOMIAL			0x07    /* (x^8) + x^2 + x + 1 */
 #define P9412_ADT_TYPE_AUTH			0x02
@@ -501,6 +507,7 @@
 #define HPP_MODE_PWR_REQUIRE			23
 
 #define RTX_RESET_COUNT_MAX			3
+#define P9XXX_WPC_REV_13			0x13
 
 /* p9412 AP BOOST PING register */
 #define P9412_APBSTPING_REG			0xF0
@@ -516,14 +523,32 @@
 #define P9412_I_API_Hys_08			0x6A
 #define P9412_MIN_FREQ_PER			0x94
 #define P9412_MIN_FREQ_PER_120			1000	/* 120000/120 */
+#define P9412_TX_FOD_THRSH_REG			0xD4
+#define P9412_TX_FOD_THRSH_1500			0x640
 
 #define P9412_MOT_REG				0xD0
 #define P9412_MOT_40PCT				0x10
 #define P9412_MOT_65PCT				0x1A
+#define P9412_MOT_30PCT                         0x0C
 
-#define P9412_MOT_REG				0xD0
-#define P9412_MOT_40PCT				0x10
-#define P9412_MOT_65PCT				0x1A
+#define P9412_HPP_FOD_SETS			8
+
+/* RA9530 */
+
+#define RA9530_CHIP_ID				0x9530
+#define RA9530_DATA_BUF_SIZE			0x400 /* 1024 bytes */
+#define RA9530_DATA_BUF_READ_START		0x800 /* 0x800 ~ 0xBFF */
+#define RA9530_DATA_BUF_WRITE_START		0x400 /* 0x400 ~ 0x7FF */
+#define RA9530_ILIM_REG				0x2C0 /* 0x400 ~ 0x7FF */
+#define RA9530_CC_WRITE_TYPE_REG		0x3F0
+#define RA9530_CC_READ_TYPE_REG			0x2F8
+#define RA9530_CC_TYPE_MASK			0xF8
+#define RA9530_CC_TYPE_SHIFT			3
+#define RA9530_CC_WRITE_SIZE_REG		0x3F2
+#define RA9530_CC_WRITE_INDEX_REG		0x3F4
+#define RA9530_CC_READ_SIZE_REG			0x3FA
+#define RA9530_CC_READ_INDEX_REG		0x3FC
+#define RA9530_BIDI_COM_PACKET_TYPE		0x13
 
 /* Features */
 typedef enum {
@@ -607,6 +632,11 @@ struct p9221_charger_cc_data_lock {
 	ktime_t cc_rcv_at;
 };
 
+struct p9221_fod_data {
+	int num;
+	u8 fod[P9221R5_NUM_FOD];
+};
+
 struct p9221_charger_platform_data {
 	int				irq_gpio;
 	int				irq_int;
@@ -616,7 +646,7 @@ struct p9221_charger_platform_data {
 	int				slct_gpio;
 	int				slct_value;
 	int				ben_gpio;
-	int                             ext_ben_gpio;
+	int				ext_ben_gpio;
 	int				switch_gpio;
 	int				boost_gpio;
 	int				dc_switch_gpio;
@@ -631,6 +661,7 @@ struct p9221_charger_platform_data {
 	u8				fod_epp_comp[P9221R5_NUM_FOD];
 	u8				fod_hpp[P9221R5_NUM_FOD];
 	u8				fod_hpp_hv[P9221R5_NUM_FOD];
+	struct p9221_fod_data		hpp_fods[P9412_HPP_FOD_SETS];
 	int				fod_num;
 	int				fod_epp_num;
 	int				fod_epp_comp_num;
@@ -662,11 +693,16 @@ struct p9221_charger_platform_data {
 	bool				apbst_en;
 	bool				has_sw_ramp;
 	bool				hw_ocp_det;
+	bool				needs_align_check;
 	/* phone type for tx_id*/
 	u8				phone_type;
 	u32				epp_icl;
 	/* calibrate light load */
 	bool				light_load;
+	int				nb_hpp_fod_vol;
+	int				*hpp_fod_vol;
+	bool				disable_align;
+	bool				ll_vout_not_set;
 };
 
 struct p9221_charger_ints_bit {
@@ -717,9 +753,11 @@ struct p9221_charger_data {
 	struct gvotable_election	*chg_mode_votable;
 	struct gvotable_election	*wlc_disable_votable;
 	struct gvotable_election	*csi_status_votable;
+	struct gvotable_election	*csi_type_votable;
 	struct notifier_block		nb;
 	struct mutex			io_lock;
 	struct mutex			cmd_lock;
+	struct mutex			fod_lock;
 	struct device			*dev;
 	struct delayed_work		notifier_work;
 	struct delayed_work		charge_stats_work;
@@ -839,6 +877,7 @@ struct p9221_charger_data {
 	int				send_txid_cnt;
 	bool				sw_ramp_done;
 	bool				hpp_hv;
+	int				hpp_fod_level;
 	int				fod_mode;
 	enum p9xxx_chk_rp		check_rp;
 
@@ -861,6 +900,7 @@ struct p9221_charger_data {
 	u16				reg_q_factor_addr;
 	u16				reg_csp_addr;
 	u16				reg_light_load_addr;
+	u16				reg_mot_addr;
 
 	int (*reg_read_n)(struct p9221_charger_data *chgr, u16 reg,
 			  void *buf, size_t n);
@@ -978,6 +1018,8 @@ enum p9xxx_renego_state {
       -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_q_factor_addr, data))
 #define p9xxx_chip_set_light_load_reg(chgr, data) (chgr->reg_light_load_addr == 0 ? \
       -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_light_load_addr, data))
+#define p9xxx_chip_set_mot_reg(chgr, data) (chgr->reg_mot_addr == 0 ? \
+      -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_mot_addr, data))
 #define logbuffer_prlog(p, fmt, ...)     \
       gbms_logbuffer_prlog(p, LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG, fmt, ##__VA_ARGS__)
 #endif /* __P9221_CHARGER_H__ */

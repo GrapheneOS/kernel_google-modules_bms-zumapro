@@ -1,10 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Platform data for the NXP WC68 battery charger driver.
+ * Platform data for the LN8411 battery charger driver.
  */
 
-#ifndef _WC68_CHARGER_H_
-#define _WC68_CHARGER_H_
+#ifndef _LN8411_CHARGER_H_
+#define _LN8411_CHARGER_H_
 
 #include <linux/mutex.h>
 #include <linux/module.h>
@@ -12,13 +12,23 @@
 #include <linux/thermal.h>
 #include <linux/pm_runtime.h>
 #include <linux/kernel.h>
+#include <linux/gpio/driver.h>
 
 /* Google integration */
 #include "gbms_power_supply.h"
 #include "google_bms.h"
 #include "google_dc_pps.h"
 
-struct wc68_platform_data {
+enum ln8411_modes {
+	LN8411_FWD4TO1 = 0,
+	LN8411_FWD2TO1,
+	LN8411_FWD1TO1,
+	LN8411_REV1TO4 = 4,
+	LN8411_REV1TO2,
+	LN8411_REV1TO1,
+};
+
+struct ln8411_platform_data {
 	s32		irq_gpio;	/* GPIO pin that's connected to INT# */
 	u32		iin_cfg;	/* Input Current Limit - uA unit */
 	u32		iin_cfg_max;	/* from config/dt */
@@ -27,15 +37,13 @@ struct wc68_platform_data {
 	u32		iin_topoff;	/* Input Topoff current -uV unit */
 	s32		iin_max_offset;
 	s32		iin_cc_comp_offset;
-	u32		ta_max_vol;
 	u32		ta_max_vol_2_1;
 	u32		ta_max_vol_4_1;
-	u32		ta_max_vol_cp;
 
 	/* irdrop */
 	s32		irdrop_limits[3];
 	s32		irdrop_limit_cnt;
-	u8		wc68_irdrop;
+	u8		ln8411_irdrop;
 
 #if IS_ENABLED(CONFIG_THERMAL)
 	const char *usb_tz_name;
@@ -45,37 +53,37 @@ struct wc68_platform_data {
 /* - PPS Integration Shared definitions ---------------------------------- */
 
 /* AC[0] */
-#define WC68_CHGS_VER		1
-#define WC68_CHGS_VER_MASK	0xff
+#define LN8411_CHGS_VER		1
+#define LN8411_CHGS_VER_MASK	0xff
 /* AC[1] APDO */
 /* RS[0] */
-#define WC68_CHGS_FLAG_SHIFT	0
-#define WC68_CHGS_FLAG_MASK	0xff
-#define WC68_CHGS_F_STBY	BIT(0)
-#define WC68_CHGS_F_SHDN	BIT(1)
-#define WC68_CHGS_F_DONE	BIT(2)
-#define WC68_CHGS_PRE_SHIFT	8
-#define WC68_CHGS_PRE_MASK	(0xff << WC68_CHGS_PRE_SHIFT)
-#define WC68_CHGS_RCPC_SHIFT	16
-#define WC68_CHGS_RCPC_MASK	(0xff << WC68_CHGS_RCPC_SHIFT)
-#define WC68_CHGS_NC_SHIFT	24
-#define WC68_CHGS_NC_MASK	(0xff << WC68_CHGS_NC_SHIFT)
+#define LN8411_CHGS_FLAG_SHIFT	0
+#define LN8411_CHGS_FLAG_MASK	0xff
+#define LN8411_CHGS_F_STBY	BIT(0)
+#define LN8411_CHGS_F_SHDN	BIT(1)
+#define LN8411_CHGS_F_DONE	BIT(2)
+#define LN8411_CHGS_PRE_SHIFT	8
+#define LN8411_CHGS_PRE_MASK	(0xff << LN8411_CHGS_PRE_SHIFT)
+#define LN8411_CHGS_RCPC_SHIFT	16
+#define LN8411_CHGS_RCPC_MASK	(0xff << LN8411_CHGS_RCPC_SHIFT)
+#define LN8411_CHGS_NC_SHIFT	24
+#define LN8411_CHGS_NC_MASK	(0xff << LN8411_CHGS_NC_SHIFT)
 /* RS[1] */
-#define WC68_CHGS_OVCC_SHIFT	0
-#define WC68_CHGS_OVCC_MASK	(0xffff << WC68_CHGS_OVCC_SHIFT)
-#define WC68_CHGS_ADJ_SHIFT	16
-#define WC68_CHGS_ADJ_MASK	(0xffff << WC68_CHGS_ADJ_MASK)
+#define LN8411_CHGS_OVCC_SHIFT	0
+#define LN8411_CHGS_OVCC_MASK	(0xffff << LN8411_CHGS_OVCC_SHIFT)
+#define LN8411_CHGS_ADJ_SHIFT	16
+#define LN8411_CHGS_ADJ_MASK	(0xffff << LN8411_CHGS_ADJ_MASK)
 /* RS[2] */
-#define WC68_CHGS_CC_SHIFT	0
-#define WC68_CHGS_CC_MASK	(0xffff << WC68_CHGS_CC_SHIFT)
-#define WC68_CHGS_CV_SHIFT	16
-#define WC68_CHGS_CV_MASK	(0xffff << WC68_CHGS_CV_SHIFT)
+#define LN8411_CHGS_CC_SHIFT	0
+#define LN8411_CHGS_CC_MASK	(0xffff << LN8411_CHGS_CC_SHIFT)
+#define LN8411_CHGS_CV_SHIFT	16
+#define LN8411_CHGS_CV_MASK	(0xffff << LN8411_CHGS_CV_SHIFT)
 /* RS[3] */
-#define WC68_CHGS_CA_SHIFT	0
-#define WC68_CHGS_CA_MASK	(0xff << WC68_CHGS_CA_SHIFT)
+#define LN8411_CHGS_CA_SHIFT	0
+#define LN8411_CHGS_CA_MASK	(0xff << LN8411_CHGS_CA_SHIFT)
 
 
-struct wc68_chg_stats {
+struct ln8411_chg_stats {
 	u32 adapter_capabilities[2];
 	u32 receiver_state[5];
 
@@ -94,20 +102,25 @@ struct wc68_chg_stats {
 	u32 stby_count;
 };
 
-#define wc68_chg_stats_valid(chg_data) ((chg_data)->valid)
+struct ln8411_chip_info {
+	u8 device_id;
+	u8 chip_rev;
+};
 
-static inline void wc68_chg_stats_update_flags(struct wc68_chg_stats *chg_data, u8 flags)
+#define ln8411_chg_stats_valid(chg_data) ((chg_data)->valid)
+
+static inline void ln8411_chg_stats_update_flags(struct ln8411_chg_stats *chg_data, u8 flags)
 {
-	chg_data->receiver_state[0] |= flags << WC68_CHGS_FLAG_SHIFT;
+	chg_data->receiver_state[0] |= flags << LN8411_CHGS_FLAG_SHIFT;
 }
 
-static inline void wc68_chg_stats_set_flags(struct wc68_chg_stats *chg_data, u8 flags)
+static inline void ln8411_chg_stats_set_flags(struct ln8411_chg_stats *chg_data, u8 flags)
 {
-	chg_data->receiver_state[0] &= ~WC68_CHGS_FLAG_MASK;
-	wc68_chg_stats_update_flags(chg_data, flags);
+	chg_data->receiver_state[0] &= ~LN8411_CHGS_FLAG_MASK;
+	ln8411_chg_stats_update_flags(chg_data, flags);
 }
 
-static inline void wc68_chg_stats_inc_ovcf(struct wc68_chg_stats *chg_data,
+static inline void ln8411_chg_stats_inc_ovcf(struct ln8411_chg_stats *chg_data,
 					    s32 ibatt, s32 cc_max)
 {
 	const s32 delta = ibatt - cc_max;
@@ -120,7 +133,7 @@ static inline void wc68_chg_stats_inc_ovcf(struct wc68_chg_stats *chg_data,
 }
 
 /**
- * struct wc68_charger - wc68 charger instance
+ * struct ln8411_charger - ln8411 charger instance
  * @monitor_wake_lock: lock to enter the suspend mode
  * @lock: protects concurrent access to online variables
  * @dev: pointer to device
@@ -150,7 +163,7 @@ static inline void wc68_chg_stats_inc_ovcf(struct wc68_chg_stats *chg_data,
  * @ta_max_cur: TA maximum current of APDO, uA
  * @ta_max_vol: TA maximum voltage for the direct charging, uV
  * @ta_max_pwr: TA maximum power, uW
- * @prev_iin: Previous IIN ADC of WC68, uA
+ * @prev_iin: Previous IIN ADC of LN8411, uA
  * @prev_inc: Previous TA voltage or current increment factor
  * @fv_uv: requested float voltage
  * @cc_max: requested charge current max
@@ -168,7 +181,7 @@ static inline void wc68_chg_stats_inc_ovcf(struct wc68_chg_stats *chg_data,
  * @init_done: true when initialization is complete
  * @dc_start_time: start time (sec since boot) of the DC session
  */
-struct wc68_charger {
+struct ln8411_charger {
 	struct wakeup_source	*monitor_wake_lock;
 	struct mutex		lock;
 	struct device		*dev;
@@ -206,7 +219,7 @@ struct wc68_charger {
 
 	s32			retry_cnt;
 
-	struct wc68_platform_data *pdata;
+	struct ln8411_platform_data *pdata;
 
 	/* Google Integration Start */
 	s32 			pps_index;		/* 0=disabled, 1=tcpm, 2=wireless */
@@ -255,14 +268,23 @@ struct wc68_charger {
 	u32 			wlc_ramp_out_delay;
 	u32 			wlc_ramp_out_vout_target;
 
-	struct wc68_chg_stats	chg_data;
+	struct ln8411_chg_stats	chg_data;
 	struct gvotable_election *dc_avail;
 
 	u32 			debug_count;
 	struct i2c_client 	*client;
+	struct ln8411_chip_info chip_info;
 	struct attribute_group 	attrs;    /* SysFS attributes */
 	struct delayed_work 	init_hw_work;
+
+#if IS_ENABLED(CONFIG_GPIOLIB)
+	struct gpio_chip gpio;
+#endif
 	/* Google Integration END */
+
+	/* Temporary, only for A1 silicon */
+	u32			iin_reg;
+	u32			vfloat_reg;
 };
 
 /* Direct Charging State */
@@ -300,18 +322,19 @@ enum {
 	CHG_NO_DC_MODE,
 	CHG_2TO1_DC_MODE,
 	CHG_4TO1_DC_MODE,
+	CHG_1TO2_DC_MODE,
 };
 
 /* PPS timers */
-#define WC68_PDMSG_WAIT_T		250	/* 250ms */
-#define WC68_PDMSG_RETRY_T		1000	/* 1000ms */
-#define WC68_PDMSG_WLC_WAIT_T	5000	/* 5000ms */
-#define WC68_PPS_PERIODIC_T		10000	/* 10000ms */
+#define LN8411_PDMSG_WAIT_T		250	/* 250ms */
+#define LN8411_PDMSG_RETRY_T		1000	/* 1000ms */
+#define LN8411_PDMSG_WLC_WAIT_T	2000	/* 2000ms */
+#define LN8411_PPS_PERIODIC_T		10000	/* 10000ms */
+#define LN8411_TA_CONFIG_WAIT_T		(4 * LN8411_PDMSG_WAIT_T)
 
 /* - Core driver  ---------------------------- */
 
-s32 wc68_read_adc(struct wc68_charger *wc68, u8 adc_ch);
-s32 wc68_input_current_limit(struct wc68_charger *wc68);
+s32 ln8411_input_current_limit(struct ln8411_charger *ln8411);
 
 /* - PPS Integration (move to a separate file) ---------------------------- */
 
@@ -323,24 +346,28 @@ enum {
 	PPS_INDEX_MAX,
 };
 
-s32 wc68_probe_pps(struct wc68_charger *wc68_chg);
+s32 ln8411_probe_pps(struct ln8411_charger *ln8411_chg);
 
-s32 wc68_request_pdo(struct wc68_charger *wc68);
-s32 wc68_usbpd_setup(struct wc68_charger *wc68);
-s32 wc68_send_pd_message(struct wc68_charger *wc68, u32 msg_type);
-s32 wc68_get_apdo_max_power(struct wc68_charger *wc68,
+s32 ln8411_request_pdo(struct ln8411_charger *ln8411);
+s32 ln8411_usbpd_setup(struct ln8411_charger *ln8411);
+s32 ln8411_send_pd_message(struct ln8411_charger *ln8411, u32 msg_type);
+s32 ln8411_get_apdo_max_power(struct ln8411_charger *ln8411,
 			    u32 ta_max_vol, u32 ta_max_cur);
-s32 wc68_send_rx_voltage(struct wc68_charger *wc68, u32 msg_type);
-s32 wc68_get_rx_max_power(struct wc68_charger *wc68);
-s32 wc68_set_ta_type(struct wc68_charger *wc68, s32 pps_index);
+s32 ln8411_send_rx_voltage(struct ln8411_charger *ln8411, u32 msg_type);
+s32 ln8411_get_rx_max_power(struct ln8411_charger *ln8411);
+s32 ln8411_set_ta_type(struct ln8411_charger *ln8411, s32 pps_index);
 
 /* GBMS integration */
-struct power_supply *wc68_get_rx_psy(struct wc68_charger *wc68);
-s32 wc68_get_chg_chgr_state(struct wc68_charger *wc68,
+struct power_supply *ln8411_get_rx_psy(struct ln8411_charger *ln8411);
+s32 ln8411_get_chg_chgr_state(struct ln8411_charger *ln8411,
 			    union gbms_charger_state *chg_state);
-s32 wc68_is_present(struct wc68_charger *wc68);
-s32 wc68_get_status(struct wc68_charger *wc68);
-s32 wc68_get_charge_type(struct wc68_charger *wc68);
+s32 ln8411_is_present(struct ln8411_charger *ln8411);
+s32 ln8411_get_status(struct ln8411_charger *ln8411);
+s32 ln8411_get_charge_type(struct ln8411_charger *ln8411);
+int ln8411_read_adc(struct ln8411_charger *ln8411,
+			  const enum ln8411_adc_chan chan);
+int get_chip_info(struct ln8411_charger *chg);
+int ln8411_check_active(struct ln8411_charger *ln8411);
 
 extern s32 debug_printk_prlog;
 extern s32 debug_no_logbuffer;
@@ -349,13 +376,11 @@ extern s32 debug_no_logbuffer;
     gbms_logbuffer_prlog(p->log, level, debug_no_logbuffer, debug_printk_prlog, fmt, ##__VA_ARGS__)
 
 /* charge stats */
-void wc68_chg_stats_init(struct wc68_chg_stats *chg_data);
-s32 wc68_chg_stats_update(struct wc68_chg_stats *chg_data,
-			  const struct wc68_charger *wc68);
-s32 wc68_chg_stats_done(struct wc68_chg_stats *chg_data,
-			const struct wc68_charger *wc68);
-void wc68_chg_stats_dump(const struct wc68_charger *wc68);
-s32 wc68_check_standby(struct wc68_charger *wc68);
-s32 wc68_hw_ping(struct wc68_charger *wc68);
+void ln8411_chg_stats_init(struct ln8411_chg_stats *chg_data);
+s32 ln8411_chg_stats_update(struct ln8411_chg_stats *chg_data,
+			  const struct ln8411_charger *ln8411);
+s32 ln8411_chg_stats_done(struct ln8411_chg_stats *chg_data,
+			const struct ln8411_charger *ln8411);
+void ln8411_chg_stats_dump(const struct ln8411_charger *ln8411);
 
 #endif

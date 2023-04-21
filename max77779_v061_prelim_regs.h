@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * machine generated DO NOT MODIFY
- * source Sequoia_RegMap_customer_060.xml
- * 2023-02-14
+ * source Sequoia_RegMap_customer_v0.6.1.xml
+ * 2023-02-16
  */
 
-#ifndef SEQUOIA_REGMAP_CUSTOMER_060_REG_H_
-#define SEQUOIA_REGMAP_CUSTOMER_060_REG_H_
+#ifndef SEQUOIA_REGMAP_CUSTOMER_V061_REG_H_
+#define SEQUOIA_REGMAP_CUSTOMER_V061_REG_H_
 
 /* needs linux/bits.h */
 
@@ -341,71 +341,34 @@ MAX77779_BFF(max77779_spmi_int_mask_vdroop_int_sm,6,6)
 MAX77779_BFF(max77779_spmi_int_mask_pmictop_int_sm,7,7)
 
 /*
- * SPMI_INT_PRIORITY,0x26,0b11111111,0xff,Reset_Type:S
- * TCPC_INT_PR,FG_INT_PR,CHGR_INT_PR,I2CM_INT_PR,BATTVIMON_PR,GPIO_INT_PR,
- * VDROOP_INT_PR,PMICTOP_INTB_PR
+ * SPMI_INT_PRIORITY,0x26,0b00000001,0x1,Reset_Type:S
+ * SPMI_INT_PR,SPR_7_1[1:7]
  */
 #define MAX77779_SPMI_INT_PRIORITY	0x26
-#define MAX77779_SPMI_INT_PRIORITY_TCPC_INT_PR_SHIFT	0
-#define MAX77779_SPMI_INT_PRIORITY_TCPC_INT_PR_MASK	(0x1 << 0)
-#define MAX77779_SPMI_INT_PRIORITY_TCPC_INT_PR_CLEAR	(~(0x1 << 0))
-#define MAX77779_SPMI_INT_PRIORITY_FG_INT_PR_SHIFT	1
-#define MAX77779_SPMI_INT_PRIORITY_FG_INT_PR_MASK	(0x1 << 1)
-#define MAX77779_SPMI_INT_PRIORITY_FG_INT_PR_CLEAR	(~(0x1 << 1))
-#define MAX77779_SPMI_INT_PRIORITY_CHGR_INT_PR_SHIFT	2
-#define MAX77779_SPMI_INT_PRIORITY_CHGR_INT_PR_MASK	(0x1 << 2)
-#define MAX77779_SPMI_INT_PRIORITY_CHGR_INT_PR_CLEAR	(~(0x1 << 2))
-#define MAX77779_SPMI_INT_PRIORITY_I2CM_INT_PR_SHIFT	3
-#define MAX77779_SPMI_INT_PRIORITY_I2CM_INT_PR_MASK	(0x1 << 3)
-#define MAX77779_SPMI_INT_PRIORITY_I2CM_INT_PR_CLEAR	(~(0x1 << 3))
-#define MAX77779_SPMI_INT_PRIORITY_BATTVIMON_PR_SHIFT	4
-#define MAX77779_SPMI_INT_PRIORITY_BATTVIMON_PR_MASK	(0x1 << 4)
-#define MAX77779_SPMI_INT_PRIORITY_BATTVIMON_PR_CLEAR	(~(0x1 << 4))
-#define MAX77779_SPMI_INT_PRIORITY_GPIO_INT_PR_SHIFT	5
-#define MAX77779_SPMI_INT_PRIORITY_GPIO_INT_PR_MASK	(0x1 << 5)
-#define MAX77779_SPMI_INT_PRIORITY_GPIO_INT_PR_CLEAR	(~(0x1 << 5))
-#define MAX77779_SPMI_INT_PRIORITY_VDROOP_INT_PR_SHIFT	6
-#define MAX77779_SPMI_INT_PRIORITY_VDROOP_INT_PR_MASK	(0x1 << 6)
-#define MAX77779_SPMI_INT_PRIORITY_VDROOP_INT_PR_CLEAR	(~(0x1 << 6))
-#define MAX77779_SPMI_INT_PRIORITY_PMICTOP_INTB_PR_SHIFT	7
-#define MAX77779_SPMI_INT_PRIORITY_PMICTOP_INTB_PR_MASK	(0x1 << 7)
-#define MAX77779_SPMI_INT_PRIORITY_PMICTOP_INTB_PR_CLEAR	(~(0x1 << 7))
+#define MAX77779_SPMI_INT_PRIORITY_SPMI_INT_PR_SHIFT	0
+#define MAX77779_SPMI_INT_PRIORITY_SPMI_INT_PR_MASK	(0x1 << 0)
+#define MAX77779_SPMI_INT_PRIORITY_SPMI_INT_PR_CLEAR	(~(0x1 << 0))
+#define MAX77779_SPMI_INT_PRIORITY_SPR_7_1_SHIFT	1
+#define MAX77779_SPMI_INT_PRIORITY_SPR_7_1_MASK	(0x7f << 1)
+#define MAX77779_SPMI_INT_PRIORITY_SPR_7_1_CLEAR	(~(0x7f << 1))
 static inline const char *
 max77779_spmi_int_priority_cstr(char *buff, size_t len, int val)
 {
 #ifdef CONFIG_SCNPRINTF_DEBUG
 	int i = 0;
 
-	i += scnprintf(&buff[i], len - i, " TCPC_INT_PR=%x",
-		FIELD2VALUE(MAX77779_TCPC_INT_PR, val));
-	i += scnprintf(&buff[i], len - i, " FG_INT_PR=%x",
-		FIELD2VALUE(MAX77779_FG_INT_PR, val));
-	i += scnprintf(&buff[i], len - i, " CHGR_INT_PR=%x",
-		FIELD2VALUE(MAX77779_CHGR_INT_PR, val));
-	i += scnprintf(&buff[i], len - i, " I2CM_INT_PR=%x",
-		FIELD2VALUE(MAX77779_I2CM_INT_PR, val));
-	i += scnprintf(&buff[i], len - i, " BATTVIMON_PR=%x",
-		FIELD2VALUE(MAX77779_BATTVIMON_PR, val));
-	i += scnprintf(&buff[i], len - i, " GPIO_INT_PR=%x",
-		FIELD2VALUE(MAX77779_GPIO_INT_PR, val));
-	i += scnprintf(&buff[i], len - i, " VDROOP_INT_PR=%x",
-		FIELD2VALUE(MAX77779_VDROOP_INT_PR, val));
-	i += scnprintf(&buff[i], len - i, " PMICTOP_INTB_PR=%x",
-		FIELD2VALUE(MAX77779_PMICTOP_INTB_PR, val));
+	i += scnprintf(&buff[i], len - i, " SPMI_INT_PR=%x",
+		FIELD2VALUE(MAX77779_SPMI_INT_PR, val));
+	i += scnprintf(&buff[i], len - i, " SPR_7_1=%x",
+		FIELD2VALUE(MAX77779_SPR_7_1, val));
 #else
 	buff[0] = 0;
 #endif
 	return buff;
 }
 
-MAX77779_BFF(max77779_spmi_int_priority_tcpc_int_pr,0,0)
-MAX77779_BFF(max77779_spmi_int_priority_fg_int_pr,1,1)
-MAX77779_BFF(max77779_spmi_int_priority_chgr_int_pr,2,2)
-MAX77779_BFF(max77779_spmi_int_priority_i2cm_int_pr,3,3)
-MAX77779_BFF(max77779_spmi_int_priority_battvimon_pr,4,4)
-MAX77779_BFF(max77779_spmi_int_priority_gpio_int_pr,5,5)
-MAX77779_BFF(max77779_spmi_int_priority_vdroop_int_pr,6,6)
-MAX77779_BFF(max77779_spmi_int_priority_pmictop_intb_pr,7,7)
+MAX77779_BFF(max77779_spmi_int_priority_spmi_int_pr,0,0)
+MAX77779_BFF(max77779_spmi_int_priority_spr_7_1,7,1)
 
 /*
  * VDROOP_INT_MASK,0x27,0b11111111,0xff,OTP:SHADOW, Reset_Type:O
@@ -542,81 +505,47 @@ MAX77779_BFF(max77779_vdroop_int_spmi_mask_sys_uvlo2_sm,6,6)
 MAX77779_BFF(max77779_vdroop_int_spmi_mask_sys_uvlo1_sm,7,7)
 
 /*
- * VDROOP_INT_SPMI_PRIORITY,0x29,0b11111111,0xff,OTP:SHADOW, Reset_Type:O
- * OILO2_CNT_PR,OILO1_CNT_PR,UVLO2_CNT_PR,UVLO1_CNT_PR,BAT_OILO2_PR,BAT_OILO1_PR,
- * SYS_UVLO2_PR,SYS_UVLO1_PR
+ * VDROOP_INT_SPMI_PRIORITY,0x29,0b00000001,0x1,OTP:SHADOW, Reset_Type:O
+ * VDROOP_INT_PR,SPR_7_1[1:7]
  */
 #define MAX77779_VDROOP_INT_SPMI_PRIORITY	0x29
-#define MAX77779_VDROOP_INT_SPMI_PRIORITY_OILO2_CNT_PR_SHIFT	0
-#define MAX77779_VDROOP_INT_SPMI_PRIORITY_OILO2_CNT_PR_MASK	(0x1 << 0)
-#define MAX77779_VDROOP_INT_SPMI_PRIORITY_OILO2_CNT_PR_CLEAR	(~(0x1 << 0))
-#define MAX77779_VDROOP_INT_SPMI_PRIORITY_OILO1_CNT_PR_SHIFT	1
-#define MAX77779_VDROOP_INT_SPMI_PRIORITY_OILO1_CNT_PR_MASK	(0x1 << 1)
-#define MAX77779_VDROOP_INT_SPMI_PRIORITY_OILO1_CNT_PR_CLEAR	(~(0x1 << 1))
-#define MAX77779_VDROOP_INT_SPMI_PRIORITY_UVLO2_CNT_PR_SHIFT	2
-#define MAX77779_VDROOP_INT_SPMI_PRIORITY_UVLO2_CNT_PR_MASK	(0x1 << 2)
-#define MAX77779_VDROOP_INT_SPMI_PRIORITY_UVLO2_CNT_PR_CLEAR	(~(0x1 << 2))
-#define MAX77779_VDROOP_INT_SPMI_PRIORITY_UVLO1_CNT_PR_SHIFT	3
-#define MAX77779_VDROOP_INT_SPMI_PRIORITY_UVLO1_CNT_PR_MASK	(0x1 << 3)
-#define MAX77779_VDROOP_INT_SPMI_PRIORITY_UVLO1_CNT_PR_CLEAR	(~(0x1 << 3))
-#define MAX77779_VDROOP_INT_SPMI_PRIORITY_BAT_OILO2_PR_SHIFT	4
-#define MAX77779_VDROOP_INT_SPMI_PRIORITY_BAT_OILO2_PR_MASK	(0x1 << 4)
-#define MAX77779_VDROOP_INT_SPMI_PRIORITY_BAT_OILO2_PR_CLEAR	(~(0x1 << 4))
-#define MAX77779_VDROOP_INT_SPMI_PRIORITY_BAT_OILO1_PR_SHIFT	5
-#define MAX77779_VDROOP_INT_SPMI_PRIORITY_BAT_OILO1_PR_MASK	(0x1 << 5)
-#define MAX77779_VDROOP_INT_SPMI_PRIORITY_BAT_OILO1_PR_CLEAR	(~(0x1 << 5))
-#define MAX77779_VDROOP_INT_SPMI_PRIORITY_SYS_UVLO2_PR_SHIFT	6
-#define MAX77779_VDROOP_INT_SPMI_PRIORITY_SYS_UVLO2_PR_MASK	(0x1 << 6)
-#define MAX77779_VDROOP_INT_SPMI_PRIORITY_SYS_UVLO2_PR_CLEAR	(~(0x1 << 6))
-#define MAX77779_VDROOP_INT_SPMI_PRIORITY_SYS_UVLO1_PR_SHIFT	7
-#define MAX77779_VDROOP_INT_SPMI_PRIORITY_SYS_UVLO1_PR_MASK	(0x1 << 7)
-#define MAX77779_VDROOP_INT_SPMI_PRIORITY_SYS_UVLO1_PR_CLEAR	(~(0x1 << 7))
+#define MAX77779_VDROOP_INT_SPMI_PRIORITY_VDROOP_INT_PR_SHIFT	0
+#define MAX77779_VDROOP_INT_SPMI_PRIORITY_VDROOP_INT_PR_MASK	(0x1 << 0)
+#define MAX77779_VDROOP_INT_SPMI_PRIORITY_VDROOP_INT_PR_CLEAR	(~(0x1 << 0))
+#define MAX77779_VDROOP_INT_SPMI_PRIORITY_SPR_7_1_SHIFT	1
+#define MAX77779_VDROOP_INT_SPMI_PRIORITY_SPR_7_1_MASK	(0x7f << 1)
+#define MAX77779_VDROOP_INT_SPMI_PRIORITY_SPR_7_1_CLEAR	(~(0x7f << 1))
 static inline const char *
 max77779_vdroop_int_spmi_priority_cstr(char *buff, size_t len, int val)
 {
 #ifdef CONFIG_SCNPRINTF_DEBUG
 	int i = 0;
 
-	i += scnprintf(&buff[i], len - i, " OILO2_CNT_PR=%x",
-		FIELD2VALUE(MAX77779_OILO2_CNT_PR, val));
-	i += scnprintf(&buff[i], len - i, " OILO1_CNT_PR=%x",
-		FIELD2VALUE(MAX77779_OILO1_CNT_PR, val));
-	i += scnprintf(&buff[i], len - i, " UVLO2_CNT_PR=%x",
-		FIELD2VALUE(MAX77779_UVLO2_CNT_PR, val));
-	i += scnprintf(&buff[i], len - i, " UVLO1_CNT_PR=%x",
-		FIELD2VALUE(MAX77779_UVLO1_CNT_PR, val));
-	i += scnprintf(&buff[i], len - i, " BAT_OILO2_PR=%x",
-		FIELD2VALUE(MAX77779_BAT_OILO2_PR, val));
-	i += scnprintf(&buff[i], len - i, " BAT_OILO1_PR=%x",
-		FIELD2VALUE(MAX77779_BAT_OILO1_PR, val));
-	i += scnprintf(&buff[i], len - i, " SYS_UVLO2_PR=%x",
-		FIELD2VALUE(MAX77779_SYS_UVLO2_PR, val));
-	i += scnprintf(&buff[i], len - i, " SYS_UVLO1_PR=%x",
-		FIELD2VALUE(MAX77779_SYS_UVLO1_PR, val));
+	i += scnprintf(&buff[i], len - i, " VDROOP_INT_PR=%x",
+		FIELD2VALUE(MAX77779_VDROOP_INT_PR, val));
+	i += scnprintf(&buff[i], len - i, " SPR_7_1=%x",
+		FIELD2VALUE(MAX77779_SPR_7_1, val));
 #else
 	buff[0] = 0;
 #endif
 	return buff;
 }
 
-MAX77779_BFF(max77779_vdroop_int_spmi_priority_oilo2_cnt_pr,0,0)
-MAX77779_BFF(max77779_vdroop_int_spmi_priority_oilo1_cnt_pr,1,1)
-MAX77779_BFF(max77779_vdroop_int_spmi_priority_uvlo2_cnt_pr,2,2)
-MAX77779_BFF(max77779_vdroop_int_spmi_priority_uvlo1_cnt_pr,3,3)
-MAX77779_BFF(max77779_vdroop_int_spmi_priority_bat_oilo2_pr,4,4)
-MAX77779_BFF(max77779_vdroop_int_spmi_priority_bat_oilo1_pr,5,5)
-MAX77779_BFF(max77779_vdroop_int_spmi_priority_sys_uvlo2_pr,6,6)
-MAX77779_BFF(max77779_vdroop_int_spmi_priority_sys_uvlo1_pr,7,7)
+MAX77779_BFF(max77779_vdroop_int_spmi_priority_vdroop_int_pr,0,0)
+MAX77779_BFF(max77779_vdroop_int_spmi_priority_spr_7_1,7,1)
 
 /*
  * PMICTOP_INT_STS,0x2A,0b00000000,0x0,Reset_Type:S
- * SPR_2_0[0:2],VDDPOR_INT,SysMsgI_INT,SYSUVLO_INT,SYSOVLO_INT,TSHDN_INT,
+ * SPR_0,SPMIERR_INT,VDDPOR_INT,SysMsgI_INT,SYSUVLO_INT,SYSOVLO_INT,TSHDN_INT,
  * APCmdResI_INT
  */
 #define MAX77779_PMICTOP_INT_STS	0x2a
-#define MAX77779_PMICTOP_INT_STS_SPR_2_0_SHIFT	0
-#define MAX77779_PMICTOP_INT_STS_SPR_2_0_MASK	(0x3 << 0)
-#define MAX77779_PMICTOP_INT_STS_SPR_2_0_CLEAR	(~(0x3 << 0))
+#define MAX77779_PMICTOP_INT_STS_SPR_0_SHIFT	0
+#define MAX77779_PMICTOP_INT_STS_SPR_0_MASK	(0x1 << 0)
+#define MAX77779_PMICTOP_INT_STS_SPR_0_CLEAR	(~(0x1 << 0))
+#define MAX77779_PMICTOP_INT_STS_SPMIERR_INT_SHIFT	1
+#define MAX77779_PMICTOP_INT_STS_SPMIERR_INT_MASK	(0x1 << 1)
+#define MAX77779_PMICTOP_INT_STS_SPMIERR_INT_CLEAR	(~(0x1 << 1))
 #define MAX77779_PMICTOP_INT_STS_VDDPOR_INT_SHIFT	2
 #define MAX77779_PMICTOP_INT_STS_VDDPOR_INT_MASK	(0x1 << 2)
 #define MAX77779_PMICTOP_INT_STS_VDDPOR_INT_CLEAR	(~(0x1 << 2))
@@ -641,8 +570,10 @@ max77779_pmictop_int_sts_cstr(char *buff, size_t len, int val)
 #ifdef CONFIG_SCNPRINTF_DEBUG
 	int i = 0;
 
-	i += scnprintf(&buff[i], len - i, " SPR_2_0=%x",
-		FIELD2VALUE(MAX77779_SPR_2_0, val));
+	i += scnprintf(&buff[i], len - i, " SPR_0=%x",
+		FIELD2VALUE(MAX77779_SPR_0, val));
+	i += scnprintf(&buff[i], len - i, " SPMIERR_INT=%x",
+		FIELD2VALUE(MAX77779_SPMIERR_INT, val));
 	i += scnprintf(&buff[i], len - i, " VDDPOR_INT=%x",
 		FIELD2VALUE(MAX77779_VDDPOR_INT, val));
 	i += scnprintf(&buff[i], len - i, " SysMsgI_INT=%x",
@@ -661,7 +592,8 @@ max77779_pmictop_int_sts_cstr(char *buff, size_t len, int val)
 	return buff;
 }
 
-MAX77779_BFF(max77779_pmictop_int_sts_spr_2_0,1,0)
+MAX77779_BFF(max77779_pmictop_int_sts_spr_0,0,0)
+MAX77779_BFF(max77779_pmictop_int_sts_spmierr_int,1,1)
 MAX77779_BFF(max77779_pmictop_int_sts_vddpor_int,2,2)
 MAX77779_BFF(max77779_pmictop_int_sts_sysmsgi_int,3,3)
 MAX77779_BFF(max77779_pmictop_int_sts_sysuvlo_int,4,4)
@@ -671,16 +603,16 @@ MAX77779_BFF(max77779_pmictop_int_sts_apcmdresi_int,7,7)
 
 /*
  * PMICTOP_INT_MASK,0x2B,0b11111111,0xff,Reset_Type:S
- * FSHIP_NOT_RD,SPR_2_1,VDDPOR_M,SysMsg_M,SYSUVLO_INT_M,SYSOVLO_INT_M,
+ * FSHIP_NOT_RD,SPMIERR_M,VDDPOR_M,SysMsg_M,SYSUVLO_INT_M,SYSOVLO_INT_M,
  * TSHDN_INT_M,APCmdRes_M
  */
 #define MAX77779_PMICTOP_INT_MASK	0x2b
 #define MAX77779_PMICTOP_INT_MASK_FSHIP_NOT_RD_SHIFT	0
 #define MAX77779_PMICTOP_INT_MASK_FSHIP_NOT_RD_MASK	(0x1 << 0)
 #define MAX77779_PMICTOP_INT_MASK_FSHIP_NOT_RD_CLEAR	(~(0x1 << 0))
-#define MAX77779_PMICTOP_INT_MASK_SPR_2_1_SHIFT	1
-#define MAX77779_PMICTOP_INT_MASK_SPR_2_1_MASK	(0x1 << 1)
-#define MAX77779_PMICTOP_INT_MASK_SPR_2_1_CLEAR	(~(0x1 << 1))
+#define MAX77779_PMICTOP_INT_MASK_SPMIERR_M_SHIFT	1
+#define MAX77779_PMICTOP_INT_MASK_SPMIERR_M_MASK	(0x1 << 1)
+#define MAX77779_PMICTOP_INT_MASK_SPMIERR_M_CLEAR	(~(0x1 << 1))
 #define MAX77779_PMICTOP_INT_MASK_VDDPOR_M_SHIFT	2
 #define MAX77779_PMICTOP_INT_MASK_VDDPOR_M_MASK	(0x1 << 2)
 #define MAX77779_PMICTOP_INT_MASK_VDDPOR_M_CLEAR	(~(0x1 << 2))
@@ -707,8 +639,8 @@ max77779_pmictop_int_mask_cstr(char *buff, size_t len, int val)
 
 	i += scnprintf(&buff[i], len - i, " FSHIP_NOT_RD=%x",
 		FIELD2VALUE(MAX77779_FSHIP_NOT_RD, val));
-	i += scnprintf(&buff[i], len - i, " SPR_2_1=%x",
-		FIELD2VALUE(MAX77779_SPR_2_1, val));
+	i += scnprintf(&buff[i], len - i, " SPMIERR_M=%x",
+		FIELD2VALUE(MAX77779_SPMIERR_M, val));
 	i += scnprintf(&buff[i], len - i, " VDDPOR_M=%x",
 		FIELD2VALUE(MAX77779_VDDPOR_M, val));
 	i += scnprintf(&buff[i], len - i, " SysMsg_M=%x",
@@ -728,7 +660,7 @@ max77779_pmictop_int_mask_cstr(char *buff, size_t len, int val)
 }
 
 MAX77779_BFF(max77779_pmictop_int_mask_fship_not_rd,0,0)
-MAX77779_BFF(max77779_pmictop_int_mask_spr_2_1,1,1)
+MAX77779_BFF(max77779_pmictop_int_mask_spmierr_m,1,1)
 MAX77779_BFF(max77779_pmictop_int_mask_vddpor_m,2,2)
 MAX77779_BFF(max77779_pmictop_int_mask_sysmsg_m,3,3)
 MAX77779_BFF(max77779_pmictop_int_mask_sysuvlo_int_m,4,4)
@@ -897,16 +829,22 @@ MAX77779_BFF(max77779_spmi_cnfg_vio_high,4,4)
 MAX77779_BFF(max77779_spmi_cnfg_spr_7_5,7,5)
 
 /*
- * SPMI_MID,0x42,0b00000010,0x2,Reset_Type:O
- * SPMI_MID[0:2],SPR_6_2[2:5],SPMI_MSG_REPEAT
+ * SPMI_MID,0x42,0b00100010,0x22,Reset_Type:O
+ * SPMI_MID[0:2],SPR_3_2[2:2],SPMI_ARB_MODE[4:2],SPR_6,SPMI_MSG_REPEAT
  */
 #define MAX77779_SPMI_MID	0x42
 #define MAX77779_SPMI_MID_SPMI_MID_SHIFT	0
 #define MAX77779_SPMI_MID_SPMI_MID_MASK	(0x3 << 0)
 #define MAX77779_SPMI_MID_SPMI_MID_CLEAR	(~(0x3 << 0))
-#define MAX77779_SPMI_MID_SPR_6_2_SHIFT	2
-#define MAX77779_SPMI_MID_SPR_6_2_MASK	(0x1f << 2)
-#define MAX77779_SPMI_MID_SPR_6_2_CLEAR	(~(0x1f << 2))
+#define MAX77779_SPMI_MID_SPR_3_2_SHIFT	2
+#define MAX77779_SPMI_MID_SPR_3_2_MASK	(0x3 << 2)
+#define MAX77779_SPMI_MID_SPR_3_2_CLEAR	(~(0x3 << 2))
+#define MAX77779_SPMI_MID_SPMI_ARB_MODE_SHIFT	4
+#define MAX77779_SPMI_MID_SPMI_ARB_MODE_MASK	(0x3 << 4)
+#define MAX77779_SPMI_MID_SPMI_ARB_MODE_CLEAR	(~(0x3 << 4))
+#define MAX77779_SPMI_MID_SPR_6_SHIFT	6
+#define MAX77779_SPMI_MID_SPR_6_MASK	(0x1 << 6)
+#define MAX77779_SPMI_MID_SPR_6_CLEAR	(~(0x1 << 6))
 #define MAX77779_SPMI_MID_SPMI_MSG_REPEAT_SHIFT	7
 #define MAX77779_SPMI_MID_SPMI_MSG_REPEAT_MASK	(0x1 << 7)
 #define MAX77779_SPMI_MID_SPMI_MSG_REPEAT_CLEAR	(~(0x1 << 7))
@@ -918,8 +856,12 @@ max77779_spmi_mid_cstr(char *buff, size_t len, int val)
 
 	i += scnprintf(&buff[i], len - i, " SPMI_MID=%x",
 		FIELD2VALUE(MAX77779_SPMI_MID, val));
-	i += scnprintf(&buff[i], len - i, " SPR_6_2=%x",
-		FIELD2VALUE(MAX77779_SPR_6_2, val));
+	i += scnprintf(&buff[i], len - i, " SPR_3_2=%x",
+		FIELD2VALUE(MAX77779_SPR_3_2, val));
+	i += scnprintf(&buff[i], len - i, " SPMI_ARB_MODE=%x",
+		FIELD2VALUE(MAX77779_SPMI_ARB_MODE, val));
+	i += scnprintf(&buff[i], len - i, " SPR_6=%x",
+		FIELD2VALUE(MAX77779_SPR_6, val));
 	i += scnprintf(&buff[i], len - i, " SPMI_MSG_REPEAT=%x",
 		FIELD2VALUE(MAX77779_SPMI_MSG_REPEAT, val));
 #else
@@ -929,13 +871,45 @@ max77779_spmi_mid_cstr(char *buff, size_t len, int val)
 }
 
 MAX77779_BFF(max77779_spmi_mid_spmi_mid,1,0)
-MAX77779_BFF(max77779_spmi_mid_spr_6_2,6,2)
+MAX77779_BFF(max77779_spmi_mid_spr_3_2,3,2)
+MAX77779_BFF(max77779_spmi_mid_spmi_arb_mode,5,4)
+MAX77779_BFF(max77779_spmi_mid_spr_6,6,6)
 MAX77779_BFF(max77779_spmi_mid_spmi_msg_repeat,7,7)
 
 /*
  * SPMI_MADDR,0x43,0b00000000,0x0,Reset_Type:O
  */
 #define MAX77779_SPMI_MADDR	0x43
+
+/*
+ * SPMI_STS,0x44,0b00000000,0x0,None
+ * SPMI_ARB_ERR,SPR_7_5[1:7]
+ */
+#define MAX77779_SPMI_STS	0x44
+#define MAX77779_SPMI_STS_SPMI_ARB_ERR_SHIFT	0
+#define MAX77779_SPMI_STS_SPMI_ARB_ERR_MASK	(0x1 << 0)
+#define MAX77779_SPMI_STS_SPMI_ARB_ERR_CLEAR	(~(0x1 << 0))
+#define MAX77779_SPMI_STS_SPR_7_5_SHIFT	1
+#define MAX77779_SPMI_STS_SPR_7_5_MASK	(0x7f << 1)
+#define MAX77779_SPMI_STS_SPR_7_5_CLEAR	(~(0x7f << 1))
+static inline const char *
+max77779_spmi_sts_cstr(char *buff, size_t len, int val)
+{
+#ifdef CONFIG_SCNPRINTF_DEBUG
+	int i = 0;
+
+	i += scnprintf(&buff[i], len - i, " SPMI_ARB_ERR=%x",
+		FIELD2VALUE(MAX77779_SPMI_ARB_ERR, val));
+	i += scnprintf(&buff[i], len - i, " SPR_7_5=%x",
+		FIELD2VALUE(MAX77779_SPR_7_5, val));
+#else
+	buff[0] = 0;
+#endif
+	return buff;
+}
+
+MAX77779_BFF(max77779_spmi_sts_spmi_arb_err,0,0)
+MAX77779_BFF(max77779_spmi_sts_spr_7_5,7,1)
 
 /*
  * SWRESET,0x50,0b00000000,0x0,Reset_Type:S, (Exception: SWR_RST bits are not register type which can retain data)
@@ -2938,7 +2912,8 @@ MAX77779_BFF(max77779_chg_details_03_jeita_aux_dtls,7,6)
 
 /*
  * CHG_DETAILS_04,0x0B,0b00000000,0x0,Reset_Type:S
- * FSHIP_EXIT_DTLS[0:2],MD_DTLS[2:2],BAT_OILO1_OPEN,BAT_OILO2_OPEN,SPR_7_6[6:2]
+ * FSHIP_EXIT_DTLS[0:2],MD_DTLS[2:2],BAT_OILO1_OPEN,BAT_OILO2_OPEN,BCK_MAXVAL_STS,
+ * SPR_7
  */
 #define MAX77779_CHG_DETAILS_04	0xbb
 #define MAX77779_CHG_DETAILS_04_FSHIP_EXIT_DTLS_SHIFT	0
@@ -2953,9 +2928,12 @@ MAX77779_BFF(max77779_chg_details_03_jeita_aux_dtls,7,6)
 #define MAX77779_CHG_DETAILS_04_BAT_OILO2_OPEN_SHIFT	5
 #define MAX77779_CHG_DETAILS_04_BAT_OILO2_OPEN_MASK	(0x1 << 5)
 #define MAX77779_CHG_DETAILS_04_BAT_OILO2_OPEN_CLEAR	(~(0x1 << 5))
-#define MAX77779_CHG_DETAILS_04_SPR_7_6_SHIFT	6
-#define MAX77779_CHG_DETAILS_04_SPR_7_6_MASK	(0x3 << 6)
-#define MAX77779_CHG_DETAILS_04_SPR_7_6_CLEAR	(~(0x3 << 6))
+#define MAX77779_CHG_DETAILS_04_BCK_MAXVAL_STS_SHIFT	6
+#define MAX77779_CHG_DETAILS_04_BCK_MAXVAL_STS_MASK	(0x1 << 6)
+#define MAX77779_CHG_DETAILS_04_BCK_MAXVAL_STS_CLEAR	(~(0x1 << 6))
+#define MAX77779_CHG_DETAILS_04_SPR_7_SHIFT	7
+#define MAX77779_CHG_DETAILS_04_SPR_7_MASK	(0x1 << 7)
+#define MAX77779_CHG_DETAILS_04_SPR_7_CLEAR	(~(0x1 << 7))
 static inline const char *
 max77779_chg_details_04_cstr(char *buff, size_t len, int val)
 {
@@ -2970,8 +2948,10 @@ max77779_chg_details_04_cstr(char *buff, size_t len, int val)
 		FIELD2VALUE(MAX77779_BAT_OILO1_OPEN, val));
 	i += scnprintf(&buff[i], len - i, " BAT_OILO2_OPEN=%x",
 		FIELD2VALUE(MAX77779_BAT_OILO2_OPEN, val));
-	i += scnprintf(&buff[i], len - i, " SPR_7_6=%x",
-		FIELD2VALUE(MAX77779_SPR_7_6, val));
+	i += scnprintf(&buff[i], len - i, " BCK_MAXVAL_STS=%x",
+		FIELD2VALUE(MAX77779_BCK_MAXVAL_STS, val));
+	i += scnprintf(&buff[i], len - i, " SPR_7=%x",
+		FIELD2VALUE(MAX77779_SPR_7, val));
 #else
 	buff[0] = 0;
 #endif
@@ -2982,7 +2962,8 @@ MAX77779_BFF(max77779_chg_details_04_fship_exit_dtls,1,0)
 MAX77779_BFF(max77779_chg_details_04_md_dtls,3,2)
 MAX77779_BFF(max77779_chg_details_04_bat_oilo1_open,4,4)
 MAX77779_BFF(max77779_chg_details_04_bat_oilo2_open,5,5)
-MAX77779_BFF(max77779_chg_details_04_spr_7_6,7,6)
+MAX77779_BFF(max77779_chg_details_04_bck_maxval_sts,6,6)
+MAX77779_BFF(max77779_chg_details_04_spr_7,7,7)
 
 /*
  * CHG_CNFG_00,0x0C,0b00000100,0x4,OTP:SHADOW, Reset_Type:O
@@ -3609,7 +3590,7 @@ MAX77779_BFF(max77779_chg_cnfg_15_spr_7_6,7,6)
 
 /*
  * CHG_CNFG_16,0x1C,0b10010000,0x90,OTP:SHADOW, Reset_Type:O
- * SLOWLX[0:2],DIS_IR_CTRL,INLIM_CLK[3:2],SPR_5,AUTO_FSHIP_TIME[6:2]
+ * SLOWLX[0:2],DIS_IR_CTRL,INLIM_CLK[3:2],WCIN_PD_DIS,AUTO_FSHIP_TIME[6:2]
  */
 #define MAX77779_CHG_CNFG_16	0xcc
 #define MAX77779_CHG_CNFG_16_SLOWLX_SHIFT	0
@@ -3621,9 +3602,9 @@ MAX77779_BFF(max77779_chg_cnfg_15_spr_7_6,7,6)
 #define MAX77779_CHG_CNFG_16_INLIM_CLK_SHIFT	3
 #define MAX77779_CHG_CNFG_16_INLIM_CLK_MASK	(0x3 << 3)
 #define MAX77779_CHG_CNFG_16_INLIM_CLK_CLEAR	(~(0x3 << 3))
-#define MAX77779_CHG_CNFG_16_SPR_5_SHIFT	5
-#define MAX77779_CHG_CNFG_16_SPR_5_MASK	(0x1 << 5)
-#define MAX77779_CHG_CNFG_16_SPR_5_CLEAR	(~(0x1 << 5))
+#define MAX77779_CHG_CNFG_16_WCIN_PD_DIS_SHIFT	5
+#define MAX77779_CHG_CNFG_16_WCIN_PD_DIS_MASK	(0x1 << 5)
+#define MAX77779_CHG_CNFG_16_WCIN_PD_DIS_CLEAR	(~(0x1 << 5))
 #define MAX77779_CHG_CNFG_16_AUTO_FSHIP_TIME_SHIFT	6
 #define MAX77779_CHG_CNFG_16_AUTO_FSHIP_TIME_MASK	(0x3 << 6)
 #define MAX77779_CHG_CNFG_16_AUTO_FSHIP_TIME_CLEAR	(~(0x3 << 6))
@@ -3639,8 +3620,8 @@ max77779_chg_cnfg_16_cstr(char *buff, size_t len, int val)
 		FIELD2VALUE(MAX77779_DIS_IR_CTRL, val));
 	i += scnprintf(&buff[i], len - i, " INLIM_CLK=%x",
 		FIELD2VALUE(MAX77779_INLIM_CLK, val));
-	i += scnprintf(&buff[i], len - i, " SPR_5=%x",
-		FIELD2VALUE(MAX77779_SPR_5, val));
+	i += scnprintf(&buff[i], len - i, " WCIN_PD_DIS=%x",
+		FIELD2VALUE(MAX77779_WCIN_PD_DIS, val));
 	i += scnprintf(&buff[i], len - i, " AUTO_FSHIP_TIME=%x",
 		FIELD2VALUE(MAX77779_AUTO_FSHIP_TIME, val));
 #else
@@ -3652,7 +3633,7 @@ max77779_chg_cnfg_16_cstr(char *buff, size_t len, int val)
 MAX77779_BFF(max77779_chg_cnfg_16_slowlx,1,0)
 MAX77779_BFF(max77779_chg_cnfg_16_dis_ir_ctrl,2,2)
 MAX77779_BFF(max77779_chg_cnfg_16_inlim_clk,4,3)
-MAX77779_BFF(max77779_chg_cnfg_16_spr_5,5,5)
+MAX77779_BFF(max77779_chg_cnfg_16_wcin_pd_dis,5,5)
 MAX77779_BFF(max77779_chg_cnfg_16_auto_fship_time,7,6)
 
 /*
@@ -5640,4 +5621,4 @@ MAX77779_BFF(max77779_sp_page_ctrl_sp_data_page,1,0)
  */
 
 
-#endif /* SEQUOIA_REGMAP_CUSTOMER_060_REG_H_ */
+#endif /* SEQUOIA_REGMAP_CUSTOMER_V0.6.1_REG_H_ */
