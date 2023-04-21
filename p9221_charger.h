@@ -902,6 +902,7 @@ struct p9221_charger_data {
 	u32 				wlc_dc_voltage_now;
 	u32 				wlc_dc_current_now;
 	bool				wlc_dc_enabled;
+	bool				chg_mode_off;
 
 	u16				reg_tx_id_addr;
 	u16				reg_tx_mfg_code_addr;

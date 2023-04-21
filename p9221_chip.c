@@ -478,6 +478,28 @@ static int p9412_chip_set_vout_max(struct p9221_charger_data *chgr, u32 mv)
 	return ret;
 }
 
+static int ra9530_chip_set_vout_max(struct p9221_charger_data *chgr, u32 mv)
+{
+	int ret;
+
+	if (mv < P9412_VOUT_SET_MIN_MV || mv > chgr->pdata->max_vout_mv)
+		return -EINVAL;
+
+	dev_dbg(&chgr->client->dev, "%s: vout setting to: %u, caller: %pS\n",
+		__func__, mv, __builtin_return_address(2));
+
+	ret = chgr->reg_write_16(chgr, P9412_VOUT_SET_REG, mv / 10);
+
+	if (chgr->chg_mode_votable && chgr->chg_mode_off) {
+		gvotable_cast_long_vote(chgr->chg_mode_votable,
+				P9221_WLC_VOTER,
+				0, false);
+		chgr->chg_mode_off = false;
+	}
+
+	return ret;
+}
+
 static int p9222_chip_set_vout_max(struct p9221_charger_data *chgr, u32 mv)
 {
 	int ret;
@@ -1991,6 +2013,27 @@ static int ra9530_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 		goto err_exit;
 
 request_pwr:
+
+	if (!chgr->chg_mode_votable)
+		chgr->chg_mode_votable =
+			gvotable_election_get_handle(GBMS_MODE_VOTABLE);
+
+	if (chgr->chg_mode_votable) {
+		gvotable_cast_long_vote(chgr->chg_mode_votable,
+					P9221_WLC_VOTER,
+					MAX77759_CHGR_MODE_ALL_OFF, true);
+		chgr->chg_mode_off = true;
+	}
+
+	/* total 2 seconds wait and early exit when WLC offline */
+	for (i = 0; i < 20; i += 1) {
+		usleep_range(100 * USEC_PER_MSEC, 120 * USEC_PER_MSEC);
+		if (!chgr->online) {
+			chgr->prop_mode_en = false;
+			goto err_exit;
+		}
+	}
+
 	/*
 	 * Read TX potential power register (0xC4)
 	 * [TX max power capability] in 0.5W units
@@ -2047,7 +2090,7 @@ err_exit:
 	ret |= chgr->reg_read_8(chgr, P9412_CDMODE_STS_REG, &cdmode);
 	ret |= chgr->reg_read_8(chgr, P9412_PROP_REQ_PWR_REG, &prop_req_pwr);
 
-	pr_debug("%s PROP_MODE: en=%d,sys_mode=%02x,mode_sts=%02x,err_sts=%02x,"
+	dev_dbg(&chgr->client->dev, "%s PROP_MODE: en=%d,sys_mode=%02x,mode_sts=%02x,err_sts=%02x,"
 		 "cdmode=%02x,pwr_stp=%02x,req_pwr=%02x,prop_cur_pwr=%02x,txpwr=%dW",
 		 __func__, chgr->prop_mode_en, val8, mode_sts, err_sts,
 		 cdmode, pwr_stp, prop_req_pwr, prop_cur_pwr, txpwr);
@@ -2069,6 +2112,13 @@ err_exit:
 		if (rc <0)
 			dev_err(&chgr->client->dev, "%s: cannot remove HPP voter (%d)\n",
 				__func__, ret);
+
+		if (chgr->chg_mode_votable) {
+			gvotable_cast_long_vote(chgr->chg_mode_votable,
+					P9221_WLC_VOTER,
+					MAX77759_CHGR_MODE_ALL_OFF, false);
+			chgr->chg_mode_off = false;
+		}
 	}
 
 	return chgr->prop_mode_en;
@@ -2375,7 +2425,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->chip_set_tx_ilim = p9412_chip_set_tx_ilim;
 		chgr->chip_get_die_temp = p9412_chip_get_die_temp;
 		chgr->chip_get_vout_max = p9412_chip_get_vout_max;
-		chgr->chip_set_vout_max = p9412_chip_set_vout_max;
+		chgr->chip_set_vout_max = ra9530_chip_set_vout_max;
 		chgr->chip_tx_mode_en = ra9530_chip_tx_mode;
 		chgr->chip_get_data_buf = ra9530_get_data_buf;
 		chgr->chip_set_data_buf = ra9530_set_data_buf;
