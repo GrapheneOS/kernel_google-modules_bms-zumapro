@@ -1337,6 +1337,9 @@ static int max1720x_update_battery_qh_based_capacity(struct max1720x_chip *chip)
 	u16 data;
 	int current_qh, err = 0;
 
+	if (chip->por)
+		return -EINVAL;
+
 	err = REGMAP_READ(&chip->regmap, MAX1720X_QH, &data);
 	if (err)
 		return err;
@@ -4409,6 +4412,7 @@ static void max1720x_model_work(struct work_struct *work)
 			 max_m5_fg_model_version(chip->model_data),
 			 max_m5_cap_lsb(chip->model_data),
 			 chip->model_next_update);
+		max1720x_prime_battery_qh_capacity(chip, POWER_SUPPLY_STATUS_UNKNOWN);
 		power_supply_changed(chip->psy);
 	}
 
