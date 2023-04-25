@@ -326,7 +326,7 @@ struct bhi_data
 	int battery_age;		/* from the FG, time in field */
 
 	/* capacity metrics */
-	int capacity_design;		/* from the FG or from charge table */
+	int pack_capacity;		/* mAh, from the FG or from charge table */
 	int capacity_fade;		/* from the FG */
 
 	/* impedance */
@@ -3783,10 +3783,17 @@ static int hist_get_index(int cycle_count, const struct batt_drv *batt_drv)
 static int bhi_cap_data_update(struct bhi_data *bhi_data, struct batt_drv *batt_drv)
 {
 	struct power_supply *fg_psy = batt_drv->fg_psy;
+	const int fade_rate = GPSY_GET_PROP(fg_psy, GBMS_PROP_CAPACITY_FADE_RATE);
+	const int designcap = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN);
 	int cap_fade;
 
 	/* GBMS_PROP_CAPACITY_FADE_RATE is in percent */
-	cap_fade = GPSY_GET_PROP(fg_psy, GBMS_PROP_CAPACITY_FADE_RATE);
+	if (fade_rate < 0 || designcap < 0)
+		return -ENODATA;
+	if (bhi_data->pack_capacity <= 0)
+		return -EINVAL;
+
+	cap_fade = fade_rate * designcap / (bhi_data->pack_capacity * 1000);
 	if (cap_fade < 0)
 		return -ENODATA;
 	if (cap_fade > 100)
@@ -3807,7 +3814,7 @@ static int bhi_cap_data_update(struct bhi_data *bhi_data, struct batt_drv *batt_
  */
 static int bhi_health_get_capacity(int algo, const struct bhi_data *bhi_data)
 {
-	return bhi_data->capacity_design * (100 - bhi_data->capacity_fade) / 100;
+	return bhi_data->pack_capacity * (100 - bhi_data->capacity_fade) / 100;
 }
 
 /* The limit for capacity is 80% of design */
@@ -3823,7 +3830,7 @@ static int bhi_calc_cap_index(int algo, struct batt_drv *batt_drv)
 	if (health_data->bhi_debug_cap_index)
 		return health_data->bhi_debug_cap_index;
 
-	if (!bhi_data->capacity_design)
+	if (!bhi_data->pack_capacity)
 		return -ENODATA;
 
 	capacity_health = bhi_health_get_capacity(algo, bhi_data);
@@ -3845,12 +3852,12 @@ static int bhi_calc_cap_index(int algo, struct batt_drv *batt_drv)
 	 * ret = gbms_storage_read(GBMS_TAG_GCFE, &gcap sizeof(gcap));
 	 */
 
-	index = (capacity_health * BHI_ALGO_FULL_HEALTH) / bhi_data->capacity_design;
+	index = (capacity_health * BHI_ALGO_FULL_HEALTH) / bhi_data->pack_capacity;
 	if (index > BHI_ALGO_FULL_HEALTH)
 		index = BHI_ALGO_FULL_HEALTH;
 
-	pr_debug("%s: algo=%d index=%d ch=%d, ca=%d, cd=%d, fr=%d\n", __func__,
-		algo, index, capacity_health, capacity_aacr, bhi_data->capacity_design,
+	pr_debug("%s: algo=%d index=%d ch=%d, ca=%d, pc=%d, fr=%d\n", __func__,
+		algo, index, capacity_health, capacity_aacr, bhi_data->pack_capacity,
 		bhi_data->capacity_fade);
 
 	return index;
@@ -9711,7 +9718,7 @@ static int batt_bhi_init(struct batt_drv *batt_drv)
 		health_data->bhi_cycle_grace = 0;
 
 	/* design is the value used to build the charge table */
-	health_data->bhi_data.capacity_design = batt_drv->battery_capacity;
+	health_data->bhi_data.pack_capacity = batt_drv->battery_capacity;
 
 	/* need battery id to get right trend points */
 	batt_drv->batt_id = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_BATT_ID);
