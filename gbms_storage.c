@@ -57,7 +57,7 @@ static int gbms_providers_count;
 static struct gbms_storage_provider gbms_providers[GBMS_PROVIDERS_MAX];
 static struct dentry *rootdir;
 
-/* 1 << 5 = 64 entries */
+/* 1 << 5 = 32 entries */
 #define GBMS_HASHTABLE_SIZE	5
 DECLARE_HASHTABLE(gbms_cache, GBMS_HASHTABLE_SIZE);
 static struct gen_pool *gbms_cache_pool;
@@ -1223,7 +1223,7 @@ static int __init gbms_storage_init(void)
 
 	gbms_cache_pool = gen_pool_create(pe_size, -1);
 	if (gbms_cache_pool) {
-		size_t mem_size = (1 << GBMS_HASHTABLE_SIZE) * pe_size;
+		size_t mem_size = (1 << GBMS_HASHTABLE_SIZE) * (1 << pe_size);
 
 		gbms_cache_mem = kzalloc(mem_size, GFP_KERNEL);
 		if (!gbms_cache_mem) {
