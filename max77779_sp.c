@@ -6,6 +6,7 @@
  */
 
 #include <linux/completion.h>
+#include <linux/debugfs.h>
 #include <linux/delay.h>
 #include <linux/gpio.h>
 #include <linux/gpio/consumer.h>
@@ -15,7 +16,6 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/regmap.h>
-#include <linux/debugfs.h>
 #include <linux/pm_runtime.h>
 
 #include "max77779_regs.h"
@@ -39,17 +39,18 @@ struct max77779_sp_data {
 	struct regmap *regmap;
 	struct dentry *de;
 	struct mutex  page_lock; /* might need spinlock */
+	u32 debug_reg_address;
 };
 
 /* hold lock on &data->page_lock */
 static int max77779_sp_rd(uint8_t *buff, int addr, size_t count, struct regmap *regmap)
 {
 	const int page = addr / 256, offset = addr % 256;
-	const int base = MAX77779_SP_DATA + (offset & ~1);
+	const int base = MAX77779_SP_DATA + ((offset & ~1) / 2);
 	int ret = 0;
 
 	/* todo: bulk of odd count, read across pages */
-	if ((count > 2 && (count & 1)) || ((offset + count) > 0x7f))
+	if ((count > 2 && (count & 1)) || ((offset + count - 1) > 0xff) || page > 3)
 		return -ERANGE;
 
 	ret = regmap_write(regmap, MAX77779_SP_PAGE_CTRL, page);
@@ -83,12 +84,12 @@ static int max77779_sp_rd(uint8_t *buff, int addr, size_t count, struct regmap *
 static int max77779_sp_wr(const uint8_t *buff, int addr, size_t count, struct regmap *regmap)
 {
 	const int page = addr / 256, offset = addr % 256;
-	const int base = MAX77779_SP_DATA + (offset & ~1);
+	const int base = MAX77779_SP_DATA + ((offset & ~1) / 2);
 	unsigned tmp = 0;
 	int ret = 0;
 
 	/* todo: bulk of odd count, read across pages */
-	if ((count > 2 && (count & 1)) || ((offset + count) > 0x7f))
+	if ((count > 2 && (count & 1)) || ((offset + count - 1) > 0xff) || page > 3)
 		return -ERANGE;
 
 	ret = regmap_write(regmap, MAX77779_SP_PAGE_CTRL, page);
@@ -103,8 +104,7 @@ static int max77779_sp_wr(const uint8_t *buff, int addr, size_t count, struct re
 		ret = regmap_read(regmap, base, &tmp);
 		if (ret < 0)
 			return ret;
-
-		tmp &= ~(0xff << ((offset & 1) * 8));
+		tmp &= 0xff << (!(offset & 1) * 8);
 		tmp |= buff[0] << ((offset & 1) * 8);
 	} else {
 		tmp = ((uint16_t*)buff)[0];
@@ -177,6 +177,33 @@ static int max77779_sp_write(gbms_tag_t tag, const void *buff, size_t size, void
 	return ret;
 }
 
+/* -- debug --------------------------------------------------------------- */
+static int max77779_sp_debug_reg_read(void *d, u64 *val)
+{
+	struct max77779_sp_data *data = d;
+	u8 reg = 0;
+	int ret;
+
+	ret = max77779_sp_rd(&reg, data->debug_reg_address, 1, data->regmap);
+	if (ret)
+		return ret;
+
+	*val = reg;
+
+	return 0;
+}
+
+static int max77779_sp_debug_reg_write(void *d, u64 val)
+{
+	struct max77779_sp_data *data = d;
+	const u8 regval = val;
+
+	return max77779_sp_wr(&regval, data->debug_reg_address, 1, data->regmap);
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(debug_reg_rw_fops, max77779_sp_debug_reg_read,
+			max77779_sp_debug_reg_write, "%02llx\n");
+
 static struct gbms_storage_desc max77779_sp_dsc = {
 	.write = max77779_sp_write,
 	.read = max77779_sp_read,
@@ -197,6 +224,18 @@ static const struct regmap_config max77779_regmap_cfg = {
 	.readable_reg = max77779_sp_is_reg,
 	.volatile_reg = max77779_sp_is_reg,
 };
+
+static int max77779_sp_dbg_init_fs(struct max77779_sp_data *data)
+{
+	data->de = debugfs_create_dir("max77779_sp", 0);
+	if (IS_ERR_OR_NULL(data->de))
+		return -EINVAL;
+
+	debugfs_create_u32("address", 0600, data->de, &data->debug_reg_address);
+	debugfs_create_file("data", 0600, data->de, data, &debug_reg_rw_fops);
+
+	return 0;
+}
 
 static int max77779_sp_probe(struct i2c_client *client,
 							  const struct i2c_device_id *id)
@@ -222,9 +261,15 @@ static int max77779_sp_probe(struct i2c_client *client,
 	data->regmap = regmap;
 	i2c_set_clientdata(client, data);
 
-	ret = gbms_storage_register(&max77779_sp_dsc, "max77779_sp", data);
+	if (!of_property_read_bool(dev->of_node, "max77779,no-storage")) {
+		ret = gbms_storage_register(&max77779_sp_dsc, "max77779_sp", data);
+		if (ret < 0)
+			dev_err(dev, "register failed, ret:%d\n", ret);
+	}
+
+	ret = max77779_sp_dbg_init_fs(data);
 	if (ret < 0)
-		dev_err(dev, "register failed, ret:%d\n", ret);
+		dev_err(dev, "Failed to initialize debug fs\n");
 
 	return 0;
 }
