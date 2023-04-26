@@ -904,6 +904,7 @@ struct p9221_charger_data {
 	u16				reg_csp_addr;
 	u16				reg_light_load_addr;
 	u16				reg_mot_addr;
+	u16				reg_cmfet_addr;
 	u16				reg_epp_tx_guarpwr_addr;
 
 	int (*reg_read_n)(struct p9221_charger_data *chgr, u16 reg,
@@ -1026,6 +1027,8 @@ enum p9xxx_renego_state {
       -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_light_load_addr, data))
 #define p9xxx_chip_set_mot_reg(chgr, data) (chgr->reg_mot_addr == 0 ? \
       -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_mot_addr, data))
+#define p9xxx_chip_set_cmfet_reg(chgr, data) (chgr->reg_cmfet_addr == 0 ? \
+      -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_cmfet_addr, data))
 #define logbuffer_prlog(p, fmt, ...)     \
       gbms_logbuffer_prlog(p, LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG, fmt, ##__VA_ARGS__)
 #endif /* __P9221_CHARGER_H__ */

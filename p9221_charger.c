@@ -815,9 +815,8 @@ static int p9221_reset_wlc_dc(struct p9221_charger_data *charger)
 		charger->prop_mode_en = false;
 		p9221_write_fod(charger);
 	}
-
-	ret = p9221_reg_write_8(charger, P9412_CMFET_L_REG, P9412_CMFET_DEFAULT);
-	if (ret < 0)
+	ret = p9xxx_chip_set_cmfet_reg(charger, P9412_CMFET_DEFAULT);
+	if (ret < 0 && ret != -ENOTSUPP)
 		dev_warn(&charger->client->dev, "Fail to set comm cap(%d)\n", ret);
 
 	return ret;
@@ -1218,8 +1217,8 @@ static void p9221_power_mitigation_work(struct work_struct *work)
 						"Fail to configure Vout to %d mV\n",
 						P9XXX_VOUT_5480MV);
 			}
-			ret = p9221_reg_write_8(charger, P9412_CMFET_L_REG, 0);
-			if (ret < 0)
+			ret = p9xxx_chip_set_cmfet_reg(charger, 0);
+			if (ret < 0 && ret != -ENOTSUPP)
 				dev_err(&charger->client->dev, "Fail to configure LL\n");
 			p9221_ll_bpp_cep(charger, charger->last_capacity);
 		}
@@ -2469,8 +2468,8 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 
 		p9221_set_switch_reg(charger, true);
 
-		ret = p9221_reg_write_8(charger, P9412_CMFET_L_REG, P9412_CMFET_2_COMM);
-		if (ret < 0)
+		ret = p9xxx_chip_set_cmfet_reg(charger, P9412_CMFET_2_COMM);
+		if (ret < 0 && ret != -ENOTSUPP)
 			dev_warn(&charger->client->dev, "Fail to set comm cap(%d)\n", ret);
 
 		return 1;
@@ -3457,7 +3456,7 @@ static void p9221_notifier_check_dc(struct p9221_charger_data *charger)
 			 * for mitigate LC node voltage overshoot
 			 */
 			ret = p9xxx_chip_set_mot_reg(charger, P9412_MOT_40PCT);
-			if (ret < 0)
+			if (ret < 0 && ret != -ENOTSUPP)
 				dev_warn(&charger->client->dev,
 					 "Fail to set MOT register(%d)\n", ret);
 		}
