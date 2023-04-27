@@ -143,6 +143,18 @@ static int max77779_sp_info(gbms_tag_t tag, size_t *addr, size_t size)
 	return 0;
 }
 
+static int max77779_sp_iter(int index, gbms_tag_t *tag, void *ptr)
+{
+	static gbms_tag_t keys[] = {GBMS_TAG_RS32, GBMS_TAG_RSBM, GBMS_TAG_RSBR, GBMS_TAG_SUFG};
+	const int count = ARRAY_SIZE(keys);
+
+	if (index >= 0 && index < count) {
+		*tag = keys[index];
+		return 0;
+	}
+	return -ENOENT;
+}
+
 static int max77779_sp_read(gbms_tag_t tag, void *buff, size_t size, void *ptr)
 {
 	struct max77779_sp_data *data = ptr;
@@ -207,6 +219,7 @@ DEFINE_SIMPLE_ATTRIBUTE(debug_reg_rw_fops, max77779_sp_debug_reg_read,
 static struct gbms_storage_desc max77779_sp_dsc = {
 	.write = max77779_sp_write,
 	.read = max77779_sp_read,
+	.iter = max77779_sp_iter,
 };
 
 static bool max77779_sp_is_reg(struct device *dev, unsigned int reg)
