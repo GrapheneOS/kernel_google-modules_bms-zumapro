@@ -243,12 +243,18 @@ static int max77779_sp_probe(struct i2c_client *client,
 	struct device *dev = &client->dev;
 	struct max77779_sp_data *data;
 	struct regmap *regmap;
-	int ret;
+	int ret, page;
 
 	regmap = devm_regmap_init_i2c(client, &max77779_regmap_cfg);
 	if (IS_ERR(regmap)) {
 		dev_err(dev, "Failed to initialize regmap\n");
 		return -EINVAL;
+	}
+
+	ret = regmap_read(regmap, MAX77779_SP_PAGE_CTRL, &page);
+	if (ret) {
+		dev_err(dev, "Unable to find scratchpad (%d)\n", ret);
+		return ret;
 	}
 
 	data = devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
