@@ -1817,8 +1817,11 @@ request_pwr:
 
 	for (i = 0; i < 30; i += 1) {
 		usleep_range(100 * USEC_PER_MSEC, 120 * USEC_PER_MSEC);
-		if (!chgr->online)
+		if (!chgr->online) {
 			chgr->prop_mode_en = false;
+			dev_err(&chgr->client->dev,
+				"PROP_MODE: charger went offline after requesting prop mode\n");
+		}
 	}
 
 err_exit:
