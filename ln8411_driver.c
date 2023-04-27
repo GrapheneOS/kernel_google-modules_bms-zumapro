@@ -61,6 +61,7 @@
 #define LN8411_TA_MIN_VOL_PRESET	8000000	/* uV */
 
 #define LN8411_TA_VOL_PRE_OFFSET	500000	 /* uV */
+#define LN8411_WLC_VOL_PRE_OFFSET	700000   /* uV */
 /* Adjust CC mode TA voltage step */
 #define LN8411_TA_VOL_STEP_ADJ_CC	40000	/* uV */
 /* Pre CV mode TA voltage step */
@@ -1828,7 +1829,7 @@ static int ln8411_set_wireless_dc(struct ln8411_charger *ln8411, int vbat)
 
 	ln8411->iin_cc = ln8411_get_iin_limit(ln8411);
 
-	ln8411->ta_vol = 2 * vbat * ln8411->chg_mode +	LN8411_TA_VOL_PRE_OFFSET;
+	ln8411->ta_vol = 2 * vbat * ln8411->chg_mode +	LN8411_WLC_VOL_PRE_OFFSET;
 
 	/* RX voltage resolution is 100mV */
 	val = ln8411->ta_vol / WCRX_VOL_STEP;
