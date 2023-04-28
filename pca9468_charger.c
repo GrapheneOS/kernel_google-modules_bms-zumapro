@@ -194,7 +194,7 @@ static int iin_fsw_cfg[16] = { 9990, 10540, 11010, 11520, 12000, 12520, 12990,
 /* ------------------------------------------------------------------------ */
 
 /* ADC Read function, return uV or uA */
-int pca9468_read_adc(struct pca9468_charger *pca9468, u8 adc_ch)
+int pca9468_read_adc(const struct pca9468_charger *pca9468, u8 adc_ch)
 {
 	u8 reg_data[2];
 	u16 raw_adc = 0;
@@ -622,7 +622,7 @@ static void pca9468_dump_test_debug(const struct pca9468_charger *pca9468,
 				    int loglevel)
 {
 	u8 test_val[16];
-	int ret;
+	int ret, vin, vout, vbat;
 
 	/* Read test register for debugging */
 	ret = regmap_bulk_read(pca9468->regmap, 0x40, test_val, 16);
@@ -640,6 +640,12 @@ static void pca9468_dump_test_debug(const struct pca9468_charger *pca9468,
 				__func__, test_val[8], test_val[9], test_val[10], test_val[11],
 				test_val[12], test_val[13], test_val[14], test_val[15]);
 	}
+
+	vin = pca9468_read_adc(pca9468, ADCCH_VIN);
+	vout = pca9468_read_adc(pca9468, ADCCH_VOUT);
+	vbat = pca9468_read_adc(pca9468, ADCCH_VBAT);
+	logbuffer_prlog(pca9468, loglevel, "%s: vin: %d, vout: %d, vbat: %d\n",
+			__func__, vin, vout, vbat);
 }
 
 static void pca9468_dump_config(const struct pca9468_charger *pca9468,

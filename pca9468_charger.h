@@ -320,7 +320,7 @@ enum {
 
 /* - Core driver  ---------------------------- */
 
-int pca9468_read_adc(struct pca9468_charger *pca9468, u8 adc_ch);
+int pca9468_read_adc(const struct pca9468_charger *pca9468, u8 adc_ch);
 int pca9468_input_current_limit(struct pca9468_charger *pca9468);
 
 /* - PPS Integration (move to a separate file) ---------------------------- */
