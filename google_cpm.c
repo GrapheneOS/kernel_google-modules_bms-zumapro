@@ -118,6 +118,8 @@ enum {
 #define MDIS_IN_MAX	4
 #define MDIS_OUT_MAX	GCPM_MAX_CHARGERS
 
+#define MDIS_REASON_SETUP "SETUP"
+
 struct mdis_thermal_device
 {
 	struct gcpm_drv *gcpm;
@@ -1228,8 +1230,9 @@ static int gcpm_pps_offline(struct gcpm_drv *gcpm)
 			pr_err("PPS_DC: fail wlc offline (%d)\n", ret);
 	}
 
-	if (tdev)
-		gcpm_update_mdis_charge_cntl_limit(tdev, tdev->current_level);
+	/* force the callback set dc -> main thermal limits */
+	if (tdev && gcpm->mdis_votable)
+		gvotable_run_election(gcpm->mdis_votable, true);
 
 	gcpm->pps_index = 0;
 	return 0;
@@ -1787,8 +1790,9 @@ static void gcpm_pps_wlc_dc_work(struct work_struct *work)
 			goto pps_dc_reschedule;
 		}
 
-		if (tdev)
-			gcpm_update_mdis_charge_cntl_limit(tdev, tdev->current_level);
+		/* force the callback set main -> dc thermal limits */
+		if (tdev && gcpm->mdis_votable)
+			gvotable_run_election(gcpm->mdis_votable, true);
 
 		/*
 		 * offine current adapter and start new. Charging is enabled
@@ -2629,13 +2633,14 @@ static int gcpm_set_mdis_charge_cntl_limit(struct thermal_cooling_device *tcd,
 {
 	struct mdis_thermal_device *tdev = tcd->devdata;
 	struct gcpm_drv *gcpm = tdev->gcpm;
+	struct gvotable_election* el = gcpm->mdis_votable;
 	int ret;
 
 	if (tdev->thermal_levels <= 0 || lvl < 0 || lvl > tdev->thermal_levels)
 		return -EINVAL;
 
 	mutex_lock(&gcpm->chg_psy_lock);
-	ret = gcpm_update_mdis_charge_cntl_limit(tdev, lvl);
+	ret = gvotable_cast_int_vote(el, REASON_MDIS, lvl, lvl > 0);
 	mutex_unlock(&gcpm->chg_psy_lock);
 
 	return ret;
@@ -2761,15 +2766,6 @@ static int gcpm_update_mdis_charge_cntl_limit(struct mdis_thermal_device *tdev,
 	if (ret < 0)
 		pr_err("%s: cannot update limits (%d)", __func__, ret);
 
-	/*  fix the disable, run another charging loop */
-	if (gcpm->mdis_votable) {
-		ret = gvotable_cast_int_vote(gcpm->mdis_votable, "MDIS",
-					     lvl, lvl >= 0);
-		if (ret < 0)
-			pr_err("%s: cannot update MDIS level (%d)", __func__, ret);
-
-	}
-
 	return 0;
 }
 
@@ -2794,6 +2790,41 @@ state2power_table_show(struct device *dev, struct device_attribute *attr, char *
 }
 
 static DEVICE_ATTR_RO(state2power_table);
+
+static ssize_t
+mdis_vote_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct gcpm_drv *gcpm = dev_get_drvdata(dev);
+	struct gvotable_election* el = gcpm->mdis_votable;
+	int lvl;
+
+	lvl = gvotable_get_int_vote(el, MDIS_REASON_SETUP);
+
+	return sprintf(buf, "%d\n", lvl);
+}
+
+static ssize_t
+mdis_vote_store(struct device *dev, struct device_attribute *attr,
+			const char *buf, size_t count)
+{
+	struct gcpm_drv *gcpm = dev_get_drvdata(dev);
+	struct gvotable_election* el = gcpm->mdis_votable;
+	int ret;
+	long lvl;
+
+	ret = kstrtol(buf, 0, &lvl);
+	if (ret)
+		return ret;
+	mutex_lock(&gcpm->chg_psy_lock);
+	ret = gvotable_cast_int_vote(el, MDIS_REASON_SETUP, lvl, lvl > 0);
+	mutex_unlock(&gcpm->chg_psy_lock);
+	if (ret)
+		return ret;
+
+	return count;
+}
+
+static DEVICE_ATTR_RW(mdis_vote);
 
 static ssize_t
 mdis_out_table_show(struct device *dev, struct device_attribute *attr, char *buf)
@@ -3154,11 +3185,15 @@ static int gcpm_mdis_callback(struct gvotable_election *el, const char *reason,
 {
 	struct gcpm_drv *gcpm = gvotable_get_data(el);
 	struct mdis_thermal_device *tdev = &gcpm->thermal_device;
-	const int budget = (long)value;
-	bool trigger_select = budget != 0 && gcpm->cp_fcc_hold;
+	const int lvl = (long)value;
+	bool trigger_select;
 
-	pr_debug("MSC_MDIS callback lvl=%d budget=%d hold=%d cp_fcc_hold_limit=%d\n",
-		 tdev->current_level, budget, gcpm->cp_fcc_hold,
+	gcpm_update_mdis_charge_cntl_limit(tdev, lvl);
+
+	trigger_select = lvl != 0 && gcpm->cp_fcc_hold;
+
+	pr_debug("MSC_MDIS callback cur_lvl=%d lvl=%d hold=%d cp_fcc_hold_limit=%d\n",
+		 tdev->current_level, lvl, gcpm->cp_fcc_hold,
 		 gcpm->cp_fcc_hold_limit);
 
 	/*
@@ -3322,7 +3357,7 @@ static int gcpm_init_mdis(struct gcpm_drv *gcpm)
 
 	/* mdis thermal engine uses this callback */
 	gcpm->mdis_votable =
-		gvotable_create_int_election(NULL, gvotable_comparator_int_min,
+		gvotable_create_int_election(NULL, gvotable_comparator_int_max,
 					     gcpm_mdis_callback, gcpm);
 	if (IS_ERR_OR_NULL(gcpm->mdis_votable)) {
 		ret = PTR_ERR(gcpm->mdis_votable);
@@ -3330,7 +3365,7 @@ static int gcpm_init_mdis(struct gcpm_drv *gcpm)
 		return ret;
 	}
 
-	gvotable_set_default(gcpm->mdis_votable, (void *)-1);
+	gvotable_set_default(gcpm->mdis_votable, (void *)0);
 	gvotable_set_vote2str(gcpm->mdis_votable, gvotable_v2s_int);
 	gvotable_election_set_name(gcpm->mdis_votable, VOTABLE_MDIS);
 
@@ -4350,6 +4385,10 @@ static int google_cpm_probe(struct platform_device *pdev)
 	ret = device_create_file(gcpm->device, &dev_attr_thermal_mdis_fan_alarm);
 	if (ret)
 		dev_err(gcpm->device, "Failed to create thermal_mdis_fan_alarm\n");
+
+	ret = device_create_file(gcpm->device, &dev_attr_mdis_vote);
+	if (ret)
+		dev_err(gcpm->device, "Failed to create mdis_vote\n");
 
 	/* give time to fg driver to start */
 	schedule_delayed_work(&gcpm->init_work,
