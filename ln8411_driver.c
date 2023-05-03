@@ -123,6 +123,8 @@
 
 #define ADC_EN_RETRIES			400
 
+#define LN8411_TIER_SWITCH_DELTA		25000 /* uV */
+
 /* GPIO support for 1_2 mode */
 #define LN8411_NUM_GPIOS	1
 #define LN8411_MIN_GPIO		0
@@ -2388,6 +2390,21 @@ static int ln8411_apply_new_vfloat(struct ln8411_charger *ln8411)
 	ret = ln8411_set_vfloat(ln8411, ln8411->new_vfloat);
 	if (ret < 0)
 		goto error_done;
+
+	/* Restart the process if tier switch happened (either direction) */
+	if (abs(ln8411->new_vfloat - ln8411->fv_uv) > LN8411_TIER_SWITCH_DELTA) {
+		ret = ln8411_reset_dcmode(ln8411);
+		if (ret < 0) {
+			pr_err("%s: cannot reset dcmode (%d)\n", __func__, ret);
+		} else {
+			dev_info(ln8411->dev, "%s: charging_state=%u->%u\n", __func__,
+				ln8411->charging_state, DC_STATE_ADJUST_CC);
+
+			ln8411->charging_state = DC_STATE_ADJUST_CC;
+			ln8411->timer_id = TIMER_PDMSG_SEND;
+			ln8411->timer_period = 0;
+		}
+	}
 
 	ln8411->fv_uv = ln8411->new_vfloat;
 

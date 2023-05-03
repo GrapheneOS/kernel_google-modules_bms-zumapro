@@ -128,6 +128,8 @@ static int adc_gain[16] = { 0,  1,  2,  3,  4,  5,  6,  7,
 #define PCA9468_SC_CLK_DITHER_RATE_DEF	0	/* 25kHz */
 #define PCA9468_SC_CLK_DITHER_LIMIT_DEF	0xF	/* 10% */
 
+#define PCA9468_TIER_SWITCH_DELTA	25000	/* uV */
+
 /* INT1 Register Buffer */
 enum {
 	REG_INT1,
@@ -2392,6 +2394,21 @@ static int pca9468_apply_new_vfloat(struct pca9468_charger *pca9468)
 	ret = pca9468_set_vfloat(pca9468, fv_uv);
 	if (ret < 0)
 		goto error_done;
+
+	/* Restart the process if tier switch happened (either direction) */
+	if (abs(fv_uv - pca9468->fv_uv) > PCA9468_TIER_SWITCH_DELTA) {
+		ret = pca9468_reset_dcmode(pca9468);
+		if (ret < 0) {
+			pr_err("%s: cannot reset dcmode (%d)\n", __func__, ret);
+		} else {
+			dev_info(pca9468->dev, "%s: charging_state=%u->%u\n", __func__,
+				pca9468->charging_state, DC_STATE_ADJUST_CC);
+
+			pca9468->charging_state = DC_STATE_ADJUST_CC;
+			pca9468->timer_id = TIMER_PDMSG_SEND;
+			pca9468->timer_period = 0;
+		}
+	}
 
 	pca9468->fv_uv = fv_uv;
 
