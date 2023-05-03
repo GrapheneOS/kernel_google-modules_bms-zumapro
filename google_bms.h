@@ -271,6 +271,7 @@ enum chg_health_state {
 	CHG_HEALTH_PAUSE,
 };
 
+#define STATS_TH_SIZE 10
 /* tier index used to log the session */
 enum gbms_stats_tier_idx_t {
 	GBMS_STATS_AC_TI_DISABLE_DIALOG = -6,
@@ -314,6 +315,8 @@ enum gbms_stats_tier_idx_t {
 	GBMS_STATS_BD_TI_CUSTOM_LEVELS = 111,
 	GBMS_STATS_BD_TI_TRICKLE = 112,
 	GBMS_STATS_BD_TI_DOCK = 113,
+	GBMS_STATS_BD_TI_TEMP_PRETRIGGER = 114,
+	GBMS_STATS_BD_TI_TEMP_RESUME = 115,
 
 	GBMS_STATS_BD_TI_TRICKLE_CLEARED = 122,
 	GBMS_STATS_BD_TI_DOCK_CLEARED = 123,
@@ -460,6 +463,7 @@ const char *gbms_chg_ev_adapter_s(int adapter);
 #define VOTABLE_DEAD_BATTERY	"DEAD_BATTERY"
 #define VOTABLE_TEMP_DRYRUN	"MSC_TEMP_DRYRUN"
 #define VOTABLE_MDIS		"CHG_MDIS"
+#define VOTABLE_THERMAL_LVL	"CHG_THERM_LVL"
 
 #define VOTABLE_CSI_STATUS	"CSI_STATUS"
 #define VOTABLE_CSI_TYPE	"CSI_TYPE"
@@ -608,12 +612,21 @@ enum bhi_algo {
 	BHI_ALGO_MAX,
 };
 
+/*
+ * Report battery health from health status (for health hal aidl v2)
+ * BH_NOMINAL		: BATTERY_HEALTH_GOOD
+ * BH_MARGINAL		: BATTERY_HEALTH_FAIR
+ * BH_NEEDS_REPLACEMENT	: BATTERY_HEALTH_DEAD
+ * BH_FAILED		: BATTERY_HEALTH_UNSPECIFIED_FAILURE
+ * BH_NOT_AVAILABLE	: BATTERY_HEALTH_NOT_AVAILABLE
+ */
 enum bhi_status {
 	BH_UNKNOWN = -1,
 	BH_NOMINAL,
 	BH_MARGINAL,
 	BH_NEEDS_REPLACEMENT,
 	BH_FAILED,
+	BH_NOT_AVAILABLE,
 };
 
 struct bhi_weight {
@@ -666,6 +679,29 @@ static inline int tcpm_update_sink_capabilities(struct tcpm_port *port,
 {
 	return 0;
 }
+
+#define CSI_TYPE_MASK_UNKNOWN		(1 << 0)
+#define CSI_TYPE_MASK_NONE		(1 << 1)
+#define CSI_TYPE_MASK_FAULT		(1 << 2)
+#define CSI_TYPE_MASK_JEITA		(1 << 3)
+#define CSI_TYPE_MASK_LONGLIFE		(1 << 4)
+#define CSI_TYPE_MASK_ADAPTIVE		(1 << 5)
+#define CSI_TYPE_MASK_NORMAL		(1 << 6)
+
+#define CSI_STATUS_MASK_UNKNOWN		(1 << 0)
+#define CSI_STATUS_MASK_HEALTH_COLD	(1 << 1)
+#define CSI_STATUS_MASK_HEALTH_HOT	(1 << 2)
+#define CSI_STATUS_MASK_SYS_THERMALS	(1 << 3)
+#define CSI_STATUS_MASK_SYS_LOAD	(1 << 4)
+#define CSI_STATUS_MASK_ADA_AUTH	(1 << 5)
+#define CSI_STATUS_MASK_ADA_POWER	(1 << 6)
+#define CSI_STATUS_MASK_ADA_QUALITY	(1 << 7)
+#define CSI_STATUS_MASK_DEFEND_TEMP	(1 << 8)
+#define CSI_STATUS_MASK_DEFEND_DWELL	(1 << 9)
+#define CSI_STATUS_MASK_DEFEND_TRICLE	(1 << 10)
+#define CSI_STATUS_MASK_DEFEND_DOCK	(1 << 11)
+#define CSI_STATUS_MASK_NOTCHARGING	(1 << 12)
+#define CSI_STATUS_MASK_CHARGING	(1 << 13)
 
 enum charging_state {
        BATTERY_STATUS_UNKNOWN = -1,

@@ -91,6 +91,7 @@ enum gbms_property {
 	GBMS_PROP_WLC_OP_FREQ,		/* GBMS wlc frequency */
 	GBMS_PROP_WLC_VRECT,		/* GBMS wlc Vrect */
 	GBMS_PROP_FG_REG_LOGGING,	/* GBMS FG logging */
+	GBMS_PROP_WLC_VCPOUT,		/* GBMS wlc cpout voltage */
 };
 
 union gbms_propval {
