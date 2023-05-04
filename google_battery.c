@@ -430,6 +430,8 @@ struct csi_stats {
 	uint16_t cc_in;
 	uint16_t cc_out;
 	ktime_t thermal_severity[CSI_THERMAL_SEVERITY_MAX];
+	int thermal_lvl_max;
+	int thermal_lvl_min;
 };
 
 #define TEMP_SAMPLE_SIZE 5
@@ -2575,10 +2577,12 @@ log_and_done:
 			res = 0;
 
 		gbms_logbuffer_prlog(batt_drv->ttf_stats.ttf_log, LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG,
-				     "ssoc=%d temp=%d CSI[min=%d max=%d avg=%d type=%d status=%d TTF[cc=%d time=%lld %lld:%lld:%lld (est=%lld max_ratio=%d)]",
-				     csi_stats->ssoc, batt_drv->batt_temp, csi_stats->csi_speed_min,
-				     csi_stats->csi_speed_max, csi_speed_avg,
+				     "ssoc=%d temp=%d CSI[speed=%d,%d,%d type=%d status=%d lvl=%d,%d"
+				     " TTF[cc=%d time=%lld %lld:%lld:%lld (est=%lld max_ratio=%d)]",
+				     csi_stats->ssoc, batt_drv->batt_temp, csi_speed_avg,
+				     csi_stats->csi_speed_min, csi_stats->csi_speed_max,
 				     csi_stats->csi_current_type, csi_stats->csi_current_status,
+				     csi_stats->thermal_lvl_min, csi_stats->thermal_lvl_max,
 				     cc / 1000, right_now, res / 3600, (res % 3600) / 60,
 				     (res % 3600) % 60, res, max_ratio);
 
@@ -2591,6 +2595,12 @@ log_and_done:
 	csi_stats->ssoc = ssoc;
 	csi_stats->csi_speed_min = current_speed;
 	csi_stats->csi_speed_max = current_speed;
+
+	/* ssoc == -1 on disconnect */
+	if (ssoc == -1) {
+		csi_stats->thermal_lvl_min = 0;
+		csi_stats->thermal_lvl_max = 0;
+	}
 
 	csi_stats->csi_time_sum = 0;
 	csi_stats->speed_sum = 0;
@@ -2849,12 +2859,37 @@ static int batt_calc_charging_speed(struct batt_drv *batt_drv)
 	return chg_speed;
 }
 
+static void batt_update_thermal_lvl(struct batt_drv *batt_drv)
+{
+	struct csi_stats *csi_stats = &batt_drv->csi_stats;
+	int thermal_level = 0;
+
+	if (chg_state_is_disconnected(&batt_drv->chg_state))
+		return;
+
+	if (!batt_drv->thermal_level_votable)
+		batt_drv->thermal_level_votable = gvotable_election_get_handle(VOTABLE_THERMAL_LVL);
+	if (batt_drv->thermal_level_votable)
+		thermal_level = gvotable_get_current_int_vote(batt_drv->thermal_level_votable);
+
+	if (thermal_level < 0)
+		return;
+
+	if (csi_stats->thermal_lvl_max == 0 && csi_stats->thermal_lvl_min == 0)
+		csi_stats->thermal_lvl_max = csi_stats->thermal_lvl_min = thermal_level;
+	else if (thermal_level > csi_stats->thermal_lvl_max)
+		csi_stats->thermal_lvl_max = thermal_level;
+	else if (thermal_level < csi_stats->thermal_lvl_min)
+		csi_stats->thermal_lvl_min = thermal_level;
+}
+
 static void batt_update_csi_info(struct batt_drv *batt_drv)
 {
 	int charging_speed;
 
 	batt_update_csi_type(batt_drv);
 	batt_update_csi_status(batt_drv);
+	batt_update_thermal_lvl(batt_drv);
 
 	charging_speed = batt_calc_charging_speed(batt_drv);
 	if (batt_drv->csi_current_speed != charging_speed) {
