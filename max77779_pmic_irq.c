@@ -197,10 +197,20 @@ static int max77779_pmic_irq_probe(struct platform_device *pdev)
 	}
 
 	err = gpio_direction_input(irq_gpio);
-	if (err < 0)
+	if (err < 0) {
 		dev_err(dev, "Error setting irq_gpio to input\n");
+		return err;
+	}
 
 	pmic_irq = gpio_to_irq(irq_gpio);
+	if (pmic_irq < 0) {
+		dev_err(dev, "Error getting irq\n");
+		return err;
+	}
+
+	err = enable_irq_wake(pmic_irq);
+	if (err < 0)
+		dev_warn(dev, "Unable to make irq wakeable.\n");
 
 	/* mask and clear all interrupts */
 	err =  max77779_pmic_reg_write(info->core,
