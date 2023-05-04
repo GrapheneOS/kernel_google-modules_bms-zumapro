@@ -309,6 +309,17 @@ static const struct regmap_config max77779_i2cm_regmap_cfg = {
 	.max_register = I2CM_MAX_REGISTER,
 };
 
+static const struct i2c_adapter_quirks max77779_i2cm_quirks = {
+	.flags = I2C_AQ_COMB_WRITE_THEN_READ |
+		 I2C_AQ_NO_ZERO_LEN |
+		 I2C_AQ_NO_REP_START,
+	.max_num_msgs = 2,
+	.max_write_len = MAX77779_I2CM_MAX_WRITE,
+	.max_read_len = MAX77779_I2CM_MAX_READ,
+	.max_comb_1st_msg_len = MAX77779_I2CM_MAX_WRITE,
+	.max_comb_2nd_msg_len = MAX77779_I2CM_MAX_READ
+};
+
 static int max77779_i2cm_probe(struct i2c_client *client,
 		const struct i2c_device_id *id)
 {
@@ -402,6 +413,7 @@ static int max77779_i2cm_probe(struct i2c_client *client,
 	info->adap.algo_data = info;
 	info->adap.dev.parent = info->dev;
 	info->adap.nr = -1;
+	info->adap.quirks = &max77779_i2cm_quirks;
 
 	err = i2c_add_numbered_adapter(&info->adap);
 	if (err < 0)
