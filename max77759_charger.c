@@ -54,6 +54,9 @@
 #define CHGR_DTLS_OFF_JEITA				0x0c
 #define CHGR_DTLS_OFF_TEMP				0x0d
 
+#define CHGR_CHG_CNFG_12_VREG_4P6V			0x1
+#define CHGR_CHG_CNFG_12_VREG_4P7V			0x2
+
 static inline int max77759_reg_read(struct regmap *regmap, uint8_t reg,
 				    uint8_t *val)
 {
@@ -1926,6 +1929,37 @@ static int max77759_init_wcin_psy(struct max77759_chgr_data *data)
 	return 0;
 }
 
+static int max77759_higher_headroom_enable(struct max77759_chgr_data *data, bool flag)
+{
+	int ret = 0;
+	u8 reg, reg_rd, val = flag ? CHGR_CHG_CNFG_12_VREG_4P7V : CHGR_CHG_CNFG_12_VREG_4P6V;
+
+	ret = max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_12, &reg);
+	if (ret < 0)
+		return ret;
+
+	reg_rd = reg;
+	ret = max77759_chg_prot(data->regmap, false);
+	if (ret < 0)
+		return ret;
+
+	reg = _chg_cnfg_12_vchgin_reg_set(reg, val);
+	ret = max77759_reg_write(data->regmap, MAX77759_CHG_CNFG_12, reg);
+	if (ret)
+		goto done;;
+
+	dev_dbg(data->dev, "%s: val: %#02x, reg: %#02x -> %#02x\n", __func__, val, reg_rd, reg);
+
+	ret = max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_12, &reg);
+	if (ret)
+		goto done;
+
+done:
+	ret = max77759_chg_prot(data->regmap, true);
+	if (ret < 0)
+		dev_err(data->dev, "%s: error enabling prot (%d)\n", __func__, ret);
+	return ret < 0 ? ret : 0;
+}
 
 static int max77759_chg_is_valid(struct max77759_chgr_data *data)
 {
@@ -2250,6 +2284,10 @@ static int max77759_psy_set_property(struct power_supply *psy,
 		ret = max77759_set_regulation_voltage(data, pval->intval);
 		pr_debug("%s: charge_voltage=%d (%d)\n",
 			__func__, pval->intval, ret);
+		if (ret)
+			break;
+		if (max77759_is_online(data) && pval->intval >= data->chg_term_voltage * 1000)
+			ret = max77759_higher_headroom_enable(data, true);
 		break;
 	/* called from google_cpm when switching chargers */
 	case GBMS_PROP_CHARGING_ENABLED:
@@ -2836,6 +2874,10 @@ static irqreturn_t max77759_chgr_irq(int irq, void *client)
 		pr_debug("%s: INSEL insel_auto_clear=%d (%d)\n", __func__,
 			 data->insel_clear, data->insel_clear ? ret : 0);
 		atomic_inc(&data->insel_cnt);
+
+		ret = max77759_higher_headroom_enable(data, false); /* reset on plug/unplug */
+		if (ret)
+			return IRQ_NONE;
 	}
 
 	/* TODO: make this an interrupt controller */
