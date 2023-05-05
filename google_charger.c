@@ -2246,7 +2246,7 @@ static void chg_update_csi(struct chg_drv *chg_drv)
 						   chg_drv->charge_start_level);
 	const bool is_disconnected = chg_state_is_disconnected(&chg_drv->chg_state);
 	const bool is_full = (chg_drv->chg_state.f.flags & GBMS_CS_FLAG_DONE) != 0;
-	const bool is_dock = chg_drv->bd_state.dd_triggered;
+	const bool is_dock = chg_drv->bd_state.dd_state == DOCK_DEFEND_ACTIVE;
 	const bool is_temp = chg_drv->bd_state.triggered;
 
 	if (!chg_drv->csi_status_votable)
