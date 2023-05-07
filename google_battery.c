@@ -620,6 +620,10 @@ struct batt_drv {
 	/* charging policy */
 	struct gvotable_election *charging_policy_votable;
 	int charging_policy;
+
+	/* irdrop for DC */
+	bool dc_irdrop;
+
 };
 
 static int gbatt_get_temp(struct batt_drv *batt_drv, int *temp);
@@ -2962,9 +2966,14 @@ static int msc_logic_irdrop(struct batt_drv *batt_drv,
 	int vchg = batt_drv->chg_state.f.vchrg;
 	int msc_state = MSC_NONE;
 	bool match_enable;
+	bool no_back_down = false;
 
-	if (batt_drv->chg_state.f.flags & GBMS_CS_FLAG_NOCOMP)
-		vchg = 0;
+	if (batt_drv->chg_state.f.flags & GBMS_CS_FLAG_DIRECT_CHG) {
+		if (batt_drv->dc_irdrop)
+			no_back_down = true;
+		else
+			vchg = 0;
+	}
 	match_enable = vchg != 0;
 
 	if ((vbatt - vtier) > otv_margin) {
@@ -2978,9 +2987,12 @@ static int msc_logic_irdrop(struct batt_drv *batt_drv,
 		 * switching voltage tiers if the current is right).
 		 * NOTE: lowering voltage might cause a small drop in
 		 * current (we should remain  under next tier)
+		 * TODO: the fv_uv_resolution might be different in
+		 * main charger and CP (should separate them)
 		 */
 		*fv_uv = gbms_msc_round_fv_uv(profile, vtier,
-			*fv_uv - profile->fv_uv_resolution);
+					      *fv_uv - profile->fv_uv_resolution,
+					      no_back_down ? cc_max : 0);
 		if (*fv_uv < vtier)
 			*fv_uv = vtier;
 
@@ -3008,10 +3020,12 @@ static int msc_logic_irdrop(struct batt_drv *batt_drv,
 		} else {
 			/* simple pullback */
 			msc_state = MSC_PULLBACK;
+			if (no_back_down)
+				*fv_uv = batt_drv->fv_uv;
 			batt_prlog(BATT_PRLOG_ALWAYS,
-				  "MSC_PULLBACK vt=%d vb=%d ibatt=%d fv_uv=%d->%d\n",
+				  "MSC_PULLBACK vt=%d vb=%d ibatt=%d fv_uv=%d->%d no_back=%d\n",
 				  vtier, vbatt, ibatt,
-				  batt_drv->fv_uv, *fv_uv);
+				  batt_drv->fv_uv, *fv_uv, no_back_down);
 		}
 
 		/*
@@ -3028,28 +3042,35 @@ static int msc_logic_irdrop(struct batt_drv *batt_drv,
 		 * data might not be consistent (b/110318684)
 		 * NOTE: could add PID loop for management of thermals
 		 */
-		const int vchrg_ua = vchg * 1000;
+		const int vchrg_uv = vchg * 1000;
+		const int pre_fv = *fv_uv;
 
 		msc_state = MSC_FAST;
 
 		/* invalid or 0 vchg disable IDROP compensation */
-		if (vchrg_ua <= 0) {
+		if (vchrg_uv <= 0) {
 			/* could keep it steady instead */
 			*fv_uv = vtier;
-		} else if (vchrg_ua > vbatt) {
-			*fv_uv = gbms_msc_round_fv_uv(profile, vtier,
-				vtier + (vchrg_ua - vbatt));
+		} else if (vchrg_uv > vbatt) {
+			const int cc_max = GBMS_CCCM_LIMITS(profile, temp_idx, *vbatt_idx);
+
+			*fv_uv = gbms_msc_round_fv_uv(profile, vtier, vtier + (vchrg_uv - vbatt),
+						      no_back_down ? cc_max : 0);
 		}
+
+		/* not allow to reduce fv in DC to avoid the VSWITCH */
+		if (no_back_down && (pre_fv > *fv_uv))
+			*fv_uv = pre_fv;
 
 		/* no tier switch in fast charge (TODO unless close to tier) */
 		if (batt_drv->checked_cv_cnt == 0)
 			batt_drv->checked_cv_cnt = 1;
 
 		batt_prlog(BATT_PRLOG_ALWAYS,
-			   "MSC_FAST vt=%d vb=%d ib=%d fv_uv=%d->%d vchrg=%d cv_cnt=%d\n",
+			   "MSC_FAST vt=%d vb=%d ib=%d fv_uv=%d->%d vchrg=%d cv_cnt=%d no_back=%d\n",
 			   vtier, vbatt, ibatt, batt_drv->fv_uv, *fv_uv,
 			   batt_drv->chg_state.f.vchrg,
-			   batt_drv->checked_cv_cnt);
+			   batt_drv->checked_cv_cnt, no_back_down);
 
 	} else if (chg_type == POWER_SUPPLY_CHARGE_TYPE_TRICKLE) {
 		/*
@@ -3135,9 +3156,12 @@ static int msc_logic_irdrop(struct batt_drv *batt_drv,
 		 * TAPER_RAISE: under tier vlim, raise one click &
 		 * debounce taper (see above handling of STEADY)
 		 */
+		const int cc_max = GBMS_CCCM_LIMITS(profile, temp_idx, *vbatt_idx);
+
 		msc_state = MSC_RAISE;
 		*fv_uv = gbms_msc_round_fv_uv(profile, vtier,
-			*fv_uv + profile->fv_uv_resolution);
+					      *fv_uv + profile->fv_uv_resolution,
+					      no_back_down ? cc_max : 0);
 		*update_interval = profile->cv_update_interval;
 
 		/* debounce next taper voltage adjustment */
@@ -4385,7 +4409,7 @@ static int msc_logic(struct batt_drv *batt_drv)
 		  batt_drv->vbatt_idx != vbatt_idx ||
 		  batt_drv->fv_uv != fv_uv;
 	batt_prlog(batt_prlog_level(changed),
-		   "MSC_LOGIC temp_idx:%d->%d, vbatt_idx:%d->%d, fv=%d->%d, ui=%d->%d cv_cnt=%d ov_cnt=%d\n",
+		   "MSC_LOGIC temp_idx:%d->%d, vbatt_idx:%d->%d, fv=%d->%d, cc_max=%d, ui=%d cv_cnt=%d ov_cnt=%d\n",
 		   batt_drv->temp_idx, temp_idx, batt_drv->vbatt_idx, vbatt_idx,
 		   batt_drv->fv_uv, fv_uv, batt_drv->cc_max, update_interval,
 		   batt_drv->checked_cv_cnt, batt_drv->checked_ov_cnt);
@@ -9830,6 +9854,10 @@ static void google_battery_init_work(struct work_struct *work)
 				   &batt_drv->health_data.bhi_data.first_usage_date);
 	if (ret < 0)
 		batt_drv->health_data.bhi_data.first_usage_date = 0;
+
+	batt_drv->dc_irdrop = of_property_read_bool(node, "google,dc-irdrop");
+	if (batt_drv->dc_irdrop)
+		pr_info("dc irdrop is enabled\n");
 
 	/* single battery disconnect */
 	(void)batt_bpst_init_debugfs(batt_drv);
