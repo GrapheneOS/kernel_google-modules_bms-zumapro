@@ -1272,8 +1272,9 @@ static int max77779_set_charger_current_max_ua(struct max77779_chgr_data *data,
 					       int current_ua)
 {
 	const int disabled = current_ua == 0;
-	u8 value;
+	u8 value, reg;
 	int ret;
+	bool cp_enabled;
 
 	if (current_ua < 0)
 		return 0;
@@ -1288,6 +1289,16 @@ static int max77779_set_charger_current_max_ua(struct max77779_chgr_data *data,
 	else
 		value = 0x3 + (current_ua - 200000) / 66670;
 
+	ret = max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_00, &reg);
+	if (ret < 0) {
+		dev_err(data->dev, "cannot read CHG_CNFG_00 (%d)\n", ret);
+		return ret;
+	}
+
+	cp_enabled = _max77779_chg_cnfg_00_cp_en_get(reg);
+	if (cp_enabled)
+		goto update_reg;
+
 	/*
 	 * cc_max > 0 might need to restart charging: the usecase state machine
 	 * will be triggered in max77779_set_charge_enabled()
@@ -1297,12 +1308,12 @@ static int max77779_set_charger_current_max_ua(struct max77779_chgr_data *data,
 		if (ret < 0)
 			dev_err(data->dev, "cannot re-enable charging (%d)\n", ret);
 	}
-
+update_reg:
 	value = VALUE2FIELD(MAX77779_CHG_CNFG_02_CHGCC, value);
 	ret = max77779_reg_update(data, MAX77779_CHG_CNFG_02,
 				   MAX77779_CHG_CNFG_02_CHGCC_MASK,
 				   value);
-	if (ret == 0)
+	if (ret == 0 && !cp_enabled)
 		ret = max77779_set_charge_enabled(data, !disabled, "CC_MAX");
 
 	return ret;

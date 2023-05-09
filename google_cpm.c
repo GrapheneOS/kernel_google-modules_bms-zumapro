@@ -255,6 +255,9 @@ struct gcpm_drv  {
 	bool resume_complete;
 	struct notifier_block chg_nb;
 
+	/* Charge Overcurrent Protection Enabled*/
+	bool cop_enabled;
+
 	/* tie up to charger mode */
 	struct gvotable_election *gbms_mode;
 
@@ -2118,8 +2121,24 @@ done:
 	 * Will disable CC_MAX vote on GCPM_FCC when/if the limit is routed
 	 * to the main-charger.
 	 */
-	if (psp == POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX)
+	if (psp == POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX) {
+		if (!route && gcpm->cop_enabled) {
+			struct power_supply *main_chg_psy = NULL;
+
+			/* Route to main charger if COP enabled */
+			main_chg_psy = gcpm_chg_get_default(gcpm);
+			if (main_chg_psy) {
+				ret = power_supply_set_property(main_chg_psy, psp, pval);
+				if (ret < 0 && ret != -EAGAIN) {
+					pr_err("cannot route prop=%d to default:%s (%d)\n", psp,
+						gcpm_psy_name(main_chg_psy), ret);
+				}
+			} else {
+				pr_err("invalid default charger for prop=%d\n", psp);
+			}
+		}
 		gcpm_update_gcpm_fcc(gcpm, "CC_MAX", gcpm->cc_max, !route);
+	}
 
 	mutex_unlock(&gcpm->chg_psy_lock);
 
@@ -4213,6 +4232,8 @@ static int google_cpm_probe(struct platform_device *pdev)
 
 	gcpm->no_init_wlc_ta_vol = of_property_read_bool(pdev->dev.of_node,
 							"google,no-init-wlc-ta-vol");
+
+	gcpm->cop_enabled = of_property_read_bool(pdev->dev.of_node, "google,cop-enabled");
 
 	dev_info(gcpm->device, "taper ts_m=%d ts_ccs=%d ts_i=%d ts_cnt=%d ts_g=%d ts_v=%d ts_c=%d\n",
 		 gcpm->taper_step_fv_margin, gcpm->taper_step_cc_step,
