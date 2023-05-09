@@ -7406,7 +7406,16 @@ static ssize_t health_set_cal_mode_store(struct device *dev,
 	return count;
 }
 
-static DEVICE_ATTR_WO(health_set_cal_mode);
+static ssize_t health_set_cal_mode_show(struct device *dev, struct device_attribute *attr,
+					char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = (struct batt_drv *)power_supply_get_drvdata(psy);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->health_data.cal_mode);
+}
+
+static DEVICE_ATTR_RW(health_set_cal_mode);
 
 static ssize_t health_get_cal_state_show(struct device *dev,
 				       struct device_attribute *attr, char *buf)
@@ -7437,7 +7446,21 @@ static ssize_t health_set_trend_points_store(struct device *dev,
 	return count;
 }
 
-static const DEVICE_ATTR_WO(health_set_trend_points);
+static ssize_t health_set_trend_points_show(struct device *dev, struct device_attribute *attr,
+					     char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	struct bhi_data *bhi_data = &batt_drv->health_data.bhi_data;
+
+	return scnprintf(buf, PAGE_SIZE, "%d,%d,%d,%d,%d,%d,%d,%d\n",
+			 bhi_data->trend[0], bhi_data->trend[1], bhi_data->trend[2],
+			 bhi_data->trend[3], bhi_data->trend[4], bhi_data->trend[5],
+			 bhi_data->trend[6], bhi_data->trend[7]);
+
+}
+
+static const DEVICE_ATTR_RW(health_set_trend_points);
 
 static ssize_t health_set_low_boundary_store(struct device *dev,
 					     struct device_attribute *attr,
@@ -7457,7 +7480,20 @@ static ssize_t health_set_low_boundary_store(struct device *dev,
 	return count;
 }
 
-static const DEVICE_ATTR_WO(health_set_low_boundary);
+static ssize_t health_set_low_boundary_show(struct device *dev, struct device_attribute *attr,
+					    char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	struct bhi_data *bhi_data = &batt_drv->health_data.bhi_data;
+
+	return scnprintf(buf, PAGE_SIZE, "%d,%d,%d,%d,%d,%d,%d,%d\n",
+			 bhi_data->l_bound[0], bhi_data->l_bound[1], bhi_data->l_bound[2],
+			 bhi_data->l_bound[3], bhi_data->l_bound[4], bhi_data->l_bound[5],
+			 bhi_data->l_bound[6], bhi_data->l_bound[7]);
+}
+
+static const DEVICE_ATTR_RW(health_set_low_boundary);
 
 /* CSI --------------------------------------------------------------------- */
 
