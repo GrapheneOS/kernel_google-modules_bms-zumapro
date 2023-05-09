@@ -708,6 +708,7 @@ struct p9221_charger_platform_data {
 	int				*hpp_fod_vol;
 	bool				disable_align;
 	bool				ll_vout_not_set;
+	int				align_delta;
 };
 
 struct p9221_charger_ints_bit {
@@ -887,6 +888,7 @@ struct p9221_charger_data {
 	int				fod_mode;
 	enum p9xxx_chk_rp		check_rp;
 	bool				extended_int_recv;
+	int				align_delta;
 
 #if IS_ENABLED(CONFIG_GPIOLIB)
 	struct gpio_chip gpio;

@@ -1290,6 +1290,8 @@ static void p9221_init_align(struct p9221_charger_data *charger)
 
 static void p9xxx_align_check(struct p9221_charger_data *charger)
 {
+	const int align_delta = charger->align_delta != 0 ?
+			charger->align_delta : charger->pdata->align_delta;
 	int res, wlc_freq_threshold;
 	u32 wlc_freq, current_scaling = 0, current_temp;
 
@@ -1309,6 +1311,7 @@ static void p9xxx_align_check(struct p9221_charger_data *charger)
 			charger->pdata->alignment_offset_high_current -
 			current_scaling;
 	}
+	wlc_freq_threshold += align_delta;
 
 	res = charger->chip_get_op_freq(charger, &wlc_freq);
 	if (res != 0) {
@@ -5292,6 +5295,35 @@ static ssize_t log_current_filtered_store(struct device *dev,
 
 static DEVICE_ATTR_RW(log_current_filtered);
 
+static ssize_t align_delta_show(struct device *dev,
+				struct device_attribute *attr,
+				char *buf)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct p9221_charger_data *charger = i2c_get_clientdata(client);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", charger->align_delta);
+}
+
+static ssize_t align_delta_store(struct device *dev,
+				 struct device_attribute *attr,
+				 const char *buf, size_t count)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct p9221_charger_data *charger = i2c_get_clientdata(client);
+	int ret, delta;
+
+	ret = kstrtoint(buf, 10, &delta);
+
+	if (ret < 0)
+		return ret;
+
+	charger->align_delta = delta;
+
+	return count;
+}
+
+static DEVICE_ATTR_RW(align_delta);
 
 static struct attribute *rtx_attributes[] = {
 	&dev_attr_rtx_sw.attr,
@@ -5341,6 +5373,7 @@ static struct attribute *p9221_attributes[] = {
 	&dev_attr_mitigate_threshold.attr,
 	&dev_attr_wpc_ready.attr,
 	&dev_attr_qien.attr,
+	&dev_attr_align_delta.attr,
 	NULL
 };
 
@@ -6659,6 +6692,12 @@ static int p9221_parse_dt(struct device *dev,
 		pdata->epp_icl = 0;
 	else
 		pdata->epp_icl = data;
+
+	ret = of_property_read_s32(node, "google,align_delta", &data);
+	if (ret < 0)
+		pdata->align_delta = 0;
+	else
+		pdata->align_delta = data;
 
 	/* Calibrate light load */
 	pdata->light_load = of_property_read_bool(node, "google,light_load");
