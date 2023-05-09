@@ -1267,6 +1267,15 @@ static int max77779_get_regulation_voltage_uv(struct max77779_chgr_data *data,
 	return 0;
 }
 
+static int max77779_is_cop_enabled(struct max77779_chgr_data *data)
+{
+	u8 value;
+	int ret;
+
+	ret = max77779_reg_read(data->regmap, MAX77779_CHG_COP_CTRL, &value);
+	return (ret == 0) && _max77779_chg_cop_ctrl_cop_en_get(value);
+}
+
 /* set charging current to 0 to disable charging (MODE=0) */
 static int max77779_set_charger_current_max_ua(struct max77779_chgr_data *data,
 					       int current_ua)
@@ -1296,8 +1305,12 @@ static int max77779_set_charger_current_max_ua(struct max77779_chgr_data *data,
 	}
 
 	cp_enabled = _max77779_chg_cnfg_00_cp_en_get(reg);
-	if (cp_enabled)
+	if (cp_enabled) {
+		if (max77779_is_cop_enabled(data))
+			ret = max77779_reg_write(data->regmap, MAX77779_CHG_COP_LIMIT_H, value);
+
 		goto update_reg;
+	}
 
 	/*
 	 * cc_max > 0 might need to restart charging: the usecase state machine
