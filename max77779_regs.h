@@ -8,7 +8,7 @@
 #ifndef MAX77779_REG_H_
 #define MAX77779_REG_H_
 
-#include "max77779_0227_v2.h"
+#include "max77779_v070_0510b_prelim_regs.h"
 
 /* b/257314583 FSHIP_EXIT_DTLS is still read only */
 #define MAX77779_FSHIP_EXIT_DTLS	  MAX77779_PMIC_INT_MASK
