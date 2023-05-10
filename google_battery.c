@@ -630,6 +630,7 @@ struct batt_drv {
 	/* irdrop for DC */
 	bool dc_irdrop;
 
+	int batt_id;
 };
 
 static int gbatt_get_temp(struct batt_drv *batt_drv, int *temp);
@@ -7426,13 +7427,27 @@ static ssize_t health_set_trend_points_store(struct device *dev,
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
 	struct bhi_data *bhi_data = &batt_drv->health_data.bhi_data;
-	int cnt = sscanf(buf, "%hu,%hu,%hu,%hu,%hu,%hu,%hu,%hu",
-			 &bhi_data->trend[0], &bhi_data->trend[1], &bhi_data->trend[2],
-			 &bhi_data->trend[3], &bhi_data->trend[4], &bhi_data->trend[5],
-			 &bhi_data->trend[6], &bhi_data->trend[7]);
+	u16 trend[BHI_TREND_POINTS_SIZE];
+	const int buf_len = strlen(buf);
+	int cnt = 0, len = 0;
+	u16 batt_id;
 
-	if (cnt != BHI_TREND_POINTS_SIZE)
-		return -ERANGE;
+	do {
+		cnt = sscanf(&buf[len], "%hu,%hu,%hu,%hu,%hu,%hu,%hu,%hu,%hu", &batt_id,
+			     &trend[0], &trend[1], &trend[2], &trend[3],
+			     &trend[4], &trend[5], &trend[6], &trend[7]);
+
+		if (cnt != BHI_TREND_POINTS_SIZE + 1)
+			return -ERANGE;
+
+		if ((int)batt_id == batt_drv->batt_id) {
+			memcpy(&bhi_data->trend, trend, sizeof(trend));
+			break;
+		}
+
+		while (buf[len] != '\n' && len < buf_len)
+			len++;
+	} while (len++ < buf_len);
 
 	return count;
 }
@@ -7460,13 +7475,27 @@ static ssize_t health_set_low_boundary_store(struct device *dev,
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
 	struct bhi_data *bhi_data = &batt_drv->health_data.bhi_data;
-	int cnt = sscanf(buf, "%hu,%hu,%hu,%hu,%hu,%hu,%hu,%hu",
-			 &bhi_data->l_bound[0], &bhi_data->l_bound[1], &bhi_data->l_bound[2],
-			 &bhi_data->l_bound[3], &bhi_data->l_bound[4], &bhi_data->l_bound[5],
-			 &bhi_data->l_bound[6], &bhi_data->l_bound[7]);
+	u16 l_bound[BHI_TREND_POINTS_SIZE];
+	const int buf_len = strlen(buf);
+	int cnt = 0, len = 0;
+	u16 batt_id;
 
-	if (cnt != BHI_TREND_POINTS_SIZE)
-		return -ERANGE;
+	do {
+		cnt = sscanf(&buf[len], "%hu,%hu,%hu,%hu,%hu,%hu,%hu,%hu,%hu", &batt_id,
+			     &l_bound[0], &l_bound[1], &l_bound[2], &l_bound[3],
+			     &l_bound[4], &l_bound[5], &l_bound[6], &l_bound[7]);
+
+		if (cnt != BHI_TREND_POINTS_SIZE + 1)
+			return -ERANGE;
+
+		if ((int)batt_id == batt_drv->batt_id) {
+			memcpy(&bhi_data->l_bound, l_bound, sizeof(l_bound));
+			break;
+		}
+
+		while (buf[len] != '\n' && len < buf_len)
+			len++;
+	} while (len++ < buf_len);
 
 	return count;
 }
@@ -9624,6 +9653,9 @@ static int batt_bhi_init(struct batt_drv *batt_drv)
 
 	/* design is the value used to build the charge table */
 	health_data->bhi_data.pack_capacity = batt_drv->battery_capacity;
+
+	/* need battery id to get right trend points */
+	batt_drv->batt_id = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_BATT_ID);
 
 	/* debug data initialization */
 	health_data->bhi_debug_cycle_count = 0;
