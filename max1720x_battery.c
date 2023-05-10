@@ -2397,6 +2397,9 @@ static int max1720x_get_property(struct power_supply *psy,
 	case GBMS_PROP_CAPACITY_FADE_RATE:
 		val->intval = max1720x_get_fade_rate(chip);
 		break;
+	case GBMS_PROP_BATT_ID:
+		val->intval = chip->batt_id;
+		break;
 	default:
 		err = -EINVAL;
 		break;
