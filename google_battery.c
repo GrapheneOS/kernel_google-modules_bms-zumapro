@@ -2668,6 +2668,17 @@ static int csi_type_cb(struct gvotable_election *el, const char *reason,
 	return 0;
 }
 
+static bool batt_csi_status_is_dock(const struct batt_drv *batt_drv)
+{
+	int dock_status;
+
+	if (!batt_drv->csi_status_votable)
+		return false;
+
+	dock_status = gvotable_get_int_vote(batt_drv->csi_status_votable, "CSI_STATUS_DEFEND_DOCK");
+	return dock_status == CSI_STATUS_Defender_Dock;
+}
+
 /* all reset on disconnect */
 static void batt_update_csi_type(struct batt_drv *batt_drv)
 {
@@ -2676,6 +2687,7 @@ static void batt_update_csi_type(struct batt_drv *batt_drv)
 	const bool is_ac = batt_drv->msc_state == MSC_HEALTH ||
 			batt_drv->msc_state == MSC_HEALTH_PAUSE ||
 			batt_drv->msc_state == MSC_HEALTH_ALWAYS_ON;
+	const bool is_dock = batt_csi_status_is_dock(batt_drv);
 
 	if (!batt_drv->csi_type_votable) {
 		batt_drv->csi_type_votable =
@@ -2686,7 +2698,7 @@ static void batt_update_csi_type(struct batt_drv *batt_drv)
 
 	/* normal or full if connected, nothing otherwise */
 	gvotable_cast_long_vote(batt_drv->csi_type_votable, "CSI_TYPE_CONNECTED",
-				is_disconnected ? CSI_TYPE_None : CSI_TYPE_Normal,
+				(is_disconnected && !is_dock) ? CSI_TYPE_None : CSI_TYPE_Normal,
 				true);
 
 	/* SW JEITA */

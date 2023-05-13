@@ -2268,7 +2268,7 @@ static void chg_update_csi(struct chg_drv *chg_drv)
 	/* Charging Status Defender_Dock */
 	gvotable_cast_long_vote(chg_drv->csi_status_votable, "CSI_STATUS_DEFEND_DOCK",
 				CSI_STATUS_Defender_Dock,
-				!is_disconnected && is_dock);
+				is_dock);
 
 	/* Battery defenders (but also retail mode) */
 	gvotable_cast_long_vote(chg_drv->csi_status_votable, "CSI_STATUS_DEFEND_TEMP",
@@ -2281,9 +2281,12 @@ static void chg_update_csi(struct chg_drv *chg_drv)
 	/* Longlife is set on TEMP, DWELL and TRICKLE */
 	gvotable_cast_long_vote(chg_drv->csi_type_votable, "CSI_TYPE_DEFEND",
 				CSI_TYPE_LongLife,
-				is_temp || is_dwell ||
-				(!is_disconnected && is_dock));
+				is_temp || is_dwell || is_dock);
 
+	/* Set to normal if the device docked */
+	if (is_dock)
+		gvotable_cast_long_vote(chg_drv->csi_type_votable, "CSI_TYPE_CONNECTED",
+					CSI_TYPE_Normal, true);
 
 	/* Charging Status Normal */
 }
