@@ -1549,11 +1549,15 @@ static enum power_supply_property max77779_wcin_props[] = {
 
 static int max77779_wcin_is_valid(struct max77779_chgr_data *data)
 {
-	uint8_t int_ok;
+	uint8_t val;
+	uint8_t wcin_dtls;
 	int ret;
 
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_INT_OK, &int_ok);
-	return (ret == 0) && _max77779_chg_int_ok_wcin_ok_get(int_ok);
+	ret = max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_00, &val);
+	if (ret < 0)
+		return ret;
+	wcin_dtls = _max77779_chg_details_00_wcin_dtls_get(val);
+	return wcin_dtls == 0x2 || wcin_dtls == 0x3;
 }
 
 static int max77779_wcin_is_online(struct max77779_chgr_data *data)
