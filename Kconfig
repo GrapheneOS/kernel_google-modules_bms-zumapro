@@ -102,6 +102,12 @@ config FG_MAX77779
 	help
 	  Say Y to enable support for the Maxim MAX77779 battery fg.
 
+config VIMON_MAX77779
+	tristate "Maxim MAX77779 VIMON driver"
+	depends on I2C && OF
+	help
+	  Say Y to enable support for the Maxim MAX77779 VIMON.
+
 config PMIC_MAX77729
 	tristate "Maxim MAX77729 PMIC driver"
 	depends on I2C && OF

@@ -30,7 +30,8 @@ GBMS_MODULES =	GOOGLE_BMS \
 		STWLC98 \
 		STWC68 \
 		LN8411 \
-		FG_MAX77779
+		FG_MAX77779 \
+		VIMON_MAX77779
 
 obj-$(CONFIG_GOOGLE_BMS)	+= google-bms.o
 google-bms-objs += google_bms.o
@@ -82,6 +83,9 @@ max77759-charger-objs += max77759_usecase.o
 obj-$(CONFIG_CHARGER_MAX77779)  += max77779-charger.o
 max77779-charger-objs += max77779_charger.o
 max77779-charger-objs += max77779_usecase.o
+
+obj-$(CONFIG_VIMON_MAX77779)  += max77779-vimon.o
+max77779-vimon-objs += max77779_vimon.o
 
 # Wireless charging
 obj-$(CONFIG_CHARGER_P9221)	+= p9221.o
@@ -150,6 +154,7 @@ WENUMS=-Wno-enum-conversion -Wno-switch
 
 CFLAGS_max77759_charger.o += -Wno-unused-function $(WENUMS)
 CFLAGS_max77779_charger.o += -Wno-unused-function $(WENUMS)
+CFLAGS_max77779_vimon.o += -Wno-unused-function $(WENUMS)
 CFLAGS_max77729_charger.o += -Wno-unused-function $(WENUMS)
 CFLAGS_max77779_fg.o += -Wno-unused-function $(WENUMS)
 CFLAGS_max1720x_battery.o += $(WENUMS)
