@@ -325,8 +325,10 @@ static int max77779_i2cm_probe(struct i2c_client *client,
 {
 	struct max77779_i2cm_info *info = NULL;
 	struct device *dev = &client->dev;
-	int irq_gpio;
 	int err = 0;
+
+	if (client->irq < 0)
+		return -EPROBE_DEFER;
 
 	if (!IS_ENABLED(CONFIG_OF))
 		return -EINVAL;
@@ -368,38 +370,24 @@ static int max77779_i2cm_probe(struct i2c_client *client,
 	}
 	init_completion(&info->xfer_done);
 
-	/* setup up our irq either from interrupt or gpio. */
-	if (client->irq < 0) {
-		irq_gpio = of_get_named_gpio(dev->of_node,
-				"max777x9,irq-gpio", 0);
-		if (irq_gpio < 0) {
-			dev_err(dev, "irq_gpio is not defined\n");
-			return -ENODEV;
-		}
-
-		client->irq = gpio_to_irq(irq_gpio);
-		if (client->irq < 0) {
-			dev_err(dev, "irq is not defined\n");
-			return -ENODEV;
-		}
-	}
-
-	err = devm_request_threaded_irq(info->dev, client->irq, NULL,
-			max777x9_i2cm_irq,
-			IRQF_TRIGGER_LOW | IRQF_SHARED | IRQF_ONESHOT,
-			"max777x9_i2cm", info);
-	if (err < 0) {
-		dev_err(dev, "Failed to get irq thread.\n");
-	} else {
-		/*
-		 * write I2CM_MASK to disable interrupts, they
-		 * will be enabled during xfer.
-		 */
-		err = regmap_write(info->regmap, MAX77779_I2CM_INTERRUPT,
-				DONEI_SET(1) | ERRI_SET(1));
-		if (err) {
-			dev_err(dev, "Failed to setup interrupts.\n");
-			return -EIO;
+	if (client->irq) {
+		err = devm_request_threaded_irq(info->dev, client->irq, NULL,
+				max777x9_i2cm_irq,
+				IRQF_TRIGGER_LOW | IRQF_SHARED | IRQF_ONESHOT,
+				"max777x9_i2cm", info);
+		if (err < 0) {
+			dev_err(dev, "Failed to get irq thread.\n");
+		} else {
+			/*
+			* write I2CM_MASK to disable interrupts, they
+			* will be enabled during xfer.
+			*/
+			err = regmap_write(info->regmap, MAX77779_I2CM_INTERRUPT,
+					DONEI_SET(1) | ERRI_SET(1));
+			if (err) {
+				dev_err(dev, "Failed to setup interrupts.\n");
+				return -EIO;
+			}
 		}
 	}
 
