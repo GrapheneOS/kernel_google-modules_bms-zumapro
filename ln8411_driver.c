@@ -2392,7 +2392,8 @@ static int ln8411_apply_new_vfloat(struct ln8411_charger *ln8411)
 		goto error_done;
 
 	/* Restart the process if tier switch happened (either direction) */
-	if (abs(ln8411->new_vfloat - ln8411->fv_uv) > LN8411_TIER_SWITCH_DELTA) {
+	if (ln8411->charging_state == DC_STATE_CV_MODE
+	    && abs(ln8411->new_vfloat - ln8411->fv_uv) > LN8411_TIER_SWITCH_DELTA) {
 		ret = ln8411_reset_dcmode(ln8411);
 		if (ret < 0) {
 			pr_err("%s: cannot reset dcmode (%d)\n", __func__, ret);
@@ -2640,7 +2641,7 @@ static int ln8411_ajdust_ccmode_wired(struct ln8411_charger *ln8411, int iin)
 }
 
 
-/* 2:1 Direct Charging Adjust CC MODE control
+/* Direct Charging Adjust CC MODE control
  * called at the beginnig of CC mode charging. Will be followed by
  * ln8411_charge_ccmode with which share some of the adjustments.
  */
@@ -2938,7 +2939,7 @@ error_exit:
 }
 
 
-/* 2:1 Direct Charging Start CV MODE control - Pre CV MODE */
+/* Direct Charging Start CV MODE control - Pre CV MODE */
 static int ln8411_charge_start_cvmode(struct ln8411_charger *ln8411)
 {
 	int ret = 0;
@@ -3089,7 +3090,7 @@ static int ln8411_check_eoc(struct ln8411_charger *ln8411)
 	return iin < ln8411->pdata->iin_topoff && vbat >= vlimit;
 }
 
-/* 2:1 Direct Charging CV MODE control */
+/*  Direct Charging CV MODE control */
 static int ln8411_charge_cvmode(struct ln8411_charger *ln8411)
 {
 	int ret = 0;
