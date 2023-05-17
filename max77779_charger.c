@@ -2857,6 +2857,10 @@ static int max77779_charger_probe(struct i2c_client *client,
 	int ret = 0;
 	u8 ping;
 
+	/* pmic-irq driver needs to setup the irq */
+	if (client->irq < 0)
+		return -EPROBE_DEFER;
+
 	regmap = devm_regmap_init_i2c(client, &max77779_chg_regmap_cfg);
 	if (IS_ERR(regmap)) {
 		dev_err(dev, "Failed to initialize regmap\n");
@@ -2921,12 +2925,7 @@ static int max77779_charger_probe(struct i2c_client *client,
 
 	INIT_DELAYED_WORK(&data->mode_rerun_work, max77779_mode_rerun_work);
 
-	data->irq_gpio = of_get_named_gpio(dev->of_node, "max77779,irq-gpio", 0);
-	if (data->irq_gpio < 0) {
-		dev_err(dev, "failed get irq_gpio\n");
-	} else {
-		client->irq = gpio_to_irq(data->irq_gpio);
-
+	if (client->irq ) {
 		ret = devm_request_threaded_irq(data->dev, client->irq, NULL,
 						max77779_chgr_irq,
 						IRQF_TRIGGER_LOW |
