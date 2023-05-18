@@ -980,10 +980,14 @@ static int gcpm_chg_select_by_voltage(struct power_supply *psy,
 	}
 
 exit_done:
-
-	pr_debug("%s: index=%d->%d vbatt=%d: low=%d min=%d high=%d max=%d\n",
-		 __func__, gcpm->dc_index, index, vbatt, vbatt_low, vbatt_min,
-		vbatt_high, vbatt_max);
+	if (gcpm->dc_index == GCPM_INDEX_DC_ENABLE && index == GCPM_DEFAULT_CHARGER)
+		pr_info("%s: index=%d->%d vbatt=%d: low=%d min=%d high=%d max=%d\n",
+			__func__, gcpm->dc_index, index, vbatt, vbatt_low, vbatt_min,
+			vbatt_high, vbatt_max);
+	else
+		pr_debug("%s: index=%d->%d vbatt=%d: low=%d min=%d high=%d max=%d\n",
+			 __func__, gcpm->dc_index, index, vbatt, vbatt_low, vbatt_min,
+			 vbatt_high, vbatt_max);
 
 	return index;
 }
@@ -1371,8 +1375,12 @@ static int gcpm_chg_select_logic(struct gcpm_drv *gcpm)
 			gcpm->taper_step -= 1;
 		}
 
-		pr_debug("%s: taper_step=%d done=%d\n", __func__,
-			 gcpm->taper_step, dc_done);
+		if (dc_done)
+			pr_info("%s: taper_step=%d done=%d\n", __func__,
+				gcpm->taper_step, dc_done);
+		else
+			pr_debug("%s: taper_step=%d done=%d\n", __func__,
+				 gcpm->taper_step, dc_done);
 	} else if (gcpm->taper_step != 0) {
 		const int vbatt_high = gcpm->dc_limit_vbatt_high;
 
@@ -1945,8 +1953,10 @@ static int gcpm_psy_set_property(struct power_supply *psy,
 	case GBMS_PROP_TAPER_CONTROL: {
 		int count = 0;
 
-		if (pval->intval != GBMS_TAPER_CONTROL_OFF)
+		if (pval->intval != GBMS_TAPER_CONTROL_OFF) {
 			count = gcpm->taper_step_count + gcpm->taper_step_grace;
+			pr_info("%s: TaperControl value=%d\n", __func__, count);
+		}
 
 		/* ta_check is set when taper control changes value */
 		ta_check = gcpm_taper_ctl(gcpm, count);
