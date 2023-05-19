@@ -8,7 +8,7 @@
 
 #include <linux/device.h>
 #include <linux/pm.h>
-#include <linux/gpio.h>
+#include <linux/gpio/driver.h>
 #include <linux/interrupt.h>
 #include <linux/i2c.h>
 #include <linux/module.h>
