@@ -767,43 +767,6 @@ static int ln8411_set_charging(struct ln8411_charger *ln8411, bool enable)
 	if (enable) {
 		int val;
 
-		/* Integration guide V1.0 Section 5.1 */
-		/* validity check before start */
-		ret = regmap_read(ln8411->regmap, LN8411_CTRL1, &val);
-		if (ret || val) {
-			dev_info(ln8411->dev, "%s: validity check LN8411_CTRL1 failed\n", __func__);
-			ret = -EAGAIN;
-			goto error;
-		}
-
-		ret = regmap_read(ln8411->regmap, LN8411_ADC_CTRL, &val);
-#ifdef POLL_ADC
-		if (ret || val != LN8411_ADC_EN) {
-#else
-		if (ret || val != (LN8411_ADC_EN | LN8411_ADC_DONE_MASK)) {
-#endif
-			dev_info(ln8411->dev, "%s: validity check LN8411_ADC_CTRL failed\n", __func__);
-			ret = -EAGAIN;
-			goto error;
-		}
-
-		/* Integration guide V1.0 Section 5.2 */
-		/* Set work mode */
-		ret = ln8411_set_mode(ln8411, ln8411->chg_mode);
-		if (ret)
-			goto error;
-
-		ret = ln8411_set_prot_by_chg_mode(ln8411);
-		if (ret)
-			goto error;
-
-		if (ln8411->ta_type == TA_TYPE_WIRELESS)
-			ret = regmap_write(ln8411->regmap, LN8411_CTRL1, LN8411_WPCGATE_EN);
-		else
-			ret = regmap_write(ln8411->regmap, LN8411_CTRL1, LN8411_OVPGATE_EN);
-		if (ret)
-			goto error;
-
 		/* Integration guide V1.0 Section 5.3 */
 		/* check power source present */
 		ret = regmap_read(ln8411->regmap, LN8411_INT_STAT, &val);
@@ -3305,7 +3268,7 @@ done:
 static int ln8411_preset_dcmode(struct ln8411_charger *ln8411)
 {
 	int vbat;
-	int ret = 0;
+	int ret = 0, val;
 
 	dev_dbg(ln8411->dev, "%s: ======START=======\n", __func__);
 	dev_dbg(ln8411->dev, "%s: = charging_state=%u == \n", __func__,
@@ -3345,8 +3308,41 @@ static int ln8411_preset_dcmode(struct ln8411_charger *ln8411)
 		 __func__, ln8411->ta_max_cur, ln8411->pdata->iin_cfg,
 		 ln8411->ta_type);
 
+	/* Integration guide V1.0 Section 5.1 */
+	/* validity check before start */
+	ret = regmap_read(ln8411->regmap, LN8411_CTRL1, &val);
+	if (ret || val) {
+		dev_info(ln8411->dev, "%s: validity check LN8411_CTRL1 failed\n", __func__);
+		ret = -EAGAIN;
+		goto error;
+	}
+
+	ret = regmap_read(ln8411->regmap, LN8411_ADC_CTRL, &val);
+#ifdef POLL_ADC
+	if (ret || val != LN8411_ADC_EN) {
+#else
+	if (ret || val != (LN8411_ADC_EN | LN8411_ADC_DONE_MASK)) {
+#endif
+		dev_info(ln8411->dev, "%s: validity check LN8411_ADC_CTRL failed\n", __func__);
+		ret = -EAGAIN;
+		goto error;
+	}
+
+	/* Integration guide V1.0 Section 5.2 */
+	/* Set work mode */
+	ret = ln8411_set_mode(ln8411, ln8411->chg_mode);
+	if (ret)
+		goto error;
+
+	ret = ln8411_set_prot_by_chg_mode(ln8411);
+	if (ret)
+		goto error;
+
 	/* Check the TA type and set the charging mode */
 	if (ln8411->ta_type == TA_TYPE_WIRELESS) {
+		ret = regmap_write(ln8411->regmap, LN8411_CTRL1, LN8411_WPCGATE_EN);
+		if (ret)
+			goto error;
 		/*
 		 * Set the RX max voltage to enough high value to find RX
 		 * maximum voltage initially
@@ -3374,6 +3370,10 @@ static int ln8411_preset_dcmode(struct ln8411_charger *ln8411)
 				ln8411->ta_max_vol, ln8411->ta_max_cur, ln8411->ta_max_pwr,
 				ln8411->iin_cc, ln8411->chg_mode);
 	} else {
+		ret = regmap_write(ln8411->regmap, LN8411_CTRL1, LN8411_OVPGATE_EN);
+		if (ret)
+			goto error;
+
 		ret = ln8411_set_chg_mode_by_apdo(ln8411);
 		if (ret < 0) {
 			int ret1;
