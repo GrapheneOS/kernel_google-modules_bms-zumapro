@@ -410,12 +410,11 @@ static int max77779_i2cm_probe(struct i2c_client *client,
 	return err;
 }
 
-static int max77779_i2cm_remove(struct i2c_client *client)
+static void max77779_i2cm_remove(struct i2c_client *client)
 {
 	struct max77779_i2cm_info *info = dev_get_drvdata(&(client->dev));
 
 	devm_kfree(info->dev, info);
-	return 0;
 }
 
 static const struct i2c_device_id id[] = {
