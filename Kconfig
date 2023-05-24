@@ -96,6 +96,12 @@ config CHARGER_MAX77779
 	help
 	  Say Y to enable support for the Maxim MAX77779 battery charger.
 
+config FG_MAX77779
+	tristate "Maxim MAX77779 battery fuel gauge driver"
+	depends on I2C && OF
+	help
+	  Say Y to enable support for the Maxim MAX77779 battery fg.
+
 config PMIC_MAX77729
 	tristate "Maxim MAX77729 PMIC driver"
 	depends on I2C && OF

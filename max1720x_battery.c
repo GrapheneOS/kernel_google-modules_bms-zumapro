@@ -1311,6 +1311,7 @@ static int max1720x_get_battery_status(struct max1720x_chip *chip)
 static int max1720x_get_battery_health(struct max1720x_chip *chip)
 {
 	/* For health report what ever was recently alerted and clear it */
+	/* TODO: 284191042 - Remove this and move to chargin stats */
 
 	if (chip->health_status & MAX1720X_STATUS_VMX) {
 		chip->health_status &= ~MAX1720X_STATUS_VMX;
@@ -1699,6 +1700,7 @@ static void max1720x_handle_update_empty_voltage(struct max1720x_chip *chip,
 	}
 }
 
+/* TODO: 284191528 - Add these batt_ce functions to common max file */
 /* Capacity Estimation functions*/
 static int batt_ce_regmap_read(struct max17x0x_regmap *map,
 			       const struct max17x0x_reg *bcea,
@@ -2010,6 +2012,7 @@ static int batt_res_registers(struct max1720x_chip *chip, bool bread,
 	return err;
 }
 
+/* TODO b/284191528 - Add to common code file */
 static int max1720x_health_write_ai(u16 act_impedance, u16 act_timerh)
 {
 	int ret;
@@ -2025,6 +2028,7 @@ static int max1720x_health_write_ai(u16 act_impedance, u16 act_timerh)
 	return ret;
 }
 
+/* TODO b/284191528 - Add to common code file */
 /* call holding chip->model_lock */
 static int max1720x_check_impedance(struct max1720x_chip *chip, u16 *th)
 {
@@ -2063,6 +2067,7 @@ static int max1720x_check_impedance(struct max1720x_chip *chip, u16 *th)
 	return 0;
 }
 
+/* TODO b/284191528 - Add to common code file */
 /* will return error if the value is not valid  */
 static int max1720x_health_get_ai(struct max1720x_chip *chip)
 {
@@ -2096,6 +2101,7 @@ static int max1720x_health_get_ai(struct max1720x_chip *chip)
 	return chip->bhi_acim;
 }
 
+/* TODO b/284191528 - Add to common code file */
 /* will return negative if the value is not qualified */
 static int max1720x_health_read_impedance(struct max1720x_chip *chip)
 {
@@ -2126,6 +2132,7 @@ static int max1720x_get_age(struct max1720x_chip *chip)
 	return reg_to_time_hr(timerh, chip);
 }
 
+/* TODO b/284191528 - Add to common code file */
 #define MAX_HIST_FULLCAP	0x3FF
 static int max1720x_get_fade_rate(struct max1720x_chip *chip)
 {
@@ -2572,6 +2579,7 @@ static int max1720x_property_is_writeable(struct power_supply *psy,
 	return 0;
 }
 
+/* TODO: b/284191528 - Add to common code file, take in array of registers as input */
 static int max1720x_monitor_log_data(struct max1720x_chip *chip, bool force_log)
 {
 	u16 data, repsoc, vfsoc, avcap, repcap, fullcap, fullcaprep;
