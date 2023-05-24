@@ -283,7 +283,7 @@
 #define LN8411_CHIP_REV_MASK		GENMASK(7,4)
 #define LN8411_CHIP_REV_SHIFT		4
 
-#define LN8411_ALARM_CTRL		0X74
+#define LN8411_ALARM_CTRL		0x74
 #define VBAT_ALARM_CFG			BIT(7)
 
 #define LN8411_ADC_CFG_2                0x76

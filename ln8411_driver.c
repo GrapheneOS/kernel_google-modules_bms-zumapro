@@ -49,8 +49,8 @@
 #define LN8411_IIN_DONE_DFT		500000		/* uA */
 
 /* Maximum TA voltage threshold */
-#define LN8411_TA_MAX_VOL		10250000 /* uV */
-#define LN8411_TA_MAX_VOL_2_1		10250000 /* UV */
+#define LN8411_TA_MAX_VOL		10500000 /* uV */
+#define LN8411_TA_MAX_VOL_2_1		11000000 /* UV */
 /* Maximum TA current threshold, set to max(cc_max) / 2 */
 #define LN8411_TA_MAX_CUR		2600000	 /* uA */
 #define LN8411_TA_MAX_CUR_4_1		2250000	 /* uA */
@@ -98,6 +98,7 @@
 #define VBAT_UVP_DFT			3400000 /* 3.4V */
 #define VBAT_OVP_WARN_DFT		4450000 /* 4.45V */
 #define VBAT_OVP_DFT			4525000 /* 4.525V */
+#define VBAT_OVP_DFT_1_2		8 /* 4.650V */
 #define SWCAP_OVP_DFT			750000 /* 0.75V */
 #define SWCAP_UVP_DFT			0 /* 0V */
 #define CBAT_OCP_WARN_DFT		8000000 /* 8A */
@@ -108,7 +109,10 @@
 #define IBUS_OCP_DFT_1_2		0x5 /* 1.4A */
 #define VUSB_OVP_DFT_4_1		0x8b /* 22V */
 #define VUSB_OVP_DFT_2_1		0x81 /* 12V */
-#define IBUS_UCP_DFT_4_1		0x10
+#define VUSB_OVP_DFT_4_1_B0		0xab /* 12V */
+#define VUSB_OVP_DFT_2_1_B0		0xa1 /* 12V */
+#define IBUS_UCP_DFT_4_1		0x0
+#define IBUS_UCP_DFT_2_1		0x3
 #define IBUS_UCP_DFT_1_2		0x90
 #define PMID2OUT_UVP_DFT_4_1		0x4 /* 10% */
 #define PMID2OUT_UVP_DFT_1_2		0x84 /* Disable */
@@ -172,15 +176,16 @@ enum batt_info_t {
 };
 
 /* Reg, val, mask (if update) */
-static u8 mode_settings[3][8][3] = {
+static u8 mode_settings_A1[3][9][3] = {
 	/* 2 to 1 */
 	{
 		{LN8411_VUSB_OVP, VUSB_OVP_DFT_2_1, 0xcf},
 		{LN8411_VWPC_OVP, VUSB_OVP_DFT_2_1, 0xcf},
 		{LN8411_CFG_10, CFG_10_DFT_2_1, 0x1},
 		{LN8411_IBUS_OCP, IBUS_OCP_DFT_2_1, 0x0},
-		{LN8411_IBUS_UCP, IBUS_UCP_DFT_4_1, 0x0},
 		{LN8411_PMID2OUT_UVP, PMID2OUT_UVP_DFT_4_1, 0x9f},
+		{0x0, 0x0, 0x0},
+		{0x0, 0x0, 0x0},
 		{0x0, 0x0, 0x0},
 		{0x0, 0x0, 0x0},
 	},
@@ -190,13 +195,54 @@ static u8 mode_settings[3][8][3] = {
 		{LN8411_VWPC_OVP, VUSB_OVP_DFT_4_1, 0xcf},
 		{LN8411_CFG_10, CFG_10_DFT_4_1, 0x1},
 		{LN8411_IBUS_OCP, IBUS_OCP_DFT_4_1, 0x0},
-		{LN8411_IBUS_UCP, IBUS_UCP_DFT_4_1, 0x0},
 		{LN8411_PMID2OUT_UVP, PMID2OUT_UVP_DFT_4_1, 0x9f},
+		{0x0, 0x0, 0x0},
+		{0x0, 0x0, 0x0},
 		{0x0, 0x0, 0x0},
 		{0x0, 0x0, 0x0},
 	},
 	/* 1 to 2 */
 	{
+		{LN8411_VBAT_OVP, VBAT_OVP_DFT_1_2, 0x0},
+		{LN8411_VWPC_OVP, VUSB_OVP_DFT_2_1, 0xcf},
+		{LN8411_CFG_10, CFG_10_DFT_4_1, 0x1},
+		{LN8411_IBUS_OCP, IBUS_OCP_DFT_1_2, 0x0},
+		{LN8411_PMID2OUT_UVP, PMID2OUT_UVP_DFT_1_2, 0x9f},
+		{LN8411_IBUS_UCP, IBUS_UCP_DFT_1_2, 0x0},
+		{LN8411_LION_COMP_CTRL_1, PMID_SWITCH_OK_DIS, 0x0},
+		{LN8411_LION_COMP_CTRL_2, LN8411_VWPC_UVP_DIS, 0x0},
+		{LN8411_LION_COMP_CTRL_4, LN8411_INFET_OFF_DET_DIS, 0x0},
+	},
+};
+
+static u8 mode_settings_B0[3][9][3] = {
+	/* 2 to 1 */
+	{
+		{LN8411_IBUS_UCP, IBUS_UCP_DFT_2_1, 0x3},
+		{LN8411_VUSB_OVP, VUSB_OVP_DFT_2_1_B0, 0xcf},
+		{LN8411_VWPC_OVP, VUSB_OVP_DFT_2_1, 0xcf},
+		{LN8411_CFG_10, CFG_10_DFT_2_1, 0x1},
+		{LN8411_IBUS_OCP, IBUS_OCP_DFT_2_1, 0x0},
+		{0x0, 0x0, 0x0},
+		{0x0, 0x0, 0x0},
+		{0x0, 0x0, 0x0},
+		{0x0, 0x0, 0x0},
+	},
+	/* 4 to 1 */
+	{
+		{LN8411_IBUS_UCP, IBUS_UCP_DFT_4_1, 0x3},
+		{LN8411_VUSB_OVP, VUSB_OVP_DFT_4_1_B0, 0xcf},
+		{LN8411_VWPC_OVP, VUSB_OVP_DFT_4_1, 0xcf},
+		{LN8411_CFG_10, CFG_10_DFT_4_1, 0x1},
+		{LN8411_IBUS_OCP, IBUS_OCP_DFT_4_1, 0x0},
+		{0x0, 0x0, 0x0},
+		{0x0, 0x0, 0x0},
+		{0x0, 0x0, 0x0},
+		{0x0, 0x0, 0x0},
+	},
+	/* 1 to 2 */
+	{
+		{LN8411_VBAT_OVP, VBAT_OVP_DFT_1_2, 0x0},
 		{LN8411_VWPC_OVP, VUSB_OVP_DFT_2_1, 0xcf},
 		{LN8411_CFG_10, CFG_10_DFT_4_1, 0x1},
 		{LN8411_IBUS_OCP, IBUS_OCP_DFT_1_2, 0x0},
@@ -712,8 +758,13 @@ static int ln8411_set_prot_by_chg_mode(const struct ln8411_charger *ln8411)
 {
 	int ret;
 	int mode_idx, i;
+	u8 (*mode_settings)[9][3];
 
 	mode_idx = ln8411->chg_mode - 1;
+	if (ln8411->chip_info.chip_rev == 1)
+		mode_settings = mode_settings_A1;
+	else
+		mode_settings = mode_settings_B0;
 	if (mode_idx < 0 || mode_idx >= CHG_1TO2_DC_MODE) {
 		dev_info(ln8411->dev, "%s: Invalid mode: %d\n", __func__, mode_idx + 1);
 		return -EINVAL;
@@ -3319,9 +3370,9 @@ static int ln8411_preset_dcmode(struct ln8411_charger *ln8411)
 
 	ret = regmap_read(ln8411->regmap, LN8411_ADC_CTRL, &val);
 #ifdef POLL_ADC
-	if (ret || val != LN8411_ADC_EN) {
+	if (ret || !(val & LN8411_ADC_EN)) {
 #else
-	if (ret || val != (LN8411_ADC_EN | LN8411_ADC_DONE_MASK)) {
+	if (ret || !(val & (LN8411_ADC_EN | LN8411_ADC_DONE_MASK))) {
 #endif
 		dev_info(ln8411->dev, "%s: validity check LN8411_ADC_CTRL failed\n", __func__);
 		ret = -EAGAIN;
@@ -3872,6 +3923,7 @@ static void ln8411_init_hw_work(struct work_struct *work)
 					struct ln8411_charger, init_hw_work.work);
 	int ret;
 
+	mutex_lock(&ln8411->lock);
 	/* Integration guide V1.0 Section 4 */
 	ret = ln8411_hw_init(ln8411);
 	if (ret) {
@@ -3880,8 +3932,8 @@ static void ln8411_init_hw_work(struct work_struct *work)
 	}
 
 	ln8411->hw_init_done = true;
-
 error:
+	mutex_unlock(&ln8411->lock);
 	return;
 }
 
@@ -4008,11 +4060,8 @@ static int ln8411_hw_init(struct ln8411_charger *ln8411)
 	if (ret)
 		goto error_done;
 
-	dev_dbg(ln8411->dev, "%s: set safety switch to 10V\n", __func__);
-	/* Set Safety switch drive for 10V Si FET */
-	ret = regmap_set_bits(ln8411->regmap, LN8411_OVPGATE_CTRL_0, LN8411_OVPFETDR_V_CFG);
-	if (ret)
-		goto error_done;
+	dev_dbg(ln8411->dev, "%s: disable alarms\n", __func__);
+	ret = regmap_clear_bits(ln8411->regmap, LN8411_ALARM_CTRL, 0x1c);
 
 	ret = ln8411_set_lion_ctrl(ln8411, LN8411_LION_CTRL_LOCK);
 	if (ret)
@@ -4027,10 +4076,17 @@ static int ln8411_hw_init(struct ln8411_charger *ln8411)
 	if (ret)
 		goto error_done;
 
-	dev_dbg(ln8411->dev, "%s: pmid2out ovp to 13%%\n", __func__);
-	ret = regmap_update_bits(ln8411->regmap, LN8411_PMID2OUT_OVP, 0x9f, 0x4);
+	dev_dbg(ln8411->dev, "%s: set ibus ucp\n", __func__);
+	ret = regmap_write(ln8411->regmap, LN8411_IBUS_UCP, 0x10);
 	if (ret)
 		goto error_done;
+
+	if (ln8411->chip_info.chip_rev == 1) {
+		dev_dbg(ln8411->dev, "%s: pmid2out ovp to 13%%\n", __func__);
+		ret = regmap_update_bits(ln8411->regmap, LN8411_PMID2OUT_OVP, 0x9f, 0x4);
+		if (ret)
+			goto error_done;
+	}
 
 	dev_dbg(ln8411->dev, "%s: clear int flags\n", __func__);
 	ret = regmap_set_bits(ln8411->regmap, LN8411_INT_MASK_2, LN8411_PAUSE_INT_UPDATE);
@@ -4328,7 +4384,7 @@ static int ln8411_enable_1_2_mode(struct ln8411_charger *ln8411)
 		goto error;
 	}
 
-	msleep(10);
+	msleep(20);
 
 	ret = ln8411_set_lion_ctrl(ln8411, LN8411_LION_CTRL_EN_SW_OVERRIDE);
 	if (ret) {
@@ -4363,6 +4419,9 @@ static int ln8411_stop_1_2_mode(struct ln8411_charger *ln8411)
 	int ret, ret1;
 
 	dev_dbg(ln8411->dev, "%s: =========START=========\n", __func__);
+        if (ln8411->chg_mode == CHG_NO_DC_MODE)
+               return 0;
+
 	ret = regmap_clear_bits(ln8411->regmap, LN8411_CTRL1, LN8411_CP_EN);
 	if (ret < 0)
 		goto error;
@@ -4616,9 +4675,11 @@ static int ln8411_mains_get_property(struct power_supply *psy,
 
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
 		/* return the output current - uA unit */
+		mutex_lock(&ln8411->lock);
 		rc = ln8411_get_iin(ln8411, &val->intval);
 		if (rc < 0)
 			dev_err(ln8411->dev, "Invalid IIN ADC (%d)\n", rc);
+		mutex_unlock(&ln8411->lock);
 		break;
 
 	case GBMS_PROP_CHARGE_CHARGER_STATE:
@@ -4629,14 +4690,18 @@ static int ln8411_mains_get_property(struct power_supply *psy,
 		break;
 
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
+		mutex_lock(&ln8411->lock);
 		intval = ln8411_read_adc(ln8411, ADCCH_VOUT);
+		mutex_unlock(&ln8411->lock);
 		if (intval < 0)
 			return intval;
 		val->intval = intval;
 		break;
 
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
+		mutex_lock(&ln8411->lock);
 		intval = ln8411_read_adc(ln8411, ADCCH_VBAT);
+		mutex_unlock(&ln8411->lock);
 		if (intval < 0)
 			return intval;
 		val->intval = intval;
@@ -4644,7 +4709,9 @@ static int ln8411_mains_get_property(struct power_supply *psy,
 
 	/* TODO: read NTC temperature? */
 	case POWER_SUPPLY_PROP_TEMP:
+		mutex_lock(&ln8411->lock);
 		val->intval = ln8411_read_adc(ln8411, ADCCH_DIETEMP);
+		mutex_unlock(&ln8411->lock);
 		break;
 
 	case POWER_SUPPLY_PROP_CHARGE_TYPE:
