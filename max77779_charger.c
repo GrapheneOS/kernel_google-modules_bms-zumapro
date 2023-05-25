@@ -1267,13 +1267,23 @@ static int max77779_get_regulation_voltage_uv(struct max77779_chgr_data *data,
 	return 0;
 }
 
+static int max77779_is_cop_enabled(struct max77779_chgr_data *data)
+{
+	u8 value;
+	int ret;
+
+	ret = max77779_reg_read(data->regmap, MAX77779_CHG_COP_CTRL, &value);
+	return (ret == 0) && _max77779_chg_cop_ctrl_cop_en_get(value);
+}
+
 /* set charging current to 0 to disable charging (MODE=0) */
 static int max77779_set_charger_current_max_ua(struct max77779_chgr_data *data,
 					       int current_ua)
 {
 	const int disabled = current_ua == 0;
-	u8 value;
+	u8 value, reg;
 	int ret;
+	bool cp_enabled;
 
 	if (current_ua < 0)
 		return 0;
@@ -1288,6 +1298,20 @@ static int max77779_set_charger_current_max_ua(struct max77779_chgr_data *data,
 	else
 		value = 0x3 + (current_ua - 200000) / 66670;
 
+	ret = max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_00, &reg);
+	if (ret < 0) {
+		dev_err(data->dev, "cannot read CHG_CNFG_00 (%d)\n", ret);
+		return ret;
+	}
+
+	cp_enabled = _max77779_chg_cnfg_00_cp_en_get(reg);
+	if (cp_enabled) {
+		if (max77779_is_cop_enabled(data))
+			ret = max77779_reg_write(data->regmap, MAX77779_CHG_COP_LIMIT_H, value);
+
+		goto update_reg;
+	}
+
 	/*
 	 * cc_max > 0 might need to restart charging: the usecase state machine
 	 * will be triggered in max77779_set_charge_enabled()
@@ -1297,12 +1321,12 @@ static int max77779_set_charger_current_max_ua(struct max77779_chgr_data *data,
 		if (ret < 0)
 			dev_err(data->dev, "cannot re-enable charging (%d)\n", ret);
 	}
-
+update_reg:
 	value = VALUE2FIELD(MAX77779_CHG_CNFG_02_CHGCC, value);
 	ret = max77779_reg_update(data, MAX77779_CHG_CNFG_02,
 				   MAX77779_CHG_CNFG_02_CHGCC_MASK,
 				   value);
-	if (ret == 0)
+	if (ret == 0 && !cp_enabled)
 		ret = max77779_set_charge_enabled(data, !disabled, "CC_MAX");
 
 	return ret;
@@ -2831,7 +2855,11 @@ static int max77779_charger_probe(struct i2c_client *client,
 	const char *tmp;
 	u32 usb_otg_mv;
 	int ret = 0;
-	u8 pmic_id;
+	u8 ping;
+
+	/* pmic-irq driver needs to setup the irq */
+	if (client->irq < 0)
+		return -EPROBE_DEFER;
 
 	regmap = devm_regmap_init_i2c(client, &max77779_chg_regmap_cfg);
 	if (IS_ERR(regmap)) {
@@ -2839,8 +2867,8 @@ static int max77779_charger_probe(struct i2c_client *client,
 		return -EINVAL;
 	}
 
-	ret = max77779_reg_read(regmap, MAX77779_PMIC_ID, &pmic_id);
-	if (ret < 0 || pmic_id != MAX77779_PMIC_ID_SEQ)
+	ret = max77779_reg_read(regmap, MAX77779_CHG_CNFG_00, &ping);
+	if (ret < 0)
 		return -ENODEV;
 
 	/* TODO: PING or read HW version from PMIC */
@@ -2897,12 +2925,7 @@ static int max77779_charger_probe(struct i2c_client *client,
 
 	INIT_DELAYED_WORK(&data->mode_rerun_work, max77779_mode_rerun_work);
 
-	data->irq_gpio = of_get_named_gpio(dev->of_node, "max77779,irq-gpio", 0);
-	if (data->irq_gpio < 0) {
-		dev_err(dev, "failed get irq_gpio\n");
-	} else {
-		client->irq = gpio_to_irq(data->irq_gpio);
-
+	if (client->irq ) {
 		ret = devm_request_threaded_irq(data->dev, client->irq, NULL,
 						max77779_chgr_irq,
 						IRQF_TRIGGER_LOW |

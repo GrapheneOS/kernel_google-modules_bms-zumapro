@@ -95,11 +95,12 @@ const char *gbms_chg_ev_adapter_s(int adapter)
 }
 EXPORT_SYMBOL_GPL(gbms_chg_ev_adapter_s);
 
+/* Convert gbms_msc_states_t to letter code */
 static const char *gbms_get_code(const int index)
 {
 	const static char *codes[] = {"n", "s", "d", "l", "v", "vo", "p", "f",
 				      "t", "dl", "st", "tc", "r", "w", "rs",
-				      "n", "ny", "h", "hp", "ha"};
+				      "n", "ny", "do", "h", "hp", "ha"};
 	const int len = ARRAY_SIZE(codes);
 
 	return (index >= 0 && index < len) ? codes[index] : "?";

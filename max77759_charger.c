@@ -54,6 +54,9 @@
 #define CHGR_DTLS_OFF_JEITA				0x0c
 #define CHGR_DTLS_OFF_TEMP				0x0d
 
+#define CHGR_CHG_CNFG_12_VREG_4P6V			0x1
+#define CHGR_CHG_CNFG_12_VREG_4P7V			0x2
+
 static inline int max77759_reg_read(struct regmap *regmap, uint8_t reg,
 				    uint8_t *val)
 {
@@ -1427,8 +1430,9 @@ static int max77759_set_charger_current_max_ua(struct max77759_chgr_data *data,
 					       int current_ua)
 {
 	const int disabled = current_ua == 0;
-	u8 value;
+	u8 value, reg;
 	int ret;
+	bool cp_enabled;
 
 	if (current_ua < 0)
 		return 0;
@@ -1443,6 +1447,16 @@ static int max77759_set_charger_current_max_ua(struct max77759_chgr_data *data,
 	else
 		value = 0x3 + (current_ua - 200000) / 66670;
 
+	ret = max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_00, &reg);
+	if (ret < 0) {
+		dev_err(data->dev, "cannot read CHG_CNFG_00 (%d)\n", ret);
+		return ret;
+	}
+
+	cp_enabled = _chg_cnfg_00_cp_en_get(reg);
+	if (cp_enabled)
+		goto update_reg;
+
 	/*
 	 * cc_max > 0 might need to restart charging: the usecase state machine
 	 * will be triggered in max77759_set_charge_enabled()
@@ -1452,12 +1466,12 @@ static int max77759_set_charger_current_max_ua(struct max77759_chgr_data *data,
 		if (ret < 0)
 			dev_err(data->dev, "cannot re-enable charging (%d)\n", ret);
 	}
-
+update_reg:
 	value = VALUE2FIELD(MAX77759_CHG_CNFG_02_CHGCC, value);
 	ret = max77759_reg_update(data, MAX77759_CHG_CNFG_02,
 				   MAX77759_CHG_CNFG_02_CHGCC_MASK,
 				   value);
-	if (ret == 0)
+	if (ret == 0 && !cp_enabled)
 		ret = max77759_set_charge_enabled(data, !disabled, "CC_MAX");
 
 	return ret;
@@ -1680,11 +1694,18 @@ static enum power_supply_property max77759_wcin_props[] = {
 
 static int max77759_wcin_is_valid(struct max77759_chgr_data *data)
 {
-	uint8_t int_ok;
+	uint8_t val;
+	uint8_t wcin_dtls;
 	int ret;
 
-	ret = max77759_reg_read(data->regmap, MAX77759_CHG_INT_OK, &int_ok);
-	return (ret == 0) && _chg_int_ok_wcin_ok_get(int_ok);
+	ret = max77759_reg_read(data->regmap, MAX77759_CHG_DETAILS_00, &val);
+	if (ret < 0)
+		return ret;
+	wcin_dtls = _chg_details_00_wcin_dtls_get(val);
+	if (wcin_dtls == 0x2 || wcin_dtls == 0x3)
+		return 1;
+	else
+		return 0;
 }
 
 static int max77759_wcin_is_online(struct max77759_chgr_data *data)
@@ -1908,6 +1929,37 @@ static int max77759_init_wcin_psy(struct max77759_chgr_data *data)
 	return 0;
 }
 
+static int max77759_higher_headroom_enable(struct max77759_chgr_data *data, bool flag)
+{
+	int ret = 0;
+	u8 reg, reg_rd, val = flag ? CHGR_CHG_CNFG_12_VREG_4P7V : CHGR_CHG_CNFG_12_VREG_4P6V;
+
+	ret = max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_12, &reg);
+	if (ret < 0)
+		return ret;
+
+	reg_rd = reg;
+	ret = max77759_chg_prot(data->regmap, false);
+	if (ret < 0)
+		return ret;
+
+	reg = _chg_cnfg_12_vchgin_reg_set(reg, val);
+	ret = max77759_reg_write(data->regmap, MAX77759_CHG_CNFG_12, reg);
+	if (ret)
+		goto done;;
+
+	dev_dbg(data->dev, "%s: val: %#02x, reg: %#02x -> %#02x\n", __func__, val, reg_rd, reg);
+
+	ret = max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_12, &reg);
+	if (ret)
+		goto done;
+
+done:
+	ret = max77759_chg_prot(data->regmap, true);
+	if (ret < 0)
+		dev_err(data->dev, "%s: error enabling prot (%d)\n", __func__, ret);
+	return ret < 0 ? ret : 0;
+}
 
 static int max77759_chg_is_valid(struct max77759_chgr_data *data)
 {
@@ -2232,6 +2284,10 @@ static int max77759_psy_set_property(struct power_supply *psy,
 		ret = max77759_set_regulation_voltage(data, pval->intval);
 		pr_debug("%s: charge_voltage=%d (%d)\n",
 			__func__, pval->intval, ret);
+		if (ret)
+			break;
+		if (max77759_is_online(data) && pval->intval >= data->chg_term_voltage * 1000)
+			ret = max77759_higher_headroom_enable(data, true);
 		break;
 	/* called from google_cpm when switching chargers */
 	case GBMS_PROP_CHARGING_ENABLED:
@@ -2818,6 +2874,10 @@ static irqreturn_t max77759_chgr_irq(int irq, void *client)
 		pr_debug("%s: INSEL insel_auto_clear=%d (%d)\n", __func__,
 			 data->insel_clear, data->insel_clear ? ret : 0);
 		atomic_inc(&data->insel_cnt);
+
+		ret = max77759_higher_headroom_enable(data, false); /* reset on plug/unplug */
+		if (ret)
+			return IRQ_NONE;
 	}
 
 	/* TODO: make this an interrupt controller */

@@ -143,3 +143,34 @@ config LN8411
 	depends on I2C && OF
 	help
 	  Say Y to enable support for the LN8411 direct charger.
+
+config MAX77779_I2CM
+	tristate "Maxim 77779 I2C Bridge Bus"
+	depends on OF
+	help
+	  Bus to bridge I2C to Maxim 77779
+
+config MAX77779_PMIC
+	tristate "Maxim 77779 PMIC"
+	depends on OF
+	help
+	  Handle IRQs for Sequoia
+
+config MAX77779_PMIC_IRQ
+	tristate "Maxim 77779 PMIC IRQ"
+	depends on OF && MAX77779_PMIC
+	help
+	  Handle IRQs for Sequoia
+
+config MAX77779_PMIC_PINCTRL
+	tristate "Maxim 77779 PMIC PINCTRL"
+	depends on OF && MAX77779_PMIC
+	help
+	  Handle PINCTRL for Sequoia
+
+config MAX77779_PMIC_SGPIO
+	tristate "Maxim 77779 PMIC SGPIO"
+	depends on OF && MAX77779_PMIC
+	help
+	  Handle GPIOS for Sequoia
+

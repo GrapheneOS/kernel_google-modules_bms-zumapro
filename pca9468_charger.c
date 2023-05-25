@@ -91,7 +91,7 @@ static int adc_gain[16] = { 0,  1,  2,  3,  4,  5,  6,  7,
 /* IIN_CC adc offset for accuracy */
 #define PCA9468_IIN_ADC_OFFSET		20000	/* uA */
 /* IIN_CC compensation offset */
-#define PCA9468_IIN_CC_COMP_OFFSET	50000	/* uA */
+#define PCA9468_IIN_CC_COMP_OFFSET	25000	/* uA */
 /* IIN_CC compensation offset in Power Limit Mode(Constant Power) TA */
 #define PCA9468_IIN_CC_COMP_OFFSET_CP	20000	/* uA */
 /* TA maximum voltage that can support CC in Constant Power Mode */
@@ -127,6 +127,8 @@ static int adc_gain[16] = { 0,  1,  2,  3,  4,  5,  6,  7,
 /* Spread Spectrum default settings */
 #define PCA9468_SC_CLK_DITHER_RATE_DEF	0	/* 25kHz */
 #define PCA9468_SC_CLK_DITHER_LIMIT_DEF	0xF	/* 10% */
+
+#define PCA9468_TIER_SWITCH_DELTA	25000	/* uV */
 
 /* INT1 Register Buffer */
 enum {
@@ -194,7 +196,7 @@ static int iin_fsw_cfg[16] = { 9990, 10540, 11010, 11520, 12000, 12520, 12990,
 /* ------------------------------------------------------------------------ */
 
 /* ADC Read function, return uV or uA */
-int pca9468_read_adc(struct pca9468_charger *pca9468, u8 adc_ch)
+int pca9468_read_adc(const struct pca9468_charger *pca9468, u8 adc_ch)
 {
 	u8 reg_data[2];
 	u16 raw_adc = 0;
@@ -622,7 +624,7 @@ static void pca9468_dump_test_debug(const struct pca9468_charger *pca9468,
 				    int loglevel)
 {
 	u8 test_val[16];
-	int ret;
+	int ret, vin, vout, vbat;
 
 	/* Read test register for debugging */
 	ret = regmap_bulk_read(pca9468->regmap, 0x40, test_val, 16);
@@ -640,6 +642,12 @@ static void pca9468_dump_test_debug(const struct pca9468_charger *pca9468,
 				__func__, test_val[8], test_val[9], test_val[10], test_val[11],
 				test_val[12], test_val[13], test_val[14], test_val[15]);
 	}
+
+	vin = pca9468_read_adc(pca9468, ADCCH_VIN);
+	vout = pca9468_read_adc(pca9468, ADCCH_VOUT);
+	vbat = pca9468_read_adc(pca9468, ADCCH_VBAT);
+	logbuffer_prlog(pca9468, loglevel, "%s: vin: %d, vout: %d, vbat: %d\n",
+			__func__, vin, vout, vbat);
 }
 
 static void pca9468_dump_config(const struct pca9468_charger *pca9468,
@@ -1034,7 +1042,7 @@ static int pca9468_irdrop_limit(struct pca9468_charger *pca9468, int fv_uv)
 static int pca9468_apply_irdrop(struct pca9468_charger *pca9468, int fv_uv)
 {
 	const int delta_limit = pca9468_irdrop_limit(pca9468, fv_uv);
-	int ret, vbat, pca_vbat = 0, delta = 0;
+	int ret = -1, vbat, pca_vbat = 0, delta = 0;
 	const bool adaptive = false;
 
 	/* use classic irdrop */
@@ -2387,6 +2395,21 @@ static int pca9468_apply_new_vfloat(struct pca9468_charger *pca9468)
 	if (ret < 0)
 		goto error_done;
 
+	/* Restart the process if tier switch happened (either direction) */
+	if (abs(fv_uv - pca9468->fv_uv) > PCA9468_TIER_SWITCH_DELTA) {
+		ret = pca9468_reset_dcmode(pca9468);
+		if (ret < 0) {
+			pr_err("%s: cannot reset dcmode (%d)\n", __func__, ret);
+		} else {
+			dev_info(pca9468->dev, "%s: charging_state=%u->%u\n", __func__,
+				pca9468->charging_state, DC_STATE_ADJUST_CC);
+
+			pca9468->charging_state = DC_STATE_ADJUST_CC;
+			pca9468->timer_id = TIMER_PDMSG_SEND;
+			pca9468->timer_period = 0;
+		}
+	}
+
 	pca9468->fv_uv = fv_uv;
 
 error_done:
@@ -2786,7 +2809,7 @@ static int pca9468_apply_new_limits(struct pca9468_charger *pca9468)
 /* 2:1 Direct Charging CC MODE control */
 static int pca9468_charge_ccmode(struct pca9468_charger *pca9468)
 {
-	int ccmode, vin_vol, iin, ret = 0;
+	int ccmode = -1, vin_vol, iin, ret = 0;
 	bool apply_ircomp = false;
 
 	pr_debug("%s: ======START======= \n", __func__);

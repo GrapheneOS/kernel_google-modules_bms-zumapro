@@ -687,6 +687,14 @@ int max_m5_load_state_data(struct max_m5_data *m5_data)
 	cp->qresidual10 = m5_data->model_save.qresidual10;
 	cp->qresidual20 = m5_data->model_save.qresidual20;
 	cp->qresidual30 = m5_data->model_save.qresidual30;
+	/* b/278492168 restore dpacc with fullcapnom for taskperiod=351ms */
+	if (cp->taskperiod == 0x2d00 && cp->dpacc == 0x3200)
+		cp->dqacc = cp->fullcapnom >> 2;
+	else if (cp->taskperiod == 0x2d00 && cp->dpacc == 0x0c80)
+		cp->dqacc = cp->fullcapnom >> 4;
+	else
+		dev_warn(m5_data->dev, "taskperiod:%#x, dpacc:%#x, dqacc:%#x\n",
+			 cp->taskperiod, cp->dpacc, cp->dqacc);
 
 	m5_data->cycles = m5_data->model_save.cycles;
 	m5_data->cv_mixcap = m5_data->model_save.cv_mixcap;
