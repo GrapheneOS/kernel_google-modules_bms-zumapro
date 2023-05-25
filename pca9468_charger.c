@@ -98,6 +98,8 @@ static int adc_gain[16] = { 0,  1,  2,  3,  4,  5,  6,  7,
 #define PCA9468_TA_MAX_VOL_CP		9800000	/* 9760000uV --> 9800000uV */
 /* Offset for cc_max / 2 */
 #define PCA9468_IIN_MAX_OFFSET		0
+/* Offset for TA max current */
+#define PCA9468_TA_CUR_MAX_OFFSET	200000 /* uA */
 
 
 /* maximum retry counter for restarting charging */
@@ -1360,7 +1362,8 @@ static int pca9468_set_ta_current_comp(struct pca9468_charger *pca9468)
 
 			/* Try to increase TA current */
 			/* Compare TA max current */
-			if (pca9468->ta_cur == pca9468->ta_max_cur) {
+			if (pca9468->ta_cur >= min(pca9468->ta_max_cur,
+					       pca9468->iin_cc + PCA9468_TA_CUR_MAX_OFFSET)) {
 
 				/* TA current is already the maximum current */
 				/* Compare TA max voltage */
