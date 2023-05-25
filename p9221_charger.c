@@ -3252,14 +3252,12 @@ static void p9221_icl_ramp_start(struct p9221_charger_data *charger)
 
 static void p9xxx_check_ll_bpp_cep(struct p9221_charger_data *charger)
 {
-	int ret, ll_icl_ua;
+	int ret;
 	u32 vout_mv = 0;
 	u8 val8 = 0;
 	bool is_ll_bpp = true;
 
-	ll_icl_ua = gvotable_get_int_vote(charger->dc_icl_votable, LL_BPP_CEP_VOTER);
-
-	if (ll_icl_ua <= 0 || charger->ll_bpp_cep == 1)
+	if (charger->ll_bpp_cep >= 0)
 		return;
 
 	if (p9221_is_epp(charger))
