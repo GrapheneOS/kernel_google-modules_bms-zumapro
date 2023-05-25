@@ -2061,9 +2061,8 @@ static int p9221_get_property(struct power_supply *psy,
 		val->intval = p9221_get_psy_online(charger);
 		break;
 	case POWER_SUPPLY_PROP_SERIAL_NUMBER:
+		/* val->strval == NULL means NODATA */
 		val->strval = p9221_get_tx_id_str(charger);
-		if (val->strval == NULL)
-			return -ENODATA;
 		break;
 	case POWER_SUPPLY_PROP_CAPACITY:
 		/* Zero may be returned on transition to wireless "online", as
@@ -2085,8 +2084,10 @@ static int p9221_get_property(struct power_supply *psy,
 
 			val->intval = rc ? : charger->wlc_dc_current_now;
 		} else {
-			if (!charger->dc_icl_votable)
-				return -EAGAIN;
+			if (!charger->dc_icl_votable) {
+				val->intval = -EAGAIN;
+				break;
+			}
 			val->intval = gvotable_get_current_int_vote(
 						charger->dc_icl_votable);
 		}
