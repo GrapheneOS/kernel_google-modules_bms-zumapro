@@ -645,6 +645,8 @@ static int gbatt_get_temp(struct batt_drv *batt_drv, int *temp);
 
 static int gbatt_get_capacity(struct batt_drv *batt_drv);
 
+static int gbatt_restore_capacity(struct batt_drv *batt_drv);
+
 static int batt_get_filter_temp(struct batt_temp_filter *temp_filter)
 {
 	int sum = 0, max, min, i;
@@ -1409,13 +1411,12 @@ done:
  * SSOC jumping around or taking long time to coverge. Could technically read
  * charger voltage and estimate SOC% based on empty and full voltage.
  */
-static int ssoc_init(struct batt_ssoc_state *ssoc_state,
-		     struct device_node *node,
-		     struct power_supply *fg_psy)
+static int ssoc_init(struct batt_drv *batt_drv)
 {
+	struct batt_ssoc_state *ssoc_state = &batt_drv->ssoc_state;
 	int ret, capacity;
 
-	ret = ssoc_rl_read_dt(&ssoc_state->ssoc_rl_state, node);
+	ret = ssoc_rl_read_dt(&ssoc_state->ssoc_rl_state, batt_drv->device->of_node);
 	if (ret < 0)
 		ssoc_state->ssoc_rl_state.rl_track_target = 1;
 	ssoc_state->ssoc_rl_state.rl_ssoc_target = -1;
@@ -1428,7 +1429,7 @@ static int ssoc_init(struct batt_ssoc_state *ssoc_state,
 	ssoc_uicurve_dup(ssoc_state->ssoc_curve, chg_curve);
 	ssoc_state->ssoc_curve_type = SSOC_UIC_TYPE_NONE;
 
-	ret = ssoc_work(ssoc_state, fg_psy);
+	ret = ssoc_work(ssoc_state, batt_drv->fg_psy);
 	if (ret < 0)
 		return -EIO;
 
@@ -1445,6 +1446,14 @@ static int ssoc_init(struct batt_ssoc_state *ssoc_state,
 						ssoc_state->ssoc_rl);
 
 	}
+
+	dump_ssoc_state(&batt_drv->ssoc_state, batt_drv->ssoc_log);
+
+	ret = gbatt_restore_capacity(batt_drv);
+	if (ret < 0)
+		dev_warn(batt_drv->device, "unable to restore capacity, ret=%d\n", ret);
+	else
+		ssoc_state->save_soc_available = true;
 
 	return 0;
 }
@@ -8545,21 +8554,15 @@ static void gbatt_record_over_temp(struct batt_drv *batt_drv)
 static int gbatt_save_capacity(struct batt_ssoc_state *ssoc_state)
 {
 	const int ui_soc = ssoc_get_capacity(ssoc_state);
-	const int gdf_soc = ssoc_get_real(ssoc_state);
-	int ret = 0, save_now;
+	int ret = 0;
 
 	if (!ssoc_state->save_soc_available)
 		return ret;
 
-	if (ui_soc == gdf_soc)
-		save_now = 0xffff;
-	else
-		save_now = ui_soc;
-
-	if (ssoc_state->save_soc != (u16)save_now) {
-		ssoc_state->save_soc = (u16)save_now;
+	if (ssoc_state->save_soc != (u16)ui_soc) {
+		ssoc_state->save_soc = (u16)ui_soc;
 		ret = gbms_storage_write(GBMS_TAG_RSOC, &ssoc_state->save_soc,
-							sizeof(ssoc_state->save_soc));
+					 sizeof(ssoc_state->save_soc));
 	}
 
 	return ret;
@@ -9323,20 +9326,26 @@ static int gbatt_set_health(struct batt_drv *batt_drv, int health)
 	return 0;
 }
 
+#define RESTORE_SOC_LOWER_THRESHOLD	2
+#define RESTORE_SOC_UPPER_THRESHOLD	5
 static int gbatt_restore_capacity(struct batt_drv *batt_drv)
 {
 	struct batt_ssoc_state *ssoc_state = &batt_drv->ssoc_state;
-	int ret = 0;
+	int ret = 0, save_soc, gdf_soc, delta;
 
 	ret = gbms_storage_read(GBMS_TAG_RSOC, &ssoc_state->save_soc,
-				sizeof(ssoc_state->save_soc));
-
+						sizeof(ssoc_state->save_soc));
 	if (ret < 0)
 		return ret;
 
-	pr_info("save_soc:%d", ssoc_state->save_soc);
-	if (ssoc_state->save_soc <= SSOC_FULL)
-		gbatt_reset_curve(batt_drv, ssoc_state->save_soc);
+	save_soc = (int)ssoc_state->save_soc;
+	gdf_soc = qnum_toint(ssoc_state->ssoc_gdf);
+	delta = save_soc - gdf_soc;
+
+	dev_info(batt_drv->device, "save_soc:%d, gdf:%d\n", save_soc, gdf_soc);
+
+	if (delta >= RESTORE_SOC_LOWER_THRESHOLD && delta <= RESTORE_SOC_UPPER_THRESHOLD)
+		gbatt_reset_curve(batt_drv, save_soc);
 
 	return ret;
 }
@@ -9891,17 +9900,9 @@ static void google_battery_init_work(struct work_struct *work)
 	/* cycle count is cached: read here bc SSOC, chg_profile might use it */
 	batt_update_cycle_count(batt_drv);
 
-	ret = ssoc_init(&batt_drv->ssoc_state, node, fg_psy);
+	ret = ssoc_init(batt_drv);
 	if (ret < 0 && batt_drv->batt_present)
 		goto retry_init_work;
-
-	dump_ssoc_state(&batt_drv->ssoc_state, batt_drv->ssoc_log);
-
-	ret = gbatt_restore_capacity(batt_drv);
-	if (ret < 0)
-		pr_warn("unable to restore capacity, ret=%d\n", ret);
-	else
-		batt_drv->ssoc_state.save_soc_available = true;
 
 	/* could read EEPROM and history here */
 
