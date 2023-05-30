@@ -64,9 +64,6 @@ google-cpm-objs += google_dc_pps.o
 # google_dock
 obj-$(CONFIG_GOOGLE_DOCK)	+= google_dock.o
 
-# Overheat mitigation driver
-obj-$(CONFIG_USB_OVERHEAT_MITIGATION)	+= overheat_mitigation.o
-
 # max7729f drivers for the single SSID
 obj-$(CONFIG_PMIC_MAX77729)	+= max77729-pmic.o
 max77729-pmic-objs += max77729_pmic.o

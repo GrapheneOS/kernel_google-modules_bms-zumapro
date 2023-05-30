@@ -36,7 +36,6 @@ kernel_module(
         "max77729_uic.ko",
         "max77759-charger.ko",
         "max77779-charger.ko",
-        "overheat_mitigation.ko",
         "p9221.ko",
         "pca9468.ko",
         "max77779_i2cm.ko",
