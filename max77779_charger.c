@@ -858,10 +858,6 @@ static int max77779_set_insel(struct max77779_chgr_data *data,
 		else
 			force_wlc = true;
 
-	} else if (cb_data->otg_on) {
-		/* all OTG cases MUST mask CHGIN */
-		/* pvp: TODO: According to use case doc, insel should be 0 */
-		insel_value |= MAX77779_CHG_CNFG_12_WCINSEL;
 	} else {
 		/* disconnected, do not enable chgin if in input_suspend */
 		if (!cb_data->chgin_off)

@@ -325,13 +325,18 @@ static int gs201_otg_enable(struct max77779_usecase_data *uc_data)
 {
 	int ret;
 
+	ret = gs201_otg_update_ilim(uc_data, true);
+	if (ret < 0) {
+		pr_debug("%s: cannot update otg ilim ret:%d\n", __func__, ret);
+		return ret;
+	}
+
 	/* the code default to write to the MODE register */
 
 	ret = max77779_chgr_mode_write(uc_data->client,
 					MAX77779_CHGR_MODE_OTG_BOOST_ON);
 	if (ret < 0) {
-		pr_debug("%s: cannot set CNFG_00 to 0xa ret:%d\n",
-				__func__, ret);
+		pr_debug("%s: cannot set CNFG_00 to 0xa ret:%d\n", __func__, ret);
 		return ret;
 	}
 
