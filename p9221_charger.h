@@ -562,6 +562,11 @@
 #define RA9530_PLIM_REG				0x2B8
 #define RA9530_PLIM_900MA			0x384
 #define RA9530_MIN_FREQ_PER_120			0x1f3	/* 60000/120 - 1 */
+#define RA9530_TX_FB_HB_REG			0x1A0
+
+#define P9XXX_OP_DUTY_REG			0xA6
+#define P9XXX_TX_CUR_PWR_REG			0xAC
+#define P9XXX_RX_CUR_PWR_REG			0xCE
 
 /* Features */
 typedef enum {
@@ -978,6 +983,10 @@ struct p9221_charger_data {
 	int (*chip_get_vout)(struct p9221_charger_data *chgr, u32 *mv);
 	int (*chip_get_iout)(struct p9221_charger_data *chgr, u32 *ma);
 	int (*chip_get_op_freq)(struct p9221_charger_data *chgr, u32 *khz);
+	int (*chip_get_op_duty)(struct p9221_charger_data *chgr, u32 *duty);
+	int (*chip_get_op_bridge)(struct p9221_charger_data *chgr, u8 *hf);
+	int (*chip_get_tx_pwr)(struct p9221_charger_data *chgr, u16 *pwr);
+	int (*chip_get_rx_pwr)(struct p9221_charger_data *chgr, u16 *pwr);
 	int (*chip_get_vcpout)(struct p9221_charger_data *chgr, u32 *mv);
 	int (*chip_set_cmd)(struct p9221_charger_data *chgr, u16 cmd);
 	int (*chip_get_rx_ilim)(struct p9221_charger_data *chgr, u32 *ma);

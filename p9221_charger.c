@@ -3903,7 +3903,7 @@ static ssize_t p9221_show_status(struct device *dev,
 	uint32_t tx_id = 0;
 	u32 val32;
 	u16 val16;
-	u8 val8;
+	u8 val8, mode_reg;
 
 	if (!p9221_is_online(charger))
 		return -ENODEV;
@@ -3923,6 +3923,7 @@ static ssize_t p9221_show_status(struct device *dev,
 	ret = charger->chip_get_sys_mode(charger, &val8);
 	count += p9221_add_buffer(buf, val8, count, ret,
 				  "mode        : ", "%02x\n");
+	mode_reg = val8;
 
 	ret = charger->chip_get_vout(charger, &val32);
 	count += p9221_add_buffer(buf, P9221_MV_TO_UV(val32), count, ret,
@@ -3946,6 +3947,22 @@ static ssize_t p9221_show_status(struct device *dev,
 	ret = charger->chip_get_op_freq(charger, &val32);
 	count += p9221_add_buffer(buf, P9221_KHZ_TO_HZ(val32), count, ret,
 				  "freq        : ", "%u hz\n");
+
+	if (mode_reg == P9XXX_SYS_OP_MODE_TX_MODE) {
+		ret = charger->chip_get_op_duty(charger, &val32);
+		count += p9221_add_buffer(buf, val32, count, ret,
+					  "duty        : ", "%u %%\n");
+		ret = charger->chip_get_op_bridge(charger, &val8);
+		count += p9221_add_buffer(buf, val8, count, ret,
+					  "HB/FB(0/1)  : ", "%u\n");
+		ret = charger->chip_get_tx_pwr(charger, &val16);
+		count += p9221_add_buffer(buf, val16, count, ret,
+					  "curr_tx_pwr : ", "%u mW\n");
+		ret = charger->chip_get_rx_pwr(charger, &val16);
+		count += p9221_add_buffer(buf, val16, count, ret,
+					  "curr_rx_pwr : ", "%u mW\n");
+	}
+
 	count += scnprintf(buf + count, PAGE_SIZE - count,
 			   "tx_busy     : %d\n", charger->tx_busy);
 	count += scnprintf(buf + count, PAGE_SIZE - count,

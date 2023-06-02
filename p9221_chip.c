@@ -371,6 +371,112 @@ static int p9222_chip_get_op_freq(struct p9221_charger_data *chgr, u32 *khz)
 	*khz = (u32) val;
 	return 0;
 }
+
+/*
+ * chip_get_op_duty
+ *
+ *   Get operating duty (%).
+ */
+static int p9221_chip_get_op_duty(struct p9221_charger_data *chgr, u32 *duty)
+{
+	return -ENOTSUPP;
+}
+
+static int p9xxx_chip_get_op_duty(struct p9221_charger_data *chgr, u32 *duty)
+{
+	int ret;
+	u8 val;
+
+	ret = chgr->reg_read_8(chgr, P9XXX_OP_DUTY_REG, &val);
+	if (ret)
+		return ret;
+
+	*duty = (u32) val*100/256;
+	return 0;
+}
+
+static int ra9530_chip_get_op_duty(struct p9221_charger_data *chgr, u32 *duty)
+{
+	int ret;
+	u8 val;
+
+	ret = chgr->reg_read_8(chgr, P9XXX_OP_DUTY_REG, &val);
+	if (ret)
+		return ret;
+
+	*duty = (u32) val*50/255;
+	return 0;
+}
+
+/*
+ * chip_get_op_bridge
+ *
+ *   Get operating on half or full bridge.
+ */
+static int p9221_chip_get_op_bridge(struct p9221_charger_data *chgr, u8 *hf)
+{
+	return -ENOTSUPP;
+}
+
+static int ra9530_chip_get_op_bridge(struct p9221_charger_data *chgr, u8 *hf)
+{
+	int ret;
+	u8 val;
+
+	ret = chgr->reg_read_8(chgr, RA9530_TX_FB_HB_REG, &val);
+	if (ret)
+		return ret;
+
+	*hf = val;
+	return 0;
+}
+
+/*
+ * chip_get_tx_pwr
+ *
+ *   Get TX power (mW).
+ */
+static int p9221_chip_get_tx_pwr(struct p9221_charger_data *chgr, u16 *pwr)
+{
+	return -ENOTSUPP;
+}
+
+static int p9xxx_chip_get_tx_pwr(struct p9221_charger_data *chgr, u16 *pwr)
+{
+	int ret;
+	u16 val;
+
+	ret = chgr->reg_read_16(chgr, P9XXX_TX_CUR_PWR_REG, &val);
+	if (ret)
+		return ret;
+
+	*pwr = val;
+	return 0;
+}
+
+/*
+ * chip_get_rx_pwr
+ *
+ *   Get RX power (mW).
+ */
+static int p9221_chip_get_rx_pwr(struct p9221_charger_data *chgr, u16 *pwr)
+{
+	return -ENOTSUPP;
+}
+
+static int p9xxx_chip_get_rx_pwr(struct p9221_charger_data *chgr, u16 *pwr)
+{
+	int ret;
+	u16 val;
+
+	ret = chgr->reg_read_16(chgr, P9XXX_RX_CUR_PWR_REG, &val);
+	if (ret)
+		return ret;
+
+	*pwr = val;
+	return 0;
+}
+
 /*
  * chip_get_vcpout
  *
@@ -2443,6 +2549,10 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 	chgr->chip_get_vrect = p9xxx_chip_get_vrect;
 	chgr->chip_get_vcpout = p9xxx_chip_get_vcpout;
 	chgr->chip_get_tx_epp_guarpwr = p9xxx_get_tx_epp_guarpwr;
+	chgr->chip_get_op_duty = p9221_chip_get_op_duty;
+	chgr->chip_get_op_bridge = p9221_chip_get_op_bridge;
+	chgr->chip_get_tx_pwr = p9221_chip_get_tx_pwr;
+	chgr->chip_get_rx_pwr = p9221_chip_get_rx_pwr;
 
 	switch (chip_id) {
 	case P9412_CHIP_ID:
@@ -2474,6 +2584,9 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->chip_send_csp_in_txmode = p9xxx_send_csp_in_txmode;
 		chgr->chip_capdiv_en = p9412_capdiv_en;
 		chgr->chip_get_vcpout = p9412_chip_get_vcpout;
+		chgr->chip_get_op_duty = p9xxx_chip_get_op_duty;
+		chgr->chip_get_tx_pwr = p9xxx_chip_get_tx_pwr;
+		chgr->chip_get_rx_pwr = p9xxx_chip_get_rx_pwr;
 		break;
 	case RA9530_CHIP_ID:
 		chgr->rtx_state = RTX_AVAILABLE;
@@ -2503,6 +2616,10 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->chip_send_txid = p9xxx_send_txid;
 		chgr->chip_send_csp_in_txmode = p9xxx_send_csp_in_txmode;
 		chgr->chip_capdiv_en = ra9530_capdiv_en;
+		chgr->chip_get_op_duty = ra9530_chip_get_op_duty;
+		chgr->chip_get_op_bridge = ra9530_chip_get_op_bridge;
+		chgr->chip_get_tx_pwr = p9xxx_chip_get_tx_pwr;
+		chgr->chip_get_rx_pwr = p9xxx_chip_get_rx_pwr;
 		break;
 	case P9382A_CHIP_ID:
 		chgr->rtx_state = RTX_AVAILABLE;
@@ -2532,6 +2649,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->chip_send_txid = p9xxx_send_txid;
 		chgr->chip_send_csp_in_txmode = p9xxx_send_csp_in_txmode;
 		chgr->chip_capdiv_en = p9221_capdiv_en;
+		chgr->chip_get_op_duty = p9xxx_chip_get_op_duty;
 		break;
 	case P9222_CHIP_ID:
 		chgr->chip_get_iout = p9222_chip_get_iout;
