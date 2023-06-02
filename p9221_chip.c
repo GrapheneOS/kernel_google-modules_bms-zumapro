@@ -359,6 +359,19 @@ static int p9xxx_chip_get_op_freq(struct p9221_charger_data *chgr, u32 *khz)
 	return 0;
 }
 
+static int p9xxx_chip_get_op_duty(struct p9221_charger_data *chgr, u32 *duty)
+{
+	int ret;
+	u8 val;
+
+	ret = chgr->reg_read_8(chgr, RA9530_OP_DUTY_REG, &val);
+	if (ret)
+		return ret;
+
+	*duty = (u32) val*50/255;
+	return 0;
+}
+
 static int p9222_chip_get_op_freq(struct p9221_charger_data *chgr, u32 *khz)
 {
 	int ret;
@@ -2428,6 +2441,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 	chgr->chip_get_vout = p9xxx_chip_get_vout;
 	chgr->chip_set_cmd = p9xxx_chip_set_cmd_reg;
 	chgr->chip_get_op_freq = p9xxx_chip_get_op_freq;
+	chgr->chip_get_op_duty = p9xxx_chip_get_op_duty;
 	chgr->chip_get_vrect = p9xxx_chip_get_vrect;
 	chgr->chip_get_vcpout = p9xxx_chip_get_vcpout;
 	chgr->chip_get_tx_epp_guarpwr = p9xxx_get_tx_epp_guarpwr;
