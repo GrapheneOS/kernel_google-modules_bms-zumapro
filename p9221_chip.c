@@ -1035,8 +1035,8 @@ static int ra9530_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 	}
 
 	/* Set ping phase current limit to 0.9A */
-	ret |= chgr->reg_write_16(chgr, RA9530_PLIM_REG, RA9530_PLIM_900MA);
-	logbuffer_log(chgr->rtx_log, "write %#02x to %#02x", RA9530_PLIM_900MA, RA9530_PLIM_REG);
+	ret = chgr->reg_write_16(chgr, RA9530_PLIM_REG, chgr->ra9530_tx_plim);
+	logbuffer_log(chgr->rtx_log, "write %#02x to %#02x", chgr->ra9530_tx_plim, RA9530_PLIM_REG);
 
 	if (ret < 0)
 		return ret;
@@ -2379,6 +2379,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->tx_api_limit = RA9530_I_API_Limit_1350MA;
 		chgr->tx_ocp = RA9530_TXOCP_1400MA;
 		chgr->tx_fod_thrsh = RA9530_TX_FOD_THRSH_1600;
+		chgr->ra9530_tx_plim = RA9530_PLIM_900MA;
 		break;
 	case P9382A_CHIP_ID:
 		chgr->reg_tx_id_addr = P9382_PROP_TX_ID_REG;
