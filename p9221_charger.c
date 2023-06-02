@@ -7310,6 +7310,14 @@ static int p9221_charger_probe(struct i2c_client *client,
 		debugfs_create_file("irq_det", 0444, charger->debug_entry, charger, &debug_irq_det_fops);
 		debugfs_create_u32("det_on_debounce", 0644, charger->debug_entry, &charger->det_on_debounce);
 		debugfs_create_u32("det_off_debounce", 0644, charger->debug_entry, &charger->det_off_debounce);
+		debugfs_create_u16("de_tx_ocp_ma", 0644, charger->debug_entry,
+				   &charger->tx_ocp);
+		debugfs_create_u16("de_tx_api_limit_ma", 0644, charger->debug_entry,
+				   &charger->tx_api_limit);
+		debugfs_create_u16("de_tx_freq_low_khz", 0644, charger->debug_entry,
+				   &charger->tx_freq_low_limit);
+		debugfs_create_u16("de_tx_fod_thrsh_mw", 0644, charger->debug_entry,
+				   &charger->tx_fod_thrsh);
 	}
 
 	/* can independently read battery capacity */
