@@ -874,6 +874,7 @@ struct p9221_charger_data {
 	u16				tx_freq_low_limit;
 	u16				tx_fod_thrsh;
 	u16				tx_plim;
+	u32				wlc_ocp;
 	struct mutex			stats_lock;
 	struct p9221_charge_stats	chg_data;
 	u32				mitigate_threshold;

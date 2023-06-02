@@ -122,7 +122,7 @@ static int ra9530_chip_set_rx_ilim(struct p9221_charger_data *chgr, u32 ma)
 	u16 val;
 
 	if (ma > RA9530_RX_ILIM_MAX_MA)
-		return -EINVAL;
+		ma = RA9530_RX_ILIM_MAX_MA;
 
 	val = ma;
 	return chgr->reg_write_16(chgr, RA9530_ILIM_REG, val);
