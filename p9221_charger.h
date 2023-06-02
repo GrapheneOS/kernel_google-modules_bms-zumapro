@@ -91,12 +91,14 @@
 #define P9XXX_DC_ICL_EPP_100		100000
 #define P9XXX_NEG_POWER_10W		(10 * 2)
 #define P9XXX_NEG_POWER_11W		(11 * 2)
+#define P9XXX_TX_GUAR_PWR_12W		(12 * 2)
 #define P9XXX_TX_GUAR_PWR_15W		(15 * 2)
 #define P9382_RTX_TIMEOUT_MS		(2 * 1000)
 #define WLCDC_DEBOUNCE_TIME_S		400
 #define WLCDC_AUTH_CHECK_S		15
 #define WLCDC_AUTH_CHECK_INTERVAL_MS	(2 * 1000)
 #define WLCDC_AUTH_CHECK_INIT_DELAY_MS	(6 * 1000)
+#define P9XXX_DC_ICL_GPP_UA		1500000
 
 /*
  * P9221 common registers
@@ -565,7 +567,7 @@
 #define RA9530_PLIM_900MA			0x384
 #define RA9530_MIN_FREQ_PER_120			0x1f3	/* 60000/120 - 1 */
 #define RA9530_TX_FB_HB_REG			0x1A0
-
+#define RA9530_ILIM_MAX_UA			(1700 * 1000)
 #define P9XXX_OP_DUTY_REG			0xA6
 #define P9XXX_TX_CUR_PWR_REG			0xAC
 #define P9XXX_RX_CUR_PWR_REG			0xCE
@@ -707,6 +709,7 @@ struct p9221_charger_platform_data {
 	u32				icl_ramp_delay_ms;
 	u16				chip_id;
 	bool				has_wlc_dc;
+	bool				gpp_enhanced;
 	bool				has_rtx;
 	u32				power_mitigate_threshold;
 	u32				power_mitigate_ac_threshold;
@@ -723,6 +726,7 @@ struct p9221_charger_platform_data {
 	/* phone type for tx_id*/
 	u8				phone_type;
 	u32				epp_icl;
+	u32				gpp_icl;
 	/* calibrate light load */
 	bool				light_load;
 	int				nb_hpp_fod_vol;

@@ -2505,6 +2505,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->tx_ocp = RA9530_TXOCP_1400MA;
 		chgr->tx_fod_thrsh = RA9530_TX_FOD_THRSH_1600;
 		chgr->ra9530_tx_plim = RA9530_PLIM_900MA;
+		chgr->wlc_ocp = RA9530_ILIM_MAX_UA;
 		break;
 	case P9382A_CHIP_ID:
 		chgr->reg_tx_id_addr = P9382_PROP_TX_ID_REG;

@@ -960,6 +960,59 @@ static int feature_15w_enable(struct p9221_charger_data *charger, bool enable)
 	return ret;
 }
 
+static int feature_gpp_15w_enable(struct p9221_charger_data *charger, bool enable)
+{
+	const int curr_icl = gvotable_get_int_vote(charger->dc_icl_votable, P9221_WLC_VOTER);
+	const int icl = enable ? charger->pdata->gpp_icl : P9XXX_DC_ICL_EPP_1000;
+	int ret = -EOPNOTSUPP;
+	u8 val;
+
+	if (curr_icl == icl)
+		return 0;
+
+	mutex_lock(&charger->auth_lock);
+
+	if (!p9221_is_epp(charger))
+		goto error_exit;
+	if (charger->last_capacity > WLC_HPP_SOC_LIMIT && enable)
+		goto error_exit;
+
+	ret = charger->reg_read_8(charger, P9221R5_EPP_TX_GUARANTEED_POWER_REG, &val);
+	if (ret) {
+		dev_warn(&charger->client->dev, "Can't get guar_pwr\n");
+		goto error_exit;
+	} else if (val <= P9XXX_TX_GUAR_PWR_12W) {
+		dev_dbg(&charger->client->dev, "15W: Tx guar_pwr=%dW too low\n", val / 2);
+		ret = -EOPNOTSUPP;
+		goto error_exit;
+	}
+
+	if (!charger->dc_icl_votable) {
+		dev_warn(&charger->client->dev, "15W: Could not find DC_ICL votable\n");
+		ret = -EIO;
+		goto error_exit;
+	}
+
+	dev_dbg(&charger->client->dev, "%s: Voting ICL %duA\n", __func__, icl);
+	ret = gvotable_cast_long_vote(charger->dc_icl_votable,
+				      P9221_OCP_VOTER,
+				      icl,
+				      true);
+	ret |= gvotable_cast_long_vote(charger->dc_icl_votable,
+				      P9221_WLC_VOTER,
+				      icl,
+				      true);
+	if (ret < 0)
+		dev_err(&charger->client->dev, "15W: cannot set icl (%d)\n", ret);
+
+error_exit:
+	if (enable)
+		p9221_set_auth_dc_icl(charger, false);
+	mutex_unlock(&charger->auth_lock);
+
+	return ret;
+}
+
 #define FEAT_SESSION_SUPPORTED \
 	(WLCF_DREAM_DEFEND | WLCF_DREAM_ALIGN | WLCF_FAST_CHARGE | WLCF_CHARGE_15W)
 
@@ -968,7 +1021,7 @@ static int feature_update_session(struct p9221_charger_data *charger, u64 ft)
 {
 	struct p9221_charger_feature *chg_fts = &charger->chg_features;
 	u64 session_features;
-	int ret;
+	int ret = 0;
 
 	mutex_lock(&chg_fts->feat_lock);
 	session_features = chg_fts->session_features;
@@ -991,10 +1044,16 @@ static int feature_update_session(struct p9221_charger_data *charger, u64 ft)
 		chg_fts->session_features &= ~WLCF_DREAM_ALIGN;
 	}
 
-	if (ft & WLCF_FAST_CHARGE) {
+	if (charger->pdata->gpp_enhanced)
+		ret = feature_gpp_15w_enable(charger, ft & WLCF_FAST_CHARGE);
+	if (ret < 0) {
+		const bool enable = (ft & WLCF_FAST_CHARGE) != 0;
+
+		dev_warn(&charger->client->dev, "error on feat GPP 15W ena=%d ret=%d\n",
+			 enable, ret);
+	} else if (ft & WLCF_FAST_CHARGE) {
 		chg_fts->session_features |= WLCF_FAST_CHARGE;
 	} else if (chg_fts->session_features & WLCF_FAST_CHARGE) {
-
 		if (charger->online)
 			dev_warn(&charger->client->dev,
 				 "Cannot disable FAST_CHARGE while online\n");
@@ -2797,6 +2856,9 @@ static void p9221_set_capacity(struct p9221_charger_data *charger, int capacity)
 	if (charger->online && charger->last_capacity >= 0 && charger->last_capacity <= 100)
 		mod_delayed_work(system_wq, &charger->charge_stats_work, 0);
 
+	if (charger->pdata->gpp_enhanced && charger->last_capacity > WLC_HPP_SOC_LIMIT)
+		feature_gpp_15w_enable(charger, false);
+
 	if (charger->online && p9221_is_epp(charger))
 		p9221_dream_defend(charger);
 
@@ -3432,7 +3494,7 @@ static void p9221_set_online(struct p9221_charger_data *charger)
 			      msecs_to_jiffies(P9221_CHARGE_STATS_TIMEOUT_MS));
 
 	/* Auth: set alternate ICL for comms and start auth timers */
-	if (charger->pdata->has_wlc_dc) {
+	if (charger->pdata->has_wlc_dc || charger->pdata->gpp_enhanced) {
 		const ktime_t timeout = ms_to_ktime(WLCDC_DEBOUNCE_TIME_S * 1000);
 
 		mutex_lock(&charger->auth_lock);
@@ -4726,7 +4788,9 @@ static ssize_t wpc_ready_show(struct device *dev,
 	struct p9221_charger_data *charger = i2c_get_clientdata(client);
 
 	/* Skip it on BPP */
-	if (!p9221_is_epp(charger) || !charger->pdata->has_wlc_dc || !p9221_check_wpc_rev13(charger))
+	if (!p9221_is_epp(charger) ||
+	    !p9221_check_wpc_rev13(charger) ||
+	    (!charger->pdata->has_wlc_dc && !charger->pdata->gpp_enhanced))
 		return scnprintf(buf, PAGE_SIZE, "N\n");
 
 	return scnprintf(buf, PAGE_SIZE, "%c\n",
@@ -7014,6 +7078,12 @@ static int p9xxx_parse_dt(struct device *dev,
 	else
 		pdata->epp_icl = data;
 
+	ret = of_property_read_u32(node, "google,gpp_dcicl_ua", &data);
+	if (ret < 0)
+		pdata->gpp_icl = P9XXX_DC_ICL_GPP_UA;
+	else
+		pdata->gpp_icl = data;
+
 	ret = of_property_read_s32(node, "google,align_delta", &data);
 	if (ret < 0)
 		pdata->align_delta = 0;
@@ -7044,6 +7114,7 @@ static int p9xxx_parse_dt(struct device *dev,
 		pdata->wait_prop_irq_ms = data;
 
 	pdata->bpp_cep_on_dl = of_property_read_bool(node, "google,bpp-cep-on-dl");
+	pdata->gpp_enhanced = of_property_read_bool(node, "google,gpp_enhanced");
 
 	pdata->hda_tz_wlc = of_property_read_bool(node, "google,hda-tz-wlc");
 
