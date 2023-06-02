@@ -7435,6 +7435,14 @@ static int p9221_charger_probe(struct i2c_client *client,
 		debugfs_create_u32("de_hpp_neg_pwr", 0644, charger->debug_entry, &charger->de_hpp_neg_pwr);
 		debugfs_create_u32("de_epp_neg_pwr", 0644, charger->debug_entry, &charger->de_epp_neg_pwr);
 		debugfs_create_u32("de_wait_prop_irq_ms", 0644, charger->debug_entry, &charger->de_wait_prop_irq_ms);
+		debugfs_create_u16("de_tx_ocp_ma", 0644, charger->debug_entry,
+				   &charger->tx_ocp);
+		debugfs_create_u16("de_tx_api_limit_ma", 0644, charger->debug_entry,
+				   &charger->tx_api_limit);
+		debugfs_create_u16("de_tx_freq_low_khz", 0644, charger->debug_entry,
+				   &charger->tx_freq_low_limit);
+		debugfs_create_u16("de_tx_fod_thrsh_mw", 0644, charger->debug_entry,
+				   &charger->tx_fod_thrsh);
 	}
 
 	/* can independently read battery capacity */

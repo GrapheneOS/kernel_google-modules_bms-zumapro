@@ -946,7 +946,8 @@ static void rtx_current_limit_opt(struct p9221_charger_data *chgr)
 	int ret;
 
 	/* Set API limit to 1.35A */
-	ret = chgr->reg_write_16(chgr, P9412_I_API_Limit, P9412_I_API_Limit_1350MA);
+	ret = chgr->reg_write_16(chgr, P9412_I_API_Limit, chgr->tx_api_limit);
+	logbuffer_log(chgr->rtx_log, "set api limit to %dMA", chgr->tx_api_limit);
 	/* Set API Hyst to 0.8A */
 	ret |= chgr->reg_write_8(chgr, P9412_I_API_Hys, P9412_I_API_Hys_08);
 
@@ -1018,6 +1019,7 @@ static int p9412_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 static int ra9530_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 {
 	int ret = 0;
+	u16 val;
 
 	dev_dbg(&chgr->client->dev, "%s(%d)\n", __func__, enable);
 
@@ -1051,21 +1053,29 @@ static int ra9530_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 			      "error waiting for tx_mode (%d)", ret);
 		return ret;
 	}
-	ret = chgr->reg_write_16(chgr, P9412_TXOCP_REG, P9412_TXOCP_1400MA);
-	logbuffer_log(chgr->rtx_log, "configure TX OCP to %dMA", P9412_TXOCP_1400MA);
+	ret = chgr->reg_write_16(chgr, P9412_TXOCP_REG, chgr->tx_ocp);
+	logbuffer_log(chgr->rtx_log, "configure TX OCP to %dMA", chgr->tx_ocp);
 	if (ret < 0)
 		return ret;
 	if (chgr->pdata->hw_ocp_det) {
 		rtx_current_limit_opt(chgr);
-		/* Set Frequency low limit to 120kHz */
-		ret = chgr->reg_write_16(chgr, P9412_MIN_FREQ_PER, RA9530_MIN_FREQ_PER_120);
+		/*
+		 * Set Frequency low limit to 120kHz
+		 * val = (clock/freq)-1 in number of 60MHz clock cycles
+		 */
+		val = chgr->tx_freq_low_limit;
+		val = (val > 0 && val <= 60000) ?
+			(60000 / val) - 1 : RA9530_MIN_FREQ_PER_120;
+		ret = chgr->reg_write_16(chgr, P9412_MIN_FREQ_PER, val);
+		logbuffer_log(chgr->rtx_log, "set freq min: write %#02x to %#02x", val, P9412_MIN_FREQ_PER);
 		if (ret < 0)
 			logbuffer_log(chgr->rtx_log, "min freq fail, ret=%d\n", ret);
 	}
 
 
 	/* Set Foreign Object Detection Threshold to 1600mW */
-	ret = chgr->reg_write_16(chgr, P9412_TX_FOD_THRSH_REG, P9412_TX_FOD_THRSH_1600);
+	ret = chgr->reg_write_16(chgr, P9412_TX_FOD_THRSH_REG, chgr->tx_fod_thrsh);
+	logbuffer_log(chgr->rtx_log, "set RTxFOD threshold : %dMW", chgr->tx_fod_thrsh);
 	if (ret < 0)
 		logbuffer_log(chgr->rtx_log, "RTxFOD fail, ret=%d\n", ret);
 
@@ -2349,6 +2359,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_mot_addr = P9412_MOT_REG;
 		chgr->reg_cmfet_addr = P9412_CMFET_L_REG;
 		chgr->reg_epp_tx_guarpwr_addr = P9221R5_EPP_TX_GUARANTEED_POWER_REG;
+		chgr->tx_api_limit = P9412_I_API_Limit_1350MA;
 		break;
 	case RA9530_CHIP_ID:
 		chgr->reg_tx_id_addr = P9412_PROP_TX_ID_REG;
@@ -2365,6 +2376,9 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_mot_addr = 0;
 		chgr->reg_cmfet_addr = 0;
 		chgr->reg_epp_tx_guarpwr_addr = P9221R5_EPP_TX_GUARANTEED_POWER_REG;
+		chgr->tx_api_limit = RA9530_I_API_Limit_1350MA;
+		chgr->tx_ocp = RA9530_TXOCP_1400MA;
+		chgr->tx_fod_thrsh = RA9530_TX_FOD_THRSH_1600;
 		break;
 	case P9382A_CHIP_ID:
 		chgr->reg_tx_id_addr = P9382_PROP_TX_ID_REG;

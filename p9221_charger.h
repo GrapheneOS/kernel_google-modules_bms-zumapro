@@ -545,6 +545,9 @@
 #define RA9530_DATA_BUF_READ_START		0x800 /* 0x800 ~ 0xBFF */
 #define RA9530_DATA_BUF_WRITE_START		0x400 /* 0x400 ~ 0x7FF */
 #define RA9530_ILIM_REG				0x2C0 /* 0x400 ~ 0x7FF */
+#define RA9530_TXOCP_1400MA			1400
+#define RA9530_I_API_Limit_1350MA		1350
+#define RA9530_TX_FOD_THRSH_1600		0x640
 #define RA9530_CC_WRITE_TYPE_REG		0x3F0
 #define RA9530_CC_TYPE_MASK			0xF8
 #define RA9530_CC_TYPE_SHIFT			3
@@ -877,6 +880,10 @@ struct p9221_charger_data {
 	bool				no_fod;
 	u32				de_q_value;
 	u16				fw_rev;
+	u16				tx_ocp;
+	u16				tx_api_limit;
+	u16				tx_freq_low_limit;
+	u16				tx_fod_thrsh;
 	struct mutex			stats_lock;
 	struct p9221_charge_stats	chg_data;
 	u32				mitigate_threshold;
