@@ -1035,8 +1035,9 @@ static int ra9530_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 	}
 
 	/* Set ping phase current limit to 0.9A */
-	ret |= chgr->reg_write_16(chgr, RA9530_PLIM_REG, RA9530_PLIM_900MA);
-	logbuffer_log(chgr->rtx_log, "write %#02x to %#02x", RA9530_PLIM_900MA, RA9530_PLIM_REG);
+	val = chgr->tx_plim > 0 ? chgr->tx_plim : RA9530_PLIM_900MA;
+	ret |= chgr->reg_write_16(chgr, RA9530_PLIM_REG, val);
+	logbuffer_log(chgr->rtx_log, "write %#02x to %#02x", val, RA9530_PLIM_REG);
 
 	if (ret < 0)
 		return ret;
