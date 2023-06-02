@@ -122,7 +122,7 @@ static int ra9530_chip_set_rx_ilim(struct p9221_charger_data *chgr, u32 ma)
 	u16 val;
 
 	if (ma > RA9530_RX_ILIM_MAX_MA)
-		return -EINVAL;
+		ma = RA9530_RX_ILIM_MAX_MA;
 
 	val = ma;
 	return chgr->reg_write_16(chgr, RA9530_ILIM_REG, val);
@@ -2343,6 +2343,8 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 
 void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 {
+	chgr->wlc_ocp = P9221R5_ILIM_MAX_UA;
+
 	switch (chip_id) {
 	case P9412_CHIP_ID:
 		chgr->reg_tx_id_addr = P9412_PROP_TX_ID_REG;

@@ -3150,7 +3150,8 @@ static int p9221_set_dc_icl(struct p9221_charger_data *charger)
 		gvotable_cast_int_vote(charger->dc_icl_votable, P9221_RAMP_VOTER, 0, false);
 
 	/* Increase the IOUT limit */
-	charger->chip_set_rx_ilim(charger, P9221_UA_TO_MA(P9221R5_ILIM_MAX_UA));
+	charger->chip_set_rx_ilim(charger, P9221_UA_TO_MA(charger->wlc_ocp));
+	logbuffer_log(charger->log, "set current limit to %dUA", charger->wlc_ocp);
 	if (ret)
 		dev_err(&charger->client->dev,
 			"Could not set rx_iout limit reg: %d\n", ret);
@@ -7445,6 +7446,8 @@ static int p9221_charger_probe(struct i2c_client *client,
 				   &charger->tx_fod_thrsh);
 		debugfs_create_u16("de_tx_plim_ma", 0644, charger->debug_entry,
 				   &charger->ra9530_tx_plim);
+		debugfs_create_u32("de_ocp_ua", 0644, charger->debug_entry,
+				   &charger->wlc_ocp);
 	}
 
 	/* can independently read battery capacity */
