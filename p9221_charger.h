@@ -773,6 +773,8 @@ struct p9221_charger_data {
 	struct delayed_work		notifier_work;
 	struct delayed_work		charge_stats_work;
 	struct delayed_work		dcin_work;
+	struct delayed_work		stop_online_spoof_work;
+	struct delayed_work		change_det_status_work;
 	struct delayed_work		align_work;
 	struct delayed_work		tx_work;
 	struct delayed_work		icl_ramp_work;
@@ -799,6 +801,7 @@ struct p9221_charger_data {
 	struct p9221_charger_feature	chg_features;
 	struct p9221_charger_cc_data_lock	cc_data_lock;
 	struct wakeup_source		*align_ws;
+	struct wakeup_source		*det_status_ws;
 	u16				chip_id;
 	int				online;
 	bool				enabled;
@@ -894,6 +897,10 @@ struct p9221_charger_data {
 	enum p9xxx_chk_rp		check_rp;
 	bool				extended_int_recv;
 	int				align_delta;
+	bool				online_spoof;
+	bool				det_status;
+	int				det_on_debounce;
+	int				det_off_debounce;
 
 #if IS_ENABLED(CONFIG_GPIOLIB)
 	struct gpio_chip gpio;

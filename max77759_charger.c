@@ -120,6 +120,8 @@ static int max77759_resume_check(struct max77759_chgr_data *data)
 }
 
 #if IS_ENABLED(CONFIG_GOOGLE_BCL)
+static int max77759_chg_prot(struct regmap *regmap, bool enable);
+
 static int max77759_get_vdroop_ok(struct i2c_client *client, bool *state)
 {
 	struct max77759_chgr_data *data;
@@ -168,6 +170,8 @@ static int max77759_set_batoilo_lvl(struct i2c_client *client, unsigned int lvl)
 {
 	struct max77759_chgr_data *data;
 	u8 val;
+	int prot;
+	int ret = 0;
 
 	if (!client)
 		return -ENODEV;
@@ -179,14 +183,30 @@ static int max77759_set_batoilo_lvl(struct i2c_client *client, unsigned int lvl)
 	if (max77759_resume_check(data))
 		return -EAGAIN;
 
+	prot = max77759_chg_prot(data->regmap, false);
+	if (prot < 0)
+		return -EIO;
+
 	/* TODO: use rmw */
-	if (max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_14, &val) < 0)
-		return -EINVAL;
+	if (max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_14, &val) < 0) {
+		ret = -EINVAL;
+		goto relock_and_end;
+	}
 	val &= ~MAX77759_CHG_CNFG_14_BAT_OILO_MASK;
 	val |= (lvl - BO_LOWER_LIMIT) / 200;
-	if (max77759_reg_write(data->regmap, MAX77759_CHG_CNFG_14, val) < 0)
-		return -EIO;
-	return 0;
+	if (max77759_reg_write(data->regmap, MAX77759_CHG_CNFG_14, val) < 0) {
+		ret = -EIO;
+		goto relock_and_end;
+	}
+
+relock_and_end:
+	prot = max77759_chg_prot(data->regmap, true);
+	if (prot < 0) {
+		dev_err(data->dev, "%s: cannot restore protection bits (%d)\n",
+		       __func__, prot);
+		return prot;
+	};
+	return ret;
 }
 
 static int max77759_get_uvlo_lvl(struct i2c_client *client, uint8_t mode, unsigned int *lvl)
@@ -219,6 +239,8 @@ static int max77759_set_uvlo_lvl(struct i2c_client *client, uint8_t mode, unsign
 	struct max77759_chgr_data *data;
 	u8 val;
 	u8 reg;
+	int prot;
+	int ret = 0;
 
 	if (!client)
 		return -ENODEV;
@@ -227,18 +249,35 @@ static int max77759_set_uvlo_lvl(struct i2c_client *client, uint8_t mode, unsign
 	if (!data || !data->regmap)
 		return -ENODEV;
 
+	prot = max77759_chg_prot(data->regmap, false);
+	if (prot < 0)
+		return -EIO;
+
 	if (max77759_resume_check(data))
 		return -EAGAIN;
 
 	reg = (mode == UVLO1) ? MAX77759_CHG_CNFG_15 : MAX77759_CHG_CNFG_16;
 
-	if (max77759_reg_read(data->regmap, reg, &val) < 0)
-		return -EINVAL;
+	if (max77759_reg_read(data->regmap, reg, &val) < 0) {
+		ret = -EINVAL;
+		goto relock_and_end;
+	}
 	val &= ~MAX77759_CHG_CNFG_15_SYS_UVLO1_MASK;
 	val |= (lvl - VD_LOWER_LIMIT) / 50;
-	if (max77759_reg_write(data->regmap, reg, val) < 0)
-		return -EIO;
-	return 0;
+	if (max77759_reg_write(data->regmap, reg, val) < 0) {
+		ret = -EIO;
+		goto relock_and_end;
+	}
+
+relock_and_end:
+	prot = max77759_chg_prot(data->regmap, true);
+	if (prot < 0) {
+		dev_err(data->dev, "%s: cannot restore protection bits (%d)\n",
+		       __func__, prot);
+		return prot;
+	};
+
+	return ret;
 }
 
 static int max77759_get_bcl_irq(struct i2c_client *client, u8 *irq_val)
