@@ -24,10 +24,12 @@
 #define RSBM_ADDR				0
 #define RSBR_ADDR				4
 #define SUFG_ADDR				8
+#define RSOC_ADDR				9
 #define RS_TAG_LENGTH				4
 #define SU_TAG_LENGTH				1
+#define RSOC_TAG_LENGTH				2
 #define RS_TAG_OFFSET_ADDR			0
-#define RS_TAG_OFFSET_LENGTH		1
+#define RS_TAG_OFFSET_LENGTH			1
 #define RS_TAG_OFFSET_DATA			2
 #define OPCODE_USER_SPACE_R_RES_LEN 32
 
@@ -136,6 +138,11 @@ static int max77779_sp_info(gbms_tag_t tag, size_t *addr, size_t size)
 			return -EINVAL;
 		*addr = SUFG_ADDR;
 		break;
+	case GBMS_TAG_RSOC:
+		if (size && size > RSOC_TAG_LENGTH)
+			return -EINVAL;
+		*addr = RSOC_ADDR;
+		break;
 	default:
 		return -ENOENT;
 	}
@@ -145,7 +152,8 @@ static int max77779_sp_info(gbms_tag_t tag, size_t *addr, size_t size)
 
 static int max77779_sp_iter(int index, gbms_tag_t *tag, void *ptr)
 {
-	static gbms_tag_t keys[] = {GBMS_TAG_RS32, GBMS_TAG_RSBM, GBMS_TAG_RSBR, GBMS_TAG_SUFG};
+	static gbms_tag_t keys[] = {GBMS_TAG_RS32, GBMS_TAG_RSBM, GBMS_TAG_RSBR,
+				    GBMS_TAG_SUFG, GBMS_TAG_RSOC};
 	const int count = ARRAY_SIZE(keys);
 
 	if (index >= 0 && index < count) {
