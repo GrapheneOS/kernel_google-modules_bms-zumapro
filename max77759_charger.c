@@ -54,6 +54,9 @@
 #define CHGR_DTLS_OFF_JEITA				0x0c
 #define CHGR_DTLS_OFF_TEMP				0x0d
 
+#define CHGR_CHG_CNFG_12_VREG_4P6V			0x1
+#define CHGR_CHG_CNFG_12_VREG_4P7V			0x2
+
 static inline int max77759_reg_read(struct regmap *regmap, uint8_t reg,
 				    uint8_t *val)
 {
@@ -117,6 +120,8 @@ static int max77759_resume_check(struct max77759_chgr_data *data)
 }
 
 #if IS_ENABLED(CONFIG_GOOGLE_BCL)
+static int max77759_chg_prot(struct regmap *regmap, bool enable);
+
 static int max77759_get_vdroop_ok(struct i2c_client *client, bool *state)
 {
 	struct max77759_chgr_data *data;
@@ -165,6 +170,8 @@ static int max77759_set_batoilo_lvl(struct i2c_client *client, unsigned int lvl)
 {
 	struct max77759_chgr_data *data;
 	u8 val;
+	int prot;
+	int ret = 0;
 
 	if (!client)
 		return -ENODEV;
@@ -176,14 +183,30 @@ static int max77759_set_batoilo_lvl(struct i2c_client *client, unsigned int lvl)
 	if (max77759_resume_check(data))
 		return -EAGAIN;
 
+	prot = max77759_chg_prot(data->regmap, false);
+	if (prot < 0)
+		return -EIO;
+
 	/* TODO: use rmw */
-	if (max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_14, &val) < 0)
-		return -EINVAL;
+	if (max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_14, &val) < 0) {
+		ret = -EINVAL;
+		goto relock_and_end;
+	}
 	val &= ~MAX77759_CHG_CNFG_14_BAT_OILO_MASK;
 	val |= (lvl - BO_LOWER_LIMIT) / 200;
-	if (max77759_reg_write(data->regmap, MAX77759_CHG_CNFG_14, val) < 0)
-		return -EIO;
-	return 0;
+	if (max77759_reg_write(data->regmap, MAX77759_CHG_CNFG_14, val) < 0) {
+		ret = -EIO;
+		goto relock_and_end;
+	}
+
+relock_and_end:
+	prot = max77759_chg_prot(data->regmap, true);
+	if (prot < 0) {
+		dev_err(data->dev, "%s: cannot restore protection bits (%d)\n",
+		       __func__, prot);
+		return prot;
+	};
+	return ret;
 }
 
 static int max77759_get_uvlo_lvl(struct i2c_client *client, uint8_t mode, unsigned int *lvl)
@@ -216,6 +239,8 @@ static int max77759_set_uvlo_lvl(struct i2c_client *client, uint8_t mode, unsign
 	struct max77759_chgr_data *data;
 	u8 val;
 	u8 reg;
+	int prot;
+	int ret = 0;
 
 	if (!client)
 		return -ENODEV;
@@ -223,59 +248,84 @@ static int max77759_set_uvlo_lvl(struct i2c_client *client, uint8_t mode, unsign
 	data = i2c_get_clientdata(client);
 	if (!data || !data->regmap)
 		return -ENODEV;
+
+	prot = max77759_chg_prot(data->regmap, false);
+	if (prot < 0)
+		return -EIO;
 
 	if (max77759_resume_check(data))
 		return -EAGAIN;
 
 	reg = (mode == UVLO1) ? MAX77759_CHG_CNFG_15 : MAX77759_CHG_CNFG_16;
 
-	if (max77759_reg_read(data->regmap, reg, &val) < 0)
-		return -EINVAL;
+	if (max77759_reg_read(data->regmap, reg, &val) < 0) {
+		ret = -EINVAL;
+		goto relock_and_end;
+	}
 	val &= ~MAX77759_CHG_CNFG_15_SYS_UVLO1_MASK;
 	val |= (lvl - VD_LOWER_LIMIT) / 50;
-	if (max77759_reg_write(data->regmap, reg, val) < 0)
-		return -EIO;
-	return 0;
+	if (max77759_reg_write(data->regmap, reg, val) < 0) {
+		ret = -EIO;
+		goto relock_and_end;
+	}
+
+relock_and_end:
+	prot = max77759_chg_prot(data->regmap, true);
+	if (prot < 0) {
+		dev_err(data->dev, "%s: cannot restore protection bits (%d)\n",
+		       __func__, prot);
+		return prot;
+	};
+
+	return ret;
 }
 
-static int max77759_get_and_clr_bcl_irq(struct i2c_client *client, u8 *irq_val)
+static int max77759_get_bcl_irq(struct i2c_client *client, u8 *irq_val)
 {
-	struct max77759_chgr_data *data;
 	u8 chg_int;
 	u8 ret;
+	const u8 clr_bcl_irq_mask = (MAX77759_CHG_INT2_BAT_OILO_I |
+			MAX77759_CHG_INT2_SYS_UVLO1_I |
+			MAX77759_CHG_INT2_SYS_UVLO2_I);
 
-	if (!client)
-		return -ENODEV;
-
-	data = i2c_get_clientdata(client);
-	if (!data || !data->regmap)
-		return -ENODEV;
-
-	if (max77759_resume_check(data))
-		return -EAGAIN;
-
-	ret = max77759_reg_read(data->regmap, MAX77759_CHG_INT2, &chg_int);
+	ret = max77759_chg_reg_read(client, MAX77759_CHG_INT2, &chg_int);
 	if (ret < 0)
 		return IRQ_NONE;
 
-	if ((chg_int & ~MAX77759_CHG_INT2_BAT_OILO_I) &
-		(chg_int & ~MAX77759_CHG_INT2_SYS_UVLO1_I) &
-		(chg_int & ~MAX77759_CHG_INT2_SYS_UVLO2_I) == 0)
+	/* Return if chg_int has all of BAT_OILO, SYS_UVLO1, SYS_UVLO2 cleared */
+	if ((chg_int & clr_bcl_irq_mask) == 0)
 		return IRQ_NONE;
 
+	/* UVLO2 has the highest priority and then BATOILO, then UVLO1 */
 	if (chg_int & MAX77759_CHG_INT2_SYS_UVLO2_I)
 		*irq_val = UVLO2;
 	else if (chg_int & MAX77759_CHG_INT2_BAT_OILO_I)
 		*irq_val = BATOILO;
 	else if (chg_int & MAX77759_CHG_INT2_SYS_UVLO1_I)
 		*irq_val = UVLO1;
-	else
-		*irq_val = 0;
 
-	ret = max77759_reg_write(data->regmap, MAX77759_CHG_INT2, chg_int);
-	if (ret < 0)
+	return ret;
+}
+
+static int max77759_clr_bcl_irq(struct i2c_client *client)
+{
+	u8 irq_val = 0;
+	u8 chg_int = 0;
+	int ret;
+
+	if (max77759_get_bcl_irq(client, &irq_val) != 0)
 		return IRQ_NONE;
 
+	if (irq_val == UVLO2)
+		chg_int = MAX77759_CHG_INT2_SYS_UVLO2_I;
+	else if (irq_val == UVLO1)
+		chg_int = MAX77759_CHG_INT2_SYS_UVLO1_I;
+	else if (irq_val == BATOILO)
+		chg_int = MAX77759_CHG_INT2_BAT_OILO_I;
+
+	ret = max77759_chg_reg_write(client, MAX77759_CHG_INT2, chg_int);
+	if (ret < 0)
+		return IRQ_NONE;
 	return ret;
 }
 
@@ -285,7 +335,8 @@ static const struct bcl_ifpmic_ops bcl_ifpmic_ops = {
 	max77759_get_uvlo_lvl,
 	max77759_set_batoilo_lvl,
 	max77759_get_batoilo_lvl,
-	max77759_get_and_clr_bcl_irq,
+	max77759_get_bcl_irq,
+	max77759_clr_bcl_irq,
 };
 #endif /* CONFIG_GOOGLE_BCL */
 
@@ -1418,8 +1469,9 @@ static int max77759_set_charger_current_max_ua(struct max77759_chgr_data *data,
 					       int current_ua)
 {
 	const int disabled = current_ua == 0;
-	u8 value;
+	u8 value, reg;
 	int ret;
+	bool cp_enabled;
 
 	if (current_ua < 0)
 		return 0;
@@ -1434,6 +1486,16 @@ static int max77759_set_charger_current_max_ua(struct max77759_chgr_data *data,
 	else
 		value = 0x3 + (current_ua - 200000) / 66670;
 
+	ret = max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_00, &reg);
+	if (ret < 0) {
+		dev_err(data->dev, "cannot read CHG_CNFG_00 (%d)\n", ret);
+		return ret;
+	}
+
+	cp_enabled = _chg_cnfg_00_cp_en_get(reg);
+	if (cp_enabled)
+		goto update_reg;
+
 	/*
 	 * cc_max > 0 might need to restart charging: the usecase state machine
 	 * will be triggered in max77759_set_charge_enabled()
@@ -1443,12 +1505,12 @@ static int max77759_set_charger_current_max_ua(struct max77759_chgr_data *data,
 		if (ret < 0)
 			dev_err(data->dev, "cannot re-enable charging (%d)\n", ret);
 	}
-
+update_reg:
 	value = VALUE2FIELD(MAX77759_CHG_CNFG_02_CHGCC, value);
 	ret = max77759_reg_update(data, MAX77759_CHG_CNFG_02,
 				   MAX77759_CHG_CNFG_02_CHGCC_MASK,
 				   value);
-	if (ret == 0)
+	if (ret == 0 && !cp_enabled)
 		ret = max77759_set_charge_enabled(data, !disabled, "CC_MAX");
 
 	return ret;
@@ -1671,11 +1733,18 @@ static enum power_supply_property max77759_wcin_props[] = {
 
 static int max77759_wcin_is_valid(struct max77759_chgr_data *data)
 {
-	uint8_t int_ok;
+	uint8_t val;
+	uint8_t wcin_dtls;
 	int ret;
 
-	ret = max77759_reg_read(data->regmap, MAX77759_CHG_INT_OK, &int_ok);
-	return (ret == 0) && _chg_int_ok_wcin_ok_get(int_ok);
+	ret = max77759_reg_read(data->regmap, MAX77759_CHG_DETAILS_00, &val);
+	if (ret < 0)
+		return ret;
+	wcin_dtls = _chg_details_00_wcin_dtls_get(val);
+	if (wcin_dtls == 0x2 || wcin_dtls == 0x3)
+		return 1;
+	else
+		return 0;
 }
 
 static int max77759_wcin_is_online(struct max77759_chgr_data *data)
@@ -1899,6 +1968,37 @@ static int max77759_init_wcin_psy(struct max77759_chgr_data *data)
 	return 0;
 }
 
+static int max77759_higher_headroom_enable(struct max77759_chgr_data *data, bool flag)
+{
+	int ret = 0;
+	u8 reg, reg_rd, val = flag ? CHGR_CHG_CNFG_12_VREG_4P7V : CHGR_CHG_CNFG_12_VREG_4P6V;
+
+	ret = max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_12, &reg);
+	if (ret < 0)
+		return ret;
+
+	reg_rd = reg;
+	ret = max77759_chg_prot(data->regmap, false);
+	if (ret < 0)
+		return ret;
+
+	reg = _chg_cnfg_12_vchgin_reg_set(reg, val);
+	ret = max77759_reg_write(data->regmap, MAX77759_CHG_CNFG_12, reg);
+	if (ret)
+		goto done;;
+
+	dev_dbg(data->dev, "%s: val: %#02x, reg: %#02x -> %#02x\n", __func__, val, reg_rd, reg);
+
+	ret = max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_12, &reg);
+	if (ret)
+		goto done;
+
+done:
+	ret = max77759_chg_prot(data->regmap, true);
+	if (ret < 0)
+		dev_err(data->dev, "%s: error enabling prot (%d)\n", __func__, ret);
+	return ret < 0 ? ret : 0;
+}
 
 static int max77759_chg_is_valid(struct max77759_chgr_data *data)
 {
@@ -2223,6 +2323,10 @@ static int max77759_psy_set_property(struct power_supply *psy,
 		ret = max77759_set_regulation_voltage(data, pval->intval);
 		pr_debug("%s: charge_voltage=%d (%d)\n",
 			__func__, pval->intval, ret);
+		if (ret)
+			break;
+		if (max77759_is_online(data) && pval->intval >= data->chg_term_voltage * 1000)
+			ret = max77759_higher_headroom_enable(data, true);
 		break;
 	/* called from google_cpm when switching chargers */
 	case GBMS_PROP_CHARGING_ENABLED:
@@ -2809,6 +2913,10 @@ static irqreturn_t max77759_chgr_irq(int irq, void *client)
 		pr_debug("%s: INSEL insel_auto_clear=%d (%d)\n", __func__,
 			 data->insel_clear, data->insel_clear ? ret : 0);
 		atomic_inc(&data->insel_cnt);
+
+		ret = max77759_higher_headroom_enable(data, false); /* reset on plug/unplug */
+		if (ret)
+			return IRQ_NONE;
 	}
 
 	/* TODO: make this an interrupt controller */

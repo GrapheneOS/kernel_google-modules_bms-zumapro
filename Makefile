@@ -22,6 +22,11 @@ GBMS_MODULES =	GOOGLE_BMS \
 		MAX_M5 \
 		PCA9468 \
 		MAX20339 \
+		MAX77779_I2CM \
+		MAX77779_PMIC \
+		MAX77779_PMIC_IRQ \
+		MAX77779_PMIC_PINCTRL \
+		MAX77779_PMIC_SGPIO \
 		STWLC98 \
 		STWC68 \
 		LN8411
@@ -58,9 +63,6 @@ google-cpm-objs += google_dc_pps.o
 
 # google_dock
 obj-$(CONFIG_GOOGLE_DOCK)	+= google_dock.o
-
-# Overheat mitigation driver
-obj-$(CONFIG_USB_OVERHEAT_MITIGATION)	+= overheat_mitigation.o
 
 # max7729f drivers for the single SSID
 obj-$(CONFIG_PMIC_MAX77729)	+= max77729-pmic.o
@@ -131,6 +133,14 @@ wc68-objs += google_dc_pps.o
 # max77779 Scratch Space
 obj-$(CONFIG_MAX77779_SP)	+= max77779-sp.o
 max77779-sp-objs += max77779_sp.o
+
+# MAX77779 PMIC
+obj-$(CONFIG_MAX77779_I2CM) += max77779_i2cm.o
+
+obj-$(CONFIG_MAX77779_PMIC) += max77779_pmic.o
+obj-$(CONFIG_MAX77779_PMIC_IRQ) += max77779_pmic_irq.o
+obj-$(CONFIG_MAX77779_PMIC_PINCTRL) += max77779_pmic_pinctrl.o
+obj-$(CONFIG_MAX77779_PMIC_SGPIO) += max77779_pmic_sgpio.o
 
 # LN8411 DC Charge pump
 obj-$(CONFIG_LN8411)	+= ln8411.o
