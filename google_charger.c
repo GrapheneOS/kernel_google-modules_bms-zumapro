@@ -680,7 +680,7 @@ static int info_usb_state(union gbms_ce_adapter_details *ad,
 					     : amperage_max / 100000;
 
 	if (voltage_max < 0 || amperage_max < 0) {
-		ad->ad_type = CHG_EV_ADAPTER_TYPE_UNKNOWN;
+		ad->ad_type = CHG_EV_ADAPTER_TYPE_USB_UNKNOWN;
 		return -EINVAL;
 	}
 
@@ -711,7 +711,7 @@ static int info_wlc_state(union gbms_ce_adapter_details *ad,
 		return 0;
 
 	if (voltage_max < 0 || amperage_max < 0) {
-		ad->ad_type = CHG_EV_ADAPTER_TYPE_UNKNOWN;
+		ad->ad_type = CHG_EV_ADAPTER_TYPE_WLC_UNKNOWN;
 		ad->ad_voltage = voltage_max;
 		ad->ad_amperage = amperage_max;
 		return -EINVAL;
