@@ -90,6 +90,7 @@ static int p9221_set_hpp_dc_icl(struct p9221_charger_data *charger, bool enable)
 static void p9221_ll_bpp_cep(struct p9221_charger_data *charger, int capacity);
 static int p9221_ll_check_id(struct p9221_charger_data *charger);
 static int p9221_has_dc_in(struct p9221_charger_data *charger);
+static void p9221_init_align(struct p9221_charger_data *charger);
 
 static char *align_status_str[] = {
 	"...", "M2C", "OK", "-1"
@@ -858,6 +859,9 @@ static int p9221_reset_wlc_dc(struct p9221_charger_data *charger)
 	ret = p9xxx_chip_set_cmfet_reg(charger, P9412_CMFET_DEFAULT);
 	if (ret < 0 && ret != -ENOTSUPP)
 		dev_warn(&charger->client->dev, "Fail to set comm cap(%d)\n", ret);
+
+	if (charger->alignment == -1)
+		p9221_init_align(charger);
 
 	return ret;
 }
