@@ -1118,7 +1118,7 @@ enum gbee_status {
 	GBEE_STATUS_OK,
 };
 
-#define GBEE_POLL_RETRIES	5
+#define GBEE_POLL_RETRIES	15
 #define GBEE_POLL_INTERVAL_MS	200
 
 /* only one battery eeprom for now */
