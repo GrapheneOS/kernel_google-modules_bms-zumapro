@@ -3350,7 +3350,7 @@ i2c_unregister_primary:
 	return ret;
 }
 
-static int max77779_fg_remove(struct i2c_client *client)
+static void max77779_fg_remove(struct i2c_client *client)
 {
 	struct max77779_fg_chip *chip = i2c_get_clientdata(client);
 
@@ -3371,8 +3371,6 @@ static int max77779_fg_remove(struct i2c_client *client)
 		i2c_unregister_device(chip->secondary);
 
 	power_supply_unregister(chip->psy);
-
-	return 0;
 }
 
 static const struct of_device_id max77779_of_match[] = {
