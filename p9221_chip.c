@@ -1772,7 +1772,8 @@ error_exit:
 
 static int p9412_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 {
-	int ret, loops, i;
+	const int req_pwr_val = req_pwr * 2 / 1000;
+	int ret, loops, i, txpwr_mw;
 	u8 val8, cdmode, txpwr, pwr_stp, mode_sts, err_sts, prop_cur_pwr, prop_req_pwr;
 	u32 val = 0;
 
@@ -1787,12 +1788,11 @@ static int p9412_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 	}
 
 	if (val8 == P9XXX_SYS_OP_MODE_PROPRIETARY) {
-
 		ret = chgr->reg_read_8(chgr, P9412_PROP_TX_POTEN_PWR_REG, &txpwr);
-		txpwr = txpwr / 2;
-		if (ret != 0 || txpwr < HPP_MODE_PWR_REQUIRE) {
+		txpwr_mw = txpwr * 1000 / 2;
+		if (ret != 0 || txpwr_mw < chgr->pdata->hpp_neg_pwr) {
 			dev_info(&chgr->client->dev,
-				"PROP_MODE: power=%dW not supported\n", txpwr);
+				"PROP_MODE: power=%dmW not supported\n", txpwr_mw);
 			chgr->prop_mode_en = false;
 			goto err_exit;
 		}
@@ -1911,10 +1911,10 @@ request_pwr:
 	 * [TX max power capability] in 0.5W units
 	 */
 	ret = chgr->reg_read_8(chgr, P9412_PROP_TX_POTEN_PWR_REG, &txpwr);
-	txpwr = txpwr / 2;
-	if ((ret == 0) && (txpwr >= HPP_MODE_PWR_REQUIRE)) {
+	txpwr_mw = txpwr * 1000 / 2;
+	if ((ret == 0) && (txpwr_mw >= chgr->pdata->hpp_neg_pwr)) {
 		dev_info(&chgr->client->dev,
-			 "PROP_MODE: Tx potential power=%dW\n", txpwr);
+			 "PROP_MODE: Tx potential power=%dmW\n", txpwr_mw);
 	} else {
 		chgr->prop_mode_en = false;
 		goto err_exit;
@@ -1924,15 +1924,15 @@ request_pwr:
 	 * Step 6: Request xx W Neg power by writing 0xC5,
 	 * then write 0x02 to 0x4F
 	 */
-	ret = chgr->reg_write_8(chgr, P9412_PROP_REQ_PWR_REG, req_pwr * 2);
+	ret = chgr->reg_write_8(chgr, P9412_PROP_REQ_PWR_REG, req_pwr_val);
 	if (ret) {
 		dev_err(&chgr->client->dev,
 			"PROP_MODE: fail to write pwr req register\n");
 		chgr->prop_mode_en = false;
 		goto err_exit;
-	} else {
-		dev_info(&chgr->client->dev, "request power=%dW\n", req_pwr);
 	}
+	dev_info(&chgr->client->dev, "request power=%dmW\n", req_pwr_val * 1000 / 2);
+
 	/* Request power from TX based on PropReqPwr (0xC5) */
 	ret = chgr->chip_set_cmd(chgr, PROP_REQ_PWR_CMD);
 	if (ret) {
@@ -1962,9 +1962,9 @@ err_exit:
 	ret |= chgr->reg_read_8(chgr, P9412_PROP_REQ_PWR_REG, &prop_req_pwr);
 
 	pr_debug("%s PROP_MODE: en=%d,sys_mode=%02x,mode_sts=%02x,err_sts=%02x,"
-		 "cdmode=%02x,pwr_stp=%02x,req_pwr=%02x,prop_cur_pwr=%02x,txpwr=%dW",
+		 "cdmode=%02x,pwr_stp=%02x,req_pwr=%02x,prop_cur_pwr=%02x,txpwr=%dmW",
 		 __func__, chgr->prop_mode_en, val8, mode_sts, err_sts,
-		 cdmode, pwr_stp, prop_req_pwr, prop_cur_pwr, txpwr);
+		 cdmode, pwr_stp, prop_req_pwr, prop_cur_pwr, txpwr_mw);
 
 	if (!ret) {
 		dev_info(&chgr->client->dev,
@@ -1991,7 +1991,8 @@ err_exit:
 
 static int ra9530_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 {
-	int ret, loops, i;
+	const int req_pwr_val = req_pwr * 2 / 1000;
+	int ret, loops, i, max_wait_time, loop_cnt, txpwr_mw;
 	u8 val8, cdmode, txpwr, pwr_stp, mode_sts, err_sts, prop_cur_pwr, prop_req_pwr;
 
 	ret = chgr->chip_get_sys_mode(chgr, &val8);
@@ -2042,7 +2043,9 @@ static int ra9530_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 	/*
 	 * wait for PropModeStat interrupt, register 0x37[4] for 60 * 50 = 3 secs
 	 */
-	for (loops = 60 ; loops ; loops--) {
+        max_wait_time = chgr->de_wait_prop_irq_ms > 0 ? chgr->de_wait_prop_irq_ms : chgr->pdata->wait_prop_irq_ms;
+        loop_cnt = max_wait_time / 50;
+	for (loops = loop_cnt ; loops ; loops--) {
 		if (chgr->prop_mode_en) {
 			dev_info(&chgr->client->dev, "PROP_MODE: Proprietary Mode Enabled\n");
 			break;
@@ -2079,23 +2082,23 @@ request_pwr:
 	 * [TX max power capability] in 0.5W units
 	 */
 	ret = chgr->reg_read_8(chgr, P9412_PROP_TX_POTEN_PWR_REG, &txpwr);
-	txpwr = txpwr / 2;
-	if ((ret != 0) || (txpwr < HPP_MODE_PWR_REQUIRE)) {
+	txpwr_mw = txpwr * 1000 / 2;
+	if ((ret != 0) || (txpwr_mw < chgr->pdata->hpp_neg_pwr)) {
 		chgr->prop_mode_en = false;
 		goto err_exit;
 	}
-	dev_info(&chgr->client->dev, "PROP_MODE: Tx potential power=%dW\n", txpwr);
+	dev_info(&chgr->client->dev, "PROP_MODE: Tx potential power=%dmW\n", txpwr_mw);
 
 	/*
 	 * Request xx W Neg power by writing 0xC5
 	 */
-	ret = chgr->reg_write_8(chgr, P9412_PROP_REQ_PWR_REG, req_pwr * 2);
+	ret = chgr->reg_write_8(chgr, P9412_PROP_REQ_PWR_REG, req_pwr_val);
 	if (ret) {
 		dev_err(&chgr->client->dev, "PROP_MODE: fail to write pwr req register\n");
 		chgr->prop_mode_en = false;
 		goto err_exit;
 	}
-	dev_info(&chgr->client->dev, "request power=%dW\n", req_pwr);
+	dev_info(&chgr->client->dev, "request power=%dmW\n", req_pwr_val * 1000 / 2);
 
 	/* Set power step to 3W */
 	ret = chgr->reg_write_8(chgr, P9412_PROP_MODE_PWR_STEP_REG, RA9530_PROP_MODE_PWR_STEP);
@@ -2131,9 +2134,9 @@ err_exit:
 	ret |= chgr->reg_read_8(chgr, P9412_PROP_REQ_PWR_REG, &prop_req_pwr);
 
 	dev_dbg(&chgr->client->dev, "%s PROP_MODE: en=%d,sys_mode=%02x,mode_sts=%02x,err_sts=%02x,"
-		 "cdmode=%02x,pwr_stp=%02x,req_pwr=%02x,prop_cur_pwr=%02x,txpwr=%dW",
+		 "cdmode=%02x,pwr_stp=%02x,req_pwr=%02x,prop_cur_pwr=%02x,txpwr=%dmW",
 		 __func__, chgr->prop_mode_en, val8, mode_sts, err_sts,
-		 cdmode, pwr_stp, prop_req_pwr, prop_cur_pwr, txpwr);
+		 cdmode, pwr_stp, prop_req_pwr, prop_cur_pwr, txpwr_mw);
 
 	if (!ret) {
 		dev_info(&chgr->client->dev,

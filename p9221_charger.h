@@ -506,7 +506,9 @@
 #define P9412_ADT_TYPE_AUTH			0x02
 
 #define P9XXX_CHARGER_FEATURE_CACHE_SIZE	32
-#define HPP_MODE_PWR_REQUIRE			23
+#define HPP_MODE_PWR_REQUIRE			23000
+#define EPP_MODE_REQ_PWR			15000
+#define WAIT_PROP_IRQ_MS			3000
 
 #define RTX_RESET_COUNT_MAX			3
 #define P9XXX_WPC_REV_13			0x13
@@ -713,6 +715,10 @@ struct p9221_charger_platform_data {
 	bool				ll_vout_not_set;
 	int				align_delta;
 	bool				disable_repeat_eop;
+	u32				hpp_neg_pwr;
+	u32				epp_neg_pwr;
+	u32				wait_prop_irq_ms;
+
 };
 
 struct p9221_charger_ints_bit {
@@ -911,6 +917,9 @@ struct p9221_charger_data {
 	u32 				wlc_dc_current_now;
 	bool				wlc_dc_enabled;
 	bool				chg_mode_off;
+	u32				de_hpp_neg_pwr;
+	u32				de_epp_neg_pwr;
+	u32				de_wait_prop_irq_ms;
 
 	u16				reg_tx_id_addr;
 	u16				reg_tx_mfg_code_addr;

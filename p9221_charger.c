@@ -693,13 +693,14 @@ static int p9221_set_switch_reg(struct p9221_charger_data *charger, bool enable)
 	return p9221_reg_write_8(charger, P9412_V5P0AP_SWITCH_REG, swreg);
 }
 
-#define EPP_MODE_REQ_PWR		15
 #define EPP_MODE_REQ_VOUT		12000
 #define WLC_VOUT_RAMP_DOWN_MV		15300
 #define WLC_VOUT_CFG_STEP		40		/* b/194346461 ramp down VOUT */
 static int p9xxx_set_bypass_mode(struct p9221_charger_data *charger)
 {
-	const int req_pwr = EPP_MODE_REQ_PWR;
+	const int req_pwr_mv = charger->de_epp_neg_pwr > 0 ?
+			       charger->de_epp_neg_pwr : charger->pdata->epp_neg_pwr;
+	const int req_pwr = req_pwr_mv * 2 / 1000;
 	const int vout_target = WLC_VOUT_RAMP_DOWN_MV;
 	int i, count, ret;
 	u8 cdmode, currpwr;
@@ -757,7 +758,7 @@ static int p9xxx_set_bypass_mode(struct p9221_charger_data *charger)
 	usleep_range(500 * USEC_PER_MSEC, 510 * USEC_PER_MSEC);
 	for (count = 0; count < 3; count++) {
 		/* Change the Requested Power to 15W */
-		ret = charger->reg_write_8(charger, P9412_PROP_REQ_PWR_REG, req_pwr * 2);
+		ret = charger->reg_write_8(charger, P9412_PROP_REQ_PWR_REG, req_pwr);
 		if (ret == 0)
 			ret = charger->chip_set_cmd(charger, PROP_REQ_PWR_CMD);
 		if (ret)
@@ -780,7 +781,7 @@ static int p9xxx_set_bypass_mode(struct p9221_charger_data *charger)
 		ret |= charger->reg_read_8(charger, P9412_PROP_CURR_PWR_REG, &currpwr);
 		dev_info(&charger->client->dev, "count=%d, currpwr=%02x, vout_mv=%u\n",
 			 count, currpwr, vout_mv);
-		if (ret == 0 && currpwr == (req_pwr * 2) && vout_mv < EPP_MODE_REQ_VOUT)
+		if (ret == 0 && currpwr == req_pwr && vout_mv < EPP_MODE_REQ_VOUT)
 			break;
 	}
 
@@ -2478,12 +2479,14 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 		 * mode isn't enabled (i.e. with p9412_prop_mode_enable())
 		 */
 		if (!(charger->prop_mode_en && p9xxx_is_capdiv_en(charger))) {
+			const u32 req_pwr = charger->de_hpp_neg_pwr > 0 ?
+					    charger->de_hpp_neg_pwr : charger->pdata->hpp_neg_pwr;
 			ret = set_renego_state(charger, P9XXX_ENABLE_PROPMODE);
 			if (ret == -EAGAIN) {
 				dev_dbg(&charger->client->dev, "Set renego state retry\n");
 				return ret;
 			}
-			ret = charger->chip_prop_mode_en(charger, HPP_MODE_PWR_REQUIRE);
+			ret = charger->chip_prop_mode_en(charger, req_pwr);
 			if (ret == -EAGAIN) {
 				dev_warn(&charger->client->dev, "PROP Mode retry\n");
 				return ret;
@@ -6812,6 +6815,22 @@ static int p9221_parse_dt(struct device *dev,
 
 	pdata->disable_repeat_eop = of_property_read_bool(node, "google,disable-repeat-eop");
 
+	ret = of_property_read_u32(node, "google,hpp_neg_pwr", &data);
+	if (ret < 0)
+		pdata->hpp_neg_pwr = HPP_MODE_PWR_REQUIRE;
+	else
+		pdata->hpp_neg_pwr = data;
+	ret = of_property_read_u32(node, "google,epp_neg_pwr", &data);
+	if (ret < 0)
+		pdata->epp_neg_pwr = EPP_MODE_REQ_PWR;
+	else
+		pdata->epp_neg_pwr = data;
+	ret = of_property_read_u32(node, "google,wait_prop_irq_ms", &data);
+	if (ret < 0)
+		pdata->wait_prop_irq_ms = WAIT_PROP_IRQ_MS;
+	else
+		pdata->wait_prop_irq_ms = data;
+
 	return 0;
 }
 
@@ -7306,6 +7325,9 @@ static int p9221_charger_probe(struct i2c_client *client,
 		debugfs_create_file("irq_det", 0444, charger->debug_entry, charger, &debug_irq_det_fops);
 		debugfs_create_u32("det_on_debounce", 0644, charger->debug_entry, &charger->det_on_debounce);
 		debugfs_create_u32("det_off_debounce", 0644, charger->debug_entry, &charger->det_off_debounce);
+		debugfs_create_u32("de_hpp_neg_pwr", 0644, charger->debug_entry, &charger->de_hpp_neg_pwr);
+		debugfs_create_u32("de_epp_neg_pwr", 0644, charger->debug_entry, &charger->de_epp_neg_pwr);
+		debugfs_create_u32("de_wait_prop_irq_ms", 0644, charger->debug_entry, &charger->de_wait_prop_irq_ms);
 	}
 
 	/* can independently read battery capacity */
