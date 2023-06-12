@@ -126,18 +126,6 @@ config MAXQ_MAX77759
 	help
 	  Say Y to enable support for MAX77759 MAXQ support.
 
-config STWLC98
-	tristate "ST WLC98 wireless power receiver driver"
-	depends on I2C && OF
-	help
-	  Say Y to enable support for the ST WLC98 wireless power receiver
-
-config STWC68
-	tristate "ST WC68 Direct charger"
-	depends on I2C && OF
-	help
-	  Say Y to enable support for the ST WC68 direct charger.
-
 config LN8411
 	tristate "LN8411 Direct charger"
 	depends on I2C && OF
