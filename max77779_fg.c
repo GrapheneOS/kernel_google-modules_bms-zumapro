@@ -3088,6 +3088,7 @@ static bool max77779_fg_is_reg(struct device *dev, unsigned int reg)
 	case 0x52 ... 0x53:
 	case 0x80 ... 0x9F: /* Model */
 	case 0xA3: /* Model cfg */
+	case 0xAB:
 	case 0xB0:
 	case 0xB2:
 	case 0xB4:
@@ -3096,6 +3097,7 @@ static bool max77779_fg_is_reg(struct device *dev, unsigned int reg)
 	case 0xD5 ... 0xDB:
 	case 0xE0 ... 0xE1: /* FG_Func*/
 	case 0xE9 ... 0xEA:
+	case 0xFF:
 		return true;
 	}
 
@@ -3106,7 +3108,7 @@ const struct regmap_config max77779_fg_model_regmap_cfg = {
 	.reg_bits = 8,
 	.val_bits = 16,
 	.val_format_endian = REGMAP_ENDIAN_NATIVE,
-	.max_register = MAX77779_FG_Command_ack,
+	.max_register = MAX77779_FG_USR,
 	.readable_reg = max77779_fg_is_reg,
 	.volatile_reg = max77779_fg_is_reg,
 };
