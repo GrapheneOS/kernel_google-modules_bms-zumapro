@@ -87,6 +87,7 @@ static int p9221_set_bpp_vout(struct p9221_charger_data *charger);
 static int p9221_set_hpp_dc_icl(struct p9221_charger_data *charger, bool enable);
 static void p9221_ll_bpp_cep(struct p9221_charger_data *charger, int capacity);
 static int p9221_ll_check_id(struct p9221_charger_data *charger);
+static int p9221_dream_defend_check_id(struct p9221_charger_data *charger);
 
 static char *align_status_str[] = {
 	"...", "M2C", "OK", "-1"
@@ -2559,7 +2560,7 @@ static void p9221_dream_defend(struct p9221_charger_data *charger)
 		 * Check Tx type here as tx_id may not be ready at start
 		 * and mfg code cannot be read after LL changing to BPP mode
 		 */
-		charger->ll_bpp_cep = p9221_ll_check_id(charger);
+		charger->ll_bpp_cep = p9221_dream_defend_check_id(charger);
 		/* trigger_power_mitigation is the same as dream defend */
 		charger->trigger_power_mitigation = true;
 		ret = delayed_work_pending(&charger->power_mitigation_work);
@@ -2615,6 +2616,40 @@ static void p9221_ll_bpp_cep(struct p9221_charger_data *charger, int capacity)
 		dev_dbg(&charger->client->dev,
 			"power_mitigate: DD vote ICL = %duA\n",
 			gvotable_get_int_vote(charger->dc_icl_votable, DD_VOTER));
+}
+static int p9221_dream_defend_check_id(struct p9221_charger_data *charger)
+{
+	uint16_t ptmc_id = charger->mfg;
+	int ret;
+	u8 val;
+
+	if (ptmc_id == 0) {
+		ret = p9xxx_chip_get_tx_mfg_code(charger, &ptmc_id);
+		if (ret < 0 || ptmc_id == 0) {
+			pr_debug("%s: cannot get mfg code ptmc_id=%x (%d)\n",
+				 __func__, ptmc_id, ret);
+			return -EAGAIN;
+		}
+	}
+
+	if (ptmc_id != WLC_MFG_GOOGLE) {
+		pr_debug("%s: ptmc_id=%x\n", __func__, ptmc_id);
+		return 0;
+	}
+
+	/* NOTE: will keep the alternate limit and keep checking on 3rd party */
+	if (p9221_get_tx_id_str(charger) == NULL) {
+		pr_debug("%s: retry %x\n", __func__, charger->tx_id);
+		return -EAGAIN;
+	}
+
+	pr_debug("%s: tx_id=%08x\n", __func__, charger->tx_id);
+
+	val = (charger->tx_id & TXID_TYPE_MASK) >> TXID_TYPE_SHIFT;
+	if (charger->pdata->bpp_cep_on_dl)
+		return (val == TXID_DD_TYPE || val == TXID_DD_TYPE2);
+
+	return val == TXID_DD_TYPE2;
 }
 
 /*
@@ -3208,7 +3243,7 @@ static void p9xxx_check_ll_bpp_cep(struct p9221_charger_data *charger)
 		is_ll_bpp = false;
 
 	ret = charger->chip_get_vout_max(charger, &vout_mv);
-	if (ret < 0 || vout_mv != P9XXX_VOUT_5480MV)
+	if (ret < 0 || (!charger->pdata->ll_vout_not_set && (vout_mv != P9XXX_VOUT_5480MV)))
 		is_ll_bpp = false;
 	ret = p9221_reg_read_8(charger, P9412_CMFET_L_REG, &val8);
 	if (ret < 0 || val8 != 0)
@@ -6623,6 +6658,8 @@ static int p9221_parse_dt(struct device *dev,
 	pdata->ll_vout_not_set = of_property_read_bool(node, "google,ll-bpp-vout-not-set");
 
 	pdata->disable_repeat_eop = of_property_read_bool(node, "google,disable-repeat-eop");
+
+	pdata->bpp_cep_on_dl = of_property_read_bool(node, "google,bpp-cep-on-dl");
 
 	return 0;
 }

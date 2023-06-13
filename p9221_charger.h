@@ -667,6 +667,7 @@ struct p9221_charger_platform_data {
 	bool				disable_align;
 	bool				ll_vout_not_set;
 	bool				disable_repeat_eop;
+	bool				bpp_cep_on_dl;
 };
 
 struct p9221_charger_ints_bit {
