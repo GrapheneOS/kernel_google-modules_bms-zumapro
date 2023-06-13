@@ -4980,11 +4980,14 @@ static int batt_init_bpst_profile(struct batt_drv *batt_drv)
 
 	bpst_state->bpst_enable = of_property_read_bool(node, "google,bpst-enable");
 	if (!bpst_state->bpst_enable)
-		return -EINVAL;
+		return 0;
 
 	ret = of_property_read_u32(node, "google,bpst-chg-rate", &bpst_state->bpst_chg_rate);
 	if (ret < 0)
 		bpst_state->bpst_chg_rate = BATT_BPST_DEFAULT_CHG_RATE;
+
+	dev_info(batt_drv->device, "bpst profile enabled, rate=%d, ret=%d\n",
+		 bpst_state->bpst_chg_rate, ret);
 
 	return 0;
 }
@@ -9035,8 +9038,12 @@ done:
 
 static int batt_init_shutdown_flag(struct batt_drv *batt_drv)
 {
+	struct device_node *node = batt_drv->device->of_node;
 	u8 data;
 	int ret;
+
+	if (of_property_read_bool(node, "google,shutdown-flag-disable"))
+		return 0;
 
 	ret = gbms_storage_read(GBMS_TAG_SUFG, &data, sizeof(data));
 	if (ret < 0)
@@ -10120,7 +10127,7 @@ static void google_battery_init_work(struct work_struct *work)
 	struct device_node *node = batt_drv->device->of_node;
 	struct power_supply *fg_psy = batt_drv->fg_psy;
 	const char *batt_vs_tz_name = NULL;
-	int ret = 0;
+	int init_delay_ms, ret = 0;
 
 	batt_rl_reset(batt_drv);
 	batt_drv->dead_battery = true; /* clear in batt_work() */
@@ -10138,6 +10145,10 @@ static void google_battery_init_work(struct work_struct *work)
 	mutex_init(&batt_drv->stats_lock);
 	mutex_init(&batt_drv->cc_data.lock);
 	mutex_init(&batt_drv->bpst_state.lock);
+
+	ret = of_property_read_u32(node, "google,batt-init-delay", &init_delay_ms);
+	if (ret < 0)
+		init_delay_ms = BATT_DELAY_INIT_MS;
 
 	if (!batt_drv->fg_psy) {
 
@@ -10486,7 +10497,7 @@ static void google_battery_init_work(struct work_struct *work)
 
 retry_init_work:
 	schedule_delayed_work(&batt_drv->init_work,
-			      msecs_to_jiffies(BATT_DELAY_INIT_MS));
+			      msecs_to_jiffies(init_delay_ms));
 }
 
 static struct thermal_zone_device_ops google_battery_tz_ops = {
