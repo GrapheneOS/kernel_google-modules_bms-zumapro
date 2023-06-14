@@ -1846,9 +1846,9 @@ static int max77779_is_online(struct max77779_chgr_data *data)
 	if (ret <= 0)
 		return 0;
 
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_02, &val);
-	return (ret == 0) && (_max77779_chg_details_02_chgin_sts_get(val) ||
-	       _max77779_chg_details_02_wcin_sts_get(val));
+	ret = max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_00, &val);
+	return (ret == 0) && ((_max77779_chg_details_00_chgin_dtls_get(val) == 0x3)||
+	       (_max77779_chg_details_00_wcin_dtls_get(val) == 0x3));
 }
 
 static int max77779_get_charge_type(struct max77779_chgr_data *data)
