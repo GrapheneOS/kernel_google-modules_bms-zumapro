@@ -1530,7 +1530,8 @@ static void thermal_stats_update(struct chg_drv *chg_drv) {
 	int i;
 	int thermal_level = -1;
 
-	if (chg_drv->thermal_levels_count <= 0)
+	if (chg_drv->thermal_levels_count <= 0 &&
+	    chg_drv->thermal_devices[CHG_TERMAL_DEVICE_FCC].thermal_levels <= 0)
 		return; /* Don't log any stats if there is nothing in the DT */
 
 	if (!chg_drv->chg_mdis)
@@ -1549,10 +1550,15 @@ static void thermal_stats_update(struct chg_drv *chg_drv) {
 		return;
 	}
 
-	/* Translate the thermal tier to a stats tier */
-	for (i = 0; i < chg_drv->thermal_levels_count; i++)
-		if (thermal_level <= chg_drv->thermal_stats_mdis_levels[i])
-			break;
+	if (chg_drv->thermal_levels_count) {
+		/* Translate the thermal tier to a stats tier */
+		for (i = 0; i < chg_drv->thermal_levels_count; i++)
+			if (thermal_level <= chg_drv->thermal_stats_mdis_levels[i])
+				break;
+	} else {
+		/* Traditinal thermal setting */
+		i = thermal_level;
+	}
 
 	/* Note; we do not report level 0 (eg. mdis_level == 0) */
 	if (i >= STATS_THERMAL_LEVELS_MAX)
