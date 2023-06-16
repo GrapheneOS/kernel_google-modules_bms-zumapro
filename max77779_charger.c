@@ -428,31 +428,30 @@ static int max77779_find_pmic(struct max77779_chgr_data *data)
 	return 0;
 }
 
-static int max77779_find_fg(struct max77779_chgr_data *data)
+static struct power_supply* max77779_get_fg_psy(struct max77779_chgr_data *chg)
 {
-	struct device_node *dn;
-
-	if (data->fg_i2c_client)
-		return 0;
-
-	dn = of_parse_phandle(data->dev->of_node, "max77779,max_m5", 0);
-	if (!dn)
-		return -ENXIO;
-
-	data->fg_i2c_client = of_find_i2c_device_by_node(dn);
-	if (!data->fg_i2c_client)
-		return -EAGAIN;
-
-	return 0;
+	if (!chg->fg_psy)
+		chg->fg_psy = power_supply_get_by_name("max77779fg");
+	return chg->fg_psy;
 }
 
 static int max77779_read_vbatt(struct max77779_chgr_data *data, int *vbatt)
 {
-	int ret;
+	union power_supply_propval val;
+	struct power_supply *fg_psy;
+	int ret = 0;
 
-	ret = max77779_find_fg(data);
-	if (ret == 0)
-		ret = max1720x_get_voltage_now(data->fg_i2c_client, vbatt);
+	fg_psy = max77779_get_fg_psy(data);
+	if (!fg_psy) {
+		dev_err(data->dev, "Couldn't get fg_psy\n");
+		ret = -EIO;
+	} else {
+		ret = power_supply_get_property(fg_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW, &val);
+		if (ret < 0)
+			dev_err(data->dev, "Couldn't get VOLTAGE_NOW, ret=%d\n", ret);
+		else
+			*vbatt = val.intval;
+	}
 
 	return ret;
 }
@@ -2208,7 +2207,7 @@ static int max77779_psy_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
 		rc = max77779_read_vbatt(data, &pval->intval);
 		if (rc < 0)
-			pval->intval = -1;
+			pval->intval = rc;
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
 		if (!max77779_current_check_mode(data)) {

@@ -20,6 +20,7 @@ struct max77779_chgr_data {
 	struct power_supply *chgin_psy;
 
 	struct power_supply *wlc_psy;
+	struct power_supply *fg_psy;
 	struct regmap *regmap;
 
 	struct gvotable_election *mode_votable;
@@ -38,7 +39,6 @@ struct max77779_chgr_data {
 	int irq_int;
 	bool irq_disabled;
 
-	struct i2c_client *fg_i2c_client;
 	struct i2c_client *pmic_i2c_client;
 
 	struct dentry *de;
