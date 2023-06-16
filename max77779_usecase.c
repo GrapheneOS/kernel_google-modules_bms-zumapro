@@ -245,15 +245,6 @@ int gs201_to_standby(struct max77779_usecase_data *uc_data, int use_case)
 			pr_err("%s: cannot enable WLC (%d)\n", __func__, ret);
 	}
 
-	/* from WLC-DC to STBY */
-	if (from_uc == GSU_MODE_WLC_DC) {
-		/* pvp TODO: check how to turn OFF HPP */
-		if (uc_data->dc_sw_gpio > 0) {
-			gpio_set_value_cansleep(uc_data->dc_sw_gpio, 0);
-			return ret;
-		}
-	}
-
 	/* transition to STBY (might need to be up) */
 	ret = max77779_chgr_mode_write(uc_data->client, MAX77779_CHGR_MODE_ALL_OFF);
 	if (ret < 0)
@@ -325,13 +316,18 @@ static int gs201_otg_enable(struct max77779_usecase_data *uc_data)
 {
 	int ret;
 
+	ret = gs201_otg_update_ilim(uc_data, true);
+	if (ret < 0) {
+		pr_debug("%s: cannot update otg ilim ret:%d\n", __func__, ret);
+		return ret;
+	}
+
 	/* the code default to write to the MODE register */
 
 	ret = max77779_chgr_mode_write(uc_data->client,
 					MAX77779_CHGR_MODE_OTG_BOOST_ON);
 	if (ret < 0) {
-		pr_debug("%s: cannot set CNFG_00 to 0xa ret:%d\n",
-				__func__, ret);
+		pr_debug("%s: cannot set CNFG_00 to 0xa ret:%d\n", __func__, ret);
 		return ret;
 	}
 
@@ -505,9 +501,6 @@ int gs201_to_usecase(struct max77779_usecase_data *uc_data, int use_case)
 		if (from_uc == GSU_MODE_USB_OTG_WLC_RX) {
 			ret = gs201_otg_mode(uc_data, GSU_MODE_USB_OTG);
 		}
-		if (from_uc == GSU_MODE_WLC_DC) {
-			/* pvp TODO: exit HPP using WLC fake GPIO? Also turn off CP? */
-		}
 		break;
 	case GSU_MODE_USB_CHG:
 	case GSU_MODE_USB_DC:
@@ -519,7 +512,6 @@ int gs201_to_usecase(struct max77779_usecase_data *uc_data, int use_case)
 		/* just write the value to the register (it's in stby) */
 		break;
 	case GSU_MODE_WLC_DC:
-		/* pvp TODO: enable HPP through WLC fake GPIO? */
 		break;
 	default:
 		break;
