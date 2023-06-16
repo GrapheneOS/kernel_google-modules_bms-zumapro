@@ -30,7 +30,7 @@
 #include <linux/platform_device.h>
 #include "gbms_power_supply.h"
 #include "google_bms.h"
-#include "max_m5.h"
+#include "max77779_fg.h"
 #include "max77779.h"
 #include "max77779_charger.h"
 
@@ -457,15 +457,24 @@ static int max77779_read_vbatt(struct max77779_chgr_data *data, int *vbatt)
 	return ret;
 }
 
-static int max77779_read_vbyp(struct max77779_chgr_data *data, int *vbyp)
+static int max77779_read_wcin(struct max77779_chgr_data *data, int *vbyp)
 {
+	unsigned tmp;
 	int ret;
 
-	ret = max77779_find_fg(data);
-	if (ret == 0)
-		ret = max_m5_read_vbypass(data->fg_i2c_client, vbyp);
+	ret = max77779_readn(data->regmap, MAX77779_CHG_WCIN_V_ADC_L, (uint8_t*)&tmp, 4);
+	if (ret) {
+		pr_err("Failed to read %x\n", MAX77779_CHG_WCIN_V_ADC_L);
+		return ret;
+	}
 
-	return ret;
+	/* swap L and H sides to get correct value */
+	tmp |= ((tmp & 0xff) << 16);
+	tmp = tmp >> 8;
+
+	/* LSB: 0.625 */
+	*vbyp = div_u64((u64) tmp * 625, 1000);
+	return 0;
 }
 
 /* ----------------------------------------------------------------------- */
@@ -849,10 +858,6 @@ static int max77779_set_insel(struct max77779_chgr_data *data,
 		else
 			force_wlc = true;
 
-	} else if (cb_data->otg_on) {
-		/* all OTG cases MUST mask CHGIN */
-		/* pvp: TODO: According to use case doc, insel should be 0 */
-		insel_value |= MAX77779_CHG_CNFG_12_WCINSEL;
 	} else {
 		/* disconnected, do not enable chgin if in input_suspend */
 		if (!cb_data->chgin_off)
@@ -1549,11 +1554,15 @@ static enum power_supply_property max77779_wcin_props[] = {
 
 static int max77779_wcin_is_valid(struct max77779_chgr_data *data)
 {
-	uint8_t int_ok;
+	uint8_t val;
+	uint8_t wcin_dtls;
 	int ret;
 
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_INT_OK, &int_ok);
-	return (ret == 0) && _max77779_chg_int_ok_wcin_ok_get(int_ok);
+	ret = max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_00, &val);
+	if (ret < 0)
+		return ret;
+	wcin_dtls = _max77779_chg_details_00_wcin_dtls_get(val);
+	return wcin_dtls == 0x2 || wcin_dtls == 0x3;
 }
 
 static int max77779_wcin_is_online(struct max77779_chgr_data *data)
@@ -1614,7 +1623,7 @@ static int max77779_wcin_voltage_now(struct max77779_chgr_data *chg,
 
 	wlc_psy = max77779_get_wlc_psy(chg);
 	if (!wlc_psy)
-		return max77779_read_vbyp(chg, &val->intval);
+		return max77779_read_wcin(chg, &val->intval);
 
 	rc = power_supply_get_property(wlc_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW, val);
 	if (rc < 0)
@@ -1623,7 +1632,7 @@ static int max77779_wcin_voltage_now(struct max77779_chgr_data *chg,
 	return rc;
 }
 
-#define MAX77779_WCIN_RAW_TO_UA	156
+#define MAX77779_WCIN_RAW_TO_UA	166
 
 /* current is valid only when charger mode is one of the following */
 static bool max77779_current_check_mode(struct max77779_chgr_data *data)
@@ -1641,17 +1650,20 @@ static bool max77779_current_check_mode(struct max77779_chgr_data *data)
 /* only valid in mode 5, 6, 7, e, f */
 static int max77779_wcin_current_now(struct max77779_chgr_data *data, int *iic)
 {
-	int ret, iic_raw;
+	unsigned tmp;
+	int ret;
 
-	ret = max77779_find_fg(data);
-	if (ret < 0)
+	ret = max77779_readn(data->regmap, MAX77779_CHG_WCIN_I_ADC_L, (uint8_t*)&tmp, 4);
+	if (ret) {
+		pr_err("Failed to read %x\n", MAX77779_CHG_WCIN_I_ADC_L);
 		return ret;
+	}
 
-	ret = max_m5_read_actual_input_current_ua(data->fg_i2c_client, &iic_raw);
-	if (ret < 0)
-		return ret;
+	/* swap L and H sides to get correct value */
+	tmp |= ((tmp & 0xff) << 16);
+	tmp = tmp >> 8;
 
-	*iic = iic_raw * MAX77779_WCIN_RAW_TO_UA;
+	*iic = tmp * MAX77779_WCIN_RAW_TO_UA;
 	return 0;
 }
 
@@ -1834,9 +1846,9 @@ static int max77779_is_online(struct max77779_chgr_data *data)
 	if (ret <= 0)
 		return 0;
 
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_02, &val);
-	return (ret == 0) && (_max77779_chg_details_02_chgin_sts_get(val) ||
-	       _max77779_chg_details_02_wcin_sts_get(val));
+	ret = max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_00, &val);
+	return (ret == 0) && ((_max77779_chg_details_00_chgin_dtls_get(val) == 0x3)||
+	       (_max77779_chg_details_00_wcin_dtls_get(val) == 0x3));
 }
 
 static int max77779_get_charge_type(struct max77779_chgr_data *data)
@@ -2016,22 +2028,25 @@ exit_done:
 	return 0;
 }
 
-#define MAX77779_CHGIN_RAW_TO_UA	125
+#define MAX77779_CHGIN_RAW_TO_UA	166
 
 /* only valid in mode 5, 6, 7, e, f */
 static int max77779_chgin_current_now(struct max77779_chgr_data *data, int *iic)
 {
-	int ret, iic_raw;
+	unsigned tmp;
+	int ret;
 
-	ret = max77779_find_fg(data);
-	if (ret < 0)
+	ret = max77779_readn(data->regmap, MAX77779_CHG_CHGIN_I_ADC_L, (uint8_t*)&tmp, 4);
+	if (ret) {
+		pr_err("Failed to read %x\n", MAX77779_CHG_CHGIN_I_ADC_L);
 		return ret;
+	}
 
-	ret = max_m5_read_actual_input_current_ua(data->fg_i2c_client, &iic_raw);
-	if (ret < 0)
-		return ret;
+	/* swap L and H sides to get correct value */
+	tmp |= ((tmp & 0xff) << 16);
+	tmp = tmp >> 8;
 
-	*iic = iic_raw * MAX77779_CHGIN_RAW_TO_UA;
+	*iic = tmp * MAX77779_CHGIN_RAW_TO_UA;
 	return 0;
 }
 
