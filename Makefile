@@ -126,15 +126,6 @@ max77779-fg-objs += max77779_fg_model.o
 # OVP
 obj-$(CONFIG_MAX20339)	+= max20339.o
 
-# WLC98 Wireless charging
-obj-$(CONFIG_STWLC98)	+= wlc98_driver.o
-
-# WC68 DC Charge pump
-obj-$(CONFIG_STWC68)	+= wc68.o
-wc68-objs += wc68_driver.o
-wc68-objs += wc68_gbms_pps.o
-wc68-objs += google_dc_pps.o
-
 # max77779 Scratch Space
 obj-$(CONFIG_MAX77779_SP)	+= max77779-sp.o
 max77779-sp-objs += max77779_sp.o
@@ -171,8 +162,6 @@ CFLAGS_google_bms.o += -Wno-enum-conversion
 CFLAGS_google_cpm.o += $(WENUMS)
 CFLAGS_google_dual_batt_gauge.o += $(WENUMS)
 CFLAGS_google_dock.o += $(WENUMS)
-CFLAGS_wc68_driver.o += $(WENUMS)
-CFLAGS_wc68_gbms_pps.o += $(WENUMS)
 CFLAGS_p9221_charger.o += $(WENUMS)
 CFLAGS_max77779_sp.o += -Wno-unused-function $(WENUMS)
 CFLAGS_ln8411_driver.o += $(WENUMS)

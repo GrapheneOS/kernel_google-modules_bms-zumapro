@@ -944,9 +944,10 @@ static int p9412_chip_tx_apbst_enable(struct p9221_charger_data *chgr)
 static void rtx_current_limit_opt(struct p9221_charger_data *chgr)
 {
 	int ret;
-
+	u16 val = chgr->tx_api_limit > 0 ? chgr->tx_api_limit : P9412_I_API_Limit_1350MA;
 	/* Set API limit to 1.35A */
-	ret = chgr->reg_write_16(chgr, P9412_I_API_Limit, P9412_I_API_Limit_1350MA);
+	ret = chgr->reg_write_16(chgr, P9412_I_API_Limit, val);
+	logbuffer_log(chgr->rtx_log, "set api limit to %dMA", val);
 	/* Set API Hyst to 0.8A */
 	ret |= chgr->reg_write_8(chgr, P9412_I_API_Hys, P9412_I_API_Hys_08);
 
@@ -1018,6 +1019,7 @@ static int p9412_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 static int ra9530_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 {
 	int ret = 0;
+	u16 val;
 
 	dev_dbg(&chgr->client->dev, "%s(%d)\n", __func__, enable);
 
@@ -1051,21 +1053,27 @@ static int ra9530_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 			      "error waiting for tx_mode (%d)", ret);
 		return ret;
 	}
-	ret = chgr->reg_write_16(chgr, P9412_TXOCP_REG, P9412_TXOCP_1400MA);
-	logbuffer_log(chgr->rtx_log, "configure TX OCP to %dMA", P9412_TXOCP_1400MA);
+	val = chgr->tx_ocp > 0 ? chgr->tx_ocp : P9412_TXOCP_1400MA;
+	ret = chgr->reg_write_16(chgr, P9412_TXOCP_REG, val);
+	logbuffer_log(chgr->rtx_log, "configure TX OCP to %dMA", val);
 	if (ret < 0)
 		return ret;
 	if (chgr->pdata->hw_ocp_det) {
 		rtx_current_limit_opt(chgr);
 		/* Set Frequency low limit to 120kHz */
-		ret = chgr->reg_write_16(chgr, P9412_MIN_FREQ_PER, RA9530_MIN_FREQ_PER_120);
+		val = chgr->tx_freq_low_limit;
+		val = (val > 0 && val <= 60000) ? 60000/val-1 : RA9530_MIN_FREQ_PER_120;
+		ret = chgr->reg_write_16(chgr, P9412_MIN_FREQ_PER, val);
+		logbuffer_log(chgr->rtx_log, "set freq min: write %#02x to %#02x", val, P9412_MIN_FREQ_PER);
 		if (ret < 0)
 			logbuffer_log(chgr->rtx_log, "min freq fail, ret=%d\n", ret);
 	}
 
 
 	/* Set Foreign Object Detection Threshold to 1600mW */
-	ret = chgr->reg_write_16(chgr, P9412_TX_FOD_THRSH_REG, P9412_TX_FOD_THRSH_1600);
+	val = chgr->tx_fod_thrsh > 0 ? chgr->tx_fod_thrsh : P9412_TX_FOD_THRSH_1600;
+	ret = chgr->reg_write_16(chgr, P9412_TX_FOD_THRSH_REG, val);
+	logbuffer_log(chgr->rtx_log, "set RTxFOD threshold : %dMW", val);
 	if (ret < 0)
 		logbuffer_log(chgr->rtx_log, "RTxFOD fail, ret=%d\n", ret);
 

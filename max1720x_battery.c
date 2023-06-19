@@ -1226,11 +1226,11 @@ static void max1720x_prime_battery_qh_capacity(struct max1720x_chip *chip,
 
 	if (chip->regmap_nvram.regmap) {
 		REGMAP_WRITE(&chip->regmap_nvram, MAX17XXX_QHCA, ~mcap);
-		dev_info(chip->dev, "Capacity primed to %d on %s\n",
+		dev_dbg(chip->dev, "Capacity primed to %d on %s\n",
 			mcap, psy_status_str[status]);
 
 		REGMAP_WRITE(&chip->regmap_nvram, MAX17XXX_QHQH, data);
-		dev_info(chip->dev, "QH primed to %d on %s\n",
+		dev_dbg(chip->dev, "QH primed to %d on %s\n",
 			data, psy_status_str[status]);
 	}
 }
@@ -1556,7 +1556,7 @@ static u16 max1720x_save_battery_cycle(const struct max1720x_chip *chip,
 	if (ret < 0) {
 		dev_info(chip->dev, "Fail to write %d eeprom cycle count (%d)", reg_cycle, ret);
 	} else {
-		dev_info(chip->dev, "update saved cycle:%d -> %d\n", eeprom_cycle, reg_cycle);
+		dev_dbg(chip->dev, "update saved cycle:%d -> %d\n", eeprom_cycle, reg_cycle);
 		eeprom_cycle = reg_cycle;
 	}
 
