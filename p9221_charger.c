@@ -90,6 +90,7 @@ static int p9221_set_hpp_dc_icl(struct p9221_charger_data *charger, bool enable)
 static void p9221_ll_bpp_cep(struct p9221_charger_data *charger, int capacity);
 static int p9221_ll_check_id(struct p9221_charger_data *charger);
 static int p9221_has_dc_in(struct p9221_charger_data *charger);
+static void p9221_init_align(struct p9221_charger_data *charger);
 
 static char *align_status_str[] = {
 	"...", "M2C", "OK", "-1"
@@ -858,6 +859,9 @@ static int p9221_reset_wlc_dc(struct p9221_charger_data *charger)
 	ret = p9xxx_chip_set_cmfet_reg(charger, P9412_CMFET_DEFAULT);
 	if (ret < 0 && ret != -ENOTSUPP)
 		dev_warn(&charger->client->dev, "Fail to set comm cap(%d)\n", ret);
+
+	if (charger->alignment == -1)
+		p9221_init_align(charger);
 
 	return ret;
 }
@@ -7306,6 +7310,14 @@ static int p9221_charger_probe(struct i2c_client *client,
 		debugfs_create_file("irq_det", 0444, charger->debug_entry, charger, &debug_irq_det_fops);
 		debugfs_create_u32("det_on_debounce", 0644, charger->debug_entry, &charger->det_on_debounce);
 		debugfs_create_u32("det_off_debounce", 0644, charger->debug_entry, &charger->det_off_debounce);
+		debugfs_create_u16("de_tx_ocp_ma", 0644, charger->debug_entry,
+				   &charger->tx_ocp);
+		debugfs_create_u16("de_tx_api_limit_ma", 0644, charger->debug_entry,
+				   &charger->tx_api_limit);
+		debugfs_create_u16("de_tx_freq_low_khz", 0644, charger->debug_entry,
+				   &charger->tx_freq_low_limit);
+		debugfs_create_u16("de_tx_fod_thrsh_mw", 0644, charger->debug_entry,
+				   &charger->tx_fod_thrsh);
 	}
 
 	/* can independently read battery capacity */

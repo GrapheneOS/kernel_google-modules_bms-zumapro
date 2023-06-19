@@ -869,6 +869,10 @@ struct p9221_charger_data {
 	bool				no_fod;
 	u32				de_q_value;
 	u16				fw_rev;
+	u16				tx_ocp;
+	u16				tx_api_limit;
+	u16				tx_freq_low_limit;
+	u16				tx_fod_thrsh;
 	struct mutex			stats_lock;
 	struct p9221_charge_stats	chg_data;
 	u32				mitigate_threshold;

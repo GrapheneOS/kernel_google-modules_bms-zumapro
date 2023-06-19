@@ -5725,6 +5725,10 @@ static void max1720x_init_work(struct work_struct *work)
 	 */
 	max1720x_fg_irq_thread_fn(-1, chip);
 
+	/* Force dump log once to get initial data */
+	if (!chip->por)
+		max1720x_monitor_log_data(chip, true);
+
 	dev_info(chip->dev, "init_work done\n");
 	if (chip->gauge_type == -1)
 		return;
