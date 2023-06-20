@@ -639,7 +639,7 @@ static int info_usb_state(union gbms_ce_adapter_details *ad,
 {
 	const char *usb_type_str = psy_usb_type_str[0];
 	int usb_type, voltage_max = -1, amperage_max = -1;
-	int usbc_type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
+	int ad_type, usbc_type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
 
 	if (usb_psy) {
 		int voltage_now, current_now;
@@ -665,26 +665,30 @@ static int info_usb_state(union gbms_ce_adapter_details *ad,
 		pr_info("usbchg=%s typec=%s usbv=%d usbc=%d usbMv=%d usbMc=%d\n",
 			usb_type_str,
 			tcpm_psy ? psy_usbc_type_str[usbc_type] : "null",
-			voltage_now / 1000,
+			voltage_now < 0 ? voltage_now : voltage_now / 1000,
 			current_now / 1000,
-			voltage_max / 1000,
-			amperage_max / 1000);
+			voltage_max < 0 ? voltage_max : voltage_max / 1000,
+			amperage_max < 0 ? amperage_max : amperage_max / 1000);
 	}
 
 	if (!ad)
 		return 0;
 
-	ad->ad_voltage = (voltage_max < 0) ? voltage_max
-					   : voltage_max / 100000;
-	ad->ad_amperage = (amperage_max < 0) ? amperage_max
-					     : amperage_max / 100000;
-
+	/* if data is not allowed, keep previous value */
 	if (voltage_max < 0 || amperage_max < 0) {
-		ad->ad_type = CHG_EV_ADAPTER_TYPE_USB_UNKNOWN;
+		if (ad->ad_type == CHG_EV_ADAPTER_TYPE_UNKNOWN)
+			ad->ad_type = CHG_EV_ADAPTER_TYPE_USB_UNKNOWN;
 		return -EINVAL;
 	}
 
-	ad->ad_type = info_usb_ad_type(usb_type, usbc_type);
+	ad_type = info_usb_ad_type(usb_type, usbc_type);
+	/* detect unknown when disconnect, ingnore this case */
+	if (ad->ad_type > ad_type && ad->ad_type != CHG_EV_ADAPTER_TYPE_USB)
+		return 0;
+
+	ad->ad_type = ad_type;
+	ad->ad_voltage = voltage_max / 100000;
+	ad->ad_amperage = amperage_max / 100000;
 
 	return 0;
 }
@@ -700,8 +704,8 @@ static int info_wlc_state(union gbms_ce_adapter_details *ad,
 	pr_info("wlcv=%d wlcc=%d wlcMv=%d wlcMc=%d wlct=%d vrect=%d opfreq=%d, vcpout=%d\n",
 		GPSY_GET_PROP(wlc_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW) / 1000,
 		GPSY_GET_PROP(wlc_psy, POWER_SUPPLY_PROP_CURRENT_NOW) / 1000,
-		voltage_max / 1000,
-		amperage_max / 1000,
+		voltage_max < 0 ? voltage_max : voltage_max / 1000,
+		amperage_max < 0 ? amperage_max : amperage_max / 1000,
 		GPSY_GET_PROP(wlc_psy, POWER_SUPPLY_PROP_TEMP),
 		GPSY_GET_PROP(wlc_psy, GBMS_PROP_WLC_VRECT) / 1000,
 		GPSY_GET_PROP(wlc_psy, GBMS_PROP_WLC_OP_FREQ) / 1000,
@@ -710,12 +714,16 @@ static int info_wlc_state(union gbms_ce_adapter_details *ad,
 	if (!ad)
 		return 0;
 
+	/* if data is not allowed, keep previous value */
 	if (voltage_max < 0 || amperage_max < 0) {
-		ad->ad_type = CHG_EV_ADAPTER_TYPE_WLC_UNKNOWN;
-		ad->ad_voltage = voltage_max;
-		ad->ad_amperage = amperage_max;
+		if (ad->ad_type == CHG_EV_ADAPTER_TYPE_UNKNOWN)
+			ad->ad_type = CHG_EV_ADAPTER_TYPE_WLC_UNKNOWN;
 		return -EINVAL;
 	}
+
+	/* keep original (dream defend might change its type) */
+	if (ad->ad_voltage > voltage_max / 100000)
+		return 0;
 
 	ad->ad_type = CHG_EV_ADAPTER_TYPE_WLC;
 	if (voltage_max >= WLC_EPP_THRESHOLD_UV) {
@@ -741,23 +749,25 @@ static int info_ext_state(union gbms_ce_adapter_details *ad,
 	pr_info("extv=%d extcc=%d extMv=%d extMc=%d\n",
 		GPSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW) / 1000,
 		GPSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_CURRENT_NOW) / 1000,
-		voltage_max / 1000, amperage_max / 1000);
+		voltage_max < 0 ? voltage_max : voltage_max / 1000,
+		amperage_max < 0 ? amperage_max : amperage_max / 1000);
 
 	if (!ad)
 		return 0;
 
+	/* if data is not allowed, keep previous value */
 	if (voltage_max < 0 || amperage_max < 0) {
-		ad->ad_type = CHG_EV_ADAPTER_TYPE_EXT_UNKNOWN;
-		ad->ad_voltage = voltage_max;
-		ad->ad_amperage = amperage_max;
+		if (ad->ad_type == CHG_EV_ADAPTER_TYPE_UNKNOWN)
+			ad->ad_type = CHG_EV_ADAPTER_TYPE_EXT_UNKNOWN;
 		return -EINVAL;
-	} else if (voltage_max > EXT1_DETECT_THRESHOLD_UV) {
-		ad->ad_type = CHG_EV_ADAPTER_TYPE_EXT1;
-	} else if (voltage_max > EXT2_DETECT_THRESHOLD_UV) {
-		ad->ad_type = CHG_EV_ADAPTER_TYPE_EXT2;
-	} else {
-		ad->ad_type = CHG_EV_ADAPTER_TYPE_EXT;
 	}
+
+	if (voltage_max > EXT1_DETECT_THRESHOLD_UV)
+		ad->ad_type = CHG_EV_ADAPTER_TYPE_EXT1;
+	else if (voltage_max > EXT2_DETECT_THRESHOLD_UV)
+		ad->ad_type = CHG_EV_ADAPTER_TYPE_EXT2;
+	else
+		ad->ad_type = CHG_EV_ADAPTER_TYPE_EXT;
 
 	ad->ad_voltage = voltage_max / 100000;
 	ad->ad_amperage = amperage_max / 100000;
@@ -2309,7 +2319,7 @@ static void chg_work(struct work_struct *work)
 	struct power_supply *ext_psy = chg_drv->ext_psy;
 	struct power_supply *usb_psy = chg_drv->tcpm_psy ? chg_drv->tcpm_psy :
 				       chg_drv->usb_psy;
-	union gbms_ce_adapter_details ad = { .v = 0 };
+	union gbms_ce_adapter_details ad = chg_drv->adapter_details;
 	int wlc_online = 0, wlc_present = 0;
 	int ext_online = 0, ext_present = 0;
 	int usb_online, usb_present = 0;
@@ -2413,6 +2423,7 @@ static void chg_work(struct work_struct *work)
 		if (stop_charging) {
 			int ret;
 
+			ad.v = 0;
 			pr_info("MSC_CHG no power source, disabling charging\n");
 
 			ret = GPSY_SET_PROP(chg_drv->chg_psy, GBMS_PROP_CHARGING_ENABLED, 0);
@@ -2440,9 +2451,6 @@ static void chg_work(struct work_struct *work)
 
 		if (chg_is_custom_enabled(upperbd, lowerbd) && chg_drv->disable_pwrsrc)
 			chg_run_defender(chg_drv);
-
-		/* clear the status */
-		chg_update_csi(chg_drv);
 
 		/* allow sleep (if disconnected) while draining */
 		if (chg_drv->disable_pwrsrc)
