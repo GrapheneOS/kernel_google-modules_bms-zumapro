@@ -1620,6 +1620,11 @@ static int max1720x_get_cycle_count_offset(struct max1720x_chip *chip)
 
 static int max1720x_get_cycle_count(struct max1720x_chip *chip)
 {
+	return chip->cycle_count;
+}
+
+static int max1720x_update_cycle_count(struct max1720x_chip *chip)
+{
 	int err, cycle_count;
 	u16 reg_cycle;
 
@@ -2975,10 +2980,12 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 		if (max1720x_check_drift_on_soc(&chip->drift_data))
 			max1720x_fixup_capacity(chip, plugged);
 
-		if (storm)
+		if (storm) {
 			pr_debug("Force power_supply_change in storm\n");
-		else
+		} else {
 			max1720x_monitor_log_data(chip, false);
+			max1720x_update_cycle_count(chip);
+		}
 
 		storm = false;
 	}
