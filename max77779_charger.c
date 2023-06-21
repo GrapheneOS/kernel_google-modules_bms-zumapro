@@ -1574,8 +1574,8 @@ static int max77779_wcin_is_online(struct max77779_chgr_data *data)
 	if (ret <= 0)
 		return ret;
 
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_02, &val);
-	return (ret == 0) && _max77779_chg_details_02_wcin_sts_get(val);
+	ret = max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_00, &val);
+	return (ret == 0) && (_max77779_chg_details_00_wcin_dtls_get(val) == 0x3);
 }
 
 /* TODO: make this configurable */
@@ -1808,8 +1808,8 @@ static int max77779_chgin_is_online(struct max77779_chgr_data *data)
 	if (ret <= 0)
 		return ret;
 
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_02, &val);
-	return (ret == 0) && _max77779_chg_details_02_chgin_sts_get(val);
+	ret = max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_00, &val);
+	return (ret == 0) && (_max77779_chg_details_00_chgin_dtls_get(val) == 0x3);
 }
 
 /*
@@ -2627,7 +2627,7 @@ static u8 max77779_int_mask[MAX77779_CHG_INT_COUNT] = {
 static irqreturn_t max77779_chgr_irq(int irq, void *client)
 {
 	struct max77779_chgr_data *data = client;
-	u8 chg_int[MAX77779_CHG_INT_COUNT];
+	u8 chg_int[MAX77779_CHG_INT_COUNT] = { 0 };
 	u8 chg_int_clr[MAX77779_CHG_INT_COUNT];
 	bool broadcast;
 	int ret;
@@ -2640,14 +2640,15 @@ static irqreturn_t max77779_chgr_irq(int irq, void *client)
 		return IRQ_HANDLED;
 	}
 
-	ret = max77779_readn(data->regmap, MAX77779_CHG_INT, chg_int,
-			     2);
+	ret = max77779_readn(data->regmap, MAX77779_CHG_INT, chg_int, 2);
 	if (ret < 0)
 		return IRQ_NONE;
-
+	/* TODO(b/288323860) fix VDROOP reading */
+#if 0
 	ret = max77779_reg_read(data->regmap, MAX77779_PMIC_VDROOP_INT, &chg_int[2]);
 	if (ret < 0)
 		return IRQ_NONE;
+#endif
 
 	if ((chg_int[0] & ~max77779_int_mask[0]) == 0 &&
 	    (chg_int[1] & ~max77779_int_mask[1]) == 0 &&
@@ -2664,12 +2665,14 @@ static irqreturn_t max77779_chgr_irq(int irq, void *client)
                               chg_int_clr, 2);
 	if (ret < 0)
 		return IRQ_NONE;
-
+	/* TODO(b/288323860) fix VDROOP reading */
+#if 0
 	ret = max77779_reg_write(data->regmap, MAX77779_PMIC_VDROOP_INT, chg_int_clr[2]);
 	if (ret < 0)
 		return IRQ_NONE;
+#endif
 
-	pr_debug("INT : %02x %02x %02x\n", chg_int[0], chg_int[1], chg_int[2]);
+	pr_debug("max77779_chgr_irq INT : %02x %02x %02x\n", chg_int[0], chg_int[1], chg_int[2]);
 
 	/* always broadcast battery events */
 	broadcast = chg_int[0] & MAX77779_CHG_INT_BAT_I_MASK;
