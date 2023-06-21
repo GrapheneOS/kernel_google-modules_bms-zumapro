@@ -2293,8 +2293,14 @@ int p9221_set_auth_dc_icl(struct p9221_charger_data *charger, bool enable)
 
 	icl_ua = enable ? P9221_AUTH_DC_ICL_UA_500 : 0;
 
-	if (!charger->dc_icl_votable)
-		goto exit;
+	if (!charger->dc_icl_votable) {
+		charger->dc_icl_votable = gvotable_election_get_handle("DC_ICL");
+		if (!charger->dc_icl_votable) {
+			dev_err(&charger->client->dev,
+				"Could not get votable: DC_ICL\n");
+			goto exit;
+		}
+	}
 
 	if (enable && !charger->auth_delay) {
 		dev_info(&charger->client->dev, "Enable Auth ICL (%d)\n", ret);
