@@ -3259,8 +3259,10 @@ static int max77779_fg_probe(struct i2c_client *client,
 						chip);
 		dev_info(chip->dev, "FG irq handler registered at %d (%d)\n",
 						chip->primary->irq, ret);
+		/* TODO re-enable irq in b/283487421
 		if (ret == 0)
 			enable_irq_wake(chip->primary->irq);
+		*/
 	} else {
 		dev_err(dev, "cannot allocate irq\n");
 		goto i2c_unregister;
@@ -3408,9 +3410,11 @@ static int max77779_pm_resume(struct device *dev)
 	pm_runtime_get_sync(chip->dev);
 	chip->resume_complete = true;
 	if (chip->irq_disabled) {
-		enable_irq(chip->primary->irq);
+		/* TODO re-enable irq in b/283487421
+		enable_irq(chip->primary->irq); */
 		chip->irq_disabled = false;
 	}
+
 	pm_runtime_put_sync(chip->dev);
 
 	return 0;
