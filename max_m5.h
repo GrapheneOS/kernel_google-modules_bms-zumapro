@@ -104,7 +104,7 @@ struct model_state_save {
 
 struct max_m5_data {
 	struct device *dev;
-	struct max17x0x_regmap *regmap;
+	struct maxfg_regmap *regmap;
 	int cap_lsb;	/* b/177099997 */
 
 	/* initial parameters are in device tree they are also learned */
@@ -167,11 +167,11 @@ static inline int max_m5_fg_model_check_version(const struct max_m5_data *m5_dat
 
 /** ------------------------------------------------------------------------ */
 
-int max_m5_regmap_init(struct max17x0x_regmap *regmap,
+int max_m5_regmap_init(struct maxfg_regmap *regmap,
 		       struct i2c_client *primary);
 
 void *max_m5_init_data(struct device *dev, struct device_node *batt_node,
-		       struct max17x0x_regmap *regmap);
+		       struct maxfg_regmap *regmap);
 void max_m5_free_data(void *data);
 
 int max_m5_load_state_data(struct max_m5_data *m5_data);

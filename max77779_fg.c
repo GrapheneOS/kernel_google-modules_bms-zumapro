@@ -58,7 +58,7 @@ enum max77779_fg_command_bits {
 
 /* Capacity Estimation */
 struct gbatt_capacity_estimation {
-	const struct max17x0x_reg *bcea;
+	const struct maxfg_reg *bcea;
 	struct mutex batt_ce_lock;
 	struct delayed_work settle_timer;
 	int cap_tsettle;
@@ -119,8 +119,8 @@ struct max77779_fg_chip {
 	struct i2c_client *secondary;
 
 	int gauge_type;	/* -1 not present, 0=max1720x, 1=max1730x */
-	struct max17x0x_regmap regmap;
-	struct max17x0x_regmap regmap_debug;
+	struct maxfg_regmap regmap;
+	struct maxfg_regmap regmap_debug;
 	struct power_supply *psy;
 	struct delayed_work init_work;
 	struct device_node *batt_node;
@@ -333,7 +333,7 @@ static ssize_t offmode_charger_store(struct device *dev,
 
 static DEVICE_ATTR_RW(offmode_charger);
 
-int max77779_fg_usr_lock(const struct max17x0x_regmap *map, bool enabled)
+int max77779_fg_usr_lock(const struct maxfg_regmap *map, bool enabled)
 {
 	int ret, i;
 	const u16 code = enabled ? 0x111 : 0;
@@ -348,7 +348,7 @@ int max77779_fg_usr_lock(const struct max17x0x_regmap *map, bool enabled)
 }
 
 /* TODO: b/283487421 - Add NDGB reg write function */
-int max77779_fg_register_write(const struct max17x0x_regmap *map,
+int max77779_fg_register_write(const struct maxfg_regmap *map,
 			       unsigned int reg, u16 value, bool verify)
 {
 	int ret;
@@ -815,8 +815,8 @@ static int max77779_fg_get_cycle_count(struct max77779_fg_chip *chip)
 
 /* TODO: 284191528 - Add these batt_ce functions to common max file */
 /* Capacity Estimation functions*/
-static int batt_ce_regmap_read(struct max17x0x_regmap *map,
-			       const struct max17x0x_reg *bcea,
+static int batt_ce_regmap_read(struct maxfg_regmap *map,
+			       const struct maxfg_reg *bcea,
 			       u32 reg, u16 *data)
 {
 	int err;
@@ -845,8 +845,8 @@ static int batt_ce_regmap_read(struct max17x0x_regmap *map,
 	return err;
 }
 
-static int batt_ce_regmap_write(struct max17x0x_regmap *map,
-				const struct max17x0x_reg *bcea,
+static int batt_ce_regmap_write(struct maxfg_regmap *map,
+				const struct maxfg_reg *bcea,
 				u32 reg, u16 data)
 {
 	int err = -EINVAL;
@@ -897,11 +897,11 @@ static void batt_ce_dump_data(const struct gbatt_capacity_estimation *cap_esti,
 			    cap_esti->cable_in);
 }
 
-static int batt_ce_load_data(struct max17x0x_regmap *map,
+static int batt_ce_load_data(struct maxfg_regmap *map,
 			     struct gbatt_capacity_estimation *cap_esti)
 {
 	u16 data;
-	const struct max17x0x_reg *bcea = cap_esti->bcea;
+	const struct maxfg_reg *bcea = cap_esti->bcea;
 
 	cap_esti->estimate_state = ESTIMATE_NONE;
 	if (batt_ce_regmap_read(map, bcea, CE_DELTA_CC_SUM_REG, &data) == 0)
@@ -922,7 +922,7 @@ static int batt_ce_load_data(struct max17x0x_regmap *map,
 }
 
 /* call holding &cap_esti->batt_ce_lock */
-static void batt_ce_store_data(struct max17x0x_regmap *map,
+static void batt_ce_store_data(struct maxfg_regmap *map,
 			       struct gbatt_capacity_estimation *cap_esti)
 {
 	if (cap_esti->cap_filter_count <= CE_FILTER_COUNT_MAX) {
@@ -1092,7 +1092,7 @@ static int max77779_fg_health_write_ai(u16 act_impedance, u16 act_timerh)
 /* call holding chip->model_lock */
 static int max77779_fg_check_impedance(struct max77779_fg_chip *chip, u16 *th)
 {
-	struct max17x0x_regmap *map = &chip->regmap;
+	struct maxfg_regmap *map = &chip->regmap;
 	int soc, temp, cycle_count, ret;
 	u16 data, timerh;
 
@@ -1247,7 +1247,7 @@ static int max77779_fg_get_property(struct power_supply *psy,
 {
 	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)
 					power_supply_get_drvdata(psy);
-	struct max17x0x_regmap *map = &chip->regmap;
+	struct maxfg_regmap *map = &chip->regmap;
 	int rc, err = 0;
 	u16 data = 0;
 	int idata;
@@ -2034,7 +2034,7 @@ static int debug_fake_battery_set(void *data, u64 val)
 DEFINE_SIMPLE_ATTRIBUTE(debug_fake_battery_fops, NULL,
 			debug_fake_battery_set, "%llu\n");
 
-static void max77779_fg_reglog_dump(struct max17x0x_reglog *regs,
+static void max77779_fg_reglog_dump(struct maxfg_reglog *regs,
 				    size_t size, char *buff)
 {
 	int i, len = 0;
@@ -2056,7 +2056,7 @@ static ssize_t debug_get_reglog_writes(struct file *filp, char __user *buf,
 {
 	char *buff;
 	ssize_t rc = 0;
-	struct max17x0x_reglog *reglog = (struct max17x0x_reglog *)filp->private_data;
+	struct maxfg_reglog *reglog = (struct maxfg_reglog *)filp->private_data;
 
 	buff = kmalloc(count, GFP_KERNEL);
 	if (!buff)
@@ -2189,7 +2189,7 @@ static ssize_t max77779_fg_show_reg_all(struct file *filp, char __user *buf,
 					size_t count, loff_t *ppos)
 {
 	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)filp->private_data;
-	const struct max17x0x_regmap *map = &chip->regmap;
+	const struct maxfg_regmap *map = &chip->regmap;
 	u32 reg_address;
 	unsigned int data;
 	char *tmp;
@@ -2226,7 +2226,7 @@ static ssize_t max77779_fg_show_dbg_reg_all(struct file *filp, char __user *buf,
 					size_t count, loff_t *ppos)
 {
 	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)filp->private_data;
-	const struct max17x0x_regmap *map = &chip->regmap_debug;
+	const struct maxfg_regmap *map = &chip->regmap_debug;
 	u32 reg_address;
 	unsigned int data;
 	char *tmp;
@@ -3111,7 +3111,7 @@ const struct regmap_config max77779_fg_regmap_cfg = {
 	.volatile_reg = max77779_fg_is_reg,
 };
 
-const struct max17x0x_reg max77779_fg[] = {
+const struct maxfg_reg max77779_fg[] = {
 	[MAX17X0X_TAG_avgc] = { ATOM_INIT_REG16(MAX77779_FG_AvgCurrent)},
 	[MAX17X0X_TAG_cnfg] = { ATOM_INIT_REG16(MAX77779_FG_Config)},
 	[MAX17X0X_TAG_mmdv] = { ATOM_INIT_REG16(MAX77779_FG_MaxMinVolt)},
@@ -3122,7 +3122,7 @@ const struct max17x0x_reg max77779_fg[] = {
 	[MAX17X0X_TAG_vfsoc] = { ATOM_INIT_REG16(MAX77779_FG_VFSOC)},
 };
 
-int max77779_max17x0x_regmap_init(struct max17x0x_regmap *regmap, struct i2c_client *clnt,
+int max77779_max17x0x_regmap_init(struct maxfg_regmap *regmap, struct i2c_client *clnt,
 				  const struct regmap_config *regmap_config, bool tag)
 {
 	struct regmap *map;

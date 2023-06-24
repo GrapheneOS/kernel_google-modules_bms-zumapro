@@ -16,7 +16,7 @@
 #ifndef MAX77779_FG_MODEL_H_
 #define MAX77779_FG_MODEL_H_
 
-#include "max1720x_battery.h"
+#include "maxfg_common.h"
 #include "max77779.h"
 
 /* change to 1 or 0 to load FG model with default parameters on startup */
@@ -82,7 +82,7 @@ struct model_state_save {
 
 struct max77779_model_data {
 	struct device *dev;
-	struct max17x0x_regmap *regmap;
+	struct maxfg_regmap *regmap;
 	struct regmap *debug_regmap;
 
 	/* initial parameters are in device tree they are also learned */
@@ -144,13 +144,13 @@ static inline int max77779_fg_model_check_version(const struct max77779_model_da
 
 /** ------------------------------------------------------------------------ */
 
-int max77779_max17x0x_regmap_init(struct max17x0x_regmap *regmap, struct i2c_client *clnt,
-															const struct regmap_config *regmap_config, bool tag);
-int max77779_fg_usr_lock(const struct max17x0x_regmap *map, bool enabled);
-int max77779_fg_register_write(const struct max17x0x_regmap *regmap, unsigned int reg,
-															u16 value, bool verify);
+int max77779_max17x0x_regmap_init(struct maxfg_regmap *regmap, struct i2c_client *clnt,
+				  const struct regmap_config *regmap_config, bool tag);
+int max77779_fg_usr_lock(const struct maxfg_regmap *map, bool enabled);
+int max77779_fg_register_write(const struct maxfg_regmap *regmap, unsigned int reg,
+			       u16 value, bool verify);
 void *max77779_init_data(struct device *dev, struct device_node *batt_node,
-			 struct max17x0x_regmap *regmap);
+			 struct maxfg_regmap *regmap);
 void max77779_free_data(void *data);
 
 int max77779_load_state_data(struct max77779_model_data *model_data);

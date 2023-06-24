@@ -44,21 +44,6 @@
 #define MAX_M5_CRC8_POLYNOMIAL		0x07	/* (x^8) + x^2 + x + 1 */
 DECLARE_CRC8_TABLE(m5_crc8_table);
 
-static void dump_model(struct device *dev, u16 *data, int count)
-{
-	int i, j, len;
-	char buff[16 * 5 + 1] = {};
-
-	for (i = 0; i < count; i += 16) {
-
-		for (len = 0, j = 0; j < 16; j++)
-			len += scnprintf(&buff[len], sizeof(buff) - len,
-					 "%04x ", data[i + j]);
-
-		dev_info(dev, "%x: %s\n", i + MAX_M5_FG_MODEL_START, buff);
-	}
-}
-
 /* input current is in the fuel gauge */
 int max_m5_read_actual_input_current_ua(struct i2c_client *client, int *iic_raw)
 {
@@ -212,9 +197,9 @@ static int max_m5_update_custom_model(struct max_m5_data *m5_data)
 			     m5_data->custom_model_size * 2);
 		success = ret == 0;
 		if (!success) {
-			dump_model(m5_data->dev, m5_data->custom_model,
+			dump_model(m5_data->dev, MAX_M5_FG_MODEL_START, m5_data->custom_model,
 				   m5_data->custom_model_size);
-			dump_model(m5_data->dev, data,
+			dump_model(m5_data->dev, MAX_M5_FG_MODEL_START, data,
 				   m5_data->custom_model_size);
 		}
 
@@ -259,7 +244,7 @@ static int max_m5_update_custom_model(struct max_m5_data *m5_data)
 static int max_m5_update_custom_parameters(struct max_m5_data *m5_data)
 {
 	struct max_m5_custom_parameters *cp = &m5_data->parameters;
-	struct max17x0x_regmap *regmap = m5_data->regmap;
+	struct maxfg_regmap *regmap = m5_data->regmap;
 	int tmp, ret;
 	u16 vfsoc;
 
@@ -458,7 +443,7 @@ static int max_m5_period2caplsb(u16 taskperiod)
 /* 0 is ok */
 int max_m5_load_gauge_model(struct max_m5_data *m5_data)
 {
-	struct max17x0x_regmap *regmap = m5_data->regmap;
+	struct maxfg_regmap *regmap = m5_data->regmap;
 	int ret, retries;
 	u16 data;
 
@@ -797,7 +782,7 @@ int max_m5_model_check_state(struct max_m5_data *m5_data)
 int max_m5_model_read_state(struct max_m5_data *m5_data)
 {
 	int rc;
-	struct max17x0x_regmap *regmap = m5_data->regmap;
+	struct maxfg_regmap *regmap = m5_data->regmap;
 
 	rc= REGMAP_READ(regmap, MAX_M5_RCOMP0, &m5_data->parameters.rcomp0);
 	if (rc == 0)
@@ -1024,7 +1009,7 @@ int max_m5_model_state_sscan(struct max_m5_data *m5_data, const char *buf,
 }
 
 /* b/177099997 TaskPeriod = 351 ms changes the lsb for capacity conversions */
-static int max_m5_read_taskperiod(int *cap_lsb, struct max17x0x_regmap *regmap)
+static int max_m5_read_taskperiod(int *cap_lsb, struct maxfg_regmap *regmap)
 {
 	u16 data;
 	int ret;
@@ -1042,7 +1027,7 @@ static int max_m5_read_taskperiod(int *cap_lsb, struct max17x0x_regmap *regmap)
 
 int max_m5_model_get_cap_lsb(const struct max_m5_data *m5_data)
 {
-	struct max17x0x_regmap *regmap = m5_data->regmap;
+	struct maxfg_regmap *regmap = m5_data->regmap;
 	int cap_lsb;
 
 	return max_m5_read_taskperiod(&cap_lsb, regmap) < 0 ? -1 : cap_lsb;
@@ -1140,7 +1125,7 @@ void max_m5_free_data(void *data)
 }
 
 void *max_m5_init_data(struct device *dev, struct device_node *node,
-		       struct max17x0x_regmap *regmap)
+		       struct maxfg_regmap *regmap)
 {
 	const char *propname = "maxim,fg-model";
 	struct max_m5_data *m5_data;
@@ -1232,7 +1217,7 @@ const struct regmap_config max_m5_regmap_cfg = {
 	.readable_reg = max_m5_is_reg,
 	.volatile_reg = max_m5_is_reg,
 };
-const struct max17x0x_reg max_m5[] = {
+const struct maxfg_reg max_m5[] = {
 	[MAX17X0X_TAG_avgc] = { ATOM_INIT_REG16(MAX_M5_AVGCURRENT)},
 	[MAX17X0X_TAG_cnfg] = { ATOM_INIT_REG16(MAX_M5_CONFIG)},
 	[MAX17X0X_TAG_mmdv] = { ATOM_INIT_REG16(MAX_M5_MAXMINVOLT)},
@@ -1243,7 +1228,7 @@ const struct max17x0x_reg max_m5[] = {
 	[MAX17X0X_TAG_vfsoc] = { ATOM_INIT_REG16(MAX_M5_VFSOC)},
 };
 
-int max_m5_regmap_init(struct max17x0x_regmap *regmap, struct i2c_client *clnt)
+int max_m5_regmap_init(struct maxfg_regmap *regmap, struct i2c_client *clnt)
 {
 	struct regmap *map;
 

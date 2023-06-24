@@ -139,7 +139,7 @@ const struct regmap_config max1730x_regmap_nvram_cfg = {
 /** ------------------------------------------------------------------------ */
 
 /* see b/119416045 for layout */
-static const struct max17x0x_reg max1730x[] = {
+static const struct maxfg_reg max1730x[] = {
 	[MAX17X0X_TAG_avgc] = { ATOM_INIT_REG16(MAX1730X_AVGCURRENT)},
 	[MAX17X0X_TAG_cnfg] = { ATOM_INIT_REG16(MAX1730X_CONFIG)},
 	[MAX17X0X_TAG_mmdv] = { ATOM_INIT_REG16(MAX1730X_MAXMINVOLT)},

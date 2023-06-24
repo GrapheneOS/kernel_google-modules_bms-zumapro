@@ -124,7 +124,7 @@ void max77779_free_data(void *data)
 
 /* TODO: b/283487421 - Implement model loading */
 void *max77779_init_data(struct device *dev, struct device_node *node,
-		       struct max17x0x_regmap *regmap)
+		       struct maxfg_regmap *regmap)
 {
 	const char *propname = "max77779,fg-model";
 	struct max77779_model_data *model_data;
