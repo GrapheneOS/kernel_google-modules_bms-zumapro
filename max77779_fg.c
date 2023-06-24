@@ -349,7 +349,7 @@ int max77779_fg_usr_lock(const struct max17x0x_regmap *map, bool enabled)
 
 /* TODO: b/283487421 - Add NDGB reg write function */
 int max77779_fg_register_write(const struct max17x0x_regmap *map,
-																			unsigned int reg, u16 value, bool verify)
+			       unsigned int reg, u16 value, bool verify)
 {
 	int ret;
 
@@ -451,8 +451,8 @@ static int max77779_fg_read_resistance(struct max77779_fg_chip *chip)
 /* ----------------------------------------------------------------------- */
 
 static ssize_t max77779_fg_model_state_show(struct device *dev,
-				   struct device_attribute *attr,
-				   char *buf)
+					    struct device_attribute *attr,
+					    char *buf)
 {
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct max77779_fg_chip *chip = power_supply_get_drvdata(psy);
@@ -472,8 +472,8 @@ static ssize_t max77779_fg_model_state_show(struct device *dev,
 }
 
 static ssize_t gmsr_show(struct device *dev,
-				 struct device_attribute *attr,
-				 char *buff)
+			 struct device_attribute *attr,
+			 char *buff)
 {
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct max77779_fg_chip *chip = power_supply_get_drvdata(psy);
@@ -490,8 +490,8 @@ static DEVICE_ATTR_RO(gmsr);
 
 /* Was POWER_SUPPLY_PROP_RESISTANCE_ID */
 static ssize_t resistance_id_show(struct device *dev,
-				 struct device_attribute *attr,
-				 char *buff)
+				  struct device_attribute *attr,
+				  char *buff)
 {
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct max77779_fg_chip *chip = power_supply_get_drvdata(psy);
@@ -503,8 +503,8 @@ static DEVICE_ATTR_RO(resistance_id);
 
 /* Was POWER_SUPPLY_PROP_RESISTANCE */
 static ssize_t resistance_show(struct device *dev,
-				 struct device_attribute *attr,
-				 char *buff)
+			       struct device_attribute *attr,
+			       char *buff)
 {
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct max77779_fg_chip *chip = power_supply_get_drvdata(psy);
@@ -554,7 +554,7 @@ static int max77779_fg_get_battery_vfsoc(struct max77779_fg_chip *chip)
 }
 
 static void max77779_fg_prime_battery_qh_capacity(struct max77779_fg_chip *chip,
-					       int status)
+						  int status)
 {
 	u16  mcap = 0, data = 0;
 
@@ -628,10 +628,10 @@ static int max77779_fg_get_battery_status(struct max77779_fg_chip *chip)
 	}
 
 	if (status != chip->prev_charge_status)
-		dev_dbg(chip->dev, "s=%d->%d c=%d avg_c=%d ichgt=%d vfsoc=%d soc=%d fullsocthr=%d\n",
-				    chip->prev_charge_status,
-				    status, current_now, current_avg,
-				    ichgterm, vfsoc, soc, fullsocthr);
+		dev_dbg(chip->dev,
+			"s=%d->%d c=%d avg_c=%d ichgt=%d vfsoc=%d soc=%d fullsocthr=%d\n",
+			chip->prev_charge_status, status, current_now, current_avg,
+			ichgterm, vfsoc, soc, fullsocthr);
 
 	chip->prev_charge_status = status;
 
@@ -720,14 +720,14 @@ static void max77779_fg_restore_battery_cycle(struct max77779_fg_chip *chip)
 		 reg_cycle, eeprom_cycle, eeprom_cycle > reg_cycle ? 'Y' : 'N');
 	if (eeprom_cycle > reg_cycle) {
 		ret = MAX77779_FG_REGMAP_WRITE_VERIFY(&chip->regmap, MAX77779_FG_Cycles,
-																			eeprom_cycle);
+						      eeprom_cycle);
 		if (ret < 0)
 			dev_warn(chip->dev, "fail to update cycles (%d)", ret);
 	}
 }
 
 static u16 max77779_fg_save_battery_cycle(const struct max77779_fg_chip *chip,
-				       u16 reg_cycle)
+					  u16 reg_cycle)
 {
 	int ret = 0;
 	u16 eeprom_cycle = chip->eeprom_cycle;
@@ -941,7 +941,7 @@ static void batt_ce_store_data(struct max17x0x_regmap *map,
 
 /* call holding &cap_esti->batt_ce_lock */
 static void batt_ce_stop_estimation(struct gbatt_capacity_estimation *cap_esti,
-				   int reason)
+				    int reason)
 {
 	cap_esti->estimate_state = reason;
 	cap_esti->start_vfsoc = 0;
@@ -1015,11 +1015,9 @@ ioerr:
 
 exit:
 	logbuffer_log(chip->ce_log,
-		"valid=%d settle[cc=%d, vfsoc=%d], delta[cc=%d,vfsoc=%d] ce[%d]=%d",
-		valid_estimate,
-		settle_cc, settle_vfsoc, delta_cc, delta_vfsoc,
-		cap_esti->cap_filter_count,
-		batt_ce_full_estimate(cap_esti));
+		      "valid=%d settle[cc=%d, vfsoc=%d], delta[cc=%d,vfsoc=%d] ce[%d]=%d",
+		      valid_estimate, settle_cc, settle_vfsoc, delta_cc, delta_vfsoc,
+		      cap_esti->cap_filter_count, batt_ce_full_estimate(cap_esti));
 
 	mutex_unlock(&cap_esti->batt_ce_lock);
 
@@ -1244,8 +1242,8 @@ static int max77779_fg_get_fade_rate(struct max77779_fg_chip *chip)
 
 
 static int max77779_fg_get_property(struct power_supply *psy,
-				 enum power_supply_property psp,
-				 union power_supply_propval *val)
+				    enum power_supply_property psp,
+				    union power_supply_propval *val)
 {
 	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)
 					power_supply_get_drvdata(psy);
@@ -1500,8 +1498,8 @@ static int max77779_fg_health_update_ai(struct max77779_fg_chip *chip, int imped
 }
 
 static int max77779_fg_set_property(struct power_supply *psy,
-				 enum power_supply_property psp,
-				 const union power_supply_propval *val)
+				    enum power_supply_property psp,
+				    const union power_supply_propval *val)
 {
 	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)
 					power_supply_get_drvdata(psy);
@@ -1568,7 +1566,7 @@ static int max77779_fg_set_property(struct power_supply *psy,
 }
 
 static int max77779_fg_property_is_writeable(struct power_supply *psy,
-					  enum power_supply_property psp)
+					     enum power_supply_property psp)
 {
 	switch (psp) {
 	case GBMS_PROP_BATT_CE_CTRL:
@@ -1677,9 +1675,9 @@ static int max77779_fg_monitor_log_data(struct max77779_fg_chip *chip, bool forc
 			     "%s %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
 			     " %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
 			     " %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
-			     " %02X:%04X %02X:%04X CC:%d",
-			     chip->max77779_fg_psy_desc.name, MAX77779_FG_RepSOC, data, MAX77779_FG_VFSOC,
-			     vfsoc, MAX77779_FG_AvCap, avcap, MAX77779_FG_RepCap, repcap,
+			     " %02X:%04X %02X:%04X CC:%d", chip->max77779_fg_psy_desc.name,
+			     MAX77779_FG_RepSOC, data, MAX77779_FG_VFSOC, vfsoc,
+			     MAX77779_FG_AvCap, avcap, MAX77779_FG_RepCap, repcap,
 			     MAX77779_FG_FullCap, fullcap, MAX77779_FG_FullCapRep, fullcaprep,
 			     MAX77779_FG_FullCapNom, fullcapnom, MAX77779_FG_QH0, qh0,
 			     MAX77779_FG_QH, qh, MAX77779_FG_dQAcc, dqacc, MAX77779_FG_dPAcc, dpacc,
@@ -2161,8 +2159,8 @@ static ssize_t max77779_fg_show_dbg_debug_data(struct file *filp, char __user *b
 }
 
 static ssize_t max77779_fg_set_dbg_debug_data(struct file *filp,
-					  const char __user *user_buf,
-					  size_t count, loff_t *ppos)
+					      const char __user *user_buf,
+					      size_t count, loff_t *ppos)
 {
 	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)filp->private_data;
 	char temp[8] = { };
@@ -2318,8 +2316,8 @@ DEFINE_SIMPLE_ATTRIBUTE(debug_reset_gmsr_fops, NULL, debug_gmsr_reset, "%llu\n")
  */
 
 static ssize_t act_impedance_store(struct device *dev,
-			       struct device_attribute *attr,
-			       const char *buf, size_t count) {
+				   struct device_attribute *attr,
+				   const char *buf, size_t count) {
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct max77779_fg_chip *chip = power_supply_get_drvdata(psy);
 	int value, ret = 0;
@@ -2341,7 +2339,7 @@ static ssize_t act_impedance_store(struct device *dev,
 }
 
 static ssize_t act_impedance_show(struct device *dev,
-			      struct device_attribute *attr, char *buf)
+				  struct device_attribute *attr, char *buf)
 {
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct max77779_fg_chip *chip = power_supply_get_drvdata(psy);
@@ -2803,7 +2801,7 @@ static int max77779_fg_init_chip(struct max77779_fg_chip *chip)
 #define REG_HALF_HIGH(reg)     ((reg >> 8) & 0x00FF)
 #define REG_HALF_LOW(reg)      (reg & 0x00FF)
 static int max77779_fg_collect_history_data(void *buff, size_t size,
-					 struct max77779_fg_chip *chip)
+					    struct max77779_fg_chip *chip)
 {
 	struct max77779_fg_eeprom_history hist = { 0 };
 	u16 data, designcap;
@@ -2910,7 +2908,7 @@ static int max77779_fg_prop_iter(int index, gbms_tag_t *tag, void *ptr)
 }
 
 static int max77779_fg_prop_read(gbms_tag_t tag, void *buff, size_t size,
-			      void *ptr)
+				 void *ptr)
 {
 	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)ptr;
 	int ret = -ENOENT;
@@ -2949,7 +2947,7 @@ static void max77779_fg_read_serial_number(struct max77779_fg_chip *chip)
 static void max77779_fg_init_work(struct work_struct *work)
 {
 	struct max77779_fg_chip *chip = container_of(work, struct max77779_fg_chip,
-						  init_work.work);
+						     init_work.work);
 	int ret = 0;
 
 	if (chip->gauge_type != -1) {
@@ -3078,7 +3076,7 @@ static bool max77779_fg_is_reg(struct device *dev, unsigned int reg)
 	case 0x1F ... 0x27:
 	case 0x29: /* ICHGTERM */
 	case 0x2E ... 0x35:
-	case 0x37:		/* VFSOC */
+	case 0x37: /* VFSOC */
 		return true;
 	case 0x39 ... 0x3A:
 	case 0x3D ... 0x3F:
@@ -3104,7 +3102,7 @@ static bool max77779_fg_is_reg(struct device *dev, unsigned int reg)
 	return false;
 }
 
-const struct regmap_config max77779_fg_model_regmap_cfg = {
+const struct regmap_config max77779_fg_regmap_cfg = {
 	.reg_bits = 8,
 	.val_bits = 16,
 	.val_format_endian = REGMAP_ENDIAN_NATIVE,
@@ -3113,7 +3111,7 @@ const struct regmap_config max77779_fg_model_regmap_cfg = {
 	.volatile_reg = max77779_fg_is_reg,
 };
 
-const struct max17x0x_reg max77779_fg_model[] = {
+const struct max17x0x_reg max77779_fg[] = {
 	[MAX17X0X_TAG_avgc] = { ATOM_INIT_REG16(MAX77779_FG_AvgCurrent)},
 	[MAX17X0X_TAG_cnfg] = { ATOM_INIT_REG16(MAX77779_FG_Config)},
 	[MAX17X0X_TAG_mmdv] = { ATOM_INIT_REG16(MAX77779_FG_MaxMinVolt)},
@@ -3124,10 +3122,8 @@ const struct max17x0x_reg max77779_fg_model[] = {
 	[MAX17X0X_TAG_vfsoc] = { ATOM_INIT_REG16(MAX77779_FG_VFSOC)},
 };
 
-int max77779_max17x0x_regmap_init(struct max17x0x_regmap *regmap,
-															struct i2c_client *clnt,
-															const struct regmap_config *regmap_config,
-															bool tag)
+int max77779_max17x0x_regmap_init(struct max17x0x_regmap *regmap, struct i2c_client *clnt,
+				  const struct regmap_config *regmap_config, bool tag)
 {
 	struct regmap *map;
 
@@ -3136,8 +3132,8 @@ int max77779_max17x0x_regmap_init(struct max17x0x_regmap *regmap,
 		return IS_ERR_VALUE(map);
 
 	if (tag) {
-		regmap->regtags.max = ARRAY_SIZE(max77779_fg_model);
-		regmap->regtags.map = max77779_fg_model;
+		regmap->regtags.max = ARRAY_SIZE(max77779_fg);
+		regmap->regtags.map = max77779_fg;
 	} else {
 		regmap->regtags.max = 0;
 		regmap->regtags.map = NULL;
@@ -3151,8 +3147,8 @@ int max77779_max17x0x_regmap_init(struct max17x0x_regmap *regmap,
 static int max77779_fg_regmap_init(struct max77779_fg_chip *chip)
 {
 	int ret = max77779_max17x0x_regmap_init(&chip->regmap, chip->primary,
-																				&max77779_fg_model_regmap_cfg,
-																				true);
+						&max77779_fg_regmap_cfg,
+						true);
 	if (ret < 0) {
 		dev_err(chip->dev, "Failed to re-initialize regmap (%ld)\n",
 			IS_ERR_VALUE(chip->regmap.regmap));
@@ -3160,8 +3156,7 @@ static int max77779_fg_regmap_init(struct max77779_fg_chip *chip)
 	}
 
 	ret = max77779_max17x0x_regmap_init(&chip->regmap_debug, chip->secondary,
-																			&max77779_fg_debug_regmap_cfg,
-																			false);
+					    &max77779_fg_debug_regmap_cfg, false);
 	if (ret < 0) {
 		dev_err(chip->dev, "Failed to re-initialize debug regmap (%ld)\n",
 			IS_ERR_VALUE(chip->regmap_debug.regmap));
@@ -3192,7 +3187,7 @@ static const struct attribute_group max77779_fg_attr_grp = {
 };
 
 static int max77779_fg_probe(struct i2c_client *client,
-			  const struct i2c_device_id *id)
+			     const struct i2c_device_id *id)
 {
 	struct max77779_fg_chip *chip;
 	struct device *dev = &client->dev;
@@ -3215,9 +3210,11 @@ static int max77779_fg_probe(struct i2c_client *client,
 	chip->batt_id_defer_cnt = DEFAULT_BATTERY_ID_RETRIES;
 	i2c_set_clientdata(client, chip);
 
-	chip->secondary = i2c_new_ancillary_device(chip->primary, "ndbg", MAX77779_FG_NDGB_ADDRESS);
+	chip->secondary = i2c_new_ancillary_device(chip->primary, "ndbg",
+						   MAX77779_FG_NDGB_ADDRESS);
 	if (IS_ERR(chip->secondary)) {
-		dev_err(dev, "Error setting up ancillary i2c bus(%ld)\n", IS_ERR_VALUE(chip->secondary));
+		dev_err(dev, "Error setting up ancillary i2c bus(%ld)\n",
+			IS_ERR_VALUE(chip->secondary));
 		goto i2c_unregister_primary;
 	}
 	i2c_set_clientdata(chip->secondary, chip);
@@ -3258,7 +3255,7 @@ static int max77779_fg_probe(struct i2c_client *client,
 						MAX77779_FG_I2C_DRIVER_NAME,
 						chip);
 		dev_info(chip->dev, "FG irq handler registered at %d (%d)\n",
-						chip->primary->irq, ret);
+			 chip->primary->irq, ret);
 		/* TODO re-enable irq in b/283487421
 		if (ret == 0)
 			enable_irq_wake(chip->primary->irq);
@@ -3271,8 +3268,7 @@ static int max77779_fg_probe(struct i2c_client *client,
 	psy_cfg.drv_data = chip;
 	psy_cfg.of_node = chip->dev->of_node;
 
-	ret = of_property_read_string(dev->of_node,
-				      "max77779,dual-battery", &psy_name);
+	ret = of_property_read_string(dev->of_node, "max77779,dual-battery", &psy_name);
 	if (ret == 0)
 		chip->max77779_fg_psy_desc.name = devm_kstrdup(dev, psy_name, GFP_KERNEL);
 	else
