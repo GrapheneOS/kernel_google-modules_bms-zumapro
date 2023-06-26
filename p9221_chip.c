@@ -958,6 +958,41 @@ error_done:
 }
 
 /* send eop */
+/*   send multiple times to make sure it works */
+#define EOP_RESTART_COUNT	2
+#define P9222_EOP_REPEAT_COUNT	4
+static int p9222_send_repeat_eop(struct p9221_charger_data *chgr, u8 reason)
+{
+	int count, ret = 0;
+	u8 val, ept_reason;
+
+	for (count = 0; count < P9222_EOP_REPEAT_COUNT; count++) {
+		ept_reason = (count < EOP_RESTART_COUNT) ? P9221_EOP_RESTART_POWER : reason;
+
+		ret = chgr->reg_write_8(chgr, P9222RE_EPT_REG, ept_reason);
+		if (ret == 0)
+			ret = chgr->chip_set_cmd(chgr, P9221R5_COM_SENDEPT);
+		if (ret < 0) {
+			dev_err(&chgr->client->dev, "fail send eop_%d (%d)\n", count, ret);
+			return ret;
+		}
+		mdelay(500);
+
+		/* Check Tx is offline due to EPT command works */
+		ret = chgr->reg_read_8(chgr, P9221_STATUS_REG, &val);
+		if (ret < 0) {
+			dev_info(&chgr->client->dev,
+				 "WLC chip offline, count=%d, ret=%d\n", count, ret);
+			break;
+		}
+	}
+
+	dev_info(&chgr->client->dev,
+		 "send 3xEOP command success(reason=%02x)\n", reason);
+
+	return 0;
+}
+
 static int p9221_send_eop(struct p9221_charger_data *chgr, u8 reason)
 {
 	int ret;
@@ -982,11 +1017,16 @@ static int p9222_send_eop(struct p9221_charger_data *chgr, u8 reason)
 
 	mutex_lock(&chgr->cmd_lock);
 
-	ret = chgr->reg_write_8(chgr, P9222RE_EPT_REG, reason);
-	if (ret == 0)
-		ret = chgr->chip_set_cmd(chgr, P9221R5_COM_SENDEPT);
+	if (chgr->pdata->disable_repeat_eop) {
+		ret = chgr->reg_write_8(chgr, P9222RE_EPT_REG, reason);
+		if (ret == 0)
+			ret = chgr->chip_set_cmd(chgr, P9221R5_COM_SENDEPT);
+	} else {
+		ret = p9222_send_repeat_eop(chgr, reason);
+	}
 
 	mutex_unlock(&chgr->cmd_lock);
+
 	return ret;
 }
 

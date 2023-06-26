@@ -558,6 +558,7 @@ static int gdbatt_get_property(struct power_supply *psy,
 	case GBMS_PROP_BATTERY_AGE:
 	case GBMS_PROP_CHARGE_FULL_ESTIMATE:
 	case GBMS_PROP_CAPACITY_FADE_RATE:
+	case GBMS_PROP_BATT_ID:
 		val->intval = fg_1.intval;
 		break;
 	default:

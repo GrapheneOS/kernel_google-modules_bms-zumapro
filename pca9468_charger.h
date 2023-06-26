@@ -43,6 +43,7 @@ struct pca9468_platform_data {
 	/* irdrop */
 	unsigned int	irdrop_limits[3];
 	int		irdrop_limit_cnt;
+	bool		pca_irdrop;
 
 	/* Spread Spectrum settings */
 	unsigned int	sc_clk_dither_rate;
@@ -104,6 +105,7 @@ struct p9468_chg_stats {
 	unsigned int cv_count;
 	unsigned int adj_count;
 	unsigned int stby_count;
+	unsigned int iin_loop_count;
 };
 
 #define p9468_chg_stats_valid(chg_data) ((chg_data)->valid)
@@ -179,7 +181,6 @@ static inline void p9468_chg_stats_inc_ovcf(struct p9468_chg_stats *chg_data,
  * @debug_adc_channel: ADC channel to read
  * @init_done: true when initialization is complete
  * @dc_start_time: start time (sec since boot) of the DC session
- * @irdrop_comp_ok: when true clear GBMS_CS_FLAG_NOCOMP in flags
  */
 struct pca9468_charger {
 	struct wakeup_source	*monitor_wake_lock;
@@ -320,7 +321,7 @@ enum {
 
 /* - Core driver  ---------------------------- */
 
-int pca9468_read_adc(struct pca9468_charger *pca9468, u8 adc_ch);
+int pca9468_read_adc(const struct pca9468_charger *pca9468, u8 adc_ch);
 int pca9468_input_current_limit(struct pca9468_charger *pca9468);
 
 /* - PPS Integration (move to a separate file) ---------------------------- */

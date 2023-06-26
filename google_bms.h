@@ -49,6 +49,7 @@ struct gbms_chg_profile {
 
 	/* behavior */
 	u32 fv_uv_margin_dpct;
+	u32 fv_dc_ratio;
 	u32 cv_range_accuracy;
 	u32 cv_debounce_cnt;
 	u32 cv_update_interval;
@@ -402,7 +403,7 @@ struct gbms_charging_event {
 #define GBMS_CS_FLAG_CV		BIT(3)
 #define GBMS_CS_FLAG_ILIM	BIT(4)
 #define GBMS_CS_FLAG_CCLVL	BIT(5)
-#define GBMS_CS_FLAG_NOCOMP     BIT(6)
+#define GBMS_CS_FLAG_DIRECT_CHG	BIT(6)
 
 union gbms_charger_state {
 	uint64_t v;
@@ -433,7 +434,7 @@ void gbms_dump_raw_profile(char *buff, size_t len, const struct gbms_chg_profile
 int gbms_msc_temp_idx(const struct gbms_chg_profile *profile, int temp);
 int gbms_msc_voltage_idx(const struct gbms_chg_profile *profile, int vbatt);
 int gbms_msc_round_fv_uv(const struct gbms_chg_profile *profile,
-			   int vtier, int fv_uv);
+			   int vtier, int fv_uv, int cc_ua);
 
 /* newgen charging: charger flags  */
 uint8_t gbms_gen_chg_flags(int chg_status, int chg_type);
@@ -469,6 +470,7 @@ const char *gbms_chg_ev_adapter_s(int adapter);
 #define VOTABLE_CSI_TYPE	"CSI_TYPE"
 
 #define VOTABLE_CHARGING_POLICY	"CHARGING_POLICY"
+#define VOTABLE_CHARGING_UISOC	"CHARGING_UISOC"
 
 #define VOTABLE_DC_CHG_AVAIL	"DC_AVAIL"
 #define REASON_DC_DRV		"DC_DRV"

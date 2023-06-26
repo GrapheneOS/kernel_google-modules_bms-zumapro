@@ -2118,8 +2118,12 @@ static int max1720x_get_age(struct max1720x_chip *chip)
 	u16 timerh;
 	int ret;
 
+	/* model not ready */
+	if (chip->por)
+		return -ENODATA;
+
 	ret = REGMAP_READ(&chip->regmap, MAX1720X_TIMERH, &timerh);
-	if (ret < 0 || timerh == 0)
+	if (ret < 0)
 		return -ENODATA;
 
 	return reg_to_time_hr(timerh, chip);
@@ -2394,6 +2398,9 @@ static int max1720x_get_property(struct power_supply *psy,
 		break;
 	case GBMS_PROP_CAPACITY_FADE_RATE:
 		val->intval = max1720x_get_fade_rate(chip);
+		break;
+	case GBMS_PROP_BATT_ID:
+		val->intval = chip->batt_id;
 		break;
 	default:
 		err = -EINVAL;
@@ -5714,8 +5721,6 @@ static void max1720x_init_work(struct work_struct *work)
 	chip->init_complete = true;
 	chip->bhi_acim = 0;
 
-	max17x0x_init_sysfs(chip);
-
 	/*
 	 * Handle any IRQ that might have been set before init
 	 * NOTE: will clear the POR bit and trigger model load if needed
@@ -6102,6 +6107,8 @@ static int max1720x_probe(struct i2c_client *client,
 	/* use VFSOC until it can confirm that FG Model is running */
 	reg = max17x0x_find_by_tag(&chip->regmap, MAX17X0X_TAG_vfsoc);
 	chip->reg_prop_capacity_raw = (reg) ? reg->reg : MAX1720X_REPSOC;
+
+	max17x0x_init_sysfs(chip);
 
 	INIT_DELAYED_WORK(&chip->cap_estimate.settle_timer,
 			  batt_ce_capacityfiltered_work);

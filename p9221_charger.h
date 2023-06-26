@@ -665,6 +665,7 @@ struct p9221_charger_platform_data {
 	bool				light_load;
 	bool				disable_align;
 	bool				ll_vout_not_set;
+	bool				disable_repeat_eop;
 };
 
 struct p9221_charger_ints_bit {
@@ -715,6 +716,7 @@ struct p9221_charger_data {
 	struct gvotable_election	*wlc_disable_votable;
 	struct gvotable_election	*csi_status_votable;
 	struct gvotable_election	*csi_type_votable;
+	struct gvotable_election	*point_full_ui_soc_votable;
 	struct notifier_block		nb;
 	struct mutex			io_lock;
 	struct mutex			cmd_lock;
