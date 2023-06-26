@@ -2686,6 +2686,7 @@ static int pca9468_charge_adjust_ccmode(struct pca9468_charger *pca9468)
 	switch(ccmode) {
 	case STS_MODE_IIN_LOOP:
 		pca9468->chg_data.iin_loop_count++;
+		fallthrough;
 	case STS_MODE_CHG_LOOP:	/* CHG_LOOP does't exist */
 		apply_ircomp = true;
 
@@ -2903,6 +2904,7 @@ static int pca9468_charge_ccmode(struct pca9468_charger *pca9468)
 
 	case STS_MODE_IIN_LOOP:
 		pca9468->chg_data.iin_loop_count++;
+		fallthrough;
 	case STS_MODE_CHG_LOOP:
 		iin = pca9468_read_adc(pca9468, ADCCH_IIN);
 		if (iin < 0)
@@ -3004,6 +3006,7 @@ static int pca9468_charge_start_cvmode(struct pca9468_charger *pca9468)
 	switch(cvmode) {
 	case STS_MODE_IIN_LOOP:
 		pca9468->chg_data.iin_loop_count++;
+		fallthrough;
 	case STS_MODE_CHG_LOOP:
 
 		if (pca9468->ta_type == TA_TYPE_WIRELESS) {
@@ -3200,6 +3203,7 @@ static int pca9468_charge_cvmode(struct pca9468_charger *pca9468)
 
 	case STS_MODE_IIN_LOOP:
 		pca9468->chg_data.iin_loop_count++;
+		fallthrough;
 	case STS_MODE_CHG_LOOP:
 		/* Check the TA type */
 		if (pca9468->ta_type == TA_TYPE_WIRELESS) {

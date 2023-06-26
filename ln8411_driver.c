@@ -2709,6 +2709,7 @@ static int ln8411_charge_adjust_ccmode(struct ln8411_charger *ln8411)
 
 	switch(ccmode) {
 	case STS_MODE_IIN_LOOP:
+		fallthrough;
 	case STS_MODE_CHG_LOOP:	/* CHG_LOOP does't exist */
 		if (ln8411->ta_type == TA_TYPE_WIRELESS) {
 			/* Decrease RX voltage (100mV) */
@@ -2915,6 +2916,7 @@ static int ln8411_charge_ccmode(struct ln8411_charger *ln8411)
 		break;
 
 	case STS_MODE_IIN_LOOP:
+		fallthrough;
 	case STS_MODE_CHG_LOOP:
 		iin = ln8411_read_adc(ln8411, ADCCH_IIN);
 		if (iin < 0)
@@ -3006,6 +3008,7 @@ static int ln8411_charge_start_cvmode(struct ln8411_charger *ln8411)
 
 	switch(cvmode) {
 	case STS_MODE_CHG_LOOP:
+		fallthrough;
 	case STS_MODE_IIN_LOOP:
 
 		if (ln8411->ta_type == TA_TYPE_WIRELESS) {
@@ -3201,6 +3204,7 @@ static int ln8411_charge_cvmode(struct ln8411_charger *ln8411)
 	} break;
 
 	case STS_MODE_CHG_LOOP:
+		fallthrough;
 	case STS_MODE_IIN_LOOP:
 		/* Check the TA type */
 		if (ln8411->ta_type == TA_TYPE_WIRELESS) {
