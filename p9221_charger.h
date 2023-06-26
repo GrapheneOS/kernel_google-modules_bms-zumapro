@@ -556,6 +556,10 @@
 #define RA9530_PLIM_REG				0x2F0
 #define RA9530_PLIM_900MA			0x384
 #define RA9530_MIN_FREQ_PER_120			0x1f3	/* 60000/120 - 1 */
+#define RA9530_OP_DUTY_REG			0xA6
+#define RA9530_TX_CUR_PWR_REG			0xAC
+#define RA9530_RX_CUR_PWR_REG			0xCE
+#define RA9530_TX_FB_HB_REG			0x1A0
 
 /* Features */
 typedef enum {
@@ -873,6 +877,8 @@ struct p9221_charger_data {
 	u16				tx_api_limit;
 	u16				tx_freq_low_limit;
 	u16				tx_fod_thrsh;
+	u16				tx_plim;
+	u32				wlc_ocp;
 	struct mutex			stats_lock;
 	struct p9221_charge_stats	chg_data;
 	u32				mitigate_threshold;
@@ -960,6 +966,7 @@ struct p9221_charger_data {
 	int (*chip_get_vout)(struct p9221_charger_data *chgr, u32 *mv);
 	int (*chip_get_iout)(struct p9221_charger_data *chgr, u32 *ma);
 	int (*chip_get_op_freq)(struct p9221_charger_data *chgr, u32 *khz);
+	int (*chip_get_op_duty)(struct p9221_charger_data *chgr, u32 *duty);
 	int (*chip_get_vcpout)(struct p9221_charger_data *chgr, u32 *mv);
 	int (*chip_set_cmd)(struct p9221_charger_data *chgr, u16 cmd);
 	int (*chip_get_rx_ilim)(struct p9221_charger_data *chgr, u32 *ma);

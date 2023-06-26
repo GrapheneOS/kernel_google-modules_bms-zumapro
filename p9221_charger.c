@@ -3022,6 +3022,7 @@ int p9xxx_sw_ramp_icl(struct p9221_charger_data *charger, const int icl_target)
 static int p9221_set_dc_icl(struct p9221_charger_data *charger)
 {
 	int icl, ret;
+	u32 val;
 
 	if (!charger->dc_icl_votable) {
 		charger->dc_icl_votable =
@@ -3087,7 +3088,9 @@ static int p9221_set_dc_icl(struct p9221_charger_data *charger)
 		gvotable_cast_int_vote(charger->dc_icl_votable, P9221_RAMP_VOTER, 0, false);
 
 	/* Increase the IOUT limit */
-	charger->chip_set_rx_ilim(charger, P9221_UA_TO_MA(P9221R5_ILIM_MAX_UA));
+	val = charger->wlc_ocp > 0 ? charger->wlc_ocp : P9221R5_ILIM_MAX_UA;
+	charger->chip_set_rx_ilim(charger, P9221_UA_TO_MA(val));
+	logbuffer_log(charger->log, "set current limit to %dUA", val);
 	if (ret)
 		dev_err(&charger->client->dev,
 			"Could not set rx_iout limit reg: %d\n", ret);
@@ -3839,7 +3842,7 @@ static ssize_t p9221_show_status(struct device *dev,
 	uint32_t tx_id = 0;
 	u32 val32;
 	u16 val16;
-	u8 val8;
+	u8 val8, mode_reg;
 
 	if (!p9221_is_online(charger))
 		return -ENODEV;
@@ -3859,6 +3862,7 @@ static ssize_t p9221_show_status(struct device *dev,
 	ret = charger->chip_get_sys_mode(charger, &val8);
 	count += p9221_add_buffer(buf, val8, count, ret,
 				  "mode        : ", "%02x\n");
+	mode_reg = val8;
 
 	ret = charger->chip_get_vout(charger, &val32);
 	count += p9221_add_buffer(buf, P9221_MV_TO_UV(val32), count, ret,
@@ -3882,6 +3886,27 @@ static ssize_t p9221_show_status(struct device *dev,
 	ret = charger->chip_get_op_freq(charger, &val32);
 	count += p9221_add_buffer(buf, P9221_KHZ_TO_HZ(val32), count, ret,
 				  "freq        : ", "%u hz\n");
+
+	if (mode_reg == P9XXX_SYS_OP_MODE_TX_MODE) {
+		ret = charger->chip_get_op_duty(charger, &val32);
+		count += p9221_add_buffer(buf, val32, count, ret,
+					  "duty        : ", "%u %%\n");
+		ret = charger->reg_read_8(charger, RA9530_TX_FB_HB_REG,
+					  &val8);
+		count += p9221_add_buffer(buf, val8, count, ret,
+					  "HB/FB(0/1)  : ", "%u\n");
+
+		ret = charger->reg_read_16(charger, RA9530_TX_CUR_PWR_REG,
+					  &val16);
+		count += p9221_add_buffer(buf, val16, count, ret,
+					  "curr_tx_pwr : ", "%u mW\n");
+	}
+
+	ret = charger->reg_read_16(charger, RA9530_RX_CUR_PWR_REG,
+				  &val16);
+	count += p9221_add_buffer(buf, val16, count, ret,
+				  "curr_rx_pwr : ", "%u mW\n");
+
 	count += scnprintf(buf + count, PAGE_SIZE - count,
 			   "tx_busy     : %d\n", charger->tx_busy);
 	count += scnprintf(buf + count, PAGE_SIZE - count,
@@ -7318,6 +7343,10 @@ static int p9221_charger_probe(struct i2c_client *client,
 				   &charger->tx_freq_low_limit);
 		debugfs_create_u16("de_tx_fod_thrsh_mw", 0644, charger->debug_entry,
 				   &charger->tx_fod_thrsh);
+		debugfs_create_u16("de_tx_plim_ma", 0644, charger->debug_entry,
+				   &charger->tx_plim);
+		debugfs_create_u32("de_ocp_ua", 0644, charger->debug_entry,
+				   &charger->wlc_ocp);
 	}
 
 	/* can independently read battery capacity */

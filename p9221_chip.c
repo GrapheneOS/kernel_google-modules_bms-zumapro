@@ -122,7 +122,7 @@ static int ra9530_chip_set_rx_ilim(struct p9221_charger_data *chgr, u32 ma)
 	u16 val;
 
 	if (ma > RA9530_RX_ILIM_MAX_MA)
-		return -EINVAL;
+		ma = RA9530_RX_ILIM_MAX_MA;
 
 	val = ma;
 	return chgr->reg_write_16(chgr, RA9530_ILIM_REG, val);
@@ -356,6 +356,19 @@ static int p9xxx_chip_get_op_freq(struct p9221_charger_data *chgr, u32 *khz)
 		return ret;
 
 	*khz = (u32) val;
+	return 0;
+}
+
+static int p9xxx_chip_get_op_duty(struct p9221_charger_data *chgr, u32 *duty)
+{
+	int ret;
+	u8 val;
+
+	ret = chgr->reg_read_8(chgr, RA9530_OP_DUTY_REG, &val);
+	if (ret)
+		return ret;
+
+	*duty = (u32) val*50/255;
 	return 0;
 }
 
@@ -1035,8 +1048,9 @@ static int ra9530_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 	}
 
 	/* Set ping phase current limit to 0.9A */
-	ret |= chgr->reg_write_16(chgr, RA9530_PLIM_REG, RA9530_PLIM_900MA);
-	logbuffer_log(chgr->rtx_log, "write %#02x to %#02x", RA9530_PLIM_900MA, RA9530_PLIM_REG);
+	val = chgr->tx_plim > 0 ? chgr->tx_plim : RA9530_PLIM_900MA;
+	ret |= chgr->reg_write_16(chgr, RA9530_PLIM_REG, val);
+	logbuffer_log(chgr->rtx_log, "write %#02x to %#02x", val, RA9530_PLIM_REG);
 
 	if (ret < 0)
 		return ret;
@@ -2427,6 +2441,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 	chgr->chip_get_vout = p9xxx_chip_get_vout;
 	chgr->chip_set_cmd = p9xxx_chip_set_cmd_reg;
 	chgr->chip_get_op_freq = p9xxx_chip_get_op_freq;
+	chgr->chip_get_op_duty = p9xxx_chip_get_op_duty;
 	chgr->chip_get_vrect = p9xxx_chip_get_vrect;
 	chgr->chip_get_vcpout = p9xxx_chip_get_vcpout;
 	chgr->chip_get_tx_epp_guarpwr = p9xxx_get_tx_epp_guarpwr;
