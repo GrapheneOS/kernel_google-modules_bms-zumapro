@@ -2748,7 +2748,7 @@ static int max77779_fg_init_chip(struct max77779_fg_chip *chip)
 	/* TODO: b/283489811 - fix this */
 	/* do not request the interrupt if can't read battery or not present */
 	if (chip->batt_id == DEFAULT_BATTERY_ID || chip->batt_id == DUMMY_BATTERY_ID) {
-		ret = MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_CONFIG2, 0x0);
+		ret = MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_Config2, 0x0);
 		if (ret < 0)
 			dev_warn(chip->dev, "Cannot write 0x0 to Config(%d)\n", ret);
 	}
