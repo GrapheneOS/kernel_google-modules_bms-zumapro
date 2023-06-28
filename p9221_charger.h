@@ -34,6 +34,7 @@
 #define LL_BPP_CEP_VOTER			"LL_BPP_CEP_VOTER"
 #define P9221_RAMP_VOTER			"WLC_RAMP_VOTER"
 #define P9221_HPP_VOTER				"EPP_HPP_VOTER"
+#define VOTABLE_DC_AVAIL			"DC_AVAIL"
 #define WLC_MFG_GOOGLE				0x72
 #define WLC_MFG_108_FOR_GOOGLE			0x108
 #define P9221_DC_ICL_BPP_UA			700000
@@ -771,6 +772,7 @@ struct p9221_charger_data {
 	struct gvotable_election	*csi_status_votable;
 	struct gvotable_election	*csi_type_votable;
 	struct gvotable_election	*point_full_ui_soc_votable;
+	struct gvotable_election	*dc_avail_votable;
 	struct notifier_block		nb;
 	struct mutex			io_lock;
 	struct mutex			cmd_lock;
@@ -908,6 +910,7 @@ struct p9221_charger_data {
 	int				det_on_debounce;
 	int				det_off_debounce;
 	bool				votable_init_done;
+	u32				trigger_dd;
 
 #if IS_ENABLED(CONFIG_GPIOLIB)
 	struct gpio_chip gpio;

@@ -717,6 +717,8 @@ static void p9221_vote_defaults(struct p9221_charger_data *charger)
 			       P9221_RAMP_VOTER, 0, false);
 	gvotable_cast_int_vote(charger->dc_icl_votable,
 			       P9221_HPP_VOTER, 0, false);
+	gvotable_cast_int_vote(charger->dc_avail_votable,
+			       DD_VOTER, 0, false);
 }
 
 static int p9221_set_switch_reg(struct p9221_charger_data *charger, bool enable)
@@ -2376,6 +2378,9 @@ int p9221_set_auth_dc_icl(struct p9221_charger_data *charger, bool enable)
 	if (!charger->dc_icl_votable)
 		goto exit;
 
+	if (!charger->dc_icl_votable)
+		goto exit;
+
 	if (enable && !charger->auth_delay) {
 		dev_info(&charger->client->dev, "Enable Auth ICL (%d)\n", ret);
 		charger->auth_delay = true;
@@ -2608,13 +2613,18 @@ static void p9221_dream_defend(struct p9221_charger_data *charger)
 	u32 threshold;
 	int ret;
 
+	if (!charger->trigger_dd)
+		charger->trigger_dd = DREAM_DEBOUNCE_TIME_S;
+
 	/* debounce for auth TODO: use charger->auth_delay */
-	if (now - charger->online_at < DREAM_DEBOUNCE_TIME_S) {
+	if (now - charger->online_at < charger->trigger_dd) {
 		pr_debug("%s: now=%lld, online_at=%lld delta=%lld\n", __func__,
 			 now, charger->online_at, now - charger->online_at);
 		return;
 	}
 
+	if (!charger->dc_avail_votable)
+		charger->dc_avail_votable = gvotable_election_get_handle(VOTABLE_DC_AVAIL);
 	if (!charger->csi_type_votable)
 		charger->csi_type_votable = gvotable_election_get_handle(VOTABLE_CSI_TYPE);
 
@@ -2634,6 +2644,10 @@ static void p9221_dream_defend(struct p9221_charger_data *charger)
 
 	if (charger->last_capacity > threshold &&
 		!charger->trigger_power_mitigation) {
+		if (charger->dc_avail_votable)
+			gvotable_cast_int_vote(charger->dc_avail_votable, DD_VOTER, 0, true);
+		if (charger->prop_mode_en)
+			return;
 		/*
 		 * Check Tx type here as tx_id may not be ready at start
 		 * and mfg code cannot be read after LL changing to BPP mode
@@ -7150,6 +7164,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	charger->ll_bpp_cep = -EINVAL;
 	charger->check_rp = RP_NOTSET;
 	charger->extended_int_recv = false;
+	charger->trigger_dd = DREAM_DEBOUNCE_TIME_S;
 	mutex_init(&charger->io_lock);
 	mutex_init(&charger->cmd_lock);
 	mutex_init(&charger->stats_lock);
@@ -7372,6 +7387,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 		charger->debug_entry = NULL;
 		dev_err(&client->dev, "Failed to create debug_entry\n");
 	} else {
+		debugfs_create_u32("trigger_dd", 0644, charger->debug_entry, &charger->trigger_dd);
 		debugfs_create_bool("no_fod", 0644, charger->debug_entry, &charger->no_fod);
 		debugfs_create_bool("de_rtx_hw_ocp", 0644, charger->debug_entry,
 				    &charger->pdata->hw_ocp_det);
