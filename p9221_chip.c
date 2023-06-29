@@ -2029,6 +2029,17 @@ static int ra9530_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 
 	msleep(50);
 
+	if (!chgr->chg_mode_votable)
+		chgr->chg_mode_votable =
+			gvotable_election_get_handle(GBMS_MODE_VOTABLE);
+
+	if (chgr->chg_mode_votable) {
+		gvotable_cast_long_vote(chgr->chg_mode_votable,
+					P9221_WLC_VOTER,
+					MAX77759_CHGR_MODE_ALL_OFF, true);
+		chgr->chg_mode_off = true;
+	}
+
 	/*
 	 * Enable Proprietary Mode: write 0x01 to 0x4F (0x4E bit8)
 	 */
@@ -2056,17 +2067,6 @@ static int ra9530_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 		goto err_exit;
 
 request_pwr:
-
-	if (!chgr->chg_mode_votable)
-		chgr->chg_mode_votable =
-			gvotable_election_get_handle(GBMS_MODE_VOTABLE);
-
-	if (chgr->chg_mode_votable) {
-		gvotable_cast_long_vote(chgr->chg_mode_votable,
-					P9221_WLC_VOTER,
-					MAX77759_CHGR_MODE_ALL_OFF, true);
-		chgr->chg_mode_off = true;
-	}
 
 	/* total 2 seconds wait and early exit when WLC offline */
 	for (i = 0; i < 20; i += 1) {
