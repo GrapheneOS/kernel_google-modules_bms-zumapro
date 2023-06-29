@@ -3381,18 +3381,18 @@ static int ln8411_preset_dcmode(struct ln8411_charger *ln8411)
 		goto error;
 	}
 
-	/* Integration guide V1.0 Section 5.2 */
-	/* Set work mode */
-	ret = ln8411_set_mode(ln8411, ln8411->chg_mode);
-	if (ret)
-		goto error;
-
-	ret = ln8411_set_prot_by_chg_mode(ln8411);
-	if (ret)
-		goto error;
-
 	/* Check the TA type and set the charging mode */
 	if (ln8411->ta_type == TA_TYPE_WIRELESS) {
+		/* Integration guide V1.0 Section 5.2 */
+		/* Set work mode */
+		ret = ln8411_set_mode(ln8411, ln8411->chg_mode);
+		if (ret)
+			goto error;
+
+		ret = ln8411_set_prot_by_chg_mode(ln8411);
+		if (ret)
+			goto error;
+
 		ret = regmap_write(ln8411->regmap, LN8411_CTRL1, LN8411_WPCGATE_EN);
 		if (ret)
 			goto error;
@@ -3423,10 +3423,6 @@ static int ln8411_preset_dcmode(struct ln8411_charger *ln8411)
 				ln8411->ta_max_vol, ln8411->ta_max_cur, ln8411->ta_max_pwr,
 				ln8411->iin_cc, ln8411->chg_mode);
 	} else {
-		ret = regmap_write(ln8411->regmap, LN8411_CTRL1, LN8411_OVPGATE_EN);
-		if (ret)
-			goto error;
-
 		ret = ln8411_set_chg_mode_by_apdo(ln8411);
 		if (ret < 0) {
 			int ret1;
@@ -3445,6 +3441,19 @@ static int ln8411_preset_dcmode(struct ln8411_charger *ln8411)
 			goto error;
 		}
 
+		/* Integration guide V1.0 Section 5.2 */
+		/* Set work mode */
+		ret = ln8411_set_mode(ln8411, ln8411->chg_mode);
+		if (ret)
+			goto error;
+
+		ret = ln8411_set_prot_by_chg_mode(ln8411);
+		if (ret)
+			goto error;
+
+		ret = regmap_write(ln8411->regmap, LN8411_CTRL1, LN8411_OVPGATE_EN);
+		if (ret)
+			goto error;
 		/*
 		 * ->ta_max_cur is too high for startup, needs to target
 		 * CC before hitting max current AND work to ta_max_cur

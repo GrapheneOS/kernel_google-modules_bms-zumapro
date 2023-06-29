@@ -90,6 +90,7 @@ static int p9221_set_hpp_dc_icl(struct p9221_charger_data *charger, bool enable)
 static void p9221_ll_bpp_cep(struct p9221_charger_data *charger, int capacity);
 static int p9221_ll_check_id(struct p9221_charger_data *charger);
 static int p9221_has_dc_in(struct p9221_charger_data *charger);
+static void p9221_init_align(struct p9221_charger_data *charger);
 
 static char *align_status_str[] = {
 	"...", "M2C", "OK", "-1"
@@ -858,6 +859,9 @@ static int p9221_reset_wlc_dc(struct p9221_charger_data *charger)
 	ret = p9xxx_chip_set_cmfet_reg(charger, P9412_CMFET_DEFAULT);
 	if (ret < 0 && ret != -ENOTSUPP)
 		dev_warn(&charger->client->dev, "Fail to set comm cap(%d)\n", ret);
+
+	if (charger->alignment == -1)
+		p9221_init_align(charger);
 
 	return ret;
 }
@@ -3018,6 +3022,7 @@ int p9xxx_sw_ramp_icl(struct p9221_charger_data *charger, const int icl_target)
 static int p9221_set_dc_icl(struct p9221_charger_data *charger)
 {
 	int icl, ret;
+	u32 val;
 
 	if (!charger->dc_icl_votable) {
 		charger->dc_icl_votable =
@@ -3083,7 +3088,9 @@ static int p9221_set_dc_icl(struct p9221_charger_data *charger)
 		gvotable_cast_int_vote(charger->dc_icl_votable, P9221_RAMP_VOTER, 0, false);
 
 	/* Increase the IOUT limit */
-	charger->chip_set_rx_ilim(charger, P9221_UA_TO_MA(P9221R5_ILIM_MAX_UA));
+	val = charger->wlc_ocp > 0 ? charger->wlc_ocp : P9221R5_ILIM_MAX_UA;
+	charger->chip_set_rx_ilim(charger, P9221_UA_TO_MA(val));
+	logbuffer_log(charger->log, "set current limit to %dUA", val);
 	if (ret)
 		dev_err(&charger->client->dev,
 			"Could not set rx_iout limit reg: %d\n", ret);
@@ -3835,7 +3842,7 @@ static ssize_t p9221_show_status(struct device *dev,
 	uint32_t tx_id = 0;
 	u32 val32;
 	u16 val16;
-	u8 val8;
+	u8 val8, mode_reg;
 
 	if (!p9221_is_online(charger))
 		return -ENODEV;
@@ -3855,6 +3862,7 @@ static ssize_t p9221_show_status(struct device *dev,
 	ret = charger->chip_get_sys_mode(charger, &val8);
 	count += p9221_add_buffer(buf, val8, count, ret,
 				  "mode        : ", "%02x\n");
+	mode_reg = val8;
 
 	ret = charger->chip_get_vout(charger, &val32);
 	count += p9221_add_buffer(buf, P9221_MV_TO_UV(val32), count, ret,
@@ -3878,6 +3886,27 @@ static ssize_t p9221_show_status(struct device *dev,
 	ret = charger->chip_get_op_freq(charger, &val32);
 	count += p9221_add_buffer(buf, P9221_KHZ_TO_HZ(val32), count, ret,
 				  "freq        : ", "%u hz\n");
+
+	if (mode_reg == P9XXX_SYS_OP_MODE_TX_MODE) {
+		ret = charger->chip_get_op_duty(charger, &val32);
+		count += p9221_add_buffer(buf, val32, count, ret,
+					  "duty        : ", "%u %%\n");
+		ret = charger->reg_read_8(charger, RA9530_TX_FB_HB_REG,
+					  &val8);
+		count += p9221_add_buffer(buf, val8, count, ret,
+					  "HB/FB(0/1)  : ", "%u\n");
+
+		ret = charger->reg_read_16(charger, RA9530_TX_CUR_PWR_REG,
+					  &val16);
+		count += p9221_add_buffer(buf, val16, count, ret,
+					  "curr_tx_pwr : ", "%u mW\n");
+	}
+
+	ret = charger->reg_read_16(charger, RA9530_RX_CUR_PWR_REG,
+				  &val16);
+	count += p9221_add_buffer(buf, val16, count, ret,
+				  "curr_rx_pwr : ", "%u mW\n");
+
 	count += scnprintf(buf + count, PAGE_SIZE - count,
 			   "tx_busy     : %d\n", charger->tx_busy);
 	count += scnprintf(buf + count, PAGE_SIZE - count,
@@ -7306,6 +7335,18 @@ static int p9221_charger_probe(struct i2c_client *client,
 		debugfs_create_file("irq_det", 0444, charger->debug_entry, charger, &debug_irq_det_fops);
 		debugfs_create_u32("det_on_debounce", 0644, charger->debug_entry, &charger->det_on_debounce);
 		debugfs_create_u32("det_off_debounce", 0644, charger->debug_entry, &charger->det_off_debounce);
+		debugfs_create_u16("de_tx_ocp_ma", 0644, charger->debug_entry,
+				   &charger->tx_ocp);
+		debugfs_create_u16("de_tx_api_limit_ma", 0644, charger->debug_entry,
+				   &charger->tx_api_limit);
+		debugfs_create_u16("de_tx_freq_low_khz", 0644, charger->debug_entry,
+				   &charger->tx_freq_low_limit);
+		debugfs_create_u16("de_tx_fod_thrsh_mw", 0644, charger->debug_entry,
+				   &charger->tx_fod_thrsh);
+		debugfs_create_u16("de_tx_plim_ma", 0644, charger->debug_entry,
+				   &charger->tx_plim);
+		debugfs_create_u32("de_ocp_ua", 0644, charger->debug_entry,
+				   &charger->wlc_ocp);
 	}
 
 	/* can independently read battery capacity */

@@ -570,7 +570,14 @@ struct batt_drv {
 
 	/* battery virtual sensor */
 	struct thermal_zone_device *batt_vs_tz;
+	struct thermal_zone_device *batt_vs_mp_tz;
 	int batt_vs_w;
+	int soc_mp_limit_low;
+	int soc_mp_limit_high;
+	int therm_mp_limit;
+	int max_ratio_mp_limit;
+	bool mp_debounce;
+	bool need_mp;
 
 	/* used to detect battery replacements and reset statistics */
 	enum batt_paired_state pairing_state;
@@ -644,6 +651,8 @@ struct batt_drv {
 static int gbatt_get_temp(struct batt_drv *batt_drv, int *temp);
 
 static int gbatt_get_capacity(struct batt_drv *batt_drv);
+static int ssoc_get_capacity(const struct batt_ssoc_state *ssoc);
+static int batt_ttf_estimate(ktime_t *res, struct batt_drv *batt_drv);
 
 static int batt_get_filter_temp(struct batt_temp_filter *temp_filter)
 {
@@ -735,6 +744,117 @@ static int batt_vs_tz_get(struct thermal_zone_device *tzd, int *batt_vs)
 
 static struct thermal_zone_device_ops batt_vs_tz_ops = {
 	.get_temp = batt_vs_tz_get,
+};
+
+#define SOC_MP_LIMIT_LOW	(50)
+#define SOC_MP_LIMIT_HIGH	(80)
+#define THERM_MP_LIMIT		(0)
+#define MAX_RATIO_MP_LIMIT	(70)
+
+static int batt_get_thermal_level(struct batt_drv *batt_drv)
+{
+	int thermal_level = -1;
+	if (!batt_drv->thermal_level_votable)
+		batt_drv->thermal_level_votable = gvotable_election_get_handle(VOTABLE_THERMAL_LVL);
+	if (batt_drv->thermal_level_votable)
+		thermal_level = gvotable_get_current_int_vote(batt_drv->thermal_level_votable);
+	return thermal_level;
+}
+
+static bool batt_mp_adapter_qual(struct batt_drv *batt_drv)
+{
+	union gbms_ce_adapter_details ad;
+	int demand = (batt_drv->cc_max * 75) / 100;
+	int adapter_cap;
+
+	/* can adapter provide 75% of demand */
+	ad.v = batt_drv->ce_data.adapter_details.v;
+	adapter_cap = ad.ad_amperage * 100000;
+	if (adapter_cap <= demand) {
+		dev_dbg(batt_drv->device, "%s: adapter power insuff: capability: %d, demand: %d\n",
+			__func__, adapter_cap, demand);
+		return false;
+	}
+	return true;
+}
+
+static bool batt_mp_ttf_qual(struct batt_drv *batt_drv)
+{
+	ktime_t res = 0;
+	const int max_ratio = batt_ttf_estimate(&res, batt_drv);
+
+	if (max_ratio < MAX_RATIO_MP_LIMIT) {
+		dev_dbg(batt_drv->device, "%s: max_ratio under limit: max_ratio: %d, limit: %d\n",
+			__func__, max_ratio, MAX_RATIO_MP_LIMIT);
+		return false;
+	}
+
+	return true;
+}
+
+/* returns true if need more power allocation for batt charging */
+static bool batt_needs_more_power(struct batt_drv *batt_drv, int ibatt)
+{
+	int capacity, thermal_level;
+
+	dev_dbg(batt_drv->device, "%s: Start. \n", __func__);
+	if (batt_drv->chg_state.f.chg_status != POWER_SUPPLY_STATUS_CHARGING) {
+		dev_dbg(batt_drv->device, "%s: Status not = CHARGING %d\n", __func__,
+			batt_drv->chg_state.f.chg_status);
+		goto done;
+	}
+
+	if (batt_drv->chg_health.rest_state != CHG_HEALTH_DISABLED) {
+		dev_dbg(batt_drv->device, "%s: rest state not _DISABLED %d\n", __func__,
+			batt_drv->chg_health.rest_state);
+		goto done;
+	}
+
+	if (ibatt > batt_drv->cc_max / 10) {
+		dev_dbg(batt_drv->device, "%s: current less than 10 percent demand ibatt: %d, cc_max: %d\n",
+			__func__, ibatt, batt_drv->cc_max);
+		goto done;
+	}
+
+	thermal_level = batt_get_thermal_level(batt_drv);
+	if (thermal_level > batt_drv->therm_mp_limit) {
+		dev_dbg(batt_drv->device, "%s: thermal level under limit lvl: %d, limit: %d\n",
+			__func__, thermal_level, batt_drv->therm_mp_limit);
+		goto done;
+	}
+
+	capacity = gbatt_get_capacity(batt_drv);
+	if (capacity >= batt_drv->soc_mp_limit_high)
+		batt_drv->mp_debounce = true;
+	else if (capacity <= batt_drv->soc_mp_limit_low)
+		batt_drv->mp_debounce = false;
+	if (batt_drv->mp_debounce) {
+		dev_dbg(batt_drv->device, "%s: in capacity debounce capacity[now:%d, low:%d, high:%d]\n",
+			__func__, capacity, batt_drv->soc_mp_limit_low, batt_drv->soc_mp_limit_high);
+		goto done;
+	}
+
+	if (!batt_mp_adapter_qual(batt_drv))
+		goto done;
+
+	if (!batt_mp_ttf_qual(batt_drv))
+		goto done;
+
+	dev_dbg(batt_drv->device, "%s: Need more power\n", __func__);
+	return true;
+done:
+	dev_dbg(batt_drv->device, "%s: Don't need more power\n", __func__);
+	return false;
+}
+
+static int batt_vs_mp_tz_get(struct thermal_zone_device *tzd, int *batt_vs)
+{
+	struct batt_drv *batt_drv = tzd->devdata;
+	return batt_drv->need_mp;
+}
+
+static struct thermal_zone_device_ops batt_vs_mp_tz_ops = {
+	.get_temp = batt_vs_mp_tz_get,
 };
 
 static int psy_changed(struct notifier_block *nb,
@@ -2534,11 +2654,7 @@ static void batt_update_csi_stat(struct batt_drv *batt_drv)
 	if (batt_temp > csi_stats->temp_max)
 		csi_stats->temp_max = batt_temp;
 
-	if (!batt_drv->thermal_level_votable)
-		batt_drv->thermal_level_votable = gvotable_election_get_handle(VOTABLE_THERMAL_LVL);
-	if (batt_drv->thermal_level_votable)
-		thermal_level = gvotable_get_current_int_vote(batt_drv->thermal_level_votable);
-
+	thermal_level = batt_get_thermal_level(batt_drv);
 	if (thermal_level >= CSI_THERMAL_SEVERITY_MAX)
 		thermal_level = CSI_THERMAL_SEVERITY_MAX - 1;
 	if (thermal_level < 0)
@@ -4536,6 +4652,8 @@ static int msc_logic(struct batt_drv *batt_drv)
 	batt_drv->ce_data.last_update = now;
 	mutex_unlock(&batt_drv->stats_lock);
 
+	batt_drv->need_mp = batt_needs_more_power(batt_drv, ibatt);
+
 	changed = batt_drv->temp_idx != temp_idx ||
 		  batt_drv->vbatt_idx != vbatt_idx ||
 		  batt_drv->fv_uv != fv_uv ||
@@ -5383,6 +5501,21 @@ static int debug_set_fv_dc_ratio(void *data, u64 val)
 
 DEFINE_SIMPLE_ATTRIBUTE(debug_fv_dc_ratio_fops,
 			debug_get_fv_dc_ratio, debug_set_fv_dc_ratio, "%llu\n");
+
+static int debug_get_mp_tz(void *data, u64 *val)
+{
+	struct batt_drv *batt_drv = (struct batt_drv *)data;
+
+	*val = batt_drv->need_mp;
+	return 0;
+}
+
+static int debug_set_mp_tz(void *data, u64 val)
+{
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(debug_mp_tz_fops, debug_get_mp_tz, debug_set_mp_tz, "%llu\n");
 
 static ssize_t debug_get_ssoc_uicurve(struct file *filp,
 					   char __user *buf,
@@ -8151,6 +8284,11 @@ static int batt_init_debugfs(struct batt_drv *batt_drv)
 	debugfs_create_file("ssoc_uic", 0644, de, batt_drv, &debug_ssoc_uic_fops);
 	debugfs_create_file("ssoc_rls", 0444, de, batt_drv, &debug_ssoc_rls_fops);
 	debugfs_create_file("fv_dc_ratio", 0644, de, batt_drv, &debug_fv_dc_ratio_fops);
+	debugfs_create_file("mp_tz", 0644, de, batt_drv, &debug_mp_tz_fops);
+	debugfs_create_u32("mp_soc_limit_low", 0600, de, &batt_drv->soc_mp_limit_low);
+	debugfs_create_u32("mp_soc_limit_high", 0600, de, &batt_drv->soc_mp_limit_high);
+	debugfs_create_u32("mp_therm_limit", 0600, de, &batt_drv->therm_mp_limit);
+	debugfs_create_u32("mp_max_ratio_limit", 0600, de, &batt_drv->max_ratio_mp_limit);
 	debugfs_create_file("ssoc_uicurve", 0644, de, batt_drv,
 			    &debug_ssoc_uicurve_cstr_fops);
 	debugfs_create_file("force_psy_update", 0400, de, batt_drv,
@@ -10061,6 +10199,38 @@ static void google_battery_init_work(struct work_struct *work)
 
 		pr_info("google,batt-vs-tz-name is %s\n", batt_vs_tz_name);
 	}
+
+	/* battery virtual sensor for more power */
+	batt_drv->batt_vs_mp_tz = thermal_zone_device_register("mdis_morepower", 0, 0,
+								batt_drv, &batt_vs_mp_tz_ops,
+								NULL, 0, 0);
+	if (IS_ERR(batt_drv->batt_vs_mp_tz)) {
+		pr_err("batt_vs_mp tz register failed. err: %ld\n",
+			PTR_ERR(batt_drv->batt_vs_mp_tz));
+		batt_drv->batt_vs_mp_tz = NULL;
+	} else {
+		thermal_zone_device_update(batt_drv->batt_vs_mp_tz, THERMAL_DEVICE_UP);
+	}
+
+	ret = of_property_read_u32(batt_drv->device->of_node, "google,morepower-soc-limit-low",
+				   &batt_drv->soc_mp_limit_low);
+	if (ret < 0)
+		batt_drv->soc_mp_limit_low = SOC_MP_LIMIT_LOW;
+
+	ret = of_property_read_u32(batt_drv->device->of_node, "google,morepower-soc-limit-high",
+				   &batt_drv->soc_mp_limit_high);
+	if (ret < 0)
+		batt_drv->soc_mp_limit_high = SOC_MP_LIMIT_HIGH;
+
+	ret = of_property_read_u32(batt_drv->device->of_node, "google,morepower_therm_limit",
+				   &batt_drv->therm_mp_limit);
+	if (ret < 0)
+		batt_drv->therm_mp_limit = THERM_MP_LIMIT;
+
+	ret = of_property_read_u32(batt_drv->device->of_node, "google,morepower_max_ratio_limit",
+				   &batt_drv->max_ratio_mp_limit);
+	if (ret < 0)
+		batt_drv->max_ratio_mp_limit = MAX_RATIO_MP_LIMIT;
 
 	batt_drv->dc_irdrop = of_property_read_bool(node, "google,dc-irdrop");
 	if (batt_drv->dc_irdrop)
