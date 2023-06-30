@@ -2745,15 +2745,14 @@ log_and_done:
 	if (ssoc == -1 || current_speed < 0)
 		current_speed = 0;
 
-	csi_stats->ssoc = ssoc;
-	csi_stats->csi_speed_min = current_speed;
-	csi_stats->csi_speed_max = current_speed;
-
-	/* ssoc == -1 on disconnect */
-	if (ssoc == -1) {
+	if (ssoc == -1 || ssoc != csi_stats->ssoc) {
 		csi_stats->thermal_lvl_min = 0;
 		csi_stats->thermal_lvl_max = 0;
 	}
+
+	csi_stats->ssoc = ssoc;
+	csi_stats->csi_speed_min = current_speed;
+	csi_stats->csi_speed_max = current_speed;
 
 	csi_stats->csi_time_sum = 0;
 	csi_stats->speed_sum = 0;
