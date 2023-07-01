@@ -40,6 +40,14 @@
 
 #define MAX77779_CHG_REVERSE_BOOST_VOUT		0xC7
 #define MAX77779_CHG_REVERSE_BOOST_VOUT_7V	0x28
+
+#define MAX77779_FG_CMD_HW		0xbf
+#define MAX77779_FG_DBG_nLearnCfg	0x9f
+/* TODO: b/286905696 - Add register to xml */
+#define MAX77779_FG_DBG_nFullCapRep	0xa9
+#define MAX77779_FG_DBG_nRelaxCFG	0xb6
+#define MAX77779_FG_DBG_nFullSOCThr	0xbc
+
 /* ----------------------------------------------------------------------------
  * Mode Register
  */

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Fuel gauge driver for Maxim Fuel Gauges with M5 Algo
+ * Fuel gauge driver for MAX77779 Fuel Gauges with M5 Algo
  *
  * Copyright (C) 2023 Google Inc.
  *
@@ -21,48 +21,398 @@
 #include <linux/err.h>
 #include <linux/module.h>
 #include <linux/of.h>
-#include <linux/of_gpio.h>
 #include <linux/power_supply.h>
 #include <linux/regmap.h>
 #include "google_bms.h"
 #include "google_psy.h"
 
 #include "max77779_fg.h"
+#include "maxfg_common.h"
 
 #ifdef CONFIG_DEBUG_FS
 #include <linux/debugfs.h>
 #endif
 
-/*
- * TODO: b/285191457 - Validate that this register is ok to use for
- *     model version read/write
- */
+#define MAX7779_FG_CRC8_POLYNOMIAL		0x07	/* (x^8) + x^2 + x + 1 */
+DECLARE_CRC8_TABLE(max77779_fg_crc8_table);
+
+#define MODEL_VERSION_SHIFT	8
+#define MODEL_VERSION_MASK	0xff
 int max77779_model_read_version(const struct max77779_model_data *model_data)
 {
-	return 0;
+	u16 temp;
+	int ret;
+
+	ret = REGMAP_READ(model_data->regmap, MAX77779_FG_MODEL_VERSION_REG, &temp);
+	if (ret == 0)
+		return (temp >> MAX77779_FG_TAlrtTh_TMAX_SHIFT) & MODEL_VERSION_MASK;
+
+	return ret;
+}
+
+static int max77779_model_write_version(const struct max77779_model_data *model_data, int version)
+{
+	u16 temp;
+	int ret;
+
+	if (version == MAX77779_FG_INVALID_VERSION)
+		return 0;
+
+	ret = REGMAP_READ(model_data->regmap, MAX77779_FG_MODEL_VERSION_REG, &temp);
+	if (ret == 0) {
+		temp &= ~(MODEL_VERSION_MASK << MODEL_VERSION_SHIFT);
+		temp |= (version & MODEL_VERSION_MASK) << MODEL_VERSION_SHIFT;
+
+		ret =  REGMAP_WRITE(model_data->regmap, MAX77779_FG_MODEL_VERSION_REG, temp);
+	}
+
+	return ret;
 }
 
 int max77779_reset_state_data(struct max77779_model_data *model_data)
 {
-	return 0;
+	struct model_state_save data;
+	int ret = 0;
+
+	memset(&data, 0xff, sizeof(data));
+
+	ret = gbms_storage_write(GBMS_TAG_GMSR, &data, sizeof(data));
+	if (ret < 0)
+		dev_warn(model_data->dev, "Erase GMSR fail (%d)\n", ret);
+
+	return ret;
 }
 
-int max77779_needs_reset_model_data(const struct max77779_model_data *model_data)
+static int max77779_read_custom_model(struct regmap *regmap, u16 *model_data,
+				    int count)
 {
-	return 0;
+	return regmap_raw_read(regmap, MAX77779_FG_MODEL_START, model_data, count * 2);
 }
 
-/* 0 is ok */
-/* TODO: b/283487421 - Implement model loading */
-int max77779_load_gauge_model(struct max77779_model_data *model_data)
+static int max77779_write_custom_model(const struct maxfg_regmap *regmap, u16 *model_data,
+				       int count)
 {
-	return 0;
+	int ret;
+
+	ret = regmap_raw_write(regmap->regmap, MAX77779_FG_MODEL_START, model_data, count * 2);
+	if (ret < 0)
+		pr_err("%s: Failed to write custom model ret=%d\n", __func__, ret);
+
+	return ret;
+}
+
+/* Requires the fg registers be unlocked */
+static int max77779_update_custom_model(struct max77779_model_data *model_data)
+{
+	int ret = 0;
+	bool success;
+	u16 *data;
+
+	data = kzalloc(model_data->custom_model_size * 2, GFP_KERNEL);
+	if (!data)
+		return -ENOMEM;
+
+	ret = REGMAP_WRITE(model_data->regmap, MAX77779_FG_RepCap, 0);
+	if (ret < 0)
+		goto error_exit;
+
+	ret = max77779_write_custom_model(model_data->regmap, model_data->custom_model,
+					  model_data->custom_model_size);
+	if (ret < 0) {
+		dev_err(model_data->dev, "cannot write custom model (%d)\n", ret);
+		goto error_exit;
+	}
+
+	ret = max77779_read_custom_model(model_data->regmap->regmap, data,
+					 model_data->custom_model_size);
+	if (ret < 0) {
+		dev_err(model_data->dev, "cannot read custom model (%d)\n", ret);
+		goto error_exit;
+	}
+
+	ret = memcmp(model_data->custom_model, data, model_data->custom_model_size * 2);
+	success = ret == 0;
+	if (!success) {
+		dev_err(model_data->dev, "cannot write custom model (%d)\n", ret);
+		dump_model(model_data->dev, MAX77779_FG_MODEL_START, model_data->custom_model,
+			   model_data->custom_model_size);
+		dump_model(model_data->dev, MAX77779_FG_MODEL_START, data,
+			   model_data->custom_model_size);
+	}
+
+error_exit:
+	kfree(data);
+	return ret;
+}
+
+static int max77779_update_custom_parameters(struct max77779_model_data *model_data)
+{
+	struct max77779_custom_parameters *cp = &model_data->parameters;
+	struct maxfg_regmap *debug_regmap = model_data->debug_regmap;
+	struct maxfg_regmap *regmap = model_data->regmap;
+	int ret, attempt;
+	u16 data;
+
+	ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_DBG_nFullCapRep, cp->fullcaprep);
+	if (ret < 0)
+		return ret;
+
+	for (attempt = 0; attempt < 3; attempt++) {
+		ret = REGMAP_WRITE(regmap, MAX77779_FG_dPAcc, 0x0C80);
+		if (ret < 0)
+			continue;
+		msleep(2);
+		ret = REGMAP_READ(regmap, MAX77779_FG_dPAcc, &data);
+		if (ret == 0 && data == 0xC80)
+			break;
+	}
+
+	if (attempt == 3)
+		return ret;
+
+	if (ret == 0)
+		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_DBG_nFullCapNom, cp->fullcapnom);
+	if (ret == 0)
+		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_DBG_nIChgTerm, cp->ichgterm);
+	if (ret == 0)
+		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_DBG_nVEmpty, cp->v_empty);
+	if (ret == 0)
+		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_DBG_nRComp0, cp->rcomp0);
+	if (ret == 0)
+		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_DBG_nTempCo, cp->tempco);
+	if (ret == 0)
+		ret = REGMAP_WRITE(regmap, MAX77779_FG_QRTable00, cp->qresidual00);
+	if (ret == 0)
+		ret = REGMAP_WRITE(regmap, MAX77779_FG_QRTable10, cp->qresidual10);
+	if (ret == 0)
+		ret = REGMAP_WRITE(regmap, MAX77779_FG_QRTable20, cp->qresidual20);
+	if (ret == 0)
+		ret = REGMAP_WRITE(regmap, MAX77779_FG_QRTable30, cp->qresidual30);
+
+	if (ret == 0) /* Write modelcfg.refresh */
+		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_DBG_nModelCfg, 0x0400);
+	if (ret == 0) /* FIXME:REGMAP_WRITE_VERIFY fail */
+		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_DBG_nLearnCfg, cp->learncfg);
+	if (ret == 0)
+		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_DBG_nRelaxCFG, cp->relaxcfg);
+	if (ret == 0)
+		ret = REGMAP_WRITE(regmap, MAX77779_FG_Config, cp->config);
+	if (ret == 0)
+		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_DBG_nFullSOCThr, cp->fullsocthr);
+	if (ret == 0)
+		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_DBG_nMiscCfg, cp->misccfg);
+	if (ret == 0)
+		ret = REGMAP_WRITE(regmap, MAX77779_FG_Config2, cp->config2);
+
+	return ret;
 }
 
 /*
- * TODO: b/283487421 - Implement model loading
- * Non-volatile registers need to be added via secondary i2c address see max17201
-*/
+ * Model loading procedure version: 0.1.2
+ * 0 is ok
+ */
+int max77779_load_gauge_model(struct max77779_model_data *model_data)
+{
+	struct maxfg_regmap *regmap = model_data->regmap;
+	u16 data, hibcfg, config2, status, temp;
+	int rc, ret, retries;
+
+	if (!model_data || !model_data->custom_model || !model_data->custom_model_size)
+		return -ENODATA;
+
+	if (!regmap) {
+		dev_err(model_data->dev, "Error! No regmap\n");
+		return -EIO;
+	}
+
+	/* Step 1: Check for POR */
+	ret = REGMAP_READ(regmap, MAX77779_FG_Status, &data);
+	if (ret < 0) {
+		dev_err(model_data->dev, "Error reading status reg\n");
+		return -EINVAL;
+	}
+	if (data & MAX77779_FG_Status_PONR_MASK) {
+		/*
+		 * Step 2: Delay until FSTAT.DNR bit == 0
+		 * check FStat.DNR to wait it clear for data read
+		 */
+		for (retries = 20; retries > 0; retries--) {
+			ret = REGMAP_READ(regmap, MAX77779_FG_FStat, &data);
+			if (ret == 0 && !(data & MAX77779_FG_FStat_DNR_MASK))
+				break;
+			msleep(10);
+		}
+		dev_info(model_data->dev, "retries:%d, FSTAT:%#x\n", retries, data);
+		if (retries == 0) {
+			dev_err(model_data->dev, "Error FSTAT.DNR not clear\n");
+			return -ETIMEDOUT;
+		}
+	}
+
+	/* Step 3.1: Unlock command */
+	ret = max77779_fg_usr_lock(regmap, false);
+	if (ret < 0) {
+		dev_err(model_data->dev, "Error Unlock (%d)\n", ret);
+		return ret;
+	}
+
+	ret = REGMAP_READ(regmap, MAX77779_FG_HibCfg, &hibcfg);
+	if (ret == 0)
+		ret = REGMAP_WRITE(regmap, MAX77779_FG_HibCfg, 0);
+	if (ret < 0) {
+		dev_err(model_data->dev, "Error read/write HibCFG (%d)\n", ret);
+		goto error_done;
+	}
+
+	/* Step 3.4.1: Write/read/verify the Custom Model */
+	ret = max77779_update_custom_model(model_data);
+	if (ret < 0) {
+		dev_err(model_data->dev, "cannot update custom model (%d)\n", ret);
+		goto error_done;
+	}
+
+	/* Step 3.4.2: Write Custom Parameters */
+	ret = max77779_update_custom_parameters(model_data);
+	if (ret < 0) {
+		dev_err(model_data->dev, "cannot update custom parameters (%d)\n", ret);
+		goto error_done;
+	}
+
+	/*
+	 * NOTE: Not a part of loading guide
+	 * version could be in the DT: this will overwrite it if set.
+	 * Invalid version is not written out.
+	 */
+	ret = max77779_model_write_version(model_data, model_data->model_version);
+	if (ret < 0) {
+		dev_err(model_data->dev, "cannot update version (%d)\n", ret);
+		goto error_done;
+	}
+
+	/* Step 3.4.3: Initiate Model Loading */
+	ret = REGMAP_READ(regmap, MAX77779_FG_Config2, &config2);
+	if (ret == 0)
+		ret = REGMAP_WRITE(regmap, MAX77779_FG_Config2,
+				   config2 | MAX77779_FG_Config2_LDMdl_MASK);
+	if (ret < 0) {
+		dev_err(model_data->dev, "Failed initiate model loading (%d)\n", ret);
+		goto error_done;
+	}
+
+	/* Step 3.4.4: Poll Config2.LdMdl */
+	for (retries = 20; retries > 0; retries--) {
+		ret = REGMAP_READ(regmap, MAX77779_FG_Config2, &config2);
+		if (ret == 0 && !(config2 & MAX77779_FG_Config2_LDMdl_MASK))
+			break;
+
+		usleep_range(WAIT_VERIFY, WAIT_VERIFY + 100);
+	}
+
+	if (retries == 0) {
+		dev_err(model_data->dev, "cannot initiate model loading (%d)\n", ret);
+		ret = -ETIMEDOUT;
+		goto error_done;
+	}
+
+	/* Step 3.4.5: Update QRTable20 and QRTable30 */
+	ret = REGMAP_WRITE_VERIFY(regmap, MAX77779_FG_QRTable20,
+				  model_data->parameters.qresidual20);
+	if (ret == 0)
+		ret = REGMAP_WRITE_VERIFY(regmap, MAX77779_FG_QRTable30,
+					  model_data->parameters.qresidual30);
+	if (ret < 0) {
+		dev_err(model_data->dev, "cannot update QR20/QR30 (%d)\n", ret);
+		goto error_done;
+	}
+
+	/* Step 3.4.6: Restore Hibcfg */
+	ret = REGMAP_WRITE(regmap, MAX77779_FG_HibCfg, hibcfg);
+	if (ret < 0) {
+		dev_err(model_data->dev, "cannot restore HibCFG (%d)\n", ret);
+		goto error_done;
+	}
+
+	/* Step 3.4.7: Lock command */
+	ret = max77779_fg_usr_lock(regmap, true);
+	if (ret < 0) {
+		dev_err(model_data->dev, "Error Lock (%d)\n", ret);
+		return ret;
+	}
+
+	/* Step 4: Initialization Complete */
+	ret = REGMAP_READ(regmap, MAX77779_FG_Status, &status);
+	if (ret == 0)
+		ret = MAX77779_FG_REGMAP_WRITE_VERIFY(regmap, MAX77779_FG_Status,
+						      status & MAX77779_FG_Status_PONR_CLEAR);
+	if (ret < 0) {
+		dev_err(model_data->dev, "cannot clear PONR bit (%d)\n", ret);
+		return ret;
+	}
+
+	temp = max77779_model_read_version(model_data);
+	if (model_data->model_version == MAX77779_FG_INVALID_VERSION) {
+		dev_err(model_data->dev, "No Model Version, Current %x\n", temp);
+		return -EINVAL;
+	} else if (temp != model_data->model_version) {
+		dev_err(model_data->dev, "Model Version %x, Mismatch %x\n",
+			model_data->model_version, temp);
+		return -EINVAL;
+	}
+
+	return 0;
+
+error_done:
+	rc = max77779_fg_usr_lock(regmap, true);
+	if (rc < 0)
+		dev_err(model_data->dev, "Error Lock (%d)\n", rc);
+
+	return ret;
+}
+
+#define MAX77779_FG_CAP_MAX_RATIO	110
+static int max77779_fg_check_state_data(struct model_state_save *state,
+					struct max77779_custom_parameters *ini)
+{
+	int max_cap = ini->designcap * MAX77779_FG_CAP_MAX_RATIO / 100;
+
+	if (state->rcomp0 == 0xFFFF)
+		return -ERANGE;
+
+	if (state->tempco == 0xFFFF)
+		return -ERANGE;
+
+	if (state->fullcaprep > max_cap)
+		return -ERANGE;
+
+	if (state->fullcapnom > max_cap)
+		return -ERANGE;
+
+	if (state->cycles == 0xFFFF)
+		return -ERANGE;
+
+	return 0;
+}
+
+static u8 max77779_fg_crc(u8 *pdata, size_t nbytes, u8 crc)
+{
+	return crc8(max77779_fg_crc8_table, pdata, nbytes, crc);
+}
+
+static u8 max77779_fg_data_crc(char *reason, struct model_state_save *state)
+{
+	u8 crc;
+
+	/* Last byte is for saving CRC */
+	crc = max77779_fg_crc((u8 *)state, sizeof(struct model_state_save) - 1,
+			  CRC8_INIT_VALUE);
+
+	pr_info("%s gmsr: %X %X %X %X %X %X (%X)\n",
+		reason, state->rcomp0, state->tempco,
+		state->fullcaprep, state->fullcapnom,
+		state->cycles, state->crc, crc);
+
+	return crc;
+}
 
 /*
  * Load parameters and model state from permanent storage.
@@ -70,70 +420,264 @@ int max77779_load_gauge_model(struct max77779_model_data *model_data)
  */
 int max77779_load_state_data(struct max77779_model_data *model_data)
 {
+	struct max77779_custom_parameters *cp = &model_data->parameters;
+	u8 crc;
+	int ret;
+
+	if (!model_data)
+		return -EINVAL;
+
+	/* might return -EAGAIN during init */
+	ret = gbms_storage_read(GBMS_TAG_GMSR, &model_data->model_save,
+				sizeof(model_data->model_save));
+	if (ret < 0) {
+		dev_info(model_data->dev, "Saved Model Data empty\n");
+		return ret;
+	}
+
+	ret = max77779_fg_check_state_data(&model_data->model_save, cp);
+	if (ret < 0)
+		return ret;
+
+	crc = max77779_fg_data_crc("restore", &model_data->model_save);
+	if (crc != model_data->model_save.crc)
+		return -EINVAL;
+
+	cp->rcomp0 = model_data->model_save.rcomp0;
+	cp->tempco = model_data->model_save.tempco;
+	cp->fullcaprep = model_data->model_save.fullcaprep;
+	cp->fullcapnom = model_data->model_save.fullcapnom;
+	model_data->cycles = model_data->model_save.cycles;
+
 	return 0;
 }
 
-/* TODO: b/283487421 - Implement model loading */
 /* save/commit parameters and model state to permanent storage */
 int max77779_save_state_data(struct max77779_model_data *model_data)
 {
-	return 0;
+	struct max77779_custom_parameters *cp = &model_data->parameters;
+	struct model_state_save rb;
+	int ret = 0;
+
+	model_data->model_save.rcomp0 = cp->rcomp0;
+	model_data->model_save.tempco = cp->tempco;
+	model_data->model_save.fullcaprep = cp->fullcaprep;
+	model_data->model_save.fullcapnom = cp->fullcapnom;
+
+	model_data->model_save.cycles = model_data->cycles;
+
+	model_data->model_save.crc = max77779_fg_data_crc("save", &model_data->model_save);
+
+	ret = gbms_storage_write(GBMS_TAG_GMSR, (const void *)&model_data->model_save,
+				 sizeof(model_data->model_save));
+	if (ret < 0)
+		return ret;
+
+	if (ret != sizeof(model_data->model_save))
+		return -ERANGE;
+
+	/* Read back to make sure data all good */
+	ret = gbms_storage_read(GBMS_TAG_GMSR, &rb, sizeof(rb));
+	if (ret < 0) {
+		dev_info(model_data->dev, "Read Back Data Failed ret=%d\n", ret);
+		return ret;
+	}
+
+	if (rb.rcomp0 != model_data->model_save.rcomp0 ||
+	    rb.tempco != model_data->model_save.tempco ||
+	    rb.fullcaprep != model_data->model_save.fullcaprep ||
+	    rb.fullcapnom != model_data->model_save.fullcapnom ||
+	    rb.cycles != model_data->model_save.cycles ||
+	    rb.crc != model_data->model_save.crc)
+		return -EINVAL;
+
+	return ret;
 }
 
-/* TODO: b/283487421 - Implement model loading */
 /* 0 ok, < 0 error. Call after reading from the FG */
 int max77779_model_check_state(struct max77779_model_data *model_data)
 {
+	struct max77779_custom_parameters *fg_param = &model_data->parameters;
+
+	if (fg_param->rcomp0 == 0xFF)
+		return -ERANGE;
+
+	if (fg_param->tempco == 0xFFFF)
+		return -ERANGE;
 	return 0;
 }
 
-/* TODO: b/283487421 - Implement model loading */
 /*
  * read fuel gauge state to parameters/model state.
  * NOTE: Called on boot if POR is not set or during save state.
  */
 int max77779_model_read_state(struct max77779_model_data *model_data)
 {
-	return 0;
+	int rc;
+	struct maxfg_regmap *regmap = model_data->regmap;
+	struct maxfg_regmap *debug_regmap = model_data->debug_regmap;
+
+	rc= REGMAP_READ(debug_regmap, MAX77779_FG_DBG_nRComp0, &model_data->parameters.rcomp0);
+	if (rc == 0)
+		rc = REGMAP_READ(debug_regmap, MAX77779_FG_DBG_nTempCo,
+				 &model_data->parameters.tempco);
+	if (rc == 0)
+		rc = REGMAP_READ(regmap, MAX77779_FG_FullCapRep,
+				 &model_data->parameters.fullcaprep);
+	if (rc == 0)
+		rc = REGMAP_READ(regmap, MAX77779_FG_Cycles, &model_data->cycles);
+	if (rc == 0)
+		rc = REGMAP_READ(regmap, MAX77779_FG_FullCapNom,
+				 &model_data->parameters.fullcapnom);
+
+	return rc;
 }
 
-/* TODO: b/283487421 - Implement model loading */
-ssize_t max77779_model_state_cstr(char *buf, int max,
-				struct max77779_model_data *model_data)
+ssize_t max77779_model_state_cstr(char *buf, int max, struct max77779_model_data *model_data)
 {
-	return 0;
+	int len = 0;
+
+	len += scnprintf(&buf[len], max - len,"%02x:%02x\n", MAX77779_FG_DBG_nRComp0,
+			 model_data->parameters.rcomp0);
+	len += scnprintf(&buf[len], max - len,"%02x:%02x\n", MAX77779_FG_DBG_nTempCo,
+			 model_data->parameters.tempco);
+	len += scnprintf(&buf[len], max - len,"%02x:%02x\n", MAX77779_FG_FullCapRep,
+			 model_data->parameters.fullcaprep);
+	len += scnprintf(&buf[len], max - len,"%02x:%02x\n", MAX77779_FG_Cycles,
+			 model_data->cycles);
+	len += scnprintf(&buf[len], max - len,"%02x:%02x\n", MAX77779_FG_FullCapNom,
+			 model_data->parameters.fullcapnom);
+
+	return len;
 }
 
-/* TODO: b/283487421 - Implement model loading */
 ssize_t max77779_gmsr_state_cstr(char *buf, int max)
 {
-	return 0;
+	struct model_state_save saved_data;
+	int ret = 0, len = 0;
+
+	ret = gbms_storage_read(GBMS_TAG_GMSR, &saved_data, GBMS_GMSR_LEN);
+	if (ret < 0)
+		return ret;
+
+	len = scnprintf(&buf[len], max - len,
+			"rcomp0     :%04X\ntempco     :%04X\n"
+			"fullcaprep :%04X\ncycles     :%04X\n"
+			"fullcapnom :%04X\n",
+			saved_data.rcomp0, saved_data.tempco,
+			saved_data.fullcaprep, saved_data.cycles,
+			saved_data.fullcapnom);
+
+	return len;
 }
 
-/* TODO: b/283487421 - Implement model loading */
 /* custom model parameters */
 int max77779_fg_model_cstr(char *buf, int max, const struct max77779_model_data *model_data)
 {
+	int i, len;
+
+	if (!model_data->custom_model || !model_data->custom_model_size)
+		return -EINVAL;
+
+	for (len = 0, i = 0; i < model_data->custom_model_size; i += 1)
+		len += scnprintf(&buf[len], max - len, "%x: %04x\n",
+				 MAX77779_FG_MODEL_START + i,
+				 model_data->custom_model[i]);
 	return 0;
 }
 
-void max77779_free_data(void *data)
+static int max77779_init_custom_parameters(struct device *dev,
+					   struct max77779_custom_parameters *cp,
+					   struct device_node *node)
 {
-	/* TODO: b/284199040 free data */
+	const char *propname = "max77779,fg-params";
+	const int cnt_default = sizeof(*cp) / 2;
+	int ret, cnt;
+
+	memset(cp, 0, sizeof(*cp));
+
+	cnt = of_property_count_elems_of_size(node, propname, sizeof(u16));
+	if (cnt < 0)
+		return -ENODATA;
+
+	if (cnt != cnt_default) {
+		dev_err(dev, "fg-params: %s has %d elements, need %ld\n",
+			propname, cnt, sizeof(*cp) / 2);
+		return -ERANGE;
+	}
+
+	ret = of_property_read_u16_array(node, propname, (u16 *)cp, cnt);
+	if (ret < 0) {
+		dev_err(dev, "fg-params: failed to read %s %s: %d\n",
+			node->name, propname, ret);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+void max77779_free_data(struct max77779_model_data *model_data)
+{
+	devm_kfree(model_data->dev, model_data);
 }
 
 /* TODO: b/283487421 - Implement model loading */
 void *max77779_init_data(struct device *dev, struct device_node *node,
-		       struct maxfg_regmap *regmap)
+			 struct maxfg_regmap *regmap, struct maxfg_regmap *debug_regmap)
 {
 	const char *propname = "max77779,fg-model";
 	struct max77779_model_data *model_data;
+	int cnt, ret;
+	u16 *model;
+	u32 temp;
 
 	model_data = devm_kzalloc(dev, sizeof(*model_data), GFP_KERNEL);
 	if (!model_data) {
 		dev_err(dev, "fg-model: %s not found\n", propname);
 		return ERR_PTR(-ENOMEM);
 	}
+
+	model = devm_kmalloc_array(dev, MAX77779_FG_MODEL_SIZE, sizeof(u16),
+				   GFP_KERNEL);
+	if (!model) {
+		dev_err(dev, "fg-model: out of memory\n");
+		return ERR_PTR(-ENOMEM);
+	}
+
+	cnt = of_property_count_elems_of_size(node, propname, sizeof(u16));
+	if (cnt != MAX77779_FG_MODEL_SIZE) {
+		dev_err(dev, "fg-model: not found, or invalid %d\n", cnt);
+	} else {
+		ret = of_property_read_u16_array(node, propname, model, cnt);
+		if (ret < 0)
+			dev_err(dev, "fg-model: no data cnt=%d %s %s: %d\n",
+				cnt, node->name, propname, ret);
+		else
+			model_data->custom_model_size = cnt;
+	}
+
+	ret = of_property_read_u32(node, "max77779,model-version", &temp);
+	if (ret < 0 || temp > 255)
+		temp = MAX77779_FG_INVALID_VERSION;
+	model_data->model_version = temp;
+
+	model_data->force_reset_model_data =
+		of_property_read_bool(node, "max77779,force-reset-model-data");
+
+	/*
+	 * Initial values: check max_m5_model_read_state() for the registers
+	 * updated from max1720x_model_work()
+	 */
+	ret = max77779_init_custom_parameters(dev, &model_data->parameters, node);
+	if (ret < 0)
+		dev_err(dev, "fg-params: not found ret=%d\n", ret);
+
+	crc8_populate_msb(max77779_fg_crc8_table, MAX7779_FG_CRC8_POLYNOMIAL);
+
+	model_data->custom_model = model;
+	model_data->debug_regmap = debug_regmap;
+	model_data->regmap = regmap;
+	model_data->dev = dev;
 
 	return model_data;
 }

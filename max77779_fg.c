@@ -41,7 +41,7 @@
 #define MAX77779_FG_TPOR_MS 800
 
 #define MAX77779_FG_TICLR_MS 500
-#define MAX77779_FG_I2C_DRIVER_NAME "max_fg_irq"
+#define MAX77779_FG_I2C_DRIVER_NAME "max77779_fg_irq"
 #define MAX77779_FG_DELAY_INIT_MS 1000
 #define FULLCAPNOM_STABILIZE_CYCLES 5
 
@@ -336,18 +336,25 @@ static DEVICE_ATTR_RW(offmode_charger);
 int max77779_fg_usr_lock(const struct maxfg_regmap *map, bool enabled)
 {
 	int ret, i;
-	const u16 code = enabled ? 0x111 : 0;
+	u16 data;
+
+	ret = REGMAP_READ(map, MAX77779_FG_USR, &data);
+	if (ret)
+		return ret;
+
+	data = _max77779_fg_usr_vlock_set(data, enabled);
+	data = _max77779_fg_usr_rlock_set(data, enabled);
+	data = _max77779_fg_usr_nlock_set(data, enabled);
 
 	/* Requires write twice */
 	for (i = 0; i < 2; i++) {
-		ret = REGMAP_WRITE(map, MAX77779_FG_USR, code);
+		ret = REGMAP_WRITE(map, MAX77779_FG_USR, data);
 		if (ret)
 			return ret;
 	}
 	return 0;
 }
 
-/* TODO: b/283487421 - Add NDGB reg write function */
 int max77779_fg_register_write(const struct maxfg_regmap *map,
 			       unsigned int reg, u16 value, bool verify)
 {
@@ -377,17 +384,47 @@ int max77779_fg_register_write(const struct maxfg_regmap *map,
 	return ret;
 }
 
+int max77779_fg_nregister_write(const struct maxfg_regmap *map,
+				const struct maxfg_regmap *debug_map,
+				unsigned int reg, u16 value, bool verify)
+{
+	int ret;
+
+	/* TODO: b/285938678 - Lock/unlock specific register areas around transactions */
+	ret = max77779_fg_usr_lock(map, false);
+	if (ret) {
+		pr_err("Failed to unlock ret=%d\n", ret);
+		return ret;
+	}
+
+	if (verify)
+		ret = REGMAP_WRITE_VERIFY(debug_map, reg, value);
+	else
+		ret = REGMAP_WRITE(debug_map, reg, value);
+	if (ret) {
+		pr_err("Failed to write reg verify=%d ret=%d\n", verify, ret);
+		max77779_fg_usr_lock(map, true);
+		return ret;
+	}
+
+	ret = max77779_fg_usr_lock(map, true);
+	if (ret)
+		pr_err("Failed to lock ret=%d\n", ret);
+
+	return ret;
+}
+
 /*
  * force is true when changing the model via debug props.
  * NOTE: call holding model_lock
  */
 static int max77779_fg_model_reload(struct max77779_fg_chip *chip, bool force)
 {
-	const bool disabled = chip->model_reload == MAX77779_LOAD_MODEL_DISABLED;
-	const bool pending = chip->model_reload != MAX77779_LOAD_MODEL_IDLE;
+	const bool disabled = chip->model_reload == MAX77779_FG_LOAD_MODEL_DISABLED;
+	const bool pending = chip->model_reload != MAX77779_FG_LOAD_MODEL_IDLE;
 	int version_now, version_load;
 
-	pr_debug("model_reload=%d force=%d pending=%d disabled=%d\n",
+	dev_info(chip->dev, "model_reload=%d force=%d pending=%d disabled=%d\n",
 		 chip->model_reload, force, pending, disabled);
 
 	if (!force && (pending || disabled))
@@ -403,7 +440,7 @@ static int max77779_fg_model_reload(struct max77779_fg_chip *chip, bool force)
 	dev_info(chip->dev, "Schedule Load FG Model, ID=%d, ver:%d->%d\n",
 		 chip->batt_id, version_now, version_load);
 
-	chip->model_reload = MAX77779_LOAD_MODEL_REQUEST;
+	chip->model_reload = MAX77779_FG_LOAD_MODEL_REQUEST;
 	chip->model_ok = false;
 	mod_delayed_work(system_wq, &chip->model_work, 0);
 
@@ -450,9 +487,9 @@ static int max77779_fg_read_resistance(struct max77779_fg_chip *chip)
 
 /* ----------------------------------------------------------------------- */
 
-static ssize_t max77779_fg_model_state_show(struct device *dev,
-					    struct device_attribute *attr,
-					    char *buf)
+static ssize_t model_state_show(struct device *dev,
+				struct device_attribute *attr,
+				char *buf)
 {
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct max77779_fg_chip *chip = power_supply_get_drvdata(psy);
@@ -470,6 +507,8 @@ static ssize_t max77779_fg_model_state_show(struct device *dev,
 
 	return len;
 }
+
+static DEVICE_ATTR_RO(model_state);
 
 static ssize_t gmsr_show(struct device *dev,
 			 struct device_attribute *attr,
@@ -778,6 +817,11 @@ static int max77779_fg_get_cycle_count_offset(struct max77779_fg_chip *chip)
 }
 
 static int max77779_fg_get_cycle_count(struct max77779_fg_chip *chip)
+{
+	return chip->cycle_count;
+}
+
+static int max77779_fg_update_cycle_count(struct max77779_fg_chip *chip)
 {
 	int err, cycle_count;
 	u16 reg_cycle;
@@ -1368,7 +1412,7 @@ static int max77779_fg_get_property(struct power_supply *psy,
 			/* chip->por prevent garbage in cycle count */
 			chip->por = (data & MAX77779_FG_Status_PONR_MASK) != 0;
 			if (chip->por && chip->model_ok &&
-			    chip->model_reload != MAX77779_LOAD_MODEL_REQUEST) {
+			    chip->model_reload == MAX77779_FG_LOAD_MODEL_IDLE) {
 				/* trigger reload model and clear of POR */
 				mutex_unlock(&chip->model_lock);
 				max77779_fg_irq_thread_fn(-1, chip);
@@ -1460,6 +1504,9 @@ static int max77779_fg_get_property(struct power_supply *psy,
 		break;
 	case GBMS_PROP_CAPACITY_FADE_RATE:
 		val->intval = max77779_fg_get_fade_rate(chip);
+		break;
+	case GBMS_PROP_BATT_ID:
+		val->intval = chip->batt_id;
 		break;
 	default:
 		err = -EINVAL;
@@ -1700,21 +1747,43 @@ static int max77779_fg_monitor_log_data(struct max77779_fg_chip *chip, bool forc
  * A full reset restores the ICs to their power-up state the same as if power
  * had been cycled.
  */
+#define CMD_HW_RESET 0x000F
 static int max77779_fg_full_reset(struct max77779_fg_chip *chip)
 {
-	/* TODO: b/283488742 - porting reset command */
-	/* REGMAP_WRITE(&chip->regmap, MAX17XXX_COMMAND,
-		     max77779_fg_COMMAND_HARDWARE_RESET); */
+	int ret;
+
+	/* FIXME: doesn't work */
+	ret = MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_CMD_HW, CMD_HW_RESET);
+	dev_info(chip->dev, "%s: ret=%d\n", __func__, ret);
 
 	msleep(MAX77779_FG_TPOR_MS);
 
-	return 0;
+	return ret;
+}
+
+static int max77779_fg_mask_por(struct max77779_fg_chip *chip, bool mask)
+{
+	u16 fg_int_mask;
+	int err;
+
+	err = REGMAP_READ(&chip->regmap, MAX77779_FG_FG_INT_MASK, &fg_int_mask);
+	if (err)
+		return err;
+
+	if (mask)
+		fg_int_mask |= MAX77779_FG_FG_INT_MASK_POR_m_MASK;
+	else
+		fg_int_mask &= ~MAX77779_FG_FG_INT_MASK_POR_m_MASK;
+
+	err = MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_FG_INT_MASK, fg_int_mask);
+
+	return err;
 }
 
 static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 {
 	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)obj;
-	u16 fg_status, fg_status_clr;
+	u16 fg_status, fg_int_sts, fg_int_sts_clr;
 	int err = 0;
 
 	if (!chip || (irq != -1 && irq != chip->primary->irq)) {
@@ -1741,108 +1810,53 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 	if (err)
 		return IRQ_NONE;
 
-	if (fg_status == 0) {
-		/*
-		 * Disable rate limiting for when interrupt is shared.
-		 * NOTE: this might need to be re-evaluated at some later point
-		 */
+	err = REGMAP_READ(&chip->regmap, MAX77779_FG_FG_INT_STS, &fg_int_sts);
+	if (err)
 		return IRQ_NONE;
-	}
+
+	if (fg_status == 0 && fg_int_sts == 0)
+		return IRQ_NONE;
+
+	dev_dbg(chip->dev, "FG_Status:%04x, FG_INT_STS:%04x\n", fg_status, fg_int_sts);
 
 	/* only used to report health */
 	chip->health_status |= fg_status;
-
-	/*
-	 * write 0 to clear will loose interrupts when we don't write 1 to the
-	 * bits that are not set. Oonly setting the bits marked as "host must clear"
-	 * in the DS seems to work eg:
-	 *
-	 * fg_status_clr = fg_status
-	 * fg_status_clr |= MAX77779_FG_Status_PONR_MASK | MAX77779_FG_Status_dSOCi_MASK
-	 *                | MAX77779_FG_Status_Bi_MASK;
-	 *
-	 * If the above logic is sound, we probably need to set also the bits
-	 * that config mark as "host must clear". Maxim to confirm.
-	 */
-	fg_status_clr = fg_status;
+	fg_int_sts_clr = fg_int_sts;
 
 	if (fg_status & MAX77779_FG_Status_PONR_MASK) {
-		const bool no_battery = chip->fake_battery == 0;
-
+		/*
+		 * TODO: figure out the interaction between Status and INT_STS
+		 * fg_int_sts_clr &= ~MAX77779_FG_Status_PONR_MASK;
+		 */
 		mutex_lock(&chip->model_lock);
 		chip->por = true;
-		if (no_battery) {
-			fg_status_clr &= MAX77779_FG_Status_PONR_CLEAR;
-		} else {
-			dev_warn(chip->dev, "POR is set(%04x), model reload:%d\n",
-				 fg_status, chip->model_reload);
-			/* trigger model load if not on-going */
-			if (chip->model_reload != MAX77779_LOAD_MODEL_REQUEST) {
-				/* TODO: implement model loading when spec ready b/271044091 */
-				/* err = max77779_fg_model_reload(chip, true);
-				if (err < 0) */
-					fg_status_clr &= MAX77779_FG_Status_PONR_CLEAR;
-			}
+
+		dev_warn(chip->dev, "POR is set (FG_INT_STS:%04x), model_reload:%d\n",
+			 fg_int_sts, chip->model_reload);
+
+		/* trigger model load if not on-going */
+		if (chip->model_reload != MAX77779_FG_LOAD_MODEL_REQUEST) {
+			/* Mask the interrupt before model load */
+			err = max77779_fg_mask_por(chip, true);
+			if (err < 0)
+				dev_warn(chip->dev, "unable to mask por bit, err=%d\n", err);
+
+			err = max77779_fg_model_reload(chip, true);
+			if (err < 0)
+				dev_warn(chip->dev, "unable to reload model, err=%d\n", err);
 		}
+
 		mutex_unlock(&chip->model_lock);
 	}
 
-	if (fg_status & MAX77779_FG_Status_Imn_MASK)
-		pr_debug("IMN is set\n");
-
-	if (fg_status & MAX77779_FG_Status_Bst_MASK)
-		pr_debug("BST is set\n");
-
-	if (fg_status & MAX77779_FG_Status_Imx_MASK)
-		pr_debug("IMX is set\n");
-
-	if (fg_status & MAX77779_FG_Status_dSOCi_MASK) {
-		fg_status_clr &= MAX77779_FG_Status_dSOCi_CLEAR;
-		pr_debug("DSOCI is set\n");
-	}
-	if (fg_status & MAX77779_FG_Status_Vmn_MASK) {
-		if (chip->RConfig & MAX77779_FG_Config_VS_MASK)
-			fg_status_clr &= MAX77779_FG_Status_Vmn_CLEAR;
-		pr_debug("VMN is set\n");
-	}
-	if (fg_status & MAX77779_FG_Status_Tmn_MASK) {
-		if (chip->RConfig & MAX77779_FG_Config_TS_MASK)
-			fg_status_clr &= MAX77779_FG_Status_Tmn_CLEAR;
-		pr_debug("TMN is set\n");
-	}
-	if (fg_status & MAX77779_FG_Status_Smn_MASK) {
-		if (chip->RConfig & MAX77779_FG_Config_SS_MASK)
-			fg_status_clr &= MAX77779_FG_Status_Smn_CLEAR;
-		pr_debug("SMN is set\n");
-	}
-	if (fg_status & MAX77779_FG_Status_Bi_MASK)
-		pr_debug("BI is set\n");
-
-	if (fg_status & MAX77779_FG_Status_Vmx_MASK) {
-		if (chip->RConfig & MAX77779_FG_Config_VS_MASK)
-			fg_status_clr &= MAX77779_FG_Status_Vmx_CLEAR;
-		pr_debug("VMX is set\n");
-	}
-	if (fg_status & MAX77779_FG_Status_Tmx_MASK) {
-		if (chip->RConfig & MAX77779_FG_Config_TS_MASK)
-			fg_status_clr &= MAX77779_FG_Status_Tmx_CLEAR;
-		pr_debug("TMX is set\n");
-	}
-	if (fg_status & MAX77779_FG_Status_Smx_MASK) {
-		if (chip->RConfig & MAX77779_FG_Config_SS_MASK)
-			fg_status_clr &= MAX77779_FG_Status_Smx_CLEAR;
-		pr_debug("SMX is set\n");
-	}
-
-	if (fg_status & MAX77779_FG_Status_Br_MASK)
-		pr_debug("BR is set\n");
-
 	/* NOTE: should always clear everything even if we lose state */
-	MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_Status, fg_status_clr);
+	MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_FG_INT_STS, fg_int_sts_clr);
 
 	/* SOC interrupts need to go through all the time */
-	if (fg_status & MAX77779_FG_Status_dSOCi_MASK)
+	if (fg_status & MAX77779_FG_Status_dSOCi_MASK) {
 		max77779_fg_monitor_log_data(chip, false);
+		max77779_fg_update_cycle_count(chip);
+	}
 
 	if (chip->psy)
 		power_supply_changed(chip->psy);
@@ -1985,7 +1999,7 @@ static int max77779_fg_init_model(struct max77779_fg_chip *chip)
 	/* TODO: split allocation and initialization */
 	model_data = max77779_init_data(chip->dev, chip->batt_node ?
 					chip->batt_node : chip->dev->of_node,
-					&chip->regmap);
+					&chip->regmap, &chip->regmap_debug);
 	if (IS_ERR(model_data))
 		return PTR_ERR(model_data);
 
@@ -1993,10 +2007,10 @@ static int max77779_fg_init_model(struct max77779_fg_chip *chip)
 
 	if (!chip->batt_node) {
 		dev_warn(chip->dev, "No child node for ID=%d\n", chip->batt_id);
-		chip->model_reload = MAX77779_LOAD_MODEL_DISABLED;
+		chip->model_reload = MAX77779_FG_LOAD_MODEL_DISABLED;
 	} else {
-		pr_debug("model_data ok for ID=%d\n", chip->batt_id);
-		chip->model_reload = MAX77779_LOAD_MODEL_IDLE;
+		dev_info(chip->dev, "model_data ok for ID=%d\n", chip->batt_id);
+		chip->model_reload = MAX77779_FG_LOAD_MODEL_IDLE;
 	}
 
 	return 0;
@@ -2420,13 +2434,12 @@ static int max77779_fg_dump_param(struct max77779_fg_chip *chip)
 	if (ret < 0)
 		return ret;
 
-	dev_info(chip->dev, "Config: 0x%04x\n", chip->RConfig);
-
 	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_IChgTerm, &data);
 	if (ret < 0)
 		return ret;
 
-	dev_info(chip->dev, "IChgTerm: %d\n", reg_to_micro_amp(data, chip->RSense));
+	dev_info(chip->dev, "Config: 0x%04x, IChgTerm: %d\n",
+		 chip->RConfig, reg_to_micro_amp(data, chip->RSense));
 
 	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_VEmpty, &data);
 	if (ret < 0)
@@ -2436,24 +2449,6 @@ static int max77779_fg_dump_param(struct max77779_fg_chip *chip)
 		 reg_to_vempty(data), reg_to_vrecovery(data));
 
 	return 0;
-}
-
-static int max77779_fg_clear_por(struct max77779_fg_chip *chip)
-{
-	u16 data;
-	int ret;
-
-	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_Status, &data);
-	if (ret < 0)
-		return ret;
-
-	if ((data & MAX77779_FG_Status_PONR_MASK) == 0)
-		return 0;
-
-	return regmap_update_bits(chip->regmap.regmap,
-				  MAX77779_FG_Status,
-				  MAX77779_FG_Status_PONR_MASK,
-				  0x1);
 }
 
 /* read state from fg (if needed) and set the next update field */
@@ -2500,8 +2495,6 @@ static int max77779_fg_model_load(struct max77779_fg_chip *chip)
 {
 	int ret;
 
-	/* TODO: b/283487421 - Implement loading procedure */
-
 	/* retrieve model state from permanent storage only on boot */
 	if (!chip->model_state_valid) {
 
@@ -2545,38 +2538,38 @@ static void max77779_fg_model_work(struct work_struct *work)
 	mutex_lock(&chip->model_lock);
 
 	/* set model_reload to the #attempts, might change cycle count */
-	if (chip->model_reload >= MAX77779_LOAD_MODEL_REQUEST) {
+	if (chip->model_reload > MAX77779_FG_LOAD_MODEL_IDLE) {
 
 		rc = max77779_fg_model_load(chip);
 		if (rc == 0) {
-			rc = max77779_fg_clear_por(chip);
+			/*
+			 * Need to ack the interrupt here if the ISR doesn't clear it
+			 * rc = MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_FG_INT_STS,
+			 *			      MAX77779_FG_Status_PONR_MASK);
+			 */
 
-			dev_info(chip->dev, "Model OK, Clear Power-On Reset (%d)\n",
-				 rc);
+			dev_info(chip->dev, "Model loading complete, rc=%d\n", rc);
 
-			/* TODO: keep trying to clear POR if the above fail */
+			rc = max77779_fg_mask_por(chip, false);
+			if (rc < 0)
+				dev_warn(chip->dev, "unable to unmask por bit, err=%d\n", rc);
 
 			max77779_fg_restore_battery_cycle(chip);
 			rc = REGMAP_READ(&chip->regmap, MAX77779_FG_Cycles, &reg_cycle);
 			if (rc == 0 && reg_cycle >= 0) {
-				chip->model_reload = MAX77779_LOAD_MODEL_IDLE;
+				chip->model_reload = MAX77779_FG_LOAD_MODEL_IDLE;
 				chip->model_ok = true;
 				new_model = true;
 				/* saved new value in max77779_fg_set_next_update */
 				chip->model_next_update = reg_cycle > 0 ? reg_cycle - 1 : 0;
 			}
 		} else if (rc != -EAGAIN) {
-			chip->model_reload = MAX77779_LOAD_MODEL_DISABLED;
+			chip->model_reload = MAX77779_FG_LOAD_MODEL_DISABLED;
 			chip->model_ok = false;
-		} else if (chip->model_reload > MAX77779_LOAD_MODEL_IDLE) {
+		} else if (chip->model_reload > MAX77779_FG_LOAD_MODEL_IDLE) {
 			chip->model_reload -= 1;
+			mod_delayed_work(system_wq, &chip->model_work, msecs_to_jiffies(1000));
 		}
-	}
-
-	if (chip->model_reload >= MAX77779_LOAD_MODEL_REQUEST) {
-		const unsigned long delay = msecs_to_jiffies(60 * 1000);
-
-		mod_delayed_work(system_wq, &chip->model_work, delay);
 	}
 
 	if (new_model) {
@@ -2601,18 +2594,6 @@ static int read_chip_property_u32(const struct max77779_fg_chip *chip,
 	}
 
 	return of_property_read_u32(chip->dev->of_node, property, data32);
-}
-
-static int max77779_fg_check_config(struct max77779_fg_chip *chip)
-{
-	u16 data;
-	int ret;
-
-	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_Config, &data);
-	if (ret == 0 && (data & MAX77779_FG_Config_Ten_MASK) == 0)
-		return -EINVAL;
-
-	return 0;
 }
 
 static int max77779_fg_log_event(struct max77779_fg_chip *chip, gbms_tag_t tag)
@@ -2652,21 +2633,23 @@ static int max77779_fg_init_model_data(struct max77779_fg_chip *chip)
 		return 0;
 
 	if (!max77779_fg_model_check_version(chip->model_data)) {
-		if (max77779_needs_reset_model_data(chip->model_data)) {
-			ret = max77779_reset_state_data(chip->model_data);
-			if (ret < 0)
-				dev_err(chip->dev, "GMSR: failed to erase RC2 saved model data"
-						" ret=%d\n", ret);
-			else
-				dev_warn(chip->dev, "GMSR: RC2 model data erased\n");
-		}
+		ret = max77779_reset_state_data(chip->model_data);
+		if (ret < 0)
+			dev_err(chip->dev, "GMSR: model data didn't erase ret=%d\n", ret);
+		else
+			dev_warn(chip->dev, "GMSR: model data erased\n");
 
-		/* this is expected */
-		ret = max77779_fg_full_reset(chip);
+		/*
+		 * FIXME: use full reset when ready
+		 * ret = max77779_fg_full_reset(chip);
+		 */
+		dev_warn(chip->dev, "FG Version Changed, Reload\n");
+		max77779_fg_model_reload(chip, true);
 
-		dev_warn(chip->dev, "FG Version Changed, Reset (%d), Will Reload\n", ret);
 		return 0;
 	}
+
+	max77779_fg_restore_battery_cycle(chip);
 
 	/* TODO add retries */
 	ret = max77779_model_read_state(chip->model_data);
@@ -2675,40 +2658,17 @@ static int max77779_fg_init_model_data(struct max77779_fg_chip *chip)
 		return -EPROBE_DEFER;
 	}
 
-	/* this is a real failure and must be logged */
-	ret = max77779_model_check_state(chip->model_data);
-	if (ret < 0) {
-		int rret = max77779_fg_full_reset(chip);
-
-		dev_err(chip->dev, "FG State Corrupt (%d), Reset (%d) Will reload\n", ret, rret);
-
-		ret = max77779_fg_log_event(chip, GBMS_TAG_SELC);
-		if (ret < 0)
-			dev_err(chip->dev, "Cannot log the event (%d)\n", ret);
-
-		return 0;
-	}
-
-	ret = max77779_fg_check_config(chip);
-	if (ret < 0) {
-		ret = max77779_fg_full_reset(chip);
-
-		dev_err(chip->dev, "Invalid config data, Reset (%d), Will reload\n", ret);
-
-		ret = max77779_fg_log_event(chip, GBMS_TAG_CELC);
-		if (ret < 0)
-			dev_err(chip->dev, "Cannot log the event (%d)\n", ret);
-
-		return 0;
-	}
+	ret = max77779_fg_mask_por(chip, false);
+	if (ret < 0)
+		dev_warn(chip->dev, "Unable to unmask por bit, ret=%d\n", ret);
 
 	ret = max77779_fg_set_next_update(chip);
 	if (ret < 0)
 		dev_warn(chip->dev, "Error on Next Update, Will retry\n");
 
 	dev_info(chip->dev, "FG Model OK, ver=%d next_update=%d\n",
-			max77779_model_read_version(chip->model_data),
-			chip->model_next_update);
+		 max77779_model_read_version(chip->model_data),
+		 chip->model_next_update);
 
 	chip->reg_prop_capacity_raw = MAX77779_FG_RepSOC;
 	chip->model_state_valid = true;
@@ -2776,19 +2736,21 @@ static int max77779_fg_init_chip(struct max77779_fg_chip *chip)
 		return -EPROBE_DEFER;
 	dev_info(chip->dev, "RSense value %d micro Ohm\n", chip->RSense * 10);
 
-	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_Status, &data);
-	if (!ret && data & MAX77779_FG_Status_Br_MASK) {
+	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_FG_INT_STS, &data);
+	if (!ret && data & MAX77779_FG_FG_INT_STS_Br_MASK) {
 		dev_info(chip->dev, "Clearing Battery Removal bit\n");
-		regmap_update_bits(chip->regmap.regmap, MAX77779_FG_Status,
-				   MAX77779_FG_Status_Br_MASK, 0x1);
+		MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_FG_INT_STS,
+					 data | MAX77779_FG_FG_INT_STS_Br_MASK);
 	}
-	if (!ret && data & MAX77779_FG_Status_Bi_MASK) {
+	if (!ret && data & MAX77779_FG_FG_INT_STS_Bi_MASK) {
 		dev_info(chip->dev, "Clearing Battery Insertion bit\n");
-		regmap_update_bits(chip->regmap.regmap, MAX77779_FG_Status,
-				   MAX77779_FG_Status_Bi_MASK, 0x1);
+		MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_FG_INT_STS,
+					 data | MAX77779_FG_FG_INT_STS_Bi_MASK);
 	}
 
-	max77779_fg_restore_battery_cycle(chip);
+	MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_FG_INT_MASK,
+				 MAX77779_FG_FG_INT_MASK_Tmn_m_MASK |
+				 MAX77779_FG_FG_INT_MASK_Tmx_m_MASK);
 
 	/* triggers loading of the model in the irq handler on POR */
 	if (!chip->por) {
@@ -3054,9 +3016,12 @@ static int max77779_read_gauge_type(struct max77779_fg_chip *chip)
 static bool max77779_fg_dbg_is_reg(struct device *dev, unsigned int reg)
 {
 	switch (reg) {
-		case 0x9D ... 0x9E:
+		case 0x9C ... 0x9E:
 		case 0xA5 ... 0xA7:
+		case 0xA9:
 		case 0xB1 ... 0xB3:
+		case 0xB6:
+		case 0xBC:
 		case 0xC6:
 		case 0xC8 ... 0xCA:
 			return true;
@@ -3095,7 +3060,7 @@ static bool max77779_fg_is_reg(struct device *dev, unsigned int reg)
 	case 0xB0:
 	case 0xB2:
 	case 0xB4:
-	case 0xBE:
+	case 0xBE ... 0xBF:
 	case 0xD0 ... 0xD3:
 	case 0xD5 ... 0xDB:
 	case 0xE0 ... 0xE1: /* FG_Func*/
@@ -3184,6 +3149,7 @@ static struct attribute *max77779_fg_attrs[] = {
 	&dev_attr_resistance_id.attr,
 	&dev_attr_resistance.attr,
 	&dev_attr_gmsr.attr,
+	&dev_attr_model_state.attr,
 	NULL,
 };
 
@@ -3261,10 +3227,9 @@ static int max77779_fg_probe(struct i2c_client *client,
 						chip);
 		dev_info(chip->dev, "FG irq handler registered at %d (%d)\n",
 			 chip->primary->irq, ret);
-		/* TODO re-enable irq in b/283487421
+
 		if (ret == 0)
 			enable_irq_wake(chip->primary->irq);
-		*/
 	} else {
 		dev_err(dev, "cannot allocate irq\n");
 		goto i2c_unregister;
@@ -3291,8 +3256,7 @@ static int max77779_fg_probe(struct i2c_client *client,
 	if (of_property_read_bool(dev->of_node, "max77779,psy-type-unknown"))
 		chip->max77779_fg_psy_desc.type = POWER_SUPPLY_TYPE_UNKNOWN;
 
-	chip->psy = devm_power_supply_register(dev, &chip->max77779_fg_psy_desc,
-					       &psy_cfg);
+	chip->psy = devm_power_supply_register(dev, &chip->max77779_fg_psy_desc, &psy_cfg);
 	if (IS_ERR(chip->psy)) {
 		dev_err(dev, "Couldn't register as power supply\n");
 		ret = PTR_ERR(chip->psy);
@@ -3310,7 +3274,7 @@ static int max77779_fg_probe(struct i2c_client *client,
 	 */
 
 	/* M5 battery model needs batt_id and is setup during init() */
-	chip->model_reload = MAX77779_LOAD_MODEL_DISABLED;
+	chip->model_reload = MAX77779_FG_LOAD_MODEL_DISABLED;
 
 	chip->ce_log = logbuffer_register(chip->max77779_fg_psy_desc.name);
 	if (IS_ERR(chip->ce_log)) {
@@ -3339,8 +3303,7 @@ static int max77779_fg_probe(struct i2c_client *client,
 	INIT_DELAYED_WORK(&chip->cap_estimate.settle_timer,
 			  batt_ce_capacityfiltered_work);
 	INIT_DELAYED_WORK(&chip->init_work, max77779_fg_init_work);
-	/* TODO: b/283487421 - Implement model loading */
-	// INIT_DELAYED_WORK(&chip->model_work, max77779_fg_model_work);
+	INIT_DELAYED_WORK(&chip->model_work, max77779_fg_model_work);
 
 	schedule_delayed_work(&chip->init_work, 0);
 
@@ -3366,8 +3329,7 @@ static void max77779_fg_remove(struct i2c_client *client)
 
 	max77779_free_data(chip->model_data);
 	cancel_delayed_work(&chip->init_work);
-	/* TODO: b/283487421 - Implement model loading */
-	// cancel_delayed_work(&chip->model_work);
+	cancel_delayed_work(&chip->model_work);
 
 	if (chip->primary->irq)
 		free_irq(chip->primary->irq, chip);
@@ -3411,8 +3373,7 @@ static int max77779_pm_resume(struct device *dev)
 	pm_runtime_get_sync(chip->dev);
 	chip->resume_complete = true;
 	if (chip->irq_disabled) {
-		/* TODO re-enable irq in b/283487421
-		enable_irq(chip->primary->irq); */
+		enable_irq(chip->primary->irq);
 		chip->irq_disabled = false;
 	}
 

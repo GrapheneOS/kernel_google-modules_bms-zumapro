@@ -20,15 +20,18 @@
 #include "max77779.h"
 
 /* change to 1 or 0 to load FG model with default parameters on startup */
-#define MAX77779_LOAD_MODEL_DISABLED	-1
-#define MAX77779_LOAD_MODEL_IDLE	0
-#define MAX77779_LOAD_MODEL_REQUEST	5
+#define MAX77779_FG_LOAD_MODEL_DISABLED	-1
+#define MAX77779_FG_LOAD_MODEL_IDLE	0
+#define MAX77779_FG_LOAD_MODEL_REQUEST	5
 
-#define MAX77779_FG_MODEL_START		0x80
+#define MAX77779_FG_MODEL_START		MAX77779_FG_OCV0
 #define MAX77779_FG_MODEL_SIZE		48
 
 /* model version */
-#define MAX77779_INVALID_VERSION	-1
+#define MAX77779_FG_INVALID_VERSION	-1
+
+/* Config2: must not enable TAlert */
+#define MAX77779_FG_MODEL_VERSION_REG	MAX77779_FG_TAlrtTh
 
 
 /** ------------------------------------------------------------------------ */
@@ -49,7 +52,6 @@ struct max77779_custom_parameters {
 	u16 fullcaprep; /* WV */
 	u16 designcap;
 	u16 dpacc;	/* WV */
-	u16 dqacc;	/* WV */
 	u16 fullcapnom;	/* WV */
 	u16 v_empty;
 	u16 qresidual00;	/* WV */
@@ -59,14 +61,7 @@ struct max77779_custom_parameters {
 	u16 rcomp0;	/* WV */
 	u16 tempco;	/* WV */
 	u16 ichgterm;
-	u16 tgain;
-	u16 toff;
-	u16 tcurve; 	/* write to 0x00B9 */
 	u16 misccfg;	/* 0x9d0 for internal current sense, 0x8d0 external */
-
-	u16 atrate;
-	u16 convgcfg;
-	u16 filtercfg; 	/* write to 0x0029 */
 } __attribute__((packed));
 
 /* this is what is saved and restored to/from GMSR */
@@ -83,7 +78,7 @@ struct model_state_save {
 struct max77779_model_data {
 	struct device *dev;
 	struct maxfg_regmap *regmap;
-	struct regmap *debug_regmap;
+	struct maxfg_regmap *debug_regmap;
 
 	/* initial parameters are in device tree they are also learned */
 	struct max77779_custom_parameters parameters;
@@ -114,12 +109,12 @@ static inline int max77779_check_devname(u16 devname)
 {
 	const u16 radix = devname >> 8;
 
-	return radix == 0x62 || radix == 0x63;
+	return radix == 0x62 || radix == 0x63 || radix == 0x51;
 }
 
 static inline int max77779_fg_model_version(const struct max77779_model_data *model_data)
 {
-	return model_data ? model_data->model_version : MAX77779_INVALID_VERSION;
+	return model_data ? model_data->model_version : MAX77779_FG_INVALID_VERSION;
 }
 
 /*
@@ -130,7 +125,7 @@ static inline int max77779_fg_model_check_version(const struct max77779_model_da
 {
 	if (!model_data)
 		return 1;
-	if (model_data->model_version == MAX77779_INVALID_VERSION)
+	if (model_data->model_version == MAX77779_FG_INVALID_VERSION)
 		return 0;
 
 	return max77779_model_read_version(model_data) == model_data->model_version;
@@ -138,9 +133,13 @@ static inline int max77779_fg_model_check_version(const struct max77779_model_da
 
 #define MAX77779_FG_REGMAP_WRITE(regmap, what, value) \
 	max77779_fg_register_write(regmap, what, value, false)
-
 #define MAX77779_FG_REGMAP_WRITE_VERIFY(regmap, what, value) \
 	max77779_fg_register_write(regmap, what, value, true)
+
+#define MAX77779_FG_N_REGMAP_WRITE(regmap, nregmap, what, value) \
+	max77779_fg_nregister_write(regmap, nregmap, what, value, false)
+#define MAX77779_FG_N_REGMAP_WRITE_VERIFY(regmap, nregmap, what, value) \
+	max77779_fg_nregister_write(regmap, nregmap, what, value, true)
 
 /** ------------------------------------------------------------------------ */
 
@@ -149,9 +148,12 @@ int max77779_max17x0x_regmap_init(struct maxfg_regmap *regmap, struct i2c_client
 int max77779_fg_usr_lock(const struct maxfg_regmap *map, bool enabled);
 int max77779_fg_register_write(const struct maxfg_regmap *regmap, unsigned int reg,
 			       u16 value, bool verify);
+int max77779_fg_nregister_write(const struct maxfg_regmap *map,
+				const struct maxfg_regmap *debug_map,
+				unsigned int reg, u16 value, bool verify);
 void *max77779_init_data(struct device *dev, struct device_node *batt_node,
-			 struct maxfg_regmap *regmap);
-void max77779_free_data(void *data);
+			 struct maxfg_regmap *regmap, struct maxfg_regmap *debug_regmap);
+void max77779_free_data(struct max77779_model_data *model_data);
 
 int max77779_load_state_data(struct max77779_model_data *model_data);
 int max77779_save_state_data(struct max77779_model_data *model_data);
