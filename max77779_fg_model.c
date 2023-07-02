@@ -332,6 +332,11 @@ int max77779_load_gauge_model(struct max77779_model_data *model_data)
 		goto error_done;
 	}
 
+	/* FIXME: Config2 change to 0x0 after 3.4.4, rewrite here */
+	ret = REGMAP_WRITE(regmap, MAX77779_FG_Config2, model_data->parameters.config2);
+	if (ret < 0)
+		dev_err(model_data->dev, "cannot restore Config2 (%d)\n", ret);
+
 	/* Step 3.4.7: Lock command */
 	ret = max77779_fg_usr_lock(regmap, true);
 	if (ret < 0) {
