@@ -33,6 +33,7 @@ struct max77759_usecase_data {
 	int wlc_vbus_en;	/* b/202526678 */
 	int ext_bst_mode;	/* wlcrx+otg: b/175706836, TPS61372 P1.1+ */
 	int cpout_en;		/* wlcrx+otg: CPOUT enabled/disabled */
+	int wlc_spoof_gpio;	/* wlcrx thermal throttle */
 	int cpout_ctl;		/* wlcrx+otg: CPOUT level 5.3V or DFLT */
 
 	int cpout21_en;		/* wlctx: CPOUT 2:1 converter enable/disable */
@@ -80,7 +81,13 @@ enum gsu_usecases {
 	GSU_MODE_USB_OTG_POGO_VOUT	= 17,
 };
 
-extern int gs101_wlc_en(struct max77759_usecase_data *uc_data, bool wlc_on);
+enum wlc_state_t {
+	WLC_DISABLED = 0,
+	WLC_ENABLED = 1,
+	WLC_SPOOFED = 2,
+};
+
+extern int gs101_wlc_en(struct max77759_usecase_data *uc_data, enum wlc_state_t state);
 extern int gs101_to_standby(struct max77759_usecase_data *uc_data, int use_case);
 extern int gs101_to_usecase(struct max77759_usecase_data *uc_data, int use_case);
 extern int gs101_force_standby(struct max77759_usecase_data *uc_data);
