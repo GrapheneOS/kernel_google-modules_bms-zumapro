@@ -3784,7 +3784,8 @@ static int bhi_individual_conditions_index(const struct health_data *health_data
 	const int bhi_indi_cap = health_data->bhi_indi_cap;
 
 	if (health_data->bhi_data.battery_age >= ONE_YEAR_HRS ||
-	    cur_impedance >= age_impedance_max || cur_capacity_pct <= bhi_indi_cap)
+	    (cur_impedance > 0 && age_impedance_max > 0 && cur_impedance >= age_impedance_max) ||
+	    cur_capacity_pct <= bhi_indi_cap)
 		return health_data->need_rep_threshold * 100;
 
 	return BHI_ALGO_FULL_HEALTH;
