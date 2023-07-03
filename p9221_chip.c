@@ -26,6 +26,7 @@
 #define P9412_GPIO_CPOUT21_EN           2
 #define P9XXX_GPIO_CPOUT_CTL_EN         3
 #define P9XXX_GPIO_DC_SW_EN             4
+#define P9XXX_GPIO_ONLINE_SPOOF         5
 #define P9XXX_GPIO_VBUS_EN              15
 
 /* Simple Chip Specific Accessors */
@@ -2689,6 +2690,13 @@ static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 		break;
 	case P9XXX_GPIO_DC_SW_EN:
 		ret = p9xxx_gpio_set_value(charger, charger->pdata->dc_switch_gpio, value);
+		break;
+	case P9XXX_GPIO_ONLINE_SPOOF:
+		if (charger->pdata->irq_det_gpio >= 0 && charger->det_status == 0 && charger->online) {
+			logbuffer_prlog(charger->log, "pxxx_gpio online_spoof=1");
+			charger->online_spoof = true;
+			cancel_delayed_work(&charger->stop_online_spoof_work);
+		}
 		break;
 	default:
 		ret = -EINVAL;
