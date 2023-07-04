@@ -4888,16 +4888,18 @@ static int p9382_rtx_enable(struct p9221_charger_data *charger, bool enable)
 		ret = gvotable_cast_long_vote(charger->chg_mode_votable,
 					      P9221_WLC_VOTER,
 					      GBMS_CHGR_MODE_WLC_TX, enable);
+		if (charger->pdata->ben_gpio > 0)
+			gpio_set_value_cansleep(charger->pdata->ben_gpio, enable);
 		return ret;
 	}
 
-	if (charger->pdata->ben_gpio >= 0)
+	if (charger->pdata->ben_gpio > 0)
 		gpio_set_value_cansleep(charger->pdata->ben_gpio, enable);
-	if (charger->pdata->switch_gpio >= 0)
+	if (charger->pdata->switch_gpio > 0)
 		gpio_set_value_cansleep(charger->pdata->switch_gpio, enable);
 
 	/* some systems provide additional boost_gpio for charging level */
-	if (charger->pdata->boost_gpio >= 0)
+	if (charger->pdata->boost_gpio > 0)
 		gpio_set_value_cansleep(charger->pdata->boost_gpio, enable);
 
 	return (charger->pdata->ben_gpio < 0 &&

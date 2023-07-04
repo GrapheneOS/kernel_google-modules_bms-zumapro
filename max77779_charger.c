@@ -741,8 +741,13 @@ static int max77779_get_usecase(struct max77779_foreach_cb_data *cb_data,
 
 		/* Rtx using the internal battery */
 		usecase = GSU_MODE_STANDBY;
-		if (wlc_tx)
+		if (wlc_tx) {
 			usecase = GSU_MODE_WLC_TX;
+			if (uc_data->reverse12_en)
+				mode = MAX77779_CHGR_MODE_REVERSE_1_2_MODE_ON;
+			else
+				mode = MAX77779_CHGR_MODE_BOOST_UNO_ON;
+		}
 
 		/* here also on WLC_DC->WLC_DC+USB */
 		dc_on = false;
@@ -750,15 +755,17 @@ static int max77779_get_usecase(struct max77779_foreach_cb_data *cb_data,
 
 		/* Disable DC when Rtx is on will handle by dc_avail_votable */
 		if (!buck_on) {
-			mode = MAX77779_CHGR_MODE_ALL_OFF;
+			mode = MAX77779_CHGR_MODE_BOOST_UNO_ON;
 			usecase = GSU_MODE_WLC_TX;
 		} else if (chgr_on) {
-			mode = MAX77779_CHGR_MODE_CHGR_BUCK_ON;
+			mode = MAX77779_CHGR_MODE_CHGR_BUCK_BOOST_UNO_ON;
 			usecase = GSU_MODE_USB_CHG_WLC_TX;
 		} else {
-			mode = MAX77779_CHGR_MODE_BUCK_ON;
+			mode = MAX77779_CHGR_MODE_BUCK_BOOST_UNO_ON;
 			usecase = GSU_MODE_USB_CHG_WLC_TX;
 		}
+		if (uc_data->reverse12_en)
+			mode = MAX77779_CHGR_MODE_REVERSE_1_2_MODE_ON;
 
 	} else if (wlc_rx) {
 

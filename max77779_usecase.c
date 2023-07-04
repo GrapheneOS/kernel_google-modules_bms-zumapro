@@ -109,11 +109,27 @@ static int gs201_wlc_tx_enable(struct max77779_usecase_data *uc_data,
 	int ret = 0;
 
 	if (enable) {
+	  /* TODO: b/289877860 still need to check PD9V+RTx & USB5V+RTx cases */
+		if (!uc_data->reverse12_en) {
+			ret = max77779_chg_reg_write(uc_data->client,
+						     MAX77779_CHG_REVERSE_BOOST_VOUT,
+						     MAX77779_CHG_REVERSE_BOOST_VOUT_7V);
+			if (ret < 0)
+				pr_err("%s: fail to configure MAX77779_CHG_REVERSE_BOOST_VOUT\n",
+				       __func__);
+		}
 		/* p9412 will not be in RX when powered from EXT */
 		ret = gs201_wlc_en(uc_data, true);
 		if (ret < 0)
 			return ret;
 	} else {
+		if (!uc_data->reverse12_en) {
+			ret = max77779_chg_reg_write(uc_data->client,
+						     MAX77779_CHG_REVERSE_BOOST_VOUT, 0);
+			if (ret < 0)
+				pr_err("%s: fail to configure MAX77779_CHG_REVERSE_BOOST_VOUT\n",
+				       __func__);
+		}
 		/* p9412 is already off from insel */
 		ret = gs201_wlc_en(uc_data, false);
 		if (ret < 0)
@@ -601,12 +617,15 @@ bool gs201_setup_usecases(struct max77779_usecase_data *uc_data,
 	/* OPTIONAL: support wlc_rx -> wlc_rx+otg */
 	uc_data->rx_otg_en = of_property_read_bool(node, "max77779,rx-to-rx-otg-en");
 
+	/* OPTIONAL: support reverse 1:2 mode for RTx */
+	uc_data->reverse12_en = of_property_read_bool(node, "max77779,reverse_12-en");
+
 	return gs201_setup_usecases_done(uc_data);
 }
 
 void gs201_dump_usecasase_config(struct max77779_usecase_data *uc_data)
 {
-	pr_info("wlc_en:%d, rx_to_rx_otg:%d\n",
-		uc_data->wlc_en, uc_data->rx_otg_en);
+	pr_info("wlc_en:%d, rx_to_rx_otg:%d, reverse12_en:%d\n",
+		uc_data->wlc_en, uc_data->rx_otg_en, uc_data->reverse12_en);
 }
 

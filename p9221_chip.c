@@ -1069,8 +1069,9 @@ static int ra9530_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 	if (ret < 0)
 		logbuffer_log(chgr->rtx_log, "RTxFOD fail, ret=%d\n", ret);
 
-	if (chgr->pdata->apbst_en && !chgr->pdata->hw_ocp_det)
-		mod_delayed_work(system_wq, &chgr->chk_rtx_ocp_work, 0);
+	/* TODO: b/289877860 check if this is needed in RA9530 */
+	//if (chgr->pdata->apbst_en && !chgr->pdata->hw_ocp_det)
+	//	mod_delayed_work(system_wq, &chgr->chk_rtx_ocp_work, 0);
 
 	logbuffer_log(chgr->rtx_log, "rtx mode=1");
 
