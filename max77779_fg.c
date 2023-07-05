@@ -2958,7 +2958,7 @@ static void max77779_fg_init_work(struct work_struct *work)
 	if (chip->gauge_type != -1) {
 
 		/* these don't require nvm storage */
-		ret = gbms_storage_register(&max77779_fg_prop_dsc, "max7779fg", chip);
+		ret = gbms_storage_register(&max77779_fg_prop_dsc, "max77779fg", chip);
 		if (ret == -EBUSY)
 			ret = 0;
 
