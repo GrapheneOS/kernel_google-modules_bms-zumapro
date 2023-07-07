@@ -1377,6 +1377,11 @@ static int max77779_fg_get_property(struct power_supply *psy,
 		}
 		break;
 	case POWER_SUPPLY_PROP_TEMP:
+		if (chip->por) {
+			/* FIXME: remove when temperature ready b/289851996 */
+			val->intval = 220; /* legacy */
+			break;
+		}
 		err = REGMAP_READ(map, MAX77779_FG_Temp, &data);
 		if (err < 0)
 			break;
