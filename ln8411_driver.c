@@ -1161,6 +1161,9 @@ static int ln8411_recover_ta(struct ln8411_charger *ln8411)
 {
 	int ret;
 
+	if (ln8411->ftm_mode)
+		return 0;
+
 	if (ln8411->ta_type == TA_TYPE_WIRELESS) {
 		ln8411->ta_vol = 0; /* set to a value to change rx vol */
 		ret = ln8411_send_rx_voltage(ln8411, MSG_REQUEST_FIXED_PDO);
@@ -3384,6 +3387,8 @@ static int ln8411_preset_dcmode(struct ln8411_charger *ln8411)
 
 	/* Check the TA type and set the charging mode */
 	if (ln8411->ta_type == TA_TYPE_WIRELESS) {
+		if (ln8411->ftm_mode)
+			goto error;
 		/* Integration guide V1.0 Section 5.2 */
 		/* Set work mode */
 		ret = ln8411_set_mode(ln8411, ln8411->chg_mode);
@@ -3424,7 +3429,8 @@ static int ln8411_preset_dcmode(struct ln8411_charger *ln8411)
 				ln8411->ta_max_vol, ln8411->ta_max_cur, ln8411->ta_max_pwr,
 				ln8411->iin_cc, ln8411->chg_mode);
 	} else {
-		ret = ln8411_set_chg_mode_by_apdo(ln8411);
+		if (!ln8411->ftm_mode)
+			ret = ln8411_set_chg_mode_by_apdo(ln8411);
 		if (ret < 0) {
 			int ret1;
 
@@ -3572,8 +3578,9 @@ exit_done:
 		ln8411->timer_period = 0;
 	}
 
-	mod_delayed_work(ln8411->dc_wq, &ln8411->timer_work,
-			 msecs_to_jiffies(ln8411->timer_period));
+	if (!ln8411->ftm_mode)
+		mod_delayed_work(ln8411->dc_wq, &ln8411->timer_work,
+			 	 msecs_to_jiffies(ln8411->timer_period));
 	mutex_unlock(&ln8411->lock);
 	return ret;
 }
@@ -3582,13 +3589,14 @@ exit_done:
 static int ln8411_start_direct_charging(struct ln8411_charger *ln8411)
 {
 	struct ln8411_chg_stats *chg_data = &ln8411->chg_data;
-	int ret;
+	int ret = 0;
 
 	dev_dbg(ln8411->dev, "%s: =========START=========\n", __func__);
 	mutex_lock(&ln8411->lock);
 
 	/* configure DC charging type for the requested index */
-	ret = ln8411_set_ta_type(ln8411, ln8411->pps_index);
+	if (!ln8411->ftm_mode)
+		ret = ln8411_set_ta_type(ln8411, ln8411->pps_index);
 	dev_info(ln8411->dev, "%s: Current ta_type=%d, chg_mode=%d\n", __func__,
 		ln8411->ta_type, ln8411->chg_mode);
 	if (ret < 0)
@@ -3690,6 +3698,9 @@ static int ln8411_send_message(struct ln8411_charger *ln8411)
 
 	dev_dbg(ln8411->dev, "%s: ====== START ======= \n", __func__);
 
+	if (ln8411->ftm_mode)
+		goto skip_pps;
+
 	/* Adjust TA current and voltage step */
 	if (ln8411->ta_type == TA_TYPE_WIRELESS) {
 		/* RX voltage resolution is 40mV */
@@ -3718,6 +3729,7 @@ static int ln8411_send_message(struct ln8411_charger *ln8411)
 		ret = ln8411_send_pd_message(ln8411, PD_MSG_REQUEST_APDO);
 	}
 
+skip_pps:
 	switch (ln8411->charging_state) {
 	case DC_STATE_PRESET_DC:
 		ln8411->timer_id = TIMER_PRESET_CONFIG;
@@ -3752,7 +3764,9 @@ static int ln8411_send_message(struct ln8411_charger *ln8411)
 	}
 
 	/* Ensure both TA voltage and current get set before enabling charging */
-	if (ln8411->timer_id == TIMER_PRESET_CONFIG)
+	if (ln8411->ftm_mode)
+		ln8411->timer_period = 0;
+	else if (ln8411->timer_id == TIMER_PRESET_CONFIG)
 		ln8411->timer_period = LN8411_TA_CONFIG_WAIT_T;
 	else if (ln8411->ta_type == TA_TYPE_WIRELESS)
 		ln8411->timer_period = LN8411_PDMSG_WLC_WAIT_T;
@@ -3954,13 +3968,14 @@ static void ln8411_pps_request_work(struct work_struct *work)
 {
 	struct ln8411_charger *ln8411 = container_of(work,
 					struct ln8411_charger, pps_work.work);
-	int ret;
+	int ret = 0;
 
 	dev_dbg(ln8411->dev, "%s: =========START=========\n", __func__);
 	dev_dbg(ln8411->dev, "%s: = charging_state=%u == \n", __func__,
 		 ln8411->charging_state);
 
-	ret = ln8411_send_pd_message(ln8411, PD_MSG_REQUEST_APDO);
+	if (!ln8411->ftm_mode)
+		ret = ln8411_send_pd_message(ln8411, PD_MSG_REQUEST_APDO);
 	if (ret < 0)
 		dev_err(ln8411->dev, "%s: Error-send_pd_message\n", __func__);
 
@@ -4759,14 +4774,16 @@ static enum power_supply_property ln8411_mains_properties[] = {
 	POWER_SUPPLY_PROP_PRESENT,
 	POWER_SUPPLY_PROP_ONLINE,
 	POWER_SUPPLY_PROP_CHARGE_TYPE,
-	POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT,
-	POWER_SUPPLY_PROP_TEMP,
+	POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
+	POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX,
 	/* same as POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT */
 	POWER_SUPPLY_PROP_CURRENT_MAX,
 	POWER_SUPPLY_PROP_CURRENT_NOW,
+	POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT,
+	POWER_SUPPLY_PROP_STATUS,
+	POWER_SUPPLY_PROP_TEMP,
 	POWER_SUPPLY_PROP_VOLTAGE_MAX,
 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
-	POWER_SUPPLY_PROP_STATUS,
 };
 
 static int ln8411_mains_is_writeable(struct power_supply *psy,
@@ -4934,7 +4951,7 @@ static int debug_adc_chan_set(void *data, u64 val)
 {
 	struct ln8411_charger *ln8411 = data;
 
-	if (val < ADCCH_VOUT || val >= ADCCH_MAX)
+	if (val < ADCCH_IIN || val >= ADCCH_MAX)
 		return -EINVAL;
 	ln8411->debug_adc_channel = val;
 	return 0;
@@ -4943,6 +4960,28 @@ static int debug_adc_chan_set(void *data, u64 val)
 DEFINE_SIMPLE_ATTRIBUTE(debug_adc_chan_ops, debug_adc_chan_get,
 			debug_adc_chan_set, "%llu\n");
 
+static int debug_ftm_mode_get(void *data, u64 *val)
+{
+	struct ln8411_charger *ln8411 = data;
+	*val = ln8411->ftm_mode;
+	return 0;
+}
+
+static int debug_ftm_mode_set(void *data, u64 val)
+{
+	struct ln8411_charger *ln8411 = data;
+
+	if (val) {
+		ln8411->ftm_mode = true;
+		ln8411->ta_type = TA_TYPE_USBPD;
+		ln8411->chg_mode = CHG_4TO1_DC_MODE;
+	} else {
+		ln8411->ftm_mode = false;
+	}
+
+	return 0;
+}
+DEFINE_SIMPLE_ATTRIBUTE(debug_ftm_mode_ops, debug_ftm_mode_get, debug_ftm_mode_set, "%llu\n");
 
 static int debug_pps_index_get(void *data, u64 *val)
 {
@@ -5095,6 +5134,8 @@ static int ln8411_create_fs_entries(struct ln8411_charger *chip)
 			    &debug_adc_chan_ops);
 	debugfs_create_file("pps_index", 0644, chip->debug_root, chip,
 			    &debug_pps_index_ops);
+	debugfs_create_file("ftm_mode", 0644, chip->debug_root, chip,
+			    &debug_ftm_mode_ops);
 
 	return 0;
 }

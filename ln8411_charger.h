@@ -282,9 +282,9 @@ struct ln8411_charger {
 #endif
 	/* Google Integration END */
 
-	/* Temporary, only for A1 silicon */
 	u32			iin_reg;
 	u32			vfloat_reg;
+	bool			ftm_mode; /* factory test, will ignore usb pps */
 };
 
 /* Direct Charging State */
