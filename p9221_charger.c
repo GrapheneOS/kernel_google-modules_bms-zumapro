@@ -51,6 +51,7 @@
 #define RTX_BEN_DISABLED	0
 #define RTX_BEN_ON		1
 #define RTX_BEN_ENABLED		2
+#define RTX_BOOST_ENABLED	9
 
 #define REENABLE_RTX_DELAY	3000
 #define P9XXX_CHK_RP_DELAY_MS	200
@@ -4930,6 +4931,9 @@ static int p9382_ben_cfg(struct p9221_charger_data *charger, int cfg)
 	case RTX_BEN_ON:
 		charger->ben_state = cfg;
 		p9382_rtx_enable(charger, true);
+		break;
+	case RTX_BOOST_ENABLED:
+		charger->ben_state = cfg;
 		break;
 	default:
 		return -EINVAL;
