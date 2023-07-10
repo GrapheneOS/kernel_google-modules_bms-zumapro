@@ -455,6 +455,10 @@ int gbms_aacr_fade10(const struct gbms_chg_profile *profile, int cycles);
 __printf(5,6)
 void gbms_logbuffer_prlog(struct logbuffer *log, int level, int debug_no_logbuffer,
 			  int debug_printk_prlog, const char *f, ...);
+#define GBMS_DEV_LOGBUFFER(log, dev, level, debug_no_logbuffer, debug_printk_prlog, fmt, ...) { \
+	gbms_logbuffer_prlog(log, level, debug_no_logbuffer, debug_printk_prlog, \
+	"%s %s: " fmt, dev_driver_string(dev), dev_name(dev), ##__VA_ARGS__); \
+}
 
 /* debug/print */
 const char *gbms_chg_type_s(int chg_type);
