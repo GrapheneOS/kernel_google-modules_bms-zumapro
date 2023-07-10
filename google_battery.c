@@ -5181,6 +5181,11 @@ static int batt_init_chg_profile(struct batt_drv *batt_drv)
 	ret = of_property_read_u32(gbms_batt_id_node(batt_drv->device->of_node),
 				   "google,chg-battery-capacity",
 				    &batt_drv->battery_capacity);
+	/* google,chg-battery-capacity does not exist in the child_node */
+	if (ret < 0)
+		ret = of_property_read_u32(batt_drv->device->of_node,
+					   "google,chg-battery-capacity",
+					    &batt_drv->battery_capacity);
 	if (ret < 0)
 		pr_warn("read chg-battery-capacity from gauge\n");
 
