@@ -7333,7 +7333,7 @@ static ssize_t manufacturing_date_show(struct device *dev,
 	struct bm_date *date = &batt_drv->health_data.bhi_data.bm_date;
 	struct rtc_time tm;
 
-	/* read manufacturing date when data is not successfully read in probe */
+	/* read manufacturing date when data is not loaded yet */
 	if (date->bm_y == 0) {
 		int ret;
 
@@ -7435,7 +7435,7 @@ static ssize_t first_usage_date_show(struct device *dev,
 	if (bhi_data->first_usage_date)
 		return scnprintf(buf, PAGE_SIZE, "%d\n", bhi_data->first_usage_date);
 
-	/* read activation date when data is not successfully read in probe */
+	/* read activation date when data is not loaded yet */
 	if (bhi_data->act_date[0] == 0) {
 		int ret;
 
@@ -10504,18 +10504,6 @@ static int google_battery_probe(struct platform_device *pdev)
 	/* power metrics */
 	batt_drv->power_metrics.polling_rate = 30;
 	batt_drv->power_metrics.interval = 120;
-
-	/* Date of manufacturing of the battery */
-	ret = batt_get_manufacture_date(&batt_drv->health_data.bhi_data);
-	if (ret < 0)
-		pr_warn("cannot get battery manufacture date, ret=%d\n", ret);
-
-	/* Date of first use of the battery */
-	if (!batt_drv->health_data.bhi_data.act_date[0]) {
-		ret = batt_get_activation_date(&batt_drv->health_data.bhi_data);
-		if (ret < 0)
-			pr_warn("cannot get battery activation date, ret=%d\n", ret);
-	}
 
 	return 0;
 }
