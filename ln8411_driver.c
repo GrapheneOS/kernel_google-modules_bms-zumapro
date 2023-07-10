@@ -61,7 +61,7 @@
 #define LN8411_TA_MIN_VOL_PRESET	8000000	/* uV */
 
 #define LN8411_TA_VOL_PRE_OFFSET	500000	 /* uV */
-#define LN8411_WLC_VOL_PRE_OFFSET	700000   /* uV */
+#define LN8411_WLC_VOL_PRE_OFFSET	500000   /* uV */
 /* Adjust CC mode TA voltage step */
 #define LN8411_TA_VOL_STEP_ADJ_CC	40000	/* uV */
 /* Pre CV mode TA voltage step */
@@ -82,6 +82,7 @@
 
 /* maximum retry counter for restarting charging */
 #define LN8411_MAX_RETRY_CNT		3	/* retries */
+#define LN8411_MAX_IBUS_UCP_RETRY_CNT	10	/* retries */
 /* TA IIN tolerance */
 #define LN8411_TA_IIN_OFFSET		100000	/* uA */
 
@@ -750,9 +751,19 @@ static int ln8411_set_status_charging(struct ln8411_charger *ln8411)
 	msleep(30);
 
 	ret = regmap_set_bits(ln8411->regmap, LN8411_CTRL1, LN8411_CP_EN);
+	return ret;
+}
+
+static int ln8411_set_status_disable_charging(struct ln8411_charger *ln8411)
+{
+	int ret;
+	ret = regmap_clear_bits(ln8411->regmap, LN8411_CTRL1, LN8411_CP_EN);
 	if (ret)
 		return ret;
 
+	msleep(60);
+
+	ret = regmap_clear_bits(ln8411->regmap, LN8411_CTRL1, LN8411_QB_EN);
 	return ret;
 }
 
@@ -863,13 +874,7 @@ static int ln8411_set_charging(struct ln8411_charger *ln8411, bool enable)
 
 		/* Integration guide V1.0 Section 5.4 */
 		/* turn off charging */
-		ret = regmap_clear_bits(ln8411->regmap, LN8411_CTRL1, LN8411_CP_EN);
-		if (ret < 0)
-			goto error;
-
-		msleep(60);
-
-		ret = regmap_clear_bits(ln8411->regmap, LN8411_CTRL1, LN8411_QB_EN);
+		ret = ln8411_set_status_disable_charging(ln8411);
 		if (ret < 0)
 			goto error;
 	}
@@ -907,21 +912,26 @@ static int ln8411_check_not_active(struct ln8411_charger *ln8411, int loglevel)
 	unsigned int reg;
 	u8 safety_sts[4];
 
+	ret = regmap_bulk_read(ln8411->regmap, LN8411_SAFETY_STS, safety_sts, 4);
+	if (ret < 0)
+		goto done;
+
 	ret = regmap_read(ln8411->regmap, LN8411_SYS_STS, &reg);
 	if (ret < 0)
 		goto done;
 
 	if (reg & LN8411_STANDBY_STS) {
-		rc = -EAGAIN;
-		logbuffer_prlog(ln8411, loglevel, "%s: in standby\n", __func__);
+		if (safety_sts[0] & LN8411_REV_IBUS_LATCHED)
+			rc = -EAGAIN;
+		else
+			rc = -EINVAL;
+		logbuffer_prlog(ln8411, loglevel, "%s: in standby (%d)\n", __func__, rc);
 	} else if (reg & LN8411_SHUTDOWN_STS) {
 		rc = -EINVAL;
 		logbuffer_prlog(ln8411, loglevel, "%s: in shutdown\n", __func__);
 	} else {
 		rc = 0;
 	}
-
-	ret = regmap_bulk_read(ln8411->regmap, LN8411_SAFETY_STS, safety_sts, 4);
 
 done:
 	logbuffer_prlog(ln8411, loglevel,
@@ -982,6 +992,7 @@ static int ln8411_check_error(struct ln8411_charger *ln8411)
 	/* LN8411 is active state */
 	if (ln8411_check_active(ln8411) == 1) {
 		dev_dbg(ln8411->dev, "%s: Active Status ok\n", __func__);
+		ln8411->ibus_ucp_retry_cnt = LN8411_MAX_IBUS_UCP_RETRY_CNT;
 		return 0;
 	}
 
@@ -3574,7 +3585,8 @@ exit_done:
 		logbuffer_prlog(ln8411, LOGLEVEL_ERR,
 				"%s: charging_state=%d, not active or error (%d)",
 				__func__, ln8411->charging_state, ret);
-		ln8411->timer_id = TIMER_ID_NONE;
+		if (ret != -EAGAIN)
+			ln8411->timer_id = TIMER_ID_NONE;
 		ln8411->timer_period = 0;
 	}
 
@@ -3939,7 +3951,25 @@ error:
 			__func__, timer_id, ln8411->timer_id, charging_state,
 			ln8411->charging_state, ln8411->timer_period, ret);
 
-	ln8411_stop_charging(ln8411);
+	if (ret == -EAGAIN && ln8411->ibus_ucp_retry_cnt) { /* Retry for IBUS UCP case */
+		ln8411->ibus_ucp_retry_cnt--;
+		ret = ln8411_set_status_disable_charging(ln8411);
+		if (ret) {
+			dev_err(ln8411->dev, "%s: unable to disable charging for retry (%d)\n",
+				__func__, ret);
+		} else {
+			ret = ln8411_set_status_charging(ln8411);
+			if (ret)
+				dev_err(ln8411->dev, "%s: unable to enable charging for retry (%d)\n",
+				__func__, ret);
+		}
+
+		if (!ret)
+			mod_delayed_work(ln8411->dc_wq, &ln8411->timer_work,
+					msecs_to_jiffies(LN8411_ENABLE_WLC_DELAY_T));
+	} else {
+		ln8411_stop_charging(ln8411);
+	}
 }
 
 /* delayed work function for resetting DC chip */
@@ -4449,13 +4479,7 @@ static int ln8411_stop_1_2_mode(struct ln8411_charger *ln8411)
         if (ln8411->chg_mode == CHG_NO_DC_MODE)
                return 0;
 
-	ret = regmap_clear_bits(ln8411->regmap, LN8411_CTRL1, LN8411_CP_EN);
-	if (ret < 0)
-		goto error;
-
-	msleep(60);
-
-	ret = regmap_clear_bits(ln8411->regmap, LN8411_CTRL1, LN8411_QB_EN);
+	ret = ln8411_set_status_disable_charging(ln8411);
 	if (ret < 0)
 		goto error;
 
@@ -5205,6 +5229,7 @@ static int ln8411_probe(struct i2c_client *client,
 	ln8411_charger->wlc_ramp_out_vout_target = 15300000; /* 15.3V as default */
 	ln8411_charger->wlc_ramp_out_delay = 300; /* 300 ms default */
 	ln8411_charger->hw_init_done = false;
+	ln8411_charger->ibus_ucp_retry_cnt = LN8411_MAX_IBUS_UCP_RETRY_CNT;
 
 	/* Create a work queue for the direct charger */
 	ln8411_charger->dc_wq = alloc_ordered_workqueue("ln8411_dc_wq", WQ_MEM_RECLAIM);
