@@ -2252,7 +2252,7 @@ static void chg_update_csi(struct chg_drv *chg_drv)
 						   chg_drv->charge_start_level);
 	const bool is_disconnected = chg_state_is_disconnected(&chg_drv->chg_state);
 	const bool is_full = (chg_drv->chg_state.f.flags & GBMS_CS_FLAG_DONE) != 0;
-	const bool is_dock = chg_drv->bd_state.dd_triggered;
+	const bool is_dock = chg_drv->bd_state.dd_state == DOCK_DEFEND_ACTIVE;
 	const bool is_temp = chg_drv->bd_state.triggered;
 
 	if (!chg_drv->csi_status_votable)
@@ -2274,7 +2274,7 @@ static void chg_update_csi(struct chg_drv *chg_drv)
 	/* Charging Status Defender_Dock */
 	gvotable_cast_long_vote(chg_drv->csi_status_votable, "CSI_STATUS_DEFEND_DOCK",
 				CSI_STATUS_Defender_Dock,
-				!is_disconnected && is_dock);
+				is_dock);
 
 	/* Battery defenders (but also retail mode) */
 	gvotable_cast_long_vote(chg_drv->csi_status_votable, "CSI_STATUS_DEFEND_TEMP",
@@ -2287,9 +2287,12 @@ static void chg_update_csi(struct chg_drv *chg_drv)
 	/* Longlife is set on TEMP, DWELL and TRICKLE */
 	gvotable_cast_long_vote(chg_drv->csi_type_votable, "CSI_TYPE_DEFEND",
 				CSI_TYPE_LongLife,
-				is_temp || is_dwell ||
-				(!is_disconnected && is_dock));
+				is_temp || is_dwell || is_dock);
 
+	/* Set to normal if the device docked */
+	if (is_dock)
+		gvotable_cast_long_vote(chg_drv->csi_type_votable, "CSI_TYPE_CONNECTED",
+					CSI_TYPE_Normal, true);
 
 	/* Charging Status Normal */
 }
