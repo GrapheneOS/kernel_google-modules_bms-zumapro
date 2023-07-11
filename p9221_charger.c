@@ -94,6 +94,7 @@ static int p9221_has_dc_in(struct p9221_charger_data *charger);
 static int p9221_init_ben_gpio(struct p9221_charger_data *charger);
 static void p9221_set_ben_gpio(struct p9221_charger_data *charger, bool enable);
 static int p9221_get_ben_gpio(struct p9221_charger_data *charger);
+static bool p9xxx_find_votable(struct p9221_charger_data *charger);
 
 static char *align_status_str[] = {
 	"...", "M2C", "OK", "-1"
@@ -2931,6 +2932,12 @@ static int p9221_notifier_cb(struct notifier_block *nb, unsigned long event,
 		container_of(nb, struct p9221_charger_data, nb);
 	const char *batt_name = IS_ERR_OR_NULL(charger->batt_psy) || !charger->batt_psy->desc ?
 				NULL : charger->batt_psy->desc->name;
+
+	if (!charger->votable_init_done) {
+		charger->votable_init_done = p9xxx_find_votable(charger);
+		if (charger->votable_init_done)
+			dev_dbg(&charger->client->dev, "p9xxx_find_votable is done\n");
+	}
 
 	if (charger->ben_state)
 		goto out;
@@ -7054,6 +7061,36 @@ static void p9221_soc_work(struct work_struct *work)
 		p9221_set_capacity(charger, soc_raw);
 }
 
+static bool p9xxx_find_votable(struct p9221_charger_data *charger)
+{
+	/*
+	 * Find the DC_ICL votable, we use this to limit the current that
+	 * is taken from the wireless charger.
+	 */
+	if (!charger->dc_icl_votable)
+		charger->dc_icl_votable = gvotable_election_get_handle("DC_ICL");
+	if (!charger->dc_icl_votable)
+		dev_warn(&charger->client->dev, "Could not find DC_ICL votable\n");
+
+	/*
+	 * Find the DC_SUSPEND, we use this to disable DCIN before
+	 * enter RTx mode
+	 */
+	if (!charger->dc_suspend_votable)
+		charger->dc_suspend_votable = gvotable_election_get_handle("DC_SUSPEND");
+	if (!charger->dc_suspend_votable)
+		dev_warn(&charger->client->dev, "Could not find DC_SUSPEND votable\n");
+
+	if (!charger->chg_mode_votable)
+		charger->chg_mode_votable = gvotable_election_get_handle(GBMS_MODE_VOTABLE);
+	if (!charger->chg_mode_votable)
+		dev_warn(&charger->client->dev, "Could not find %s votable\n", GBMS_MODE_VOTABLE);
+
+	return charger->dc_icl_votable != NULL &&
+	       charger->dc_suspend_votable != NULL &&
+	       charger->chg_mode_votable != NULL;
+}
+
 static int p9221_charger_probe(struct i2c_client *client,
 				const struct i2c_device_id *id)
 {
@@ -7255,27 +7292,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 		}
 	}
 
-	/*
-	 * Find the DC_ICL votable, we use this to limit the current that
-	 * is taken from the wireless charger.
-	 */
-	charger->dc_icl_votable = gvotable_election_get_handle("DC_ICL");
-	if (!charger->dc_icl_votable)
-		dev_warn(&charger->client->dev, "Could not find DC_ICL votable\n");
-
-	/*
-	 * Find the DC_SUSPEND, we use this to disable DCIN before
-	 * enter RTx mode
-	 */
-	charger->dc_suspend_votable =
-		gvotable_election_get_handle("DC_SUSPEND");
-	if (!charger->dc_suspend_votable)
-		dev_warn(&charger->client->dev, "Could not find DC_SUSPEND votable\n");
-
-	charger->chg_mode_votable =
-		gvotable_election_get_handle(GBMS_MODE_VOTABLE);
-	if (!charger->chg_mode_votable)
-		dev_warn(&charger->client->dev, "Could not find %s votable\n", GBMS_MODE_VOTABLE);
+	charger->votable_init_done = p9xxx_find_votable(charger);
 
 	/* Ramping on BPP is optional */
 	if (charger->pdata->icl_ramp_delay_ms != -1) {
