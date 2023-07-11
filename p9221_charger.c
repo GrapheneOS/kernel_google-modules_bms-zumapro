@@ -2948,6 +2948,8 @@ static int p9221_notifier_cb(struct notifier_block *nb, unsigned long event,
 	if (strcmp(psy->desc->name, "dc") == 0) {
 		charger->dc_psy = psy;
 		charger->check_dc = true;
+	} else if (strcmp(psy->desc->name, "dc-mains") == 0) {
+		charger->check_dc = true;
 	} else if (batt_name && strcmp(psy->desc->name, batt_name) == 0) {
 		schedule_delayed_work(&charger->soc_work, 0);
 	}
