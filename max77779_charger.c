@@ -2510,7 +2510,7 @@ static ssize_t max77779_chg_show_reg_all(struct file *filp, char __user *buf,
 	if (!tmp)
 		return -ENOMEM;
 
-	for (reg_address = 0xB0; reg_address <= 0xD9; reg_address++) {
+	for (reg_address = 0; reg_address <= 0xFF; reg_address++) {
 		ret = max77779_reg_read(data->regmap, reg_address, &reg);
 		if (ret < 0)
 			continue;
@@ -2566,7 +2566,17 @@ static int dbg_init_fs(struct max77779_chgr_data *data)
 
 static bool max77779_chg_is_reg(struct device *dev, unsigned int reg)
 {
-	return (reg >= MAX77779_CHG_INT) && (reg <= MAX77779_CHG_CUST_TM);
+	switch(reg) {
+	case MAX77779_CHG_CHGIN_I_ADC_L ... MAX77779_CHG_JEITA_FLAGS:
+	case MAX77779_CHG_COP_CTRL ... MAX77779_CHG_COP_LIMIT_H:
+	case MAX77779_CHG_INT ... MAX77779_CHG_INT2:
+	case MAX77779_CHG_INT_MASK ... MAX77779_CHG_INT2_MASK:
+	case MAX77779_CHG_INT_OK ... MAX77779_BAT_OILO2_CNFG_3:
+	case MAX77779_CHG_CUST_TM :
+		return true;
+	default:
+		return false;
+	}
 }
 
 static const struct regmap_config max77779_chg_regmap_cfg = {
