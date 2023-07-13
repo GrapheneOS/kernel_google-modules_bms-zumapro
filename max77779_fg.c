@@ -2194,7 +2194,8 @@ static ssize_t max77779_fg_set_dbg_debug_data(struct file *filp,
 	if (ret < 0)
 		return ret;
 
-	ret =  MAX77779_FG_REGMAP_WRITE(&chip->regmap_debug, chip->debug_dbg_reg_address, data);
+	ret = MAX77779_FG_N_REGMAP_WRITE(&chip->regmap, &chip->regmap_debug,
+					 chip->debug_dbg_reg_address, data);
 	if (ret < 0)
 		return ret;
 
