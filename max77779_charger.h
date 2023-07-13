@@ -7,10 +7,8 @@
 #ifndef MAX77779_CHARGER_H_
 #define MAX77779_CHARGER_H_
 
-#if IS_ENABLED(CONFIG_GOOGLE_BCL)
-#include <soc/google/bcl.h>
-#endif
 #include "max77779_usecase.h"
+#include "max777x9_bcl.h"
 
 struct max77779_chgr_data {
 	struct device *dev;
@@ -62,12 +60,6 @@ struct max77779_chgr_data {
 
 	/* debug interface, register to read or write */
 	u32 debug_reg_address;
-
-	/* thermal BCL */
-#if IS_ENABLED(CONFIG_GOOGLE_BCL)
-	struct bcl_device *bcl_dev;
-	struct delayed_work init_bcl;
-#endif
 
 	int chg_term_voltage;
 	int chg_term_volt_debounce;

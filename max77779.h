@@ -13,7 +13,7 @@
 //#define CONFIG_SCNPRINTF_DEBUG 0
 #include "max77779_regs.h"
 
-#define MAX77779_CHG_INT_COUNT 3
+#define MAX77779_CHG_INT_COUNT 2
 
 #define MAX77779_PMIC_REV_A0		0x01
 #define MAX77779_PMIC_REV_A1		0x02

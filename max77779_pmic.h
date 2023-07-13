@@ -9,6 +9,7 @@
 
 #include <linux/device.h>
 #include "max77779_regs.h"
+#include "max777x9_bcl.h"
 
 extern int max77779_pmic_reg_read(struct device *core_dev,
 		unsigned int reg, unsigned int *val);

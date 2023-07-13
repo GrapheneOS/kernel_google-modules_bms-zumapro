@@ -116,128 +116,32 @@ static int max77779_resume_check(struct max77779_chgr_data *data)
 	return ret;
 }
 
-#if 0
-// To be enabled by George Lee
-// #if IS_ENABLED(CONFIG_GOOGLE_BCL)
-static int max77779_get_vdroop_ok(struct i2c_client *client, bool *state)
+/* 1 if changed, 0 if not changed, or < 0 on error */
+static int max77779_chg_prot(struct regmap *regmap, bool enable)
 {
-	struct max77779_chgr_data *data;
-	u8 val;
+	u8 value = enable ? 0 : MAX77779_CHG_CNFG_06_CHGPROT_MASK;
+	u8 prot;
+	int ret;
 
-	if (!client)
-		return -ENODEV;
-
-	data = i2c_get_clientdata(client);
-	if (!data || !data->regmap)
-		return -ENODEV;
-
-	if (max77779_resume_check(data))
-		return -EAGAIN;
-
-	if (max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_01, &val) < 0)
-		return -EINVAL;
-
-	*state = _max77779_chg_details_01_vdroop2_ok_get(val);;
-	return 0;
-}
-
-static int max77779_get_batoilo_lvl(struct i2c_client *client, unsigned int *lvl)
-{
-	struct max77779_chgr_data *data;
-	u8 val;
-
-	if (!client)
-		return -ENODEV;
-
-	data = i2c_get_clientdata(client);
-	if (!data || !data->regmap)
-		return -ENODEV;
-
-	if (max77779_resume_check(data))
-		return -EAGAIN;
-
-	if (max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_14, &val) < 0)
-		return -EINVAL;
-	//*lvl = (BO_STEP * ((val & MAX77779_CHG_CNFG_14_BAT_OILO_MASK)
-	//		>> MAX77779_CHG_CNFG_14_BAT_OILO_SHIFT) + BO_LOWER_LIMIT);
-	return 0;
-}
-
-static int max77779_set_batoilo_lvl(struct i2c_client *client, unsigned int lvl)
-{
-	struct max77779_chgr_data *data;
-
-	if (!client)
-		return -ENODEV;
-
-	data = i2c_get_clientdata(client);
-	if (!data || !data->regmap)
-		return -ENODEV;
-
-	if (max77779_resume_check(data))
-		return -EAGAIN;
-
-	/* TODO: Waiting on b/267779863 */
-	return 0;
-}
-
-static int max77779_get_uvlo_lvl(struct i2c_client *client, uint8_t mode, unsigned int *lvl)
-{
-	struct max77779_chgr_data *data;
-	u8 val;
-	u8 reg;
-
-	if (!client)
-		return -ENODEV;
-
-	data = i2c_get_clientdata(client);
-	if (!data || !data->regmap)
-		return -ENODEV;
-
-	if (max77779_resume_check(data))
-		return -EAGAIN;
-
-	reg = (mode == UVLO1) ? MAX77779_SYS_UVLO1_CNFG_0 : MAX77779_SYS_UVLO2_CNFG_0;
-
-	if (max77779_reg_read(data->regmap, reg, &val) < 0)
-		return -EINVAL;
-	*lvl = VD_STEP * ((val & MAX77779_SYS_UVLO1_CNFG_0_SYS_UVLO1_MASK)
-			  >> MAX77779_SYS_UVLO1_CNFG_0_SYS_UVLO1_SHIFT) + VD_LOWER_LIMIT;
-	return 0;
-}
-
-static int max77779_set_uvlo_lvl(struct i2c_client *client, uint8_t mode, unsigned int lvl)
-{
-	struct max77779_chgr_data *data;
-	u8 val;
-	u8 reg;
-
-	if (!client)
-		return -ENODEV;
-
-	data = i2c_get_clientdata(client);
-	if (!data || !data->regmap)
-		return -ENODEV;
-
-	if (max77779_resume_check(data))
-		return -EAGAIN;
-
-	reg = (mode == UVLO1) ? MAX77779_SYS_UVLO1_CNFG_0 : MAX77779_SYS_UVLO2_CNFG_0;
-
-	if (max77779_reg_read(data->regmap, reg, &val) < 0)
-		return -EINVAL;
-	val &= ~MAX77779_SYS_UVLO1_CNFG_0_SYS_UVLO1_MASK;
-	val |= (lvl - VD_LOWER_LIMIT) / 50;
-	if (max77779_reg_write(data->regmap, reg, val) < 0)
+	ret = max77779_reg_read(regmap, MAX77779_CHG_CNFG_06, &prot);
+	if (ret < 0)
 		return -EIO;
-	return 0;
+
+	if ((prot & MAX77779_CHG_CNFG_06_CHGPROT_MASK) == value)
+		return 0;
+
+	ret = regmap_write_bits(regmap, MAX77779_CHG_CNFG_06,
+				MAX77779_CHG_CNFG_06_CHGPROT_MASK,
+				value);
+	if (ret < 0)
+		return -EIO;
+
+	return 1;
 }
 
-static int max77779_get_and_clr_bcl_irq(struct i2c_client *client, u8 *irq_val)
+int max77779_external_reg_read(struct i2c_client *client, uint8_t reg, uint8_t *val)
 {
 	struct max77779_chgr_data *data;
-	u8 chg_int;
-	u8 ret;
 
 	if (!client)
 		return -ENODEV;
@@ -249,40 +153,47 @@ static int max77779_get_and_clr_bcl_irq(struct i2c_client *client, u8 *irq_val)
 	if (max77779_resume_check(data))
 		return -EAGAIN;
 
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_INT2, &chg_int);
-	if (ret < 0)
-		return IRQ_NONE;
+	if (max77779_readn(data->regmap, reg, val, 2) < 0)
+		return -EINVAL;
 
-	if ((chg_int & ~MAX77779_CHG_INT2_BAT_OILO_I) &
-		(chg_int & ~MAX77779_CHG_INT2_SYS_UVLO1_I) &
-		(chg_int & ~MAX77779_CHG_INT2_SYS_UVLO2_I) == 0)
-		return IRQ_NONE;
+	return 0;
+}
+EXPORT_SYMBOL_GPL(max77779_external_reg_read);
 
-	if (chg_int & MAX77779_CHG_INT2_SYS_UVLO2_I)
-		*irq_val = UVLO2;
-	else if (chg_int & MAX77779_CHG_INT2_BAT_OILO_I)
-		*irq_val = BATOILO;
-	else if (chg_int & MAX77779_CHG_INT2_SYS_UVLO1_I)
-		*irq_val = UVLO1;
-	else
-		*irq_val = 0;
+static int max77779_chg_prot(struct regmap *regmap, bool enable);
 
-	ret = max77779_reg_write(data->regmap, MAX77779_CHG_INT2, chg_int);
-	if (ret < 0)
-		return IRQ_NONE;
+int max77779_external_reg_write(struct i2c_client *client, uint8_t reg, uint8_t val)
+{
+	struct max77779_chgr_data *data;
+	int prot;
+	int ret = 0;
 
+	if (!client)
+		return -ENODEV;
+
+	data = i2c_get_clientdata(client);
+	if (!data || !data->regmap)
+		return -ENODEV;
+
+	if (max77779_resume_check(data))
+		return -EAGAIN;
+
+	prot = max77779_chg_prot(data->regmap, false);
+	if (prot < 0)
+		return -EIO;
+
+	if (max77779_reg_write(data->regmap, reg, val))
+		ret = -EIO;
+
+	prot = max77779_chg_prot(data->regmap, true);
+	if (prot < 0) {
+		dev_err(data->dev, "%s: cannot restore protection bits (%d)\n",
+		       __func__, prot);
+		return prot;
+	};
 	return ret;
 }
-
-static const struct bcl_ifpmic_ops bcl_ifpmic_ops = {
-	max77779_get_vdroop_ok,
-	max77779_set_uvlo_lvl,
-	max77779_get_uvlo_lvl,
-	max77779_set_batoilo_lvl,
-	max77779_get_batoilo_lvl,
-	max77779_get_and_clr_bcl_irq,
-};
-#endif /* CONFIG_GOOGLE_BCL */
+EXPORT_SYMBOL_GPL(max77779_external_reg_write);
 
 /* ----------------------------------------------------------------------- */
 
@@ -349,29 +260,6 @@ int max77779_chg_mode_write(struct i2c_client *client,
 				 mode);
 }
 EXPORT_SYMBOL_GPL(max77779_chg_mode_write);
-
-/* 1 if changed, 0 if not changed, or < 0 on error */
-static int max77779_chg_prot(struct regmap *regmap, bool enable)
-{
-	u8 value = enable ? 0 : MAX77779_CHG_CNFG_06_CHGPROT_MASK;
-	u8 prot;
-	int ret;
-
-	ret = max77779_reg_read(regmap, MAX77779_CHG_CNFG_06, &prot);
-	if (ret < 0)
-		return -EIO;
-
-	if ((prot & MAX77779_CHG_CNFG_06_CHGPROT_MASK) == value)
-		return 0;
-
-	ret = regmap_write_bits(regmap, MAX77779_CHG_CNFG_06,
-				MAX77779_CHG_CNFG_06_CHGPROT_MASK,
-				value);
-	if (ret < 0)
-		return -EIO;
-
-	return 1;
-}
 
 int max77779_chg_insel_write(struct i2c_client *client, u8 mask, u8 value)
 {
@@ -2610,9 +2498,7 @@ static u8 max77779_int_mask[MAX77779_CHG_INT_COUNT] = {
 	  MAX77779_CHG_INT_THM2_I_MASK),
 	(u8)~(MAX77779_CHG_INT2_INSEL_I_MASK |
 	  MAX77779_CHG_INT2_CHG_STA_TO_I_MASK |
-	  MAX77779_CHG_INT2_CHG_STA_DONE_I_MASK),
-	(u8)~(MAX77779_PMIC_VDROOP_INT_SYS_UVLO1_INT_MASK |
-	  MAX77779_PMIC_VDROOP_INT_SYS_UVLO2_INT_MASK)
+	  MAX77779_CHG_INT2_CHG_STA_DONE_I_MASK)
 };
 
 static irqreturn_t max77779_chgr_irq(int irq, void *client)
@@ -2634,36 +2520,20 @@ static irqreturn_t max77779_chgr_irq(int irq, void *client)
 	ret = max77779_readn(data->regmap, MAX77779_CHG_INT, chg_int, 2);
 	if (ret < 0)
 		return IRQ_NONE;
-	/* TODO(b/288323860) fix VDROOP reading */
-#if 0
-	ret = max77779_reg_read(data->regmap, MAX77779_PMIC_VDROOP_INT, &chg_int[2]);
-	if (ret < 0)
-		return IRQ_NONE;
-#endif
 
 	if ((chg_int[0] & ~max77779_int_mask[0]) == 0 &&
-	    (chg_int[1] & ~max77779_int_mask[1]) == 0 &&
-	    (chg_int[2] & ~max77779_int_mask[2]) == 0)
+	    (chg_int[1] & ~max77779_int_mask[1]) == 0)
 		return IRQ_NONE;
 
 	chg_int_clr[0] = chg_int[0];
 	chg_int_clr[1] = chg_int[1];
-	chg_int_clr[2] = chg_int[2] & (~MAX77779_PMIC_VDROOP_INT_BAT_OILO1_INT_MASK &
-					~MAX77779_PMIC_VDROOP_INT_SYS_UVLO2_INT_MASK &
-					~MAX77779_PMIC_VDROOP_INT_SYS_UVLO1_INT_MASK);
 
 	ret = max77779_writen(data->regmap, MAX77779_CHG_INT, /* NOTYPO */
                               chg_int_clr, 2);
 	if (ret < 0)
 		return IRQ_NONE;
-	/* TODO(b/288323860) fix VDROOP reading */
-#if 0
-	ret = max77779_reg_write(data->regmap, MAX77779_PMIC_VDROOP_INT, chg_int_clr[2]);
-	if (ret < 0)
-		return IRQ_NONE;
-#endif
 
-	pr_debug("max77779_chgr_irq INT : %02x %02x %02x\n", chg_int[0], chg_int[1], chg_int[2]);
+	pr_debug("max77779_chgr_irq INT : %02x %02x\n", chg_int[0], chg_int[1]);
 
 	/* always broadcast battery events */
 	broadcast = chg_int[0] & MAX77779_CHG_INT_BAT_I_MASK;
@@ -2813,47 +2683,6 @@ static int max77779_setup_votables(struct max77779_chgr_data *data)
 	return 0;
 }
 
-#if 0
-/* To be enabled by George Lee */
-//#if IS_ENABLED(CONFIG_GOOGLE_BCL)
-static void max77779_register_bcl(struct work_struct *work)
-{
-	struct max77779_chgr_data *data = container_of(work, struct max77779_chgr_data,
-						       init_bcl.work);
-	struct bcl_device *bcl_dev;
-
-	bcl_dev = google_retrieve_bcl_handle();
-	if (!bcl_dev)
-		goto retry_init_work;
-
-	if (google_bcl_register_ifpmic(bcl_dev, &bcl_ifpmic_ops) == 0)
-		data->bcl_dev = bcl_dev;
-
-	return;
-retry_init_work:
-	schedule_delayed_work(&data->init_bcl, msecs_to_jiffies(1000));
-}
-
-static int max77779_init_bcl(struct max77779_chgr_data *data)
-{
-	u8 regdata;
-	int ret;
-
-	/* TODO: use RMW */
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_17, &regdata);
-	if (ret == 0)
-		ret = max77779_reg_write(data->regmap, MAX77779_CHG_CNFG_17,
-					 regdata | BATOILO_DET_30US);
-	if (ret < 0)
-		return -EIO;
-
-	INIT_DELAYED_WORK(&data->init_bcl, max77779_register_bcl);
-	schedule_delayed_work(&data->init_bcl, msecs_to_jiffies(1000));
-
-	return ret;
-}
-#endif
-
 static int max77779_charger_probe(struct i2c_client *client,
 				  const struct i2c_device_id *id)
 {
@@ -2894,17 +2723,6 @@ static int max77779_charger_probe(struct i2c_client *client,
 	atomic_set(&data->insel_cnt, 0);
 	atomic_set(&data->early_topoff_cnt, 0);
 	i2c_set_clientdata(client, data);
-
-#if 0
-//#if IS_ENABLED(CONFIG_GOOGLE_BCL)
-	/*
-	 * NOTE: this should possibly be retried later. Startip seems to be
-	 * a little "racey".
-	 */
-	ret = max77779_init_bcl(data);
-	if (ret < 0)
-	        pr_err("Failed to register BCL callback %d\n", ret);
-#endif
 
 	data->usecase_wake_lock = wakeup_source_register(NULL, "max77779-usecase");
 	if (!data->usecase_wake_lock) {
