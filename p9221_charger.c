@@ -2334,8 +2334,14 @@ int p9221_set_auth_dc_icl(struct p9221_charger_data *charger, bool enable)
 
 	icl_ua = enable ? P9221_AUTH_DC_ICL_UA_500 : 0;
 
-	if (!charger->dc_icl_votable)
-		goto exit;
+	if (!charger->dc_icl_votable) {
+		charger->dc_icl_votable = gvotable_election_get_handle("DC_ICL");
+		if (!charger->dc_icl_votable) {
+			dev_err(&charger->client->dev,
+				"Could not get votable: DC_ICL\n");
+			goto exit;
+		}
+	}
 
 	if (enable && !charger->auth_delay) {
 		dev_info(&charger->client->dev, "Enable Auth ICL (%d)\n", ret);
@@ -6935,12 +6941,6 @@ static int p9221_wlc_disable_callback(struct gvotable_election *el,
 	int disable = GVOTABLE_PTR_TO_INT(vote);
 	u8 val = P9221_EOP_UNKNOWN;
 
-	if (disable && (charger->last_disable == 0 || charger->last_disable == -1) && charger->online) {
-		logbuffer_prlog(charger->log, "wlc_disable: online_spoof=1");
-		charger->online_spoof = true;
-		cancel_delayed_work(&charger->stop_online_spoof_work);
-	}
-
 	if (charger->online_spoof && charger->last_disable && !disable)
 		schedule_delayed_work(&charger->stop_online_spoof_work, msecs_to_jiffies(2000));
 
@@ -7079,6 +7079,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	charger->ll_bpp_cep = -EINVAL;
 	charger->check_rp = RP_NOTSET;
 	charger->extended_int_recv = false;
+	charger->det_status = 1;
 	mutex_init(&charger->io_lock);
 	mutex_init(&charger->cmd_lock);
 	mutex_init(&charger->stats_lock);

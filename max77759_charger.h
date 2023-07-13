@@ -33,6 +33,7 @@ struct max77759_chgr_data {
 	bool charge_done;
 	bool chgin_input_suspend;
 	bool wcin_input_suspend;
+	bool wlc_spoof;
 	bool thm2_sts;
 
 	int irq_gpio;
@@ -78,4 +79,5 @@ struct max77759_chgr_data {
 	int chg_term_voltage;
 	int chg_term_volt_debounce;
 };
+
 #endif

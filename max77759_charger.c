@@ -1012,10 +1012,19 @@ static int max77759_set_insel(struct max77759_chgr_data *data,
 		wlc_on = wlc_on || (insel_value & MAX77759_CHG_CNFG_12_WCINSEL) != 0;
 
 		/* b/182973431 disable WLC_IC while CHGIN, rtx will enable WLC later */
-		ret = gs101_wlc_en(uc_data, wlc_on);
+		if (wlc_on)
+			ret = gs101_wlc_en(uc_data, WLC_ENABLED);
+		else if (data->wlc_spoof)
+			ret = gs101_wlc_en(uc_data, WLC_SPOOFED);
+		else
+			ret = gs101_wlc_en(uc_data, WLC_DISABLED);
+
 		if (ret < 0)
 			pr_err("%s: error wlc_en=%d ret:%d\n", __func__,
 			       wlc_on, ret);
+
+		/* reset wlc_spoof */
+		data->wlc_spoof = false;
 	} else {
 		u8 value = 0;
 
@@ -1711,6 +1720,9 @@ static int max77759_dcicl_callback(struct gvotable_election *el,
 			dc_icl, ret);
 
 	/* will trigger a CHARGER_MODE callback */
+	if (strcmp(reason, REASON_MDIS) == 0)
+		data->wlc_spoof = true;
+
 	ret = max77759_wcin_input_suspend(data, suspend, "DC_ICL");
 	if (ret < 0)
 		dev_err(data->dev, "cannot set suspend=%d (%d)\n",

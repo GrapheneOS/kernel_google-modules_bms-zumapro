@@ -2795,12 +2795,18 @@ static int csi_type_cb(struct gvotable_election *el, const char *reason,
 
 	return 0;
 }
+static bool batt_is_trickle(struct batt_ssoc_state *ssoc_state)
+{
+	return ssoc_state->bd_trickle_cnt > 0 &&
+		ssoc_state->bd_trickle_enable &&
+		!ssoc_state->bd_trickle_dry_run;
+}
 
 /* all reset on disconnect */
 static void batt_update_csi_type(struct batt_drv *batt_drv)
 {
 	const bool is_disconnected = chg_state_is_disconnected(&batt_drv->chg_state);
-	const bool is_trickle = batt_drv->ssoc_state.bd_trickle_cnt > 0;
+	const bool is_trickle = batt_is_trickle(&batt_drv->ssoc_state);
 	const bool is_ac = batt_drv->msc_state == MSC_HEALTH ||
 			batt_drv->msc_state == MSC_HEALTH_PAUSE ||
 			batt_drv->msc_state == MSC_HEALTH_ALWAYS_ON;
@@ -2892,7 +2898,7 @@ static void batt_update_csi_status(struct batt_drv *batt_drv)
 	const int temp_hot_idx = profile->temp_nb_limits - 1;
 	const bool is_cold = batt_drv->batt_temp < profile->temp_limits[0];
 	const bool is_hot = batt_drv->batt_temp >= profile->temp_limits[temp_hot_idx];
-	const bool is_trickle = batt_drv->ssoc_state.bd_trickle_cnt > 0;
+	const bool is_trickle = batt_is_trickle(&batt_drv->ssoc_state);
 	const bool is_disconnected = chg_state_is_disconnected(&batt_drv->chg_state);
 	const union gbms_ce_adapter_details *ad = &batt_drv->ce_data.adapter_details;
 
