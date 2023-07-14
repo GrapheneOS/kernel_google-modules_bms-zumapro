@@ -1576,12 +1576,7 @@ static int max77779_wcin_is_online(struct max77779_chgr_data *data)
 	uint8_t val;
 	int ret;
 
-	ret = max77779_wcin_is_valid(data);
-	if (ret <= 0)
-		return ret;
-
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_00, &val);
-	return (ret == 0) && (_max77779_chg_details_00_wcin_dtls_get(val) == 0x3);
+	return max77779_wcin_is_valid(data);
 }
 
 /* TODO: make this configurable */
@@ -1848,12 +1843,9 @@ static int max77779_is_online(struct max77779_chgr_data *data)
 	uint8_t val;
 	int ret;
 
-	ret = max77779_is_valid(data);
-	if (ret <= 0)
-		return 0;
-
 	ret = max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_00, &val);
 	return (ret == 0) && ((_max77779_chg_details_00_chgin_dtls_get(val) == 0x3)||
+	       (_max77779_chg_details_00_wcin_dtls_get(val) == 0x2) ||
 	       (_max77779_chg_details_00_wcin_dtls_get(val) == 0x3));
 }
 
@@ -2200,7 +2192,7 @@ static int max77779_psy_get_property(struct power_supply *psy,
 		pval->intval = max77779_is_online(data);
 		break;
 	case POWER_SUPPLY_PROP_PRESENT:
-		pval->intval = max77779_is_valid(data);
+		pval->intval = max77779_is_online(data);
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
 		ret = max77779_chgin_get_ilim_max_ua(data, &pval->intval);
