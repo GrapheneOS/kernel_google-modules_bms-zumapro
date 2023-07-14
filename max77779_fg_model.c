@@ -153,12 +153,16 @@ static int max77779_update_custom_parameters(struct max77779_model_data *model_d
 	int ret, attempt;
 	u16 data;
 
+	ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_nDesignCap, cp->designcap);
+	if (ret < 0)
+		return ret;
+
 	ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_DBG_nFullCapRep, cp->fullcaprep);
 	if (ret < 0)
 		return ret;
 
 	for (attempt = 0; attempt < 3; attempt++) {
-		ret = REGMAP_WRITE(regmap, MAX77779_FG_dPAcc, 0x0C80);
+		ret = REGMAP_WRITE(regmap, MAX77779_FG_dPAcc, cp->dpacc);
 		if (ret < 0)
 			continue;
 		msleep(2);
@@ -190,7 +194,7 @@ static int max77779_update_custom_parameters(struct max77779_model_data *model_d
 		ret = REGMAP_WRITE(regmap, MAX77779_FG_QRTable30, cp->qresidual30);
 
 	if (ret == 0) /* Write modelcfg.refresh */
-		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_DBG_nModelCfg, 0x0400);
+		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_DBG_nModelCfg, cp->modelcfg);
 	if (ret == 0) /* FIXME:REGMAP_WRITE_VERIFY fail */
 		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_DBG_nLearnCfg, cp->learncfg);
 	if (ret == 0)
@@ -203,6 +207,14 @@ static int max77779_update_custom_parameters(struct max77779_model_data *model_d
 		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_DBG_nMiscCfg, cp->misccfg);
 	if (ret == 0)
 		ret = REGMAP_WRITE(regmap, MAX77779_FG_Config2, cp->config2);
+
+	/* In INI but not part of model loading guide */
+	if (ret == 0)
+		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_DBG_nThermCfg, cp->thermcfg);
+	if (ret == 0)
+		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_DBG_nNVCfg0, cp->nvcfg0);
+	if (ret == 0)
+		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_DBG_nFilterCfg, cp->filtercfg);
 
 	return ret;
 }

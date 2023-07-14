@@ -45,8 +45,10 @@
 #define MAX77779_FG_DBG_nLearnCfg	0x9f
 /* TODO: b/286905696 - Add register to xml */
 #define MAX77779_FG_DBG_nFullCapRep	0xa9
+#define MAX77779_FG_nDesignCap		0xb3
 #define MAX77779_FG_DBG_nRelaxCFG	0xb6
 #define MAX77779_FG_DBG_nFullSOCThr	0xbc
+#define MAX77779_FG_DBG_nNVCfg0	0xc0
 
 /* ----------------------------------------------------------------------------
  * Mode Register

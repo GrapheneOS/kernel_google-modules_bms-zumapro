@@ -257,7 +257,6 @@ static inline int reg_to_capacity_uah(u16 val, struct max77779_fg_chip *chip)
 
 static inline int reg_to_time_hr(u16 val, struct max77779_fg_chip *chip)
 {
-
 	return (val * 32) / 10;
 }
 
@@ -1817,7 +1816,7 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 	if (fg_status == 0 && fg_int_sts == 0)
 		return IRQ_NONE;
 
-	dev_dbg(chip->dev, "FG_Status:%04x, FG_INT_STS:%04x\n", fg_status, fg_int_sts);
+	dev_info(chip->dev, "FG_Status:%04x, FG_INT_STS:%04x\n", fg_status, fg_int_sts);
 
 	/* only used to report health */
 	chip->health_status |= fg_status;
@@ -2741,12 +2740,12 @@ static int max77779_fg_init_chip(struct max77779_fg_chip *chip)
 	if (!ret && data & MAX77779_FG_FG_INT_STS_Br_MASK) {
 		dev_info(chip->dev, "Clearing Battery Removal bit\n");
 		MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_FG_INT_STS,
-					 data | MAX77779_FG_FG_INT_STS_Br_MASK);
+					 MAX77779_FG_FG_INT_STS_Br_MASK);
 	}
 	if (!ret && data & MAX77779_FG_FG_INT_STS_Bi_MASK) {
 		dev_info(chip->dev, "Clearing Battery Insertion bit\n");
 		MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_FG_INT_STS,
-					 data | MAX77779_FG_FG_INT_STS_Bi_MASK);
+					 MAX77779_FG_FG_INT_STS_Bi_MASK);
 	}
 
 	MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_FG_INT_MASK,
@@ -3023,6 +3022,7 @@ static bool max77779_fg_dbg_is_reg(struct device *dev, unsigned int reg)
 		case 0xB1 ... 0xB3:
 		case 0xB6:
 		case 0xBC:
+		case 0xC0:
 		case 0xC6:
 		case 0xC8 ... 0xCA:
 			return true;

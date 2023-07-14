@@ -43,7 +43,7 @@
  * TODO: handle switching between RC1 and RC2 model types.
  */
 struct max77779_custom_parameters {
-	u16 iavg_empty; /* WV */
+	u16 nvcfg0;
 	u16 relaxcfg;
 	u16 learncfg;
 	u16 config;
@@ -62,6 +62,9 @@ struct max77779_custom_parameters {
 	u16 tempco;	/* WV */
 	u16 ichgterm;
 	u16 misccfg;	/* 0x9d0 for internal current sense, 0x8d0 external */
+	u16 modelcfg;
+	u16 thermcfg;
+	u16 filtercfg;
 } __attribute__((packed));
 
 /* this is what is saved and restored to/from GMSR */
@@ -71,7 +74,7 @@ struct model_state_save {
 	u16 fullcaprep;
 	u16 cycles;
 	u16 fullcapnom;
-	u8 padding[6]; /* keep the same size as 59 for consistency GBMS_GMSR_LEN */
+	u8 padding[12]; /* keep the same size as 59 for consistency GBMS_GMSR_LEN */
 	u8 crc;
 } __attribute__((packed));
 
