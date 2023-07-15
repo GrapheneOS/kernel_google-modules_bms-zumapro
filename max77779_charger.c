@@ -1571,11 +1571,8 @@ static int max77779_wcin_is_valid(struct max77779_chgr_data *data)
 	return wcin_dtls == 0x2 || wcin_dtls == 0x3;
 }
 
-static int max77779_wcin_is_online(struct max77779_chgr_data *data)
+static inline int max77779_wcin_is_online(struct max77779_chgr_data *data)
 {
-	uint8_t val;
-	int ret;
-
 	return max77779_wcin_is_valid(data);
 }
 
@@ -1790,27 +1787,13 @@ static int max77779_init_wcin_psy(struct max77779_chgr_data *data)
 	return 0;
 }
 
-
-static int max77779_chg_is_valid(struct max77779_chgr_data *data)
-{
-	uint8_t int_ok;
-	int ret;
-
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_INT_OK, &int_ok);
-	return (ret == 0) && _max77779_chg_int_ok_chgin_ok_get(int_ok);
-}
-
 static int max77779_chgin_is_online(struct max77779_chgr_data *data)
 {
 	uint8_t val;
-	int ret;
+	int ret = max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_00, &val);
 
-	ret = max77779_chg_is_valid(data);
-	if (ret <= 0)
-		return ret;
-
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_00, &val);
-	return (ret == 0) && (_max77779_chg_details_00_chgin_dtls_get(val) == 0x3);
+	return (ret == 0) && (_max77779_chg_details_00_chgin_dtls_get(val) == 0x2 ||
+		_max77779_chg_details_00_chgin_dtls_get(val) == 0x3);
 }
 
 /*
@@ -1827,16 +1810,6 @@ static int max77779_is_limited(struct max77779_chgr_data *data)
 	return (ret == 0) && _max77779_chg_int_ok_inlim_ok_get(value) == 0;
 }
 
-static int max77779_is_valid(struct max77779_chgr_data *data)
-{
-	uint8_t int_ok;
-	int ret;
-
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_INT_OK, &int_ok);
-	return (ret == 0) && (_max77779_chg_int_ok_chgin_ok_get(int_ok) ||
-	       _max77779_chg_int_ok_wcin_ok_get(int_ok));
-}
-
 /* WCIN || CHGIN present, valid  && CHGIN FET is closed */
 static int max77779_is_online(struct max77779_chgr_data *data)
 {
@@ -1844,7 +1817,8 @@ static int max77779_is_online(struct max77779_chgr_data *data)
 	int ret;
 
 	ret = max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_00, &val);
-	return (ret == 0) && ((_max77779_chg_details_00_chgin_dtls_get(val) == 0x3)||
+	return (ret == 0) && ((_max77779_chg_details_00_chgin_dtls_get(val) == 0x2)||
+	       (_max77779_chg_details_00_chgin_dtls_get(val) == 0x3) ||
 	       (_max77779_chg_details_00_wcin_dtls_get(val) == 0x2) ||
 	       (_max77779_chg_details_00_wcin_dtls_get(val) == 0x3));
 }
@@ -1953,7 +1927,7 @@ static int max77779_get_chg_chgr_state(struct max77779_chgr_data *data,
 {
 	int usb_present, usb_valid, dc_present, dc_valid;
 	const char *source = "";
-	uint8_t int_ok, dtls;
+	uint8_t dtls, cnfg, cp_enabled = 0;
 	int vbatt, icl = 0;
 	int rc;
 
@@ -1963,18 +1937,27 @@ static int max77779_get_chg_chgr_state(struct max77779_chgr_data *data,
 	chg_state->f.flags = gbms_gen_chg_flags(chg_state->f.chg_status,
 						chg_state->f.chg_type);
 
-	rc = max77779_reg_read(data->regmap, MAX77779_CHG_INT_OK, &int_ok);
-	if (rc == 0)
+	rc = max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_00, &cnfg);
+	if (rc == 0) {
+		cp_enabled = _max77779_chg_cnfg_00_cp_en_get(cnfg);
 		rc = max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_02,
 					&dtls);
+	}
 
 	/* present when connected, valid when FET is closed */
-	usb_present = (rc == 0) && _max77779_chg_int_ok_chgin_ok_get(int_ok);
-	usb_valid = usb_present && _max77779_chg_details_02_chgin_sts_get(dtls);
+	/* chgin_sts and wcin_sts not valid in direct charger 4:1 mode */
+	usb_present = (rc == 0) && max77779_chgin_is_online(data);
+	if (!cp_enabled)
+		usb_valid = usb_present && _max77779_chg_details_02_chgin_sts_get(dtls);
+	else
+		usb_valid = usb_present;
 
 	/* present if in field, valid when FET is closed */
-	dc_present = (rc == 0) && _max77779_chg_int_ok_wcin_ok_get(int_ok);
-	dc_valid = dc_present && _max77779_chg_details_02_wcin_sts_get(dtls);
+	dc_present = (rc == 0) && max77779_wcin_is_online(data);
+	if (!cp_enabled)
+		dc_valid = dc_present && _max77779_chg_details_02_wcin_sts_get(dtls);
+	else
+		dc_valid = dc_present;
 
 	rc = max77779_read_vbatt(data, &vbatt);
 	if (rc == 0)
