@@ -210,6 +210,11 @@ static int gbms_read_cccm_limits(struct gbms_chg_profile *profile,
 	profile->volt_nb_limits =
 	    of_property_count_elems_of_size(gbms_batt_id_node(node), "google,chg-cv-limits",
 					    sizeof(u32));
+	/* google,chg-cv-limits does not exist in the child_node */
+	if (profile->volt_nb_limits <= 0)
+		profile->volt_nb_limits =
+		    of_property_count_elems_of_size(node, "google,chg-cv-limits",
+						    sizeof(u32));
 	if (profile->volt_nb_limits <= 0) {
 		ret = profile->volt_nb_limits;
 		gbms_err(profile, "cannot read chg-cv-limits, ret=%d\n", ret);
@@ -223,6 +228,11 @@ static int gbms_read_cccm_limits(struct gbms_chg_profile *profile,
 	ret = of_property_read_u32_array(gbms_batt_id_node(node), "google,chg-cv-limits",
 					 (u32 *)profile->volt_limits,
 					 profile->volt_nb_limits);
+	/* google,chg-cv-limits does not exist in the child_node */
+	if (ret < 0)
+		ret = of_property_read_u32_array(node, "google,chg-cv-limits",
+						 (u32 *)profile->volt_limits,
+						 profile->volt_nb_limits);
 	if (ret < 0) {
 		gbms_err(profile, "cannot read chg-cv-limits table, ret=%d\n",
 			 ret);
