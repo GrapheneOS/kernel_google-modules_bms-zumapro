@@ -577,6 +577,12 @@ static int ln8411_set_input_current(struct ln8411_charger *ln8411,
 	return ret;
 }
 
+static inline bool ln8411_can_inc_ta_cur(struct ln8411_charger *ln8411)
+{
+	return ln8411->ta_cur + PD_MSG_TA_CUR_STEP < min(ln8411->ta_max_cur,
+		ln8411->iin_cc + LN8411_TA_CUR_MAX_OFFSET);
+}
+
 /* Returns the enable or disable value. into 1 or 0. */
 static int ln8411_get_charging_enabled(struct ln8411_charger *ln8411)
 {
@@ -1351,7 +1357,7 @@ static int ln8411_set_ta_current_comp(struct ln8411_charger *ln8411)
 			if (ln8411->ta_vol == ln8411->ta_max_vol) {
 				/* TA voltage is already the maximum voltage */
 				/* Compare TA max current */
-				if (ln8411->ta_cur == ln8411->ta_max_cur) {
+				if (!ln8411_can_inc_ta_cur(ln8411)) {
 					/* TA voltage and current are at max */
 					logbuffer_prlog(ln8411, LOGLEVEL_DEBUG,
 							"End1: ta_vol=%u, ta_cur=%u",
@@ -1399,8 +1405,7 @@ static int ln8411_set_ta_current_comp(struct ln8411_charger *ln8411)
 
 			/* Try to increase TA current */
 			/* Compare TA max current */
-			if (ln8411->ta_cur >= min(ln8411->ta_max_cur,
-						  ln8411->iin_cc + LN8411_TA_CUR_MAX_OFFSET)) {
+			if (!ln8411_can_inc_ta_cur(ln8411)) {
 
 				/* TA current is already the maximum current */
 				/* Compare TA max voltage */
@@ -1453,7 +1458,7 @@ static int ln8411_set_ta_current_comp(struct ln8411_charger *ln8411)
 			/* TA voltage is already the maximum voltage */
 
 			/* Compare TA maximum current */
-			if (ln8411->ta_cur == ln8411->ta_max_cur) {
+			if (!ln8411_can_inc_ta_cur(ln8411)) {
 				/*
 				* TA voltage and current are already at the
 				 * maximum values
@@ -2641,7 +2646,7 @@ static int ln8411_ajdust_ccmode_wired(struct ln8411_charger *ln8411, int iin)
 
 		/* Try to increase TA current */
 		/* Check APDO max current */
-	} else if (ln8411->ta_cur == ln8411->ta_max_cur) {
+	} else if (!ln8411_can_inc_ta_cur(ln8411)) {
 		/* TA current is maximum current */
 
 		logbuffer_prlog(ln8411, LOGLEVEL_DEBUG,
