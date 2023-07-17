@@ -213,7 +213,7 @@ static inline int reg_to_twos_comp_int(u16 val)
 static inline int reg_to_micro_amp(s16 val, u16 rsense)
 {
 	/* LSB: 1.5625μV/RSENSE ; Rsense LSB is 2μΩ */
-	return div_s64((s64) val * 156250, rsense);
+	return div_s64((s64) val * 156250, (rsense / 10));
 }
 
 static inline int reg_to_deci_deg_cel(s16 val)
