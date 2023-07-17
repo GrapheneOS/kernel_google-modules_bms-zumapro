@@ -2608,19 +2608,37 @@ static void batt_update_csi_stat(struct batt_drv *batt_drv)
 	int thermal_level = 0;
 	ktime_t elap;
 
-	if (chg_state_is_disconnected(&batt_drv->chg_state) && csi_stats->vol_in != 0) {
-		/* update disconnected data */
-		const int vol_out = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
-		const int cc_out = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_CHARGE_COUNTER);
-
-		if (vol_out < 0 || cc_out < 0)
+	if (chg_state_is_disconnected(&batt_drv->chg_state)) {
+		/* Only update CSI stats when plugged and charging */
+		if(csi_stats->time_stat_last_update == 0)
 			return;
 
-		csi_stats->vol_out = vol_out / 1000;
-		csi_stats->cc_out = cc_out / 1000;
-		csi_stats->ssoc_out = ssoc;
+		/* update disconnected data */
+		if(csi_stats->vol_in != 0) {
+			const int vol_out = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
+			const int cc_out = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_CHARGE_COUNTER);
 
-		return;
+			if (vol_out < 0 || cc_out < 0)
+				return;
+
+			csi_stats->vol_out = vol_out / 1000;
+			csi_stats->cc_out = cc_out / 1000;
+			csi_stats->ssoc_out = ssoc;
+
+			logbuffer_log(batt_drv->ttf_stats.ttf_log,
+				"csi_stats: %s,%d,%d,%d,%d,%lld,%d,%d,%lld,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
+				 gbms_chg_ev_adapter_s(csi_stats->ad_type), csi_stats->ad_voltage * 100,
+				 csi_stats->ad_amperage * 100, csi_stats->ssoc_in, csi_stats->ssoc_out,
+				 csi_stats->time_sum / 60, csi_stats->aggregate_type, csi_stats->aggregate_status,
+				 csi_stats->time_effective / 60, csi_stats->temp_min, csi_stats->temp_max,
+				 csi_stats->vol_in, csi_stats->vol_out, csi_stats->cc_in, csi_stats->cc_out,
+				 (int)(csi_stats->thermal_severity[0] * 100 / csi_stats->time_sum),
+				 (int)(csi_stats->thermal_severity[1] * 100 / csi_stats->time_sum),
+				 (int)(csi_stats->thermal_severity[2] * 100 / csi_stats->time_sum),
+				 (int)(csi_stats->thermal_severity[3] * 100 / csi_stats->time_sum),
+				 (int)(csi_stats->thermal_severity[4] * 100 / csi_stats->time_sum));
+			return;
+		}
 	}
 
 	/* initial connected data */
