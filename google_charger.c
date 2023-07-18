@@ -108,6 +108,8 @@
 #define EXT1_DETECT_THRESHOLD_UV	(10500000)
 #define EXT2_DETECT_THRESHOLD_UV	(5000000)
 
+#define PSY_RETRY_LIMIT	10
+
 #define usb_pd_is_high_volt(ad) \
 	(((ad)->ad_type == CHG_EV_ADAPTER_TYPE_USB_PD || \
 	(ad)->ad_type == CHG_EV_ADAPTER_TYPE_USB_PD_PPS) && \
@@ -230,6 +232,7 @@ struct chg_drv {
 	struct power_supply *tcpm_psy;
 	const char *tcpm_psy_name;
 	int log_psy_ratelimit;
+	int psy_retry_count;
 
 	struct notifier_block psy_nb;
 	struct delayed_work init_work;
@@ -681,7 +684,7 @@ static int info_usb_state(union gbms_ce_adapter_details *ad,
 					     : amperage_max / 100000;
 
 	if (voltage_max < 0 || amperage_max < 0) {
-		ad->ad_type = CHG_EV_ADAPTER_TYPE_UNKNOWN;
+		ad->ad_type = CHG_EV_ADAPTER_TYPE_USB_UNKNOWN;
 		return -EINVAL;
 	}
 
@@ -712,7 +715,7 @@ static int info_wlc_state(union gbms_ce_adapter_details *ad,
 		return 0;
 
 	if (voltage_max < 0 || amperage_max < 0) {
-		ad->ad_type = CHG_EV_ADAPTER_TYPE_UNKNOWN;
+		ad->ad_type = CHG_EV_ADAPTER_TYPE_WLC_UNKNOWN;
 		ad->ad_voltage = voltage_max;
 		ad->ad_amperage = amperage_max;
 		return -EINVAL;
@@ -5398,6 +5401,22 @@ static struct power_supply *get_tcpm_psy(struct chg_drv *chg_drv)
 	return tcpm_psy;
 }
 
+static int chg_get_psy(struct chg_drv *chg_drv, const char *psy_name, struct power_supply **psy)
+{
+	*psy = NULL;
+	if (psy_name && chg_drv->psy_retry_count) {
+		*psy = psy_get_by_name(chg_drv, psy_name);
+		if (!*psy) {
+			chg_drv->psy_retry_count--;
+			return -EAGAIN;
+		}
+	}
+
+	if (!psy || !*psy)
+		return -ENODEV;
+	return 0;
+}
+
 static void google_charger_init_work(struct work_struct *work)
 {
 	struct chg_drv *chg_drv = container_of(work, struct chg_drv,
@@ -5405,63 +5424,62 @@ static void google_charger_init_work(struct work_struct *work)
 	struct power_supply *chg_psy = NULL, *usb_psy = NULL;
 	struct power_supply *wlc_psy = NULL, *bat_psy = NULL;
 	struct power_supply *ext_psy = NULL, *tcpm_psy = NULL;
-	int ret = 0;
+	int ret = 0, ret_usb = 0, ret_wlc = 0, ret_ext = 0, ret_tcpm = 0;
 
-	chg_psy = psy_get_by_name(chg_drv, chg_drv->chg_psy_name);
-	if (!chg_psy)
+	if (!chg_drv->chg_psy && chg_get_psy(chg_drv, chg_drv->chg_psy_name, &chg_psy))
 		goto retry_init_work;
+	if (!chg_drv->chg_psy)
+		chg_drv->chg_psy = chg_psy;
 
-	bat_psy = psy_get_by_name(chg_drv, chg_drv->bat_psy_name);
-	if (!bat_psy)
+	if (!chg_drv->bat_psy && chg_get_psy(chg_drv, chg_drv->bat_psy_name, &bat_psy))
 		goto retry_init_work;
+	if (!chg_drv->bat_psy)
+		chg_drv->bat_psy = bat_psy;
 
-	if (chg_drv->usb_psy_name) {
-		usb_psy = psy_get_by_name(chg_drv, chg_drv->usb_psy_name);
-		if (!usb_psy && !chg_drv->usb_skip_probe)
-			goto retry_init_work;
-	}
+	if (!chg_drv->usb_psy && chg_drv->usb_psy_name)	/* usb_psy_name is optional */
+		ret_usb = chg_get_psy(chg_drv, chg_drv->usb_psy_name, &usb_psy);
+	if (!ret_usb && !chg_drv->usb_psy)
+		chg_drv->usb_psy = usb_psy;
 
-	if (chg_drv->wlc_psy_name) {
-		wlc_psy = psy_get_by_name(chg_drv, chg_drv->wlc_psy_name);
-		if (!wlc_psy)
-			goto retry_init_work;
-	}
+	if (!chg_drv->wlc_psy && chg_drv->wlc_psy_name) /* wlc_psy_name is optional */
+		ret_wlc = chg_get_psy(chg_drv, chg_drv->wlc_psy_name, &wlc_psy);
+	if (!ret_wlc && !chg_drv->wlc_psy)
+		chg_drv->wlc_psy = wlc_psy;
 
-	if (chg_drv->ext_psy_name) {
-		ext_psy = psy_get_by_name(chg_drv, chg_drv->ext_psy_name);
-		if (!ext_psy)
-			goto retry_init_work;
-	}
+	if (!chg_drv->ext_psy && chg_drv->ext_psy_name) /* ext_psy_name is optional */
+		ret_ext = chg_get_psy(chg_drv, chg_drv->ext_psy_name, &ext_psy);
+	if (!ret_ext && !chg_drv->ext_psy)
+		chg_drv->ext_psy = ext_psy;
 
-	if (chg_drv->tcpm_phandle) {
+	if (!chg_drv->tcpm_psy && chg_drv->tcpm_phandle && chg_drv->psy_retry_count) {
 		tcpm_psy = get_tcpm_psy(chg_drv);
 		if (IS_ERR(tcpm_psy)) {
 			tcpm_psy = NULL;
-			goto retry_init_work;
+			chg_drv->psy_retry_count--;
+			ret_tcpm = -EAGAIN;
 		}
 	}
+
+	if (!ret_tcpm && !chg_drv->tcpm_psy)
+		chg_drv->tcpm_psy = tcpm_psy;
+
+	if (ret_usb == -EAGAIN || ret_wlc == -EAGAIN || ret_ext == -EAGAIN || ret_tcpm == -EAGAIN)
+		goto retry_init_work;
 
 	/* TODO: make this optional since we don't need to do this anymore */
 	ret = chg_disable_std_votables(chg_drv);
 	if (ret == -EPROBE_DEFER)
 		goto retry_init_work;
 
-	chg_drv->chg_psy = chg_psy;
-	chg_drv->bat_psy = bat_psy;
-	chg_drv->wlc_psy = wlc_psy;
-	chg_drv->usb_psy = usb_psy;
-	chg_drv->ext_psy = ext_psy;
-	chg_drv->tcpm_psy = tcpm_psy;
-
 	/* PPS negotiation handled in google_charger */
-	if (!tcpm_psy) {
+	if (!chg_drv->tcpm_psy) {
 		pr_info("PPS not available\n");
 	} else {
-		const char *name = tcpm_psy->desc->name;
+		const char *name = chg_drv->tcpm_psy->desc->name;
 		const bool pps_enable = of_property_read_bool(chg_drv->device->of_node,
 							      "google,pps-enable");
 
-		ret = pps_init(&chg_drv->pps_data, chg_drv->device, tcpm_psy, "gcharger-pps");
+		ret = pps_init(&chg_drv->pps_data, chg_drv->device, chg_drv->tcpm_psy, "gcharger-pps");
 		if (ret < 0) {
 			pr_err("PPS init failure for %s (%d)\n", name, ret);
 		} else if (pps_enable) {
@@ -5517,19 +5535,6 @@ static void google_charger_init_work(struct work_struct *work)
 	return;
 
 retry_init_work:
-	if (chg_psy)
-		power_supply_put(chg_psy);
-	if (bat_psy)
-		power_supply_put(bat_psy);
-	if (usb_psy)
-		power_supply_put(usb_psy);
-	if (wlc_psy)
-		power_supply_put(wlc_psy);
-	if (ext_psy)
-		power_supply_put(ext_psy);
-	if (tcpm_psy)
-		power_supply_put(tcpm_psy);
-
 	schedule_delayed_work(&chg_drv->init_work,
 			      msecs_to_jiffies(CHG_DELAY_INIT_MS));
 }
@@ -5616,6 +5621,14 @@ static int google_charger_probe(struct platform_device *pdev)
 				   &chg_drv->tcpm_phandle);
 	if (ret < 0)
 		pr_warn("google,tcpm-power-supply not defined\n");
+
+	ret = of_property_read_u32(pdev->dev.of_node,
+				   "google,psy-retry-count",
+				   &chg_drv->psy_retry_count);
+	if (ret < 0)
+		chg_drv->psy_retry_count = PSY_RETRY_LIMIT;
+	else
+		pr_info("google,psy-retry-count is %d\n", chg_drv->psy_retry_count);
 
 	/*
 	 * when set will reduce the comparison value for ibatt by
