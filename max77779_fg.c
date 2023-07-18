@@ -35,6 +35,7 @@
 #include "gbms_power_supply.h"
 #include "google_bms.h"
 #include "max77779_fg.h"
+#include "max77779_pmic.h"
 
 #include <linux/debugfs.h>
 
@@ -183,6 +184,10 @@ struct max77779_fg_chip {
 
 	/* battery current criteria for report status charge */
 	u32 status_charge_threshold_ma;
+
+	bool fw_check_done;
+	bool is_fake_temp;
+	int fake_temperature;
 };
 
 static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj);
@@ -1284,6 +1289,71 @@ static int max77779_fg_get_fade_rate(struct max77779_fg_chip *chip)
 	return 100 - ratio;
 }
 
+#define MAX77779_FG_CHECK_FW_VER	1
+#define MAX77779_FG_AVAILABLE_FW_VER	15
+#define MAX77779_FG_FW_VER_TEMP	220
+static int max77779_fg_check_fw_ver(struct max77779_fg_chip *chip)
+{
+	struct device_node *dn;
+	unsigned int fw_rev, fw_sub_rev;
+	int ret;
+
+	if (chip->fw_check_done)
+		return 0;
+
+	if (!chip->pmic_i2c_client) {
+		dn = of_parse_phandle(chip->dev->of_node, "max77779,pmic", 0);
+		if (!dn)
+			return -ENXIO;
+
+		chip->pmic_i2c_client = of_find_i2c_device_by_node(dn);
+		if (!chip->pmic_i2c_client)
+			return -EAGAIN;
+	}
+
+	ret = max77779_external_pmic_reg_read(chip->pmic_i2c_client, MAX77779_FG_FW_REV, &fw_rev);
+	if (ret < 0)
+		return ret;
+
+	if (fw_rev != MAX77779_FG_CHECK_FW_VER) {
+		chip->fw_check_done = true;
+		goto exit_done;
+	}
+
+	ret = max77779_external_pmic_reg_read(chip->pmic_i2c_client, MAX77779_FG_FW_SUB_REV,
+					      &fw_sub_rev);
+	if (ret < 0)
+		return ret;
+
+	if (fw_sub_rev < MAX77779_FG_AVAILABLE_FW_VER) {
+		chip->is_fake_temp = true;
+		chip->fake_temperature = MAX77779_FG_FW_VER_TEMP;
+	}
+
+	chip->fw_check_done = true;
+
+exit_done:
+
+	return 0;
+}
+
+static int max77779_fg_get_temp(struct max77779_fg_chip *chip)
+{
+	u16 data = 0;
+	int err = 0;
+
+	if (!chip->fw_check_done)
+		max77779_fg_check_fw_ver(chip);
+
+	if (chip->is_fake_temp)
+		return chip->fake_temperature;
+
+	err = REGMAP_READ(&chip->regmap, MAX77779_FG_Temp, &data);
+	if (err < 0)
+		return chip->fake_temperature;
+
+	return reg_to_deci_deg_cel(data);
+}
 
 static int max77779_fg_get_property(struct power_supply *psy,
 				    enum power_supply_property psp,
@@ -1414,16 +1484,7 @@ static int max77779_fg_get_property(struct power_supply *psy,
 		}
 		break;
 	case POWER_SUPPLY_PROP_TEMP:
-		if (chip->por) {
-			/* FIXME: remove when temperature ready b/289851996 */
-			val->intval = 220; /* legacy */
-			break;
-		}
-		err = REGMAP_READ(map, MAX77779_FG_Temp, &data);
-		if (err < 0)
-			break;
-
-		val->intval = reg_to_deci_deg_cel(data);
+		val->intval = max77779_fg_get_temp(chip);
 		break;
 	case POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG:
 		err = REGMAP_READ(map, MAX77779_FG_TTE, &data);
