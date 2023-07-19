@@ -320,6 +320,9 @@ static struct power_supply* max77779_get_fg_psy(struct max77779_chgr_data *chg)
 {
 	if (!chg->fg_psy)
 		chg->fg_psy = power_supply_get_by_name("max77779fg");
+	if (!chg->fg_psy)
+		chg->fg_psy = power_supply_get_by_name("dualbatt");
+
 	return chg->fg_psy;
 }
 
