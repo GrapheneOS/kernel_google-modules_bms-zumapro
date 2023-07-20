@@ -7,6 +7,15 @@
 #ifndef MAX77779_USECASE_H_
 #define MAX77779_USECASE_H_
 
+#define MAX77779_CHG_CNFG_05_WCSM_ILIM_1400_MA 0xA
+
+struct max77779_usecase_mode {
+	u8 usb_otg_wlc_rx_chgr_on_mode;
+	u8 usb_otg_wlc_rx_chgr_off_mode;
+	u8 usb_otg_mode;
+	u8 usb_dc_mode;
+};
+
 struct max77779_usecase_data {
 	int otg_enable;		/* enter/exit from OTG cases */
 	bool rx_otg_en;		/* enable WLC_RX -> WLC_RX + OTG case */
@@ -24,6 +33,7 @@ struct max77779_usecase_data {
 	u8 otg_value;		/* CHG_CNFG_11:VBYPSET for USB OTG Voltage */
 
 	struct i2c_client *client;
+	struct max77779_usecase_mode modes;
 	bool init_done;
 	int use_case;
 };
@@ -51,6 +61,7 @@ enum gsu_usecases {
 extern int gs201_wlc_en(struct max77779_usecase_data *uc_data, bool wlc_on);
 extern int gs201_to_standby(struct max77779_usecase_data *uc_data, int use_case);
 extern int gs201_to_usecase(struct max77779_usecase_data *uc_data, int use_case);
+extern int gs201_finish_usecase(struct max77779_usecase_data *uc_data, int use_case);
 extern int gs201_force_standby(struct max77779_usecase_data *uc_data);
 extern bool gs201_setup_usecases(struct max77779_usecase_data *uc_data,
 				 struct device_node *node);

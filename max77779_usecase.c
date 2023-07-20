@@ -102,40 +102,64 @@ int gs201_wlc_en(struct max77779_usecase_data *uc_data, bool wlc_on)
 }
 
 /* RTX reverse wireless charging */
-/* pvp TODO check this. Need to interact with CP and WLC */
 static int gs201_wlc_tx_enable(struct max77779_usecase_data *uc_data,
 			       bool enable)
 {
 	int ret = 0;
 
 	if (enable) {
-	  /* TODO: b/289877860 still need to check PD9V+RTx & USB5V+RTx cases */
-		if (!uc_data->reverse12_en) {
-			ret = max77779_chg_reg_write(uc_data->client,
-						     MAX77779_CHG_REVERSE_BOOST_VOUT,
-						     MAX77779_CHG_REVERSE_BOOST_VOUT_7V);
-			if (ret < 0)
-				pr_err("%s: fail to configure MAX77779_CHG_REVERSE_BOOST_VOUT\n",
-				       __func__);
-		}
-		/* p9412 will not be in RX when powered from EXT */
+		msleep(100);
 		ret = gs201_wlc_en(uc_data, true);
 		if (ret < 0)
-			return ret;
+			pr_err("%s: cannot enable WLC (%d)\n", __func__, ret);
 	} else {
-		if (!uc_data->reverse12_en) {
+			if (!uc_data->reverse12_en) {
 			ret = max77779_chg_reg_write(uc_data->client,
-						     MAX77779_CHG_REVERSE_BOOST_VOUT, 0);
+						     MAX77779_CHG_CNFG_11, 0x0);
 			if (ret < 0)
-				pr_err("%s: fail to configure MAX77779_CHG_REVERSE_BOOST_VOUT\n",
-				       __func__);
+				pr_err("%s: fail to reset MAX77779_CHG_REVERSE_BOOST_VOUT\n",
+				        __func__);
 		}
-		/* p9412 is already off from insel */
+
 		ret = gs201_wlc_en(uc_data, false);
 		if (ret < 0)
-			return ret;
+			pr_err("%s: cannot enable WLC (%d)\n", __func__, ret);
+	}
 
-		/* STBY will re-enable WLC */
+	return ret;
+}
+static int gs201_wlc_tx_config(struct max77779_usecase_data *uc_data)
+{
+	u8 val;
+	int ret = 0;
+
+	/* No reverse 1:2 available, we need to configure sequoia */
+	if (!uc_data->reverse12_en) {
+		if (uc_data->use_case == GSU_MODE_WLC_TX) {
+			ret = max77779_chg_reg_write(uc_data->client,
+						     MAX77779_CHG_CNFG_11,
+						     MAX77779_CHG_REVERSE_BOOST_VOUT_7V);
+			if (ret < 0)
+				pr_err("fail to configure MAX77779_CHG_REVERSE_BOOST_VOUT\n");
+		} else {
+			ret = max77779_chg_reg_write(uc_data->client,
+						     MAX77779_CHG_CNFG_11,
+						     0x0);
+			if (ret < 0)
+				pr_err("fail to reset MAX77779_CHG_REVERSE_BOOST_VOUT\n");
+		}
+		/* Set WCSM to 1.4A */
+		ret = max77779_chg_reg_read(uc_data->client, MAX77779_CHG_CNFG_05, &val);
+		if (ret < 0)
+			pr_err("%s: fail to read MAX77779_CHG_CNFG_05 ret:%d\n", __func__, ret);
+
+		ret = max77779_chg_reg_write(uc_data->client, MAX77779_CHG_CNFG_05,
+			_max77779_chg_cnfg_05_wcsm_ilim_set(val,
+					MAX77779_CHG_CNFG_05_WCSM_ILIM_1400_MA));
+		if (ret < 0) {
+			pr_err("%s: fail to write MAX77779_CHG_CNFG_05 ret:%d\n", __func__, ret);
+			return ret;
+		}
 	}
 
 	return ret;
@@ -194,19 +218,14 @@ int gs201_to_standby(struct max77779_usecase_data *uc_data, int use_case)
 			    use_case != GSU_MODE_WLC_DC;
 		break;
 	case GSU_MODE_WLC_TX:
-		need_stby = use_case != GSU_MODE_USB_OTG_WLC_TX &&
-			    use_case != GSU_MODE_USB_CHG_WLC_TX;
+		need_stby = use_case != GSU_MODE_USB_CHG_WLC_TX;
 		break;
 	case GSU_MODE_USB_CHG_WLC_TX:
-		need_stby = use_case != GSU_MODE_USB_CHG &&
-			    use_case != GSU_MODE_USB_OTG_WLC_TX &&
-			    use_case != GSU_MODE_USB_DC;
+		need_stby = use_case != GSU_MODE_USB_CHG && use_case != GSU_MODE_USB_DC;
 		break;
 
 	case GSU_MODE_USB_OTG:
 		from_otg = true;
-		if (use_case == GSU_MODE_USB_OTG_WLC_TX)
-			break;
 		if (use_case == GSU_MODE_USB_OTG_WLC_RX)
 			break;
 
@@ -227,10 +246,6 @@ int gs201_to_standby(struct max77779_usecase_data *uc_data, int use_case)
 	case GSU_RAW_MODE:
 		need_stby = true;
 		break;
-	case GSU_MODE_USB_OTG_WLC_TX:
-		from_otg = true;
-		need_stby = false;
-		break;
 	case GSU_MODE_STANDBY:
 	default:
 		need_stby = false;
@@ -246,25 +261,19 @@ int gs201_to_standby(struct max77779_usecase_data *uc_data, int use_case)
 	if (!need_stby)
 		return 0;
 
-	/* from WLC_TX to STBY */
+	/* transition to STBY (might need to be up) */
+	ret = max77779_chgr_mode_write(uc_data->client, MAX77779_CHGR_MODE_ALL_OFF);
+	if (ret < 0)
+		return -EIO;
+
 	if (from_uc == GSU_MODE_WLC_TX) {
-		// pvp TODO: Check how to enable wlc tx
-		ret = gs201_wlc_tx_enable(uc_data, false);
-		if (ret < 0) {
-			pr_err("%s: cannot tun off wlc_tx (%d)\n", __func__, ret);
-			return ret;
-		}
+		gs201_wlc_tx_enable(uc_data, false);
 
 		/* re-enable wlc IC if disabled */
 		ret = gs201_wlc_en(uc_data, true);
 		if (ret < 0)
 			pr_err("%s: cannot enable WLC (%d)\n", __func__, ret);
 	}
-
-	/* transition to STBY (might need to be up) */
-	ret = max77779_chgr_mode_write(uc_data->client, MAX77779_CHGR_MODE_ALL_OFF);
-	if (ret < 0)
-		return -EIO;
 
 	uc_data->use_case = GSU_MODE_STANDBY;
 	return ret;
@@ -350,31 +359,6 @@ static int gs201_otg_enable(struct max77779_usecase_data *uc_data)
 	return ret;
 }
 
-/* configure ilim wlctx */
-static int gs201_wlctx_otg_en(struct max77779_usecase_data *uc_data, bool enable)
-{
-	int ret;
-
-	if (enable) {
-		/* this should be already set */
-		ret = gs201_otg_update_ilim(uc_data, true);
-		if (ret < 0)
-			pr_err("%s: cannot update otg_ilim (%d)\n", __func__, ret);
-	} else {
-		/* TODO: Discharge IN/OUT nodes with AO37 should be done in TCPM */
-
-		msleep(100);
-
-		ret = gs201_otg_update_ilim(uc_data, false);
-		if (ret < 0)
-			pr_err("%s: cannot restore otg_ilim (%d)\n", __func__, ret);
-
-		ret = 0;
-        }
-
-	return ret;
-}
-
 /*
  * Case	USB_chg USB_otg	WLC_chg	WLC_TX	PMIC_Charger	Name
  * -------------------------------------------------------------------------------------
@@ -429,7 +413,7 @@ static int gs201_to_otg_usecase(struct max77779_usecase_data *uc_data, int use_c
 	case GSU_MODE_USB_CHG:
 	case GSU_MODE_USB_CHG_WLC_TX:
 		/* need to go through stby out of this */
-		if (use_case != GSU_MODE_USB_OTG && use_case != GSU_MODE_USB_OTG_WLC_TX)
+		if (use_case != GSU_MODE_USB_OTG)
 			return -EINVAL;
 
 		ret = gs201_otg_enable(uc_data);
@@ -437,14 +421,6 @@ static int gs201_to_otg_usecase(struct max77779_usecase_data *uc_data, int use_c
 
 
 	case GSU_MODE_WLC_TX:
-		/* b/179820595: WLC_TX -> WLC_TX + OTG */
-		if (use_case == GSU_MODE_USB_OTG_WLC_TX) {
-			ret = max77779_chgr_mode_write(uc_data->client, MAX77779_CHGR_MODE_OTG_BOOST_ON);
-			if (ret < 0) {
-				pr_err("%s: cannot set CNFG_00 to 0xa ret:%d\n",  __func__, ret);
-				return ret;
-			}
-		}
 	break;
 
 	case GSU_MODE_WLC_RX:
@@ -458,21 +434,9 @@ static int gs201_to_otg_usecase(struct max77779_usecase_data *uc_data, int use_c
 	break;
 
 	case GSU_MODE_USB_OTG:
-		/* b/179820595: OTG -> WLC_TX + OTG (see b/181371696) */
-		if (use_case == GSU_MODE_USB_OTG_WLC_TX) {
-			ret = gs201_otg_mode(uc_data, GSU_MODE_USB_OTG);
-			if (ret == 0)
-				ret = gs201_wlc_tx_enable(uc_data, true);
-		}
 		/* b/179816224: OTG -> WLC_RX + OTG */
 		if (use_case == GSU_MODE_USB_OTG_WLC_RX) {
 			/* pvp TODO: Is it just WLC Rx enable? */
-		}
-	break;
-	case GSU_MODE_USB_OTG_WLC_TX:
-		/*  b/179820595: WLC_TX + OTG -> OTG */
-		if (use_case == GSU_MODE_USB_OTG) {
-			ret = gs201_wlc_tx_enable(uc_data, false);
 		}
 	break;
 	case GSU_MODE_USB_OTG_WLC_RX:
@@ -502,16 +466,7 @@ int gs201_to_usecase(struct max77779_usecase_data *uc_data, int use_case)
 		break;
 	case GSU_MODE_WLC_TX:
 	case GSU_MODE_USB_CHG_WLC_TX:
-		/* Coex Case #4, WLC_TX + OTG -> WLC_TX */
-		if (from_uc == GSU_MODE_USB_OTG_WLC_TX) {
-			ret = max77779_chgr_mode_write(uc_data->client,
-						      MAX77779_CHGR_MODE_ALL_OFF);
-			if (ret == 0)
-				ret = gs201_wlctx_otg_en(uc_data, false);
-		} else {
-			ret = gs201_wlc_tx_enable(uc_data, true);
-		}
-
+		ret = gs201_wlc_tx_config(uc_data);
 		break;
 	case GSU_MODE_WLC_RX:
 		if (from_uc == GSU_MODE_USB_OTG_WLC_RX) {
@@ -520,14 +475,42 @@ int gs201_to_usecase(struct max77779_usecase_data *uc_data, int use_case)
 		break;
 	case GSU_MODE_USB_CHG:
 	case GSU_MODE_USB_DC:
-		if (from_uc == GSU_MODE_WLC_TX || from_uc == GSU_MODE_USB_CHG_WLC_TX)
-			ret = gs201_wlc_tx_enable(uc_data, false);
-		break;
 	case GSU_MODE_USB_WLC_RX:
 	case GSU_RAW_MODE:
 		/* just write the value to the register (it's in stby) */
 		break;
 	case GSU_MODE_WLC_DC:
+		break;
+	default:
+		break;
+	}
+
+	return ret;
+}
+
+/* finish usecase configuration after max77779 mode register is set */
+int gs201_finish_usecase(struct max77779_usecase_data *uc_data, int use_case)
+{
+	const int from_uc = uc_data->use_case;
+	int ret = 0;
+
+	switch (use_case) {
+	case GSU_MODE_WLC_TX:
+	case GSU_MODE_USB_CHG_WLC_TX:
+		/* p9412 will not be in RX when powered from EXT */
+		ret = gs201_wlc_tx_enable(uc_data, true);
+		if (ret < 0)
+			return ret;
+		break;
+	case GSU_MODE_USB_CHG:
+	case GSU_MODE_USB_DC:
+		if (from_uc == GSU_MODE_WLC_TX || from_uc == GSU_MODE_USB_CHG_WLC_TX) {
+			/* p9412 is already off from insel */
+			ret = gs201_wlc_tx_enable(uc_data, false);
+			if (ret < 0)
+				return ret;
+		}
+		/* STBY will re-enable WLC */
 		break;
 	default:
 		break;
@@ -605,6 +588,8 @@ static void gs201_setup_default_usecase(struct max77779_usecase_data *uc_data)
 bool gs201_setup_usecases(struct max77779_usecase_data *uc_data,
 			  struct device_node *node)
 {
+	int ret;
+
 	if (!node) {
 		gs201_setup_default_usecase(uc_data);
 		return false;
@@ -619,6 +604,30 @@ bool gs201_setup_usecases(struct max77779_usecase_data *uc_data,
 
 	/* OPTIONAL: support reverse 1:2 mode for RTx */
 	uc_data->reverse12_en = of_property_read_bool(node, "max77779,reverse_12-en");
+
+	/* USB_OTG_WLC_RX usecases default:Proto */
+	ret = of_property_read_u8(node, "max77779,usb_otg_wlc_rx_chgr_on_mode",
+				  &uc_data->modes.usb_otg_wlc_rx_chgr_on_mode);
+	if (ret < 0)
+		uc_data->modes.usb_otg_wlc_rx_chgr_on_mode =
+			 MAX77779_CHGR_MODE_CHGR_BUCK_BOOST_UNO_ON;
+
+	ret = of_property_read_u8(node, "max77779,usb_otg_wlc_rx_chgr_off_mode",
+				  &uc_data->modes.usb_otg_wlc_rx_chgr_off_mode);
+	if (ret < 0)
+		uc_data->modes.usb_otg_wlc_rx_chgr_off_mode = MAX77779_CHGR_MODE_OTG_BUCK_BOOST_ON;
+
+	/* USB_OTG usecases default:Proto */
+	ret = of_property_read_u8(node, "max77779,usb_otg_mode",
+				  &uc_data->modes.usb_otg_mode);
+	if (ret < 0)
+		uc_data->modes.usb_otg_mode = MAX77779_CHGR_MODE_ALL_OFF;
+
+	/* USB_DC usecases default:Ultra */
+	ret = of_property_read_u8(node, "max77779,usb_dc_mode",
+				  &uc_data->modes.usb_dc_mode);
+	if (ret < 0)
+		uc_data->modes.usb_dc_mode = MAX77779_CHGR_MODE_ALL_OFF;
 
 	return gs201_setup_usecases_done(uc_data);
 }

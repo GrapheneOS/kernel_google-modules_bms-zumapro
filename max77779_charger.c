@@ -537,7 +537,8 @@ static bool cb_data_is_chgr_on(const struct max77779_foreach_cb_data *cb_data)
  *
  * NOTE: do not call with (cb_data->wlc_rx && cb_data->wlc_tx)
  */
-static int max77779_get_otg_usecase(struct max77779_foreach_cb_data *cb_data)
+static int max77779_get_otg_usecase(struct max77779_foreach_cb_data *cb_data,
+				struct max77779_usecase_data *uc_data)
 {
 	const int chgr_on = cb_data_is_chgr_on(cb_data);
 	bool dc_on = cb_data->dc_on; /* && !cb_data->charge_done */
@@ -553,7 +554,7 @@ static int max77779_get_otg_usecase(struct max77779_foreach_cb_data *cb_data)
 	if (!cb_data->wlc_rx && !cb_data->wlc_tx) {
 		/* 9: USB_OTG or  10: USB_OTG_FRS */
 		usecase = GSU_MODE_USB_OTG;
-		mode = MAX77779_CHGR_MODE_OTG_BOOST_ON;
+		mode = uc_data->modes.usb_otg_mode;
 
 		/* b/188730136  OTG cases with DC on */
 		if (dc_on)
@@ -564,9 +565,9 @@ static int max77779_get_otg_usecase(struct max77779_foreach_cb_data *cb_data)
 	} else if (cb_data->wlc_rx) {
 		usecase = GSU_MODE_USB_OTG_WLC_RX;
 		if (chgr_on)
-			mode = MAX77779_CHGR_MODE_CHGR_OTG_BUCK_BOOST_ON;
+			mode = uc_data->modes.usb_otg_wlc_rx_chgr_on_mode;
 		else
-			mode = MAX77779_CHGR_MODE_OTG_BUCK_BOOST_ON;
+			mode = uc_data->modes.usb_otg_wlc_rx_chgr_off_mode;
 	} else if (dc_on) {
 		return -EINVAL;
 	} else {
@@ -613,7 +614,7 @@ static int max77779_get_usecase(struct max77779_foreach_cb_data *cb_data,
 
 	/* OTG modes override the others, might need to move under usb_wlc */
 	if (cb_data->otg_on)
-		return max77779_get_otg_usecase(cb_data);
+		return max77779_get_otg_usecase(cb_data, uc_data);
 
 	/* USB will disable wlc_rx */
 	if (cb_data->buck_on)
@@ -631,30 +632,34 @@ static int max77779_get_usecase(struct max77779_foreach_cb_data *cb_data,
 		usecase = GSU_MODE_STANDBY;
 		if (wlc_tx) {
 			usecase = GSU_MODE_WLC_TX;
-			if (uc_data->reverse12_en)
-				mode = MAX77779_CHGR_MODE_REVERSE_1_2_MODE_ON;
-			else
+			if (!uc_data->reverse12_en)
 				mode = MAX77779_CHGR_MODE_BOOST_UNO_ON;
+			else
+				dc_on = true;
 		}
-
-		/* here also on WLC_DC->WLC_DC+USB */
-		dc_on = false;
 	} else if (wlc_tx) {
-
-		/* Disable DC when Rtx is on will handle by dc_avail_votable */
 		if (!buck_on) {
-			mode = MAX77779_CHGR_MODE_BOOST_UNO_ON;
 			usecase = GSU_MODE_WLC_TX;
+			if (uc_data->reverse12_en) {
+				mode = MAX77779_CHGR_MODE_ALL_OFF;
+				dc_on = true;
+			} else
+				mode = MAX77779_CHGR_MODE_BOOST_UNO_ON;
 		} else if (chgr_on) {
-			mode = MAX77779_CHGR_MODE_CHGR_BUCK_BOOST_UNO_ON;
+			if (uc_data->reverse12_en) {
+				mode = MAX77779_CHGR_MODE_CHGR_BUCK_ON;
+				dc_on = true;
+			} else
+				mode = MAX77779_CHGR_MODE_CHGR_BUCK_BOOST_UNO_ON;
 			usecase = GSU_MODE_USB_CHG_WLC_TX;
 		} else {
-			mode = MAX77779_CHGR_MODE_BUCK_BOOST_UNO_ON;
+			if (uc_data->reverse12_en) {
+				mode = MAX77779_CHGR_MODE_BUCK_ON;
+				dc_on = true;
+			} else
+				mode = MAX77779_CHGR_MODE_BUCK_BOOST_UNO_ON;
 			usecase = GSU_MODE_USB_CHG_WLC_TX;
 		}
-		if (uc_data->reverse12_en)
-			mode = MAX77779_CHGR_MODE_REVERSE_1_2_MODE_ON;
-
 	} else if (wlc_rx) {
 
 		/* will be in mode 4 if in stby unless dc is enabled */
@@ -691,7 +696,7 @@ static int max77779_get_usecase(struct max77779_foreach_cb_data *cb_data,
 		if (dc_on && cb_data->wlc_rx) {
 			/* WLC_DC->WLC_DC+USB -> ignore dc_on */
 		} else if (dc_on) {
-			mode = MAX77779_CHGR_MODE_ALL_OFF;
+			mode = uc_data->modes.usb_dc_mode;
 			usecase = GSU_MODE_USB_DC;
 		} else if (cb_data->stby_on && !chgr_on) {
 			mode = MAX77779_CHGR_MODE_ALL_OFF;
@@ -699,12 +704,6 @@ static int max77779_get_usecase(struct max77779_foreach_cb_data *cb_data,
 		}
 
 	}
-
-	if (!cb_data->dc_avail_votable)
-		cb_data->dc_avail_votable = gvotable_election_get_handle(VOTABLE_DC_CHG_AVAIL);
-	if (cb_data->dc_avail_votable)
-		gvotable_cast_int_vote(cb_data->dc_avail_votable,
-				       "WLC_TX", wlc_tx? 0 : 1, wlc_tx);
 
 	/* reg might be ignored later */
 	cb_data->reg = _max77779_chg_cnfg_00_cp_en_set(cb_data->reg, dc_on);
@@ -841,6 +840,12 @@ exit_done:
 	if (ret < 0) {
 		dev_err(data->dev,  "use_case=%d->%d CNFG_00=%x failed ret:%d\n",
 			from_uc, use_case, cb_data->reg, ret);
+		return ret;
+	}
+
+	ret = gs201_finish_usecase(uc_data, use_case);
+	if (ret < 0) {
+		dev_err(data->dev, "Error finishing usecase config ret:%d\n", ret);
 		return ret;
 	}
 
