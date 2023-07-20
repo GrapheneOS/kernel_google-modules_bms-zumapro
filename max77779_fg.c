@@ -1692,7 +1692,7 @@ static int max77779_fg_monitor_log_data(struct max77779_fg_chip *chip, bool forc
 	if (ret < 0)
 		return ret;
 
-	ret = REGMAP_READ(&chip->regmap_debug, MAX77779_FG_DBG_nTempCo, &tempco);
+	ret = REGMAP_READ(&chip->regmap_debug, MAX77779_FG_NVM_nTempCo, &tempco);
 	if (ret < 0)
 		return ret;
 
@@ -1727,7 +1727,7 @@ static int max77779_fg_monitor_log_data(struct max77779_fg_chip *chip, bool forc
 			     MAX77779_FG_FullCapNom, fullcapnom, MAX77779_FG_QH0, qh0,
 			     MAX77779_FG_QH, qh, MAX77779_FG_dQAcc, dqacc, MAX77779_FG_dPAcc, dpacc,
 			     MAX77779_FG_QResidual, qresidual, MAX77779_FG_FStat, fstat,
-			     MAX77779_FG_LearnCfg, learncfg, MAX77779_FG_DBG_nTempCo, tempco,
+			     MAX77779_FG_LearnCfg, learncfg, MAX77779_FG_NVM_nTempCo, tempco,
 			     MAX77779_FG_MixCap, mixcap, MAX77779_FG_VFRemCap, vfremcap,
 			     MAX77779_FG_VCell, vcell, MAX77779_FG_Current, ibat, charge_counter);
 
@@ -2854,13 +2854,13 @@ static int max77779_fg_collect_history_data(void *buff, size_t size,
 	if (chip->por)
 		return -EINVAL;
 
-	ret = REGMAP_READ(&chip->regmap_debug, MAX77779_FG_DBG_nTempCo, &data);
+	ret = REGMAP_READ(&chip->regmap_debug, MAX77779_FG_NVM_nTempCo, &data);
 	if (ret)
 		return ret;
 
 	hist.tempco = data;
 
-	ret = REGMAP_READ(&chip->regmap_debug, MAX77779_FG_DBG_nRComp0, &data);
+	ret = REGMAP_READ(&chip->regmap_debug, MAX77779_FG_NVM_nRComp0, &data);
 	if (ret)
 		return ret;
 
@@ -3111,7 +3111,7 @@ const struct regmap_config max77779_fg_debug_regmap_cfg = {
 	.reg_bits = 8,
 	.val_bits = 16,
 	.val_format_endian = REGMAP_ENDIAN_NATIVE,
-	.max_register = MAX77779_FG_DBG_nThermCfg,
+	.max_register = MAX77779_FG_NVM_nThermCfg,
 	.readable_reg = max77779_fg_dbg_is_reg,
 	.volatile_reg = max77779_fg_dbg_is_reg,
 };
