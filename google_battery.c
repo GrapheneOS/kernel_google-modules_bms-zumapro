@@ -384,6 +384,7 @@ struct health_data
 	/* recalibration */
 	u8 cal_mode;
 	u8 cal_state;
+	int cal_target;
 };
 
 #define POWER_METRICS_MAX_DATA	50
@@ -2608,19 +2609,37 @@ static void batt_update_csi_stat(struct batt_drv *batt_drv)
 	int thermal_level = 0;
 	ktime_t elap;
 
-	if (chg_state_is_disconnected(&batt_drv->chg_state) && csi_stats->vol_in != 0) {
-		/* update disconnected data */
-		const int vol_out = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
-		const int cc_out = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_CHARGE_COUNTER);
-
-		if (vol_out < 0 || cc_out < 0)
+	if (chg_state_is_disconnected(&batt_drv->chg_state)) {
+		/* Only update CSI stats when plugged and charging */
+		if(csi_stats->time_stat_last_update == 0)
 			return;
 
-		csi_stats->vol_out = vol_out / 1000;
-		csi_stats->cc_out = cc_out / 1000;
-		csi_stats->ssoc_out = ssoc;
+		/* update disconnected data */
+		if(csi_stats->vol_in != 0) {
+			const int vol_out = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
+			const int cc_out = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_CHARGE_COUNTER);
 
-		return;
+			if (vol_out < 0 || cc_out < 0)
+				return;
+
+			csi_stats->vol_out = vol_out / 1000;
+			csi_stats->cc_out = cc_out / 1000;
+			csi_stats->ssoc_out = ssoc;
+
+			logbuffer_log(batt_drv->ttf_stats.ttf_log,
+				"csi_stats: %s,%d,%d,%d,%d,%lld,%d,%d,%lld,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
+				 gbms_chg_ev_adapter_s(csi_stats->ad_type), csi_stats->ad_voltage * 100,
+				 csi_stats->ad_amperage * 100, csi_stats->ssoc_in, csi_stats->ssoc_out,
+				 csi_stats->time_sum / 60, csi_stats->aggregate_type, csi_stats->aggregate_status,
+				 csi_stats->time_effective / 60, csi_stats->temp_min, csi_stats->temp_max,
+				 csi_stats->vol_in, csi_stats->vol_out, csi_stats->cc_in, csi_stats->cc_out,
+				 (int)(csi_stats->thermal_severity[0] * 100 / csi_stats->time_sum),
+				 (int)(csi_stats->thermal_severity[1] * 100 / csi_stats->time_sum),
+				 (int)(csi_stats->thermal_severity[2] * 100 / csi_stats->time_sum),
+				 (int)(csi_stats->thermal_severity[3] * 100 / csi_stats->time_sum),
+				 (int)(csi_stats->thermal_severity[4] * 100 / csi_stats->time_sum));
+			return;
+		}
 	}
 
 	/* initial connected data */
@@ -2745,15 +2764,14 @@ log_and_done:
 	if (ssoc == -1 || current_speed < 0)
 		current_speed = 0;
 
-	csi_stats->ssoc = ssoc;
-	csi_stats->csi_speed_min = current_speed;
-	csi_stats->csi_speed_max = current_speed;
-
-	/* ssoc == -1 on disconnect */
-	if (ssoc == -1) {
+	if (ssoc == -1 || ssoc != csi_stats->ssoc) {
 		csi_stats->thermal_lvl_min = 0;
 		csi_stats->thermal_lvl_max = 0;
 	}
+
+	csi_stats->ssoc = ssoc;
+	csi_stats->csi_speed_min = current_speed;
+	csi_stats->csi_speed_max = current_speed;
 
 	csi_stats->csi_time_sum = 0;
 	csi_stats->speed_sum = 0;
@@ -4354,6 +4372,90 @@ static int bhi_cycle_count_residency(struct gbatt_ccbin_data *ccd , int soc_limi
 
 	pr_debug("%s: under=%d, over=%d limit=%d\n", __func__, under, over, soc_limit);
 	return (under * BHI_ALGO_FULL_HEALTH) / (under + over);
+}
+
+/*
+ * initial or done   detect abnormal      FG reset/learning    FG learning done
+ * STATE_OK    --->  STATE_SCHEDULED ---> STATE_SCHEDULED ---> STATE_OK
+ * MODE_RESET  --->  MODE_BEST_TIME  ---> MODE_RESTART    ---> MODE_RESET
+ *                  (MODE_IMMEDIATE)
+ */
+#define MAX_CAPACITY_RATIO 115
+static int batt_bhi_update_recalibration_status(struct batt_drv *batt_drv)
+{
+	const int design_capacity = batt_drv->battery_capacity; /* mAh */
+	u8 cal_state = batt_drv->health_data.cal_state;
+	u8 cal_mode = batt_drv->health_data.cal_mode;
+	int full_cap_nom = 0, recal_state, ret = 0;
+	bool is_best_time = false;
+
+	recal_state = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_RECAL_FG);
+	if (recal_state < 0)
+		return recal_state;
+	if (recal_state != 0) {
+		cal_state = REC_STATE_SCHEDULED;
+		cal_mode = REC_MODE_RESTART;
+		goto done;
+	}
+
+	if (cal_mode == REC_MODE_BEST_TIME) {
+		if (batt_drv->msc_state == MSC_HEALTH_PAUSE)
+			is_best_time = true;
+		if (batt_drv->chg_done == true)
+			is_best_time = true;
+	}
+
+	if (cal_mode == REC_MODE_IMMEDIATE)
+		is_best_time = true;
+
+	if (is_best_time) {
+		ret = GPSY_SET_PROP(batt_drv->fg_psy, GBMS_PROP_RECAL_FG,
+				    batt_drv->health_data.cal_target);
+		if (ret == 0) {
+			cal_state = REC_STATE_SCHEDULED;
+			cal_mode = REC_MODE_RESTART;
+		}
+		goto done;
+	}
+
+	if (cal_mode == REC_MODE_RESTART && recal_state == 0) {
+		cal_state = REC_STATE_OK;
+		cal_mode = REC_MODE_RESET;
+		goto done;
+	}
+
+	/* read full capacity value */
+	ret = GPSY_GET_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_CHARGE_FULL);
+	if (ret < 0)
+		goto done;
+	full_cap_nom = ret / 1000;
+
+	/*
+	 * compare with design value, allow to reset FG if conditions match
+	 * and wait for appropriate time to execute
+	 */
+	if (full_cap_nom > (design_capacity * MAX_CAPACITY_RATIO / 100)) {
+		cal_state = REC_STATE_SCHEDULED;
+		cal_mode = REC_MODE_BEST_TIME;
+	}
+
+done:
+	if (batt_drv->health_data.cal_state != cal_state ||
+	    batt_drv->health_data.cal_mode != cal_mode) {
+		gbms_logbuffer_prlog(batt_drv->ttf_stats.ttf_log, LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG,
+				     "RE_CAL: cal_state: %d -> %d, cal_mode:%d -> %d\n",
+				     batt_drv->health_data.cal_state, cal_state,
+				     batt_drv->health_data.cal_mode, cal_mode);
+		batt_drv->health_data.cal_state = cal_state;
+		batt_drv->health_data.cal_mode = cal_mode;
+		if (full_cap_nom)
+			gbms_logbuffer_prlog(batt_drv->ttf_stats.ttf_log,
+					     LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG,
+					     "RE_CAL: full_cap_nom:%d, design_capacity:%d\n",
+					     full_cap_nom, design_capacity);
+	}
+
+	return ret;
 }
 
 /* call holding mutex_lock(&batt_drv->chg_lock)  */
@@ -7334,7 +7436,7 @@ static ssize_t manufacturing_date_show(struct device *dev,
 	struct bm_date *date = &batt_drv->health_data.bhi_data.bm_date;
 	struct rtc_time tm;
 
-	/* read manufacturing date when data is not successfully read in probe */
+	/* read manufacturing date when data is not loaded yet */
 	if (date->bm_y == 0) {
 		int ret;
 
@@ -7436,7 +7538,7 @@ static ssize_t first_usage_date_show(struct device *dev,
 	if (bhi_data->first_usage_date)
 		return scnprintf(buf, PAGE_SIZE, "%d\n", bhi_data->first_usage_date);
 
-	/* read activation date when data is not successfully read in probe */
+	/* read activation date when data is not loaded yet */
 	if (bhi_data->act_date[0] == 0) {
 		int ret;
 
@@ -7611,9 +7713,21 @@ static ssize_t health_set_cal_mode_store(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	/* TODO: implement set recalibration mode */
-	batt_drv->health_data.cal_mode = value;
+	mutex_lock(&batt_drv->chg_lock);
+	if (batt_drv->health_data.cal_state == REC_STATE_SCHEDULED)
+		goto exit_done;
 
+	gbms_logbuffer_prlog(batt_drv->ttf_stats.ttf_log, LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG,
+			     "RE_CAL: cal_state: %d, cal_mode:%d -> %d\n",
+			     batt_drv->health_data.cal_state,
+			     batt_drv->health_data.cal_mode, value);
+	batt_drv->health_data.cal_mode = value;
+	ret = batt_bhi_update_recalibration_status(batt_drv);
+	if (ret < 0)
+		count = ret;
+
+exit_done:
+	mutex_unlock(&batt_drv->chg_lock);
 	return count;
 }
 
@@ -9168,6 +9282,11 @@ static void google_battery_work(struct work_struct *work)
 		}
 	}
 
+	/* check recalibration conditions */
+	ret = batt_bhi_update_recalibration_status(batt_drv);
+	if (ret < 0)
+		pr_err("bhi update recalibration not available (%d)\n", ret);
+
 	mutex_unlock(&batt_drv->chg_lock);
 
 	/* TODO: we might not need to do this all the time */
@@ -9878,6 +9997,9 @@ static int batt_bhi_init(struct batt_drv *batt_drv)
 	health_data->bhi_debug_imp_index = 0;
 	health_data->bhi_debug_sd_index = 0;
 	health_data->bhi_debug_health_index = 0;
+	/* TODO: restore cal_state/cal_mode if reboot */
+	health_data->cal_state = REC_STATE_OK;
+	health_data->cal_mode = REC_MODE_RESET;
 
 	return 0;
 }
@@ -10505,18 +10627,6 @@ static int google_battery_probe(struct platform_device *pdev)
 	/* power metrics */
 	batt_drv->power_metrics.polling_rate = 30;
 	batt_drv->power_metrics.interval = 120;
-
-	/* Date of manufacturing of the battery */
-	ret = batt_get_manufacture_date(&batt_drv->health_data.bhi_data);
-	if (ret < 0)
-		pr_warn("cannot get battery manufacture date, ret=%d\n", ret);
-
-	/* Date of first use of the battery */
-	if (!batt_drv->health_data.bhi_data.act_date[0]) {
-		ret = batt_get_activation_date(&batt_drv->health_data.bhi_data);
-		if (ret < 0)
-			pr_warn("cannot get battery activation date, ret=%d\n", ret);
-	}
 
 	return 0;
 }
