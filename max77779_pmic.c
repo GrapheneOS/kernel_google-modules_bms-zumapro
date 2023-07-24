@@ -28,6 +28,7 @@
 # include <linux/seq_file.h>
 #endif
 
+#include "google_bms.h"
 #include "max77779_pmic.h"
 
 #define MAX77779_PMIC_ID_VAL	0x79
@@ -46,16 +47,11 @@ int max77779_pmic_reg_read(struct device *core_dev,
 		unsigned int reg, unsigned int *val)
 {
 	struct max77779_pmic_info *info = dev_get_drvdata(core_dev);
-	int err;
 
 	if (!info || !info->regmap)
 		return -EAGAIN;
 
-	err = regmap_read(info->regmap, reg, val);
-	if (err)
-		dev_err(core_dev, "error reading %#02x err = %d\n", reg, err);
-
-	return err;
+	return regmap_read(info->regmap, reg, val);
 }
 EXPORT_SYMBOL_GPL(max77779_pmic_reg_read);
 
@@ -63,16 +59,11 @@ int max77779_pmic_reg_write(struct device *core_dev,
 		unsigned int reg, unsigned int val)
 {
 	struct max77779_pmic_info *info = dev_get_drvdata(core_dev);
-	int err;
 
 	if (!info || !info->regmap)
 		return -EAGAIN;
 
-	err = regmap_write(info->regmap, reg, val);
-	if (err)
-		dev_err(core_dev, "error writing %#02x err = %d\n",
-				reg, err);
-	return err;
+	return regmap_write(info->regmap, reg, val);
 }
 EXPORT_SYMBOL_GPL(max77779_pmic_reg_write);
 
@@ -227,6 +218,42 @@ static int data_read(void *d, u64 *val)
 }
 DEFINE_SIMPLE_ATTRIBUTE(data_fops, data_read, data_write, "%llx\n");
 
+static ssize_t max77779_pmic_show_reg_all(struct file *filp, char __user *buf,
+					size_t count, loff_t *ppos)
+{
+	struct max77779_pmic_info *info = (struct max77779_pmic_info *)filp->private_data;
+	u32 reg_address;
+	unsigned int reg = 0;
+	char *tmp;
+	int ret = 0, len = 0;
+
+	if (!info->regmap) {
+		pr_err("Failed to read, no regmap\n");
+		return -EIO;
+	}
+
+	tmp = kmalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!tmp)
+		return -ENOMEM;
+
+	for (reg_address = MAX77779_PMIC_ID; reg_address <= MAX77779_VGPI_CNFG; reg_address++) {
+		ret = max77779_pmic_reg_read(info->dev, reg_address, &reg);
+		if (ret < 0)
+			continue;
+
+		len += scnprintf(tmp + len, PAGE_SIZE - len, "%02x: %02x\n", reg_address, reg);
+	}
+
+	if (len > 0)
+		len = simple_read_from_buffer(buf, count,  ppos, tmp, strlen(tmp));
+
+	kfree(tmp);
+
+	return len;
+}
+
+BATTERY_DEBUG_ATTRIBUTE(debug_all_reg_fops, max77779_pmic_show_reg_all, NULL);
+
 static int dbg_init_fs(struct max77779_pmic_info *info)
 {
 	info->de = debugfs_create_dir("max77779_pmic", 0);
@@ -238,6 +265,9 @@ static int dbg_init_fs(struct max77779_pmic_info *info)
 
 	debugfs_create_file("data", 0600, info->de,
 			info, &data_fops);
+
+	/* dump all registers */
+	debugfs_create_file("registers", 0444, info->de, info, &debug_all_reg_fops);
 
 	return 0;
 }
@@ -256,12 +286,21 @@ static inline void dbg_remove_fs(struct max77779_pmic_info *info) {}
 
 static bool max77779_pmic_is_readable(struct device *dev, unsigned int reg)
 {
-	return true; /* FIXME(jwylder) */
-}
-
-static bool max77779_pmic_is_volatile(struct device *dev, unsigned int reg)
-{
-	return reg > MAX77779_PMIC_INTSRC_STS;
+	switch(reg) {
+	case MAX77779_PMIC_ID ... MAX77779_PMIC_OTP_REVISION:
+	case MAX77779_PMIC_INTSRC_STS ... MAX77779_PMIC_INT_MASK:
+	case MAX77779_PMIC_EVENT_CNT_CFG ... MAX77779_PMIC_EVENT_CNT_UVLO1:
+	case MAX77779_PMIC_I2C_CNFG ... MAX77779_PMIC_SPMI_STS:
+	case MAX77779_PMIC_SWRESET ... MAX77779_PMIC_CONTROL_FG:
+	case MAX77779_FG_DEVICE_ID ... MAX77779_FG_FW_SUB_REV:
+	case MAX77779_FG_AP_DATAOUT1 ... MAX77779_FG_AP_DATAOUT_OPCODE:
+	case MAX77779_FG_AP_DATAIN0 ... MAX77779_FG_SysMsg:
+	case MAX77779_FG_COMMAND_HW:
+	case MAX77779_SGPIO_INT ... MAX77779_VGPI_CNFG:
+		return true;
+	default:
+		return false;
+	}
 }
 
 static const struct regmap_config max77779_pmic_regmap_cfg = {
@@ -269,9 +308,9 @@ static const struct regmap_config max77779_pmic_regmap_cfg = {
 	.reg_bits = 8,
 	.val_bits = 8,
 	.val_format_endian = REGMAP_ENDIAN_NATIVE,
-	.max_register = 0xff,
+	.max_register = MAX77779_VGPI_CNFG,
 	.readable_reg = max77779_pmic_is_readable,
-	.volatile_reg = max77779_pmic_is_volatile,
+	.volatile_reg = max77779_pmic_is_readable,
 };
 
 static const struct mfd_cell max77779_pmic_devs[] = {

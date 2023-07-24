@@ -60,9 +60,10 @@ static int max77779_pmic_sgpio_get_direction(struct gpio_chip *gc,
 		return -EINVAL;
 
 	err = max77779_pmic_reg_read(core, reg, &mode);
-	if (err)
+	if (err) {
+		dev_err(info->dev, "Unable to read SGPIO config (%d)\n", err);
 		return err;
-
+	}
 	mode &= MAX77779_SGPIO_CNFG0_MODE_MASK;
 	mode >>= MAX77779_SGPIO_CNFG0_MODE_SHIFT;
 
@@ -127,9 +128,10 @@ static int max77779_pmic_sgpio_get(struct gpio_chip *gc, unsigned int offset)
 		return -EINVAL;
 
 	err = max77779_pmic_reg_read(core, reg, &val);
-	if (err)
+	if (err) {
+		dev_err(info->dev, "Unable to read SGPIO config (%d)\n", err);
 		return err;
-
+	}
 	val = !!(val & MAX77779_SGPIO_CNFG0_DATA_MASK);
 	return val;
 }
