@@ -356,6 +356,7 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 	int fod_count = charger->pdata->fod_num;
 	int ret;
 	int retries = 3;
+	int vout_mv;
 	static char *wlc_mode[] = { "BPP", "EPP", "EPP_COMP",
 				    "HPP_0", "HPP_1", "HPP_2", "HPP_3",
 				    "HPP_4", "HPP_5", "HPP_6", "HPP_7" };
@@ -377,7 +378,8 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 	if (charger->pdata->fod_num)
 		fod = charger->pdata->fod;
 
-	if (p9221_is_epp(charger) && charger->pdata->fod_epp_num) {
+	ret = charger->chip_get_vout_max(charger, &vout_mv);
+	if (p9221_is_epp(charger) && charger->pdata->fod_epp_num && vout_mv > 5500) {
 		mode = WLC_EPP;
 		if (charger->pdata->fod_fsw)
 			mode = p9221_check_fod_by_fsw(charger);
@@ -6194,6 +6196,7 @@ static void p9221_irq_handler(struct p9221_charger_data *charger, u16 irq_src)
 			schedule_delayed_work(&charger->chk_rp_work,
 					      msecs_to_jiffies(P9XXX_CHK_RP_DELAY_MS));
 		}
+		schedule_delayed_work(&charger->chk_fod_work, 0);
 	}
 }
 
