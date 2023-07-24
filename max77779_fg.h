@@ -178,6 +178,6 @@ ssize_t max77779_gmsr_state_cstr(char *buf, int max);
 
 void *max77779_get_model_data(struct i2c_client *client);
 
-
+int max77779_external_pmic_reg_write(struct i2c_client *client, unsigned int reg, unsigned int val);
 
 #endif

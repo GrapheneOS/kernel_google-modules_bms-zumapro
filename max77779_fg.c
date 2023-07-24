@@ -117,6 +117,7 @@ struct max77779_fg_chip {
 	struct device *dev;
 	struct i2c_client *primary;
 	struct i2c_client *secondary;
+	struct i2c_client *pmic_i2c_client;
 
 	int gauge_type;	/* -1 not present, 0=max1720x, 1=max1730x */
 	struct maxfg_regmap regmap;
@@ -1410,13 +1411,6 @@ static int max77779_fg_get_property(struct power_supply *psy,
 
 			/* chip->por prevent garbage in cycle count */
 			chip->por = (data & MAX77779_FG_Status_PONR_MASK) != 0;
-			if (chip->por && chip->model_ok &&
-			    chip->model_reload == MAX77779_FG_LOAD_MODEL_IDLE) {
-				/* trigger reload model and clear of POR */
-				mutex_unlock(&chip->model_lock);
-				max77779_fg_irq_thread_fn(-1, chip);
-				return err;
-			}
 		}
 		break;
 	case POWER_SUPPLY_PROP_TEMP:
@@ -1742,6 +1736,24 @@ static int max77779_fg_monitor_log_data(struct max77779_fg_chip *chip, bool forc
 	return ret;
 }
 
+
+static int max77779_get_pmic_i2c_client(struct max77779_fg_chip *chip)
+{
+	struct device_node *dn;
+
+	if (!chip->pmic_i2c_client) {
+		dn = of_parse_phandle(chip->dev->of_node, "max77779,pmic", 0);
+		if (!dn)
+			return -ENXIO;
+
+		chip->pmic_i2c_client = of_find_i2c_device_by_node(dn);
+		if (!chip->pmic_i2c_client)
+			return -EAGAIN;
+	}
+
+	return 0;
+}
+
 /*
  * A full reset restores the ICs to their power-up state the same as if power
  * had been cycled.
@@ -1749,13 +1761,18 @@ static int max77779_fg_monitor_log_data(struct max77779_fg_chip *chip, bool forc
 #define CMD_HW_RESET 0x000F
 static int max77779_fg_full_reset(struct max77779_fg_chip *chip)
 {
-	int ret;
+	int ret = 0;
 
-	/* FIXME: doesn't work */
-	ret = MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_CMD_HW, CMD_HW_RESET);
-	dev_info(chip->dev, "%s: ret=%d\n", __func__, ret);
+	if (!chip->pmic_i2c_client)
+		ret = max77779_get_pmic_i2c_client(chip);
+	if (ret != 0)
+		return ret;
 
-	msleep(MAX77779_FG_TPOR_MS);
+	ret = max77779_external_pmic_reg_write(chip->pmic_i2c_client, MAX77779_FG_COMMAND_HW,
+					       CMD_HW_RESET);
+	dev_warn(chip->dev, "%s, ret=%d\n", __func__, ret);
+	if (ret == 0)
+		msleep(MAX77779_FG_TPOR_MS);
 
 	return ret;
 }
@@ -1816,7 +1833,7 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 	if (fg_status == 0 && fg_int_sts == 0)
 		return IRQ_NONE;
 
-	dev_info(chip->dev, "FG_Status:%04x, FG_INT_STS:%04x\n", fg_status, fg_int_sts);
+	dev_dbg(chip->dev, "FG_Status:%04x, FG_INT_STS:%04x\n", fg_status, fg_int_sts);
 
 	/* only used to report health */
 	chip->health_status |= fg_status;
@@ -1840,9 +1857,9 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 			if (err < 0)
 				dev_warn(chip->dev, "unable to mask por bit, err=%d\n", err);
 
-			err = max77779_fg_model_reload(chip, true);
+			err = max77779_fg_model_reload(chip, false);
 			if (err < 0)
-				dev_warn(chip->dev, "unable to reload model, err=%d\n", err);
+				dev_dbg(chip->dev, "unable to reload model, err=%d\n", err);
 		}
 
 		mutex_unlock(&chip->model_lock);
@@ -2639,12 +2656,11 @@ static int max77779_fg_init_model_data(struct max77779_fg_chip *chip)
 		else
 			dev_warn(chip->dev, "GMSR: model data erased\n");
 
-		/*
-		 * FIXME: use full reset when ready
-		 * ret = max77779_fg_full_reset(chip);
-		 */
 		dev_warn(chip->dev, "FG Version Changed, Reload\n");
-		max77779_fg_model_reload(chip, true);
+
+		ret = max77779_fg_full_reset(chip);
+		if (ret < 0)
+			dev_warn(chip->dev, "Reset unsuccessful, ret=%d\n", ret);
 
 		return 0;
 	}
