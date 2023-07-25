@@ -170,6 +170,7 @@ int max77779_load_gauge_model(struct max77779_model_data *model_data);
 
 ssize_t max77779_model_state_cstr(char *buf, int max, struct max77779_model_data *model_data);
 int max77779_fg_model_cstr(char *buf, int max, const struct max77779_model_data *model_data);
+int max77779_fg_model_sscan(struct max77779_model_data *model_data, const char *buf, int max);
 
 /* read saved value */
 ssize_t max77779_gmsr_state_cstr(char *buf, int max);

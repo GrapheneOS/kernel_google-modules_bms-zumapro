@@ -600,6 +600,42 @@ int max77779_fg_model_cstr(char *buf, int max, const struct max77779_model_data 
 		len += scnprintf(&buf[len], max - len, "%x: %04x\n",
 				 MAX77779_FG_MODEL_START + i,
 				 model_data->custom_model[i]);
+	return len;
+}
+
+/* custom model parameters */
+int max77779_fg_model_sscan(struct max77779_model_data *model_data, const char *buf, int max)
+{
+	int ret, index, reg, val, fg_model_end;
+
+	if (!model_data->custom_model)
+		return -EINVAL;
+
+	/* use the default size */
+	if (!model_data->custom_model_size)
+		model_data->custom_model_size = MAX77779_FG_MODEL_SIZE;
+
+	fg_model_end = MAX77779_FG_MODEL_START + model_data->custom_model_size;
+	for (index = 0; index < max ; index += 1) {
+		ret = sscanf(&buf[index], "%x:%x", &reg, &val);
+		if (ret != 2) {
+			dev_err(model_data->dev, "@%d: sscan error %d\n",
+				index, ret);
+			return -EINVAL;
+		}
+
+		dev_info(model_data->dev, "@%d: reg=%x val=%x\n", index, reg, val);
+
+		if (reg >= MAX77779_FG_MODEL_START && reg < fg_model_end) {
+			const int offset = reg - MAX77779_FG_MODEL_START;
+
+			model_data->custom_model[offset] = val;
+		}
+
+		for ( ; index < max && buf[index] != '\n'; index++)
+			;
+	}
+
 	return 0;
 }
 
