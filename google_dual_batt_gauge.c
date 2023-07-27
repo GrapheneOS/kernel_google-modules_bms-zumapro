@@ -157,6 +157,30 @@ static int gdbatt_select_voltage_idx(struct gbms_chg_profile *profile, int vbatt
 	return vbatt_idx;
 }
 
+static int gdbatt_oc_cc_offset(int ibase, int isec, int cc_base, int cc_sec, int now_offset, int step)
+{
+	int cc_offset_base = 0, cc_offset_sec = 0;
+
+	if (cc_base < 0 || cc_sec < 0 || step <= 0) {
+		pr_err("%s: invalid params, %d, %d, %d\n", __func__, cc_base, cc_sec, step);
+		return 0;
+	}
+
+	if (ibase > cc_base)
+		cc_offset_base = ((ibase - cc_base + step - 1) / step) * step;
+
+	if (isec > cc_sec)
+		cc_offset_sec = ((isec - cc_sec + step - 1) / step) * step;
+
+
+	now_offset = ((cc_offset_base + cc_offset_sec) <= now_offset) ? (now_offset) :
+									(now_offset + step);
+
+	pr_debug("%s: %d, %d, %d", __func__, now_offset, cc_offset_base, cc_offset_sec);
+
+	return now_offset;
+}
+
 static void gdbatt_check_current(struct dual_fg_drv *dual_fg_drv, int temp_idx, int vbat_idx)
 {
 	int ibase, isec, cc_base, cc_sec, cc_offset, next_cc_max, cc_lowerbd;
@@ -193,8 +217,8 @@ static void gdbatt_check_current(struct dual_fg_drv *dual_fg_drv, int temp_idx, 
 
 	if ((ibase > cc_base) || (isec > cc_sec)) {
 		const int cc_offset_max = dual_fg_drv->cc_max - cc_lowerbd;
-
-		cc_offset = dual_fg_drv->cc_balance_offset + DUAL_BATT_BALANCE_CC_ADJUST_STEP;
+		cc_offset = gdbatt_oc_cc_offset(ibase, isec, cc_base, cc_sec,
+			dual_fg_drv->cc_balance_offset, DUAL_BATT_BALANCE_CC_ADJUST_STEP);
 		if (cc_offset > cc_offset_max)
 			cc_offset = cc_offset_max;
 
