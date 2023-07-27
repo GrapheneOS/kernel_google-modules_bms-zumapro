@@ -136,13 +136,13 @@ static int max77779_pinconf_set(struct pinctrl_dev *pctldev,
 
 			if (enable) {
 				err = max77779_pmic_reg_update(info->core,
-						MAX77779_SGPIO_PD, BIT(pin), 0);
+						MAX77779_SGPIO_PD, BIT(pin), ~BIT(pin));
 				if (err)
 					return err;
 			}
 
 			err = max77779_pmic_reg_update(info->core,
-					MAX77779_SGPIO_PU, BIT(pin), enable);
+					MAX77779_SGPIO_PU, BIT(pin), enable << pin);
 			if (err)
 				return err;
 
@@ -154,13 +154,13 @@ static int max77779_pinconf_set(struct pinctrl_dev *pctldev,
 
 			if (enable) {
 				err = max77779_pmic_reg_update(info->core,
-						MAX77779_SGPIO_PU, BIT(pin), 0);
+						MAX77779_SGPIO_PU, BIT(pin), ~BIT(pin));
 				if (err)
 					return err;
 			}
 
 			err = max77779_pmic_reg_update(info->core,
-					MAX77779_SGPIO_PD, BIT(pin), enable);
+					MAX77779_SGPIO_PD, BIT(pin), enable << pin);
 			if (err)
 				return err;
 
@@ -169,12 +169,12 @@ static int max77779_pinconf_set(struct pinctrl_dev *pctldev,
 		case PIN_CONFIG_BIAS_DISABLE:
 		{
 			err = max77779_pmic_reg_update(info->core,
-					MAX77779_SGPIO_PU, BIT(pin), 0);
+					MAX77779_SGPIO_PU, BIT(pin), ~BIT(pin));
 			if (err)
 				return err;
 
 			err = max77779_pmic_reg_update(info->core,
-					MAX77779_SGPIO_PD, BIT(pin), 0);
+					MAX77779_SGPIO_PD, BIT(pin), ~BIT(pin));
 			if (err)
 				return err;
 

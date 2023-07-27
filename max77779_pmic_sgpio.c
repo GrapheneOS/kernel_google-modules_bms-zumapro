@@ -257,7 +257,8 @@ static void max77779_pmic_sgpio_bus_sync_unlock(struct irq_data *d)
 		if (unmasked)
 			max77779_pmic_reg_update(core, reg,
 					MAX77779_SGPIO_CNFG0_IRQ_SEL_MASK,
-					info->trig_type[id]);
+					info->trig_type[id] << MAX77779_SGPIO_CNFG0_IRQ_SEL_SHIFT);
+
 		info->mask_u &= ~BIT(id);
 	}
 
