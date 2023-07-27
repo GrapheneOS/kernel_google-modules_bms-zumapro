@@ -35,7 +35,6 @@ struct max77779_pmic_sgpio_info {
 	struct device		*dev;
 	struct device		*core;
 	struct gpio_chip	gpio_chip;
-	struct irq_chip		irq_chip;
 	struct mutex		lock;
 
 	int			irq;
@@ -266,6 +265,39 @@ unlock_out:
 	mutex_unlock(&info->lock);
 }
 
+static irqreturn_t max77779_sgpio_irq_handler(int irq, void *ptr)
+{
+	struct max77779_pmic_sgpio_info *info = ptr;
+	struct device *core = info->core;
+	struct irq_domain *domain = info->gpio_chip.irq.domain;
+	unsigned int sgpio_int;
+	int sub_irq;
+	int offset;
+	int err;
+
+	err = max77779_pmic_reg_read(core, MAX77779_SGPIO_INT,
+			&sgpio_int);
+	if (err) {
+		dev_err_ratelimited(info->dev, "read error %d\n", err);
+		return IRQ_NONE;
+	}
+
+	for (offset = 0; offset < MAX77779_SGPIO_NUM_GPIOS; offset++) {
+		if (sgpio_int & BIT(offset)) {
+			sub_irq = irq_find_mapping(domain, offset);
+			if (sub_irq)
+				handle_nested_irq(sub_irq);
+		}
+	}
+
+	err = max77779_pmic_reg_write(core, MAX77779_SGPIO_INT,
+			sgpio_int);
+	if (err)
+		dev_err_ratelimited(info->dev, "write error %d\n", err);
+
+	return IRQ_HANDLED;
+}
+
 static struct irq_chip max77779_pmic_sgpio_irq_chip = {
 	.name = "max77779_sgpio_irq",
 	.irq_enable = max77779_pmic_sgpio_irq_enable,
@@ -320,7 +352,8 @@ static int max77779_pmic_sgpio_probe(struct platform_device *pdev)
 	gpio_chip->of_node = dev->of_node;
 	gpio_chip->ngpio = MAX77779_SGPIO_NUM_GPIOS;
 
-	gpio_chip->irq.chip = &max77779_pmic_sgpio_irq_chip;
+	gpio_irq_chip_set_chip(&gpio_chip->irq, &max77779_pmic_sgpio_irq_chip);
+
 	gpio_chip->irq.default_type = IRQ_TYPE_NONE;
 	gpio_chip->irq.handler = handle_simple_irq;
 	gpio_chip->irq.parent_handler = NULL;
@@ -331,10 +364,21 @@ static int max77779_pmic_sgpio_probe(struct platform_device *pdev)
 	gpio_chip->irq.init_valid_mask = max77779_pmic_sgpio_set_irq_valid_mask;
 	gpio_chip->irq.first = 0;
 
+	platform_set_drvdata(pdev, info);
+
 	err = devm_gpiochip_add_data(dev, gpio_chip, info);
 	if (err) {
 		dev_err(dev, "Failed to initialize gpio chip err = %d\n", err);
 		return err;
+	}
+
+	err = devm_request_threaded_irq(info->dev, irq_in, NULL,
+			max77779_sgpio_irq_handler,
+			IRQF_TRIGGER_LOW | IRQF_ONESHOT,
+			"max77779_pmic_sgpio_irq", info);
+	if (err < 0) {
+		dev_err(dev, "failed get irq thread err = %d\n", err);
+		return -ENODEV;
 	}
 
 	return 0;
