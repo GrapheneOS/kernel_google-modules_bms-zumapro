@@ -10,6 +10,9 @@
 #include "max77779_usecase.h"
 #include "max777x9_bcl.h"
 
+#define MAX77779_COP_SENSE_RESISTOR_VAL 2 /* 2mOhm */
+#define MAX7779_COP_WARN_THRESHOLD 105 /* Percentage */
+
 struct max77779_chgr_data {
 	struct device *dev;
 

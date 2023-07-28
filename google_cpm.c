@@ -4115,6 +4115,7 @@ static int google_cpm_probe(struct platform_device *pdev)
 	struct power_supply_config psy_cfg = { 0 };
 	const char *tmp_name = NULL;
 	struct gcpm_drv *gcpm;
+	struct device_node *tmp_node;
 	int ret;
 
 	gcpm = devm_kzalloc(&pdev->dev, sizeof(*gcpm), GFP_KERNEL);
@@ -4278,7 +4279,9 @@ static int google_cpm_probe(struct platform_device *pdev)
 	gcpm->no_init_wlc_ta_vol = of_property_read_bool(pdev->dev.of_node,
 							"google,no-init-wlc-ta-vol");
 
-	gcpm->cop_enabled = of_property_read_bool(pdev->dev.of_node, "google,cop-enabled");
+	tmp_node = of_parse_phandle(pdev->dev.of_node, "google,max77779_chg", 0);
+	if (tmp_node)
+		gcpm->cop_enabled = of_property_read_bool(tmp_node, "google,cop-enabled");
 
 	dev_info(gcpm->device, "taper ts_m=%d ts_ccs=%d ts_i=%d ts_cnt=%d ts_g=%d ts_v=%d ts_c=%d\n",
 		 gcpm->taper_step_fv_margin, gcpm->taper_step_cc_step,
