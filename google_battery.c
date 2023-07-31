@@ -662,9 +662,9 @@ static int gbatt_get_capacity(struct batt_drv *batt_drv);
 static int ssoc_get_capacity(const struct batt_ssoc_state *ssoc);
 static int batt_ttf_estimate(ktime_t *res, struct batt_drv *batt_drv);
 
-static int gbatt_restore_capacity(struct batt_drv *batt_drv);
 
 static int gbatt_restore_capacity(struct batt_drv *batt_drv);
+static int batt_ttf_estimate(ktime_t *res, struct batt_drv *batt_drv);
 
 static int batt_get_filter_temp(struct batt_temp_filter *temp_filter)
 {
@@ -862,7 +862,12 @@ done:
 static int batt_vs_mp_tz_get(struct thermal_zone_device *tzd, int *batt_vs)
 {
 	struct batt_drv *batt_drv = tzd->devdata;
-	return batt_drv->need_mp;
+
+	if (!batt_vs)
+		return -EINVAL;
+
+	*batt_vs = batt_drv->need_mp;
+	return 0;
 }
 
 static struct thermal_zone_device_ops batt_vs_mp_tz_ops = {
@@ -876,6 +881,8 @@ static int hda_tz_cb(struct gvotable_election *el,
 
 	mutex_lock(&batt_drv->hda_tz_lock);
 	batt_drv->hda_tz_vote = GVOTABLE_PTR_TO_INT(vote);
+	dev_dbg(batt_drv->device, "%s reason: %s, vote: %d\n", __func__,
+		reason, batt_drv->hda_tz_vote);
 	mutex_unlock(&batt_drv->hda_tz_lock);
 	return 0;
 }
@@ -883,12 +890,17 @@ static int hda_tz_cb(struct gvotable_election *el,
 static int batt_vs_hda_tz_get(struct thermal_zone_device *tzd, int *batt_vs)
 {
 	struct batt_drv *batt_drv = tzd->devdata;
-	int ret;
+
+	if (!batt_vs)
+		return -EINVAL;
 
 	mutex_lock(&batt_drv->hda_tz_lock);
-	ret = batt_drv->hda_tz_vote;
+	if (!batt_drv->hda_tz_limit)
+		*batt_vs = batt_drv->hda_tz_vote;
+	else
+		*batt_vs = batt_drv->hda_tz_vote >= batt_drv->hda_tz_limit ? 1 : 0;
 	mutex_unlock(&batt_drv->hda_tz_lock);
-	return ret;
+	return 0;
 }
 
 static struct thermal_zone_device_ops batt_vs_hda_tz_ops = {
@@ -10738,8 +10750,6 @@ static int google_battery_probe(struct platform_device *pdev)
 
 	ret = of_property_read_u32(pdev->dev.of_node, "google,hda-tz-limit",
 				   &batt_drv->hda_tz_limit);
-	if (ret < 0)
-		batt_drv->hda_tz_limit = -1;
 
 	/* AACR server side */
 	batt_drv->aacr_cycle_grace = AACR_START_CYCLE_DEFAULT;

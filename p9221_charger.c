@@ -638,7 +638,7 @@ static void p9xxx_ll_adjust_soc(struct p9221_charger_data *charger, int soc)
 }
 
 /*
- * Put the default ICL back to BPP, reset OCP voter
+ * Put the default ICL back to BPP, reset OCP voter, reset ALIGN voter
  * @pre charger && charger->dc_icl_votable && charger->client->dev
  * gvotable_cast_int_vote can handle NULL votable, so don't need check
  */
@@ -686,6 +686,10 @@ static void p9221_vote_defaults(struct p9221_charger_data *charger)
 			       P9221_RAMP_VOTER, 0, false);
 	gvotable_cast_int_vote(charger->dc_icl_votable,
 			       P9221_HPP_VOTER, 0, false);
+	gvotable_cast_int_vote(charger->hda_tz_votable,
+			       P9221_WLC_VOTER, 0, false);
+	gvotable_cast_int_vote(charger->hda_tz_votable,
+			       P9221_ALIGN_VOTER, 0, false);
 	gvotable_cast_int_vote(charger->dc_avail_votable,
 			       DD_VOTER, 0, false);
 	gvotable_cast_int_vote(charger->hda_tz_votable,
@@ -1116,7 +1120,7 @@ static void p9221_set_offline(struct p9221_charger_data *charger)
 	charger->online = false;
 	charger->online_at = 0;
 	charger->check_rp = RP_NOTSET;
-	cancel_delayed_work(&charger->charge_stats_work);
+	cancel_delayed_work(&charger->charge_stats_hda_work);
 	p9221_dump_charge_stats(charger);
 	mutex_unlock(&charger->stats_lock);
 
@@ -1583,6 +1587,17 @@ static void p9221_align_work(struct work_struct *work)
 		p9221_align_check(charger, current_scaling);
 	else
 		p9xxx_align_check(charger);
+
+	if (!charger->hda_tz_votable)
+		charger->hda_tz_votable = gvotable_election_get_handle(VOTABLE_HDA_TZ);
+
+	if (charger->hda_tz_votable) {
+		const bool align_ok = charger->alignment < WLC_ALIGN_LOWER_LIMIT
+				      || charger->alignment > WLC_ALIGN_UPPER_LIMIT;
+
+		gvotable_cast_int_vote(charger->hda_tz_votable, P9221_ALIGN_VOTER,
+			HDA_TZ_WLC_NOT_ALIGN, !align_ok);
+	}
 
 align_again:
 	/*
@@ -2289,14 +2304,15 @@ static int p9221_get_property(struct power_supply *psy,
 }
 
 #define P9221_CHARGE_STATS_DELAY_SEC 10
-static void p9221_charge_stats_work(struct work_struct *work)
+static void p9221_charge_stats_hda_work(struct work_struct *work)
 {
 	struct p9221_charger_data *charger = container_of(work,
-			struct p9221_charger_data, charge_stats_work.work);
+			struct p9221_charger_data, charge_stats_hda_work.work);
 	struct p9221_charge_stats *chg_data = &charger->chg_data;
 	const ktime_t now = get_boot_sec();
 	const ktime_t start_time = chg_data->start_time;
 	const ktime_t elap = now - chg_data->start_time;
+	int tz_vote = HDA_TZ_WLC_NONE;
 
 	mutex_lock(&charger->stats_lock);
 
@@ -2323,6 +2339,17 @@ static void p9221_charge_stats_work(struct work_struct *work)
 	p9221_check_adapter_type(charger);
 	p9221_stats_update_state(charger);
 
+	if (!charger->hda_tz_votable)
+		charger->hda_tz_votable = gvotable_election_get_handle(VOTABLE_HDA_TZ);
+
+	if (charger->chg_data.adapter_type == TXID_DD_TYPE)
+		tz_vote = HDA_TZ_WLC_EPP_1P;
+
+	if (charger->hda_tz_votable && charger->chg_data.adapter_type == TXID_DD_TYPE
+	    || charger->chg_data.adapter_type == TXID_DD_TYPE2)
+		gvotable_cast_int_vote(charger->hda_tz_votable, P9221_WLC_VOTER,
+					tz_vote, tz_vote);
+
 	/* SOC changed, store data to the last one. */
 	if (chg_data->last_soc != charger->last_capacity)
 		p9221_update_soc_stats(charger, chg_data->last_soc);
@@ -2331,7 +2358,7 @@ static void p9221_charge_stats_work(struct work_struct *work)
 
 	chg_data->last_soc = charger->last_capacity;
 
-	schedule_delayed_work(&charger->charge_stats_work,
+	schedule_delayed_work(&charger->charge_stats_hda_work,
 			      msecs_to_jiffies(P9221_CHARGE_STATS_TIMEOUT_MS));
 
 unlock_done:
@@ -2854,7 +2881,7 @@ static void p9221_set_capacity(struct p9221_charger_data *charger, int capacity)
 
 	/* p9221_is_online() is true when the device in TX mode. */
 	if (charger->online && charger->last_capacity >= 0 && charger->last_capacity <= 100)
-		mod_delayed_work(system_wq, &charger->charge_stats_work, 0);
+		mod_delayed_work(system_wq, &charger->charge_stats_hda_work, 0);
 
 	if (charger->pdata->gpp_enhanced && charger->last_capacity > WLC_HPP_SOC_LIMIT)
 		feature_gpp_15w_enable(charger, false);
@@ -3234,6 +3261,14 @@ static int p9221_set_dc_icl(struct p9221_charger_data *charger)
 	if (charger->pdata->has_sw_ramp && !charger->icl_ramp)
 		gvotable_cast_int_vote(charger->dc_icl_votable, P9221_RAMP_VOTER, 0, false);
 
+	if (p9221_is_epp(charger)) {
+		if (!charger->hda_tz_votable)
+			charger->hda_tz_votable = gvotable_election_get_handle(VOTABLE_HDA_TZ);
+		if (charger->hda_tz_votable)
+			gvotable_cast_int_vote(charger->hda_tz_votable, P9221_WLC_VOTER,
+				HDA_TZ_WLC_EPP_3P, true);
+	}
+
 	/* Increase the IOUT limit */
 	charger->chip_set_rx_ilim(charger, P9221_UA_TO_MA(charger->wlc_ocp));
 	logbuffer_log(charger->log, "set current limit to %dUA", charger->wlc_ocp);
@@ -3490,7 +3525,7 @@ static void p9221_set_online(struct p9221_charger_data *charger)
 		      align_status_str[charger->align]);
 	schedule_work(&charger->uevent_work);
 
-	schedule_delayed_work(&charger->charge_stats_work,
+	schedule_delayed_work(&charger->charge_stats_hda_work,
 			      msecs_to_jiffies(P9221_CHARGE_STATS_TIMEOUT_MS));
 
 	/* Auth: set alternate ICL for comms and start auth timers */
@@ -7122,6 +7157,7 @@ static int p9xxx_parse_dt(struct device *dev,
 
 	pdata->bpp_cep_on_dl = of_property_read_bool(node, "google,bpp-cep-on-dl");
 	pdata->gpp_enhanced = of_property_read_bool(node, "google,gpp_enhanced");
+	pdata->hda_tz_wlc = of_property_read_bool(node, "google,hda-tz-wlc");
 
 	pdata->hda_tz_wlc = of_property_read_bool(node, "google,hda-tz-wlc");
 
@@ -7401,7 +7437,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	INIT_DELAYED_WORK(&charger->dcin_work, p9221_dcin_work);
 	INIT_DELAYED_WORK(&charger->stop_online_spoof_work, p9xxx_stop_online_spoof_work);
 	INIT_DELAYED_WORK(&charger->change_det_status_work, p9xxx_change_det_status_work);
-	INIT_DELAYED_WORK(&charger->charge_stats_work, p9221_charge_stats_work);
+	INIT_DELAYED_WORK(&charger->charge_stats_hda_work, p9221_charge_stats_hda_work);
 	INIT_DELAYED_WORK(&charger->tx_work, p9221_tx_work);
 	INIT_DELAYED_WORK(&charger->txid_work, p9382_txid_work);
 	INIT_DELAYED_WORK(&charger->icl_ramp_work, p9221_icl_ramp_work);
@@ -7698,7 +7734,7 @@ static void p9221_charger_remove(struct i2c_client *client)
 	cancel_delayed_work_sync(&charger->dcin_work);
 	cancel_delayed_work_sync(&charger->stop_online_spoof_work);
 	cancel_delayed_work_sync(&charger->change_det_status_work);
-	cancel_delayed_work_sync(&charger->charge_stats_work);
+	cancel_delayed_work_sync(&charger->charge_stats_hda_work);
 	cancel_delayed_work_sync(&charger->tx_work);
 	cancel_delayed_work_sync(&charger->txid_work);
 	cancel_delayed_work_sync(&charger->icl_ramp_work);

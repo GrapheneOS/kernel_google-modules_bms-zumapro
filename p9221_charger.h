@@ -36,6 +36,7 @@
 #define P9221_HPP_VOTER				"EPP_HPP_VOTER"
 #define P9221_ALIGN_VOTER			"WLC_ALIGN_VOTER"
 #define VOTABLE_DC_AVAIL			"DC_AVAIL"
+#define P9221_ALIGN_VOTER			"WLC_ALIGN_VOTER"
 #define WLC_MFG_GOOGLE				0x72
 #define WLC_MFG_108_FOR_GOOGLE			0x108
 #define P9221_DC_ICL_BPP_UA			700000
@@ -801,7 +802,7 @@ struct p9221_charger_data {
 	struct mutex			fod_lock;
 	struct device			*dev;
 	struct delayed_work		notifier_work;
-	struct delayed_work		charge_stats_work;
+	struct delayed_work		charge_stats_hda_work;
 	struct delayed_work		dcin_work;
 	struct delayed_work		stop_online_spoof_work;
 	struct delayed_work		change_det_status_work;
