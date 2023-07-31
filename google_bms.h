@@ -480,9 +480,17 @@ const char *gbms_chg_ev_adapter_s(int adapter);
 #define VOTABLE_CHARGING_POLICY	"CHARGING_POLICY"
 #define VOTABLE_CHARGING_UISOC	"CHARGING_UISOC"
 
+#define VOTABLE_HDA_TZ		"HDA_TZ"
+
 #define VOTABLE_DC_CHG_AVAIL	"DC_AVAIL"
 #define REASON_DC_DRV		"DC_DRV"
 #define REASON_MDIS		"MDIS"
+
+#define HDA_TZ_WLC_NONE		(0)
+#define HDA_TZ_WLC_ADAPTER	(1)
+#define HDA_TZ_WLC_EPP_1P	(10)
+#define HDA_TZ_WLC_EPP_3P	(20)
+#define HDA_TZ_WLC_NOT_ALIGN	(30)
 
 #define FAN_LVL_UNKNOWN		-1
 #define FAN_LVL_NOT_CARE	0

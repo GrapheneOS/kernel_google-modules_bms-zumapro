@@ -34,6 +34,7 @@
 #define LL_BPP_CEP_VOTER			"LL_BPP_CEP_VOTER"
 #define P9221_RAMP_VOTER			"WLC_RAMP_VOTER"
 #define P9221_HPP_VOTER				"EPP_HPP_VOTER"
+#define P9221_ALIGN_VOTER			"WLC_ALIGN_VOTER"
 #define WLC_MFG_GOOGLE				0x72
 #define WLC_MFG_108_FOR_GOOGLE			0x108
 #define P9221_DC_ICL_BPP_UA			700000
@@ -719,6 +720,7 @@ struct p9221_charger_platform_data {
 	int				align_delta;
 	bool				disable_repeat_eop;
 	bool				bpp_cep_on_dl;
+	bool				hda_tz_wlc;
 };
 
 struct p9221_charger_ints_bit {
@@ -771,6 +773,7 @@ struct p9221_charger_data {
 	struct gvotable_election	*csi_status_votable;
 	struct gvotable_election	*csi_type_votable;
 	struct gvotable_election	*point_full_ui_soc_votable;
+	struct gvotable_election	*hda_tz_votable;
 	struct notifier_block		nb;
 	struct mutex			io_lock;
 	struct mutex			cmd_lock;
