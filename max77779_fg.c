@@ -194,6 +194,8 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj);
 static int max77779_fg_set_next_update(struct max77779_fg_chip *chip);
 static int max77779_fg_monitor_log_data(struct max77779_fg_chip *chip, bool force_log);
 
+static struct mutex section_lock;
+
 static bool max77779_fg_reglog_init(struct max77779_fg_chip *chip)
 {
 	chip->regmap.reglog = devm_kzalloc(chip->dev, sizeof(*chip->regmap.reglog), GFP_KERNEL);
@@ -338,35 +340,67 @@ static ssize_t offmode_charger_store(struct device *dev,
 
 static DEVICE_ATTR_RW(offmode_charger);
 
-int max77779_fg_usr_lock(const struct maxfg_regmap *map, bool enabled)
+int max77779_fg_usr_lock_section(const struct maxfg_regmap *map, enum max77779_fg_reg_sections section, bool enabled)
 {
 	int ret, i;
 	u16 data;
 
+	mutex_lock(&section_lock);
 	ret = REGMAP_READ(map, MAX77779_FG_USR, &data);
 	if (ret)
-		return ret;
+		goto unlock_exit;
 
-	data = _max77779_fg_usr_vlock_set(data, enabled);
-	data = _max77779_fg_usr_rlock_set(data, enabled);
-	data = _max77779_fg_usr_nlock_set(data, enabled);
+	switch (section) {
+	case MAX77779_FG_RAM_SECTION: /* addr: 0x36, reg: 0x00 ... 0xDF */
+		data = _max77779_fg_usr_vlock_set(data, enabled);
+		break;
+	case MAX77779_FG_FUNC_SECTION: /* addr: 0x36, reg: 0xE0 ... 0xEE */
+		data = _max77779_fg_usr_rlock_set(data, enabled);
+		break;
+	case MAX77779_FG_NVM_SECTION: /* addr: 0x37 */
+		data = _max77779_fg_usr_nlock_set(data, enabled);
+		break;
+	case MAX77779_FG_ALL_SECTION:
+		data = _max77779_fg_usr_vlock_set(data, enabled);
+		data = _max77779_fg_usr_rlock_set(data, enabled);
+		data = _max77779_fg_usr_nlock_set(data, enabled);
+		break;
+	default:
+		pr_err("Failed to lock section %d\n", section);
+		goto unlock_exit;
+	}
 
 	/* Requires write twice */
 	for (i = 0; i < 2; i++) {
 		ret = REGMAP_WRITE(map, MAX77779_FG_USR, data);
 		if (ret)
-			return ret;
+			goto unlock_exit;
 	}
-	return 0;
+
+unlock_exit:
+	mutex_unlock(&section_lock);
+	return ret;
+}
+
+/* NOTE: it might not be static inline depending on how it's used */
+static inline int max77779_fg_usr_lock(const struct maxfg_regmap *map, unsigned int reg, bool enabled) {
+	switch (reg) {
+	case 0x00 ... 0xDF:
+		return max77779_fg_usr_lock_section(map, MAX77779_FG_RAM_SECTION, enabled);
+	case 0xE0 ... 0xEE:
+		return max77779_fg_usr_lock_section(map, MAX77779_FG_FUNC_SECTION, enabled);
+	default:
+		pr_err("Failed to translate reg 0x%X to section\n", reg);
+		return -EINVAL;
+	}
 }
 
 int max77779_fg_register_write(const struct maxfg_regmap *map,
 			       unsigned int reg, u16 value, bool verify)
 {
-	int ret;
+	int ret, rc;
 
-	/* TODO: b/285938678 - Lock/unlock specific register areas around transactions */
-	ret = max77779_fg_usr_lock(map, false);
+	ret = max77779_fg_usr_lock(map, reg, false);
 	if (ret) {
 		pr_err("Failed to unlock ret=%d\n", ret);
 		return ret;
@@ -376,15 +410,12 @@ int max77779_fg_register_write(const struct maxfg_regmap *map,
 		ret = REGMAP_WRITE_VERIFY(map, reg, value);
 	else
 		ret = REGMAP_WRITE(map, reg, value);
-	if (ret) {
-		pr_err("Failed to write reg verify=%d ret=%d\n", verify, ret);
-		max77779_fg_usr_lock(map, true);
-		return ret;
-	}
-
-	ret = max77779_fg_usr_lock(map, true);
 	if (ret)
-		pr_err("Failed to lock ret=%d\n", ret);
+		pr_err("Failed to write reg verify=%d ret=%d\n", verify, ret);
+
+	rc = max77779_fg_usr_lock(map, reg, true);
+	if (rc)
+		pr_err("Failed to lock ret=%d\n", rc);
 
 	return ret;
 }
@@ -393,10 +424,9 @@ int max77779_fg_nregister_write(const struct maxfg_regmap *map,
 				const struct maxfg_regmap *debug_map,
 				unsigned int reg, u16 value, bool verify)
 {
-	int ret;
+	int ret, rc;
 
-	/* TODO: b/285938678 - Lock/unlock specific register areas around transactions */
-	ret = max77779_fg_usr_lock(map, false);
+	ret = max77779_fg_usr_lock_section(map, MAX77779_FG_NVM_SECTION, false);
 	if (ret) {
 		pr_err("Failed to unlock ret=%d\n", ret);
 		return ret;
@@ -406,15 +436,12 @@ int max77779_fg_nregister_write(const struct maxfg_regmap *map,
 		ret = REGMAP_WRITE_VERIFY(debug_map, reg, value);
 	else
 		ret = REGMAP_WRITE(debug_map, reg, value);
-	if (ret) {
-		pr_err("Failed to write reg verify=%d ret=%d\n", verify, ret);
-		max77779_fg_usr_lock(map, true);
-		return ret;
-	}
-
-	ret = max77779_fg_usr_lock(map, true);
 	if (ret)
-		pr_err("Failed to lock ret=%d\n", ret);
+		pr_err("Failed to write reg verify=%d ret=%d\n", verify, ret);
+
+	rc = max77779_fg_usr_lock_section(map, MAX77779_FG_NVM_SECTION, true);
+	if (rc)
+		pr_err("Failed to lock ret=%d\n", rc);
 
 	return ret;
 }
@@ -3354,6 +3381,8 @@ static int max77779_fg_probe(struct i2c_client *client,
 		dev_err(dev, "Failed to initialize regmap(s)\n");
 		goto i2c_unregister;
 	}
+
+	mutex_init(&section_lock);
 
 	/* NOTE: < 0 not available, it could be a bare MLB */
 	chip->gauge_type = max77779_read_gauge_type(chip);

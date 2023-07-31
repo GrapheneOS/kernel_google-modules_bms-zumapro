@@ -134,6 +134,14 @@ static inline int max77779_fg_model_check_version(const struct max77779_model_da
 	return max77779_model_read_version(model_data) == model_data->model_version;
 }
 
+enum max77779_fg_reg_sections {
+	MAX77779_FG_RAM_SECTION,
+	MAX77779_FG_FUNC_SECTION,
+	MAX77779_FG_NVM_SECTION,
+	MAX77779_FG_ALL_SECTION,
+	MAX77779_FG_UNKNOWN_SECTION,
+};
+
 #define MAX77779_FG_REGMAP_WRITE(regmap, what, value) \
 	max77779_fg_register_write(regmap, what, value, false)
 #define MAX77779_FG_REGMAP_WRITE_VERIFY(regmap, what, value) \
@@ -144,11 +152,12 @@ static inline int max77779_fg_model_check_version(const struct max77779_model_da
 #define MAX77779_FG_N_REGMAP_WRITE_VERIFY(regmap, nregmap, what, value) \
 	max77779_fg_nregister_write(regmap, nregmap, what, value, true)
 
+
 /** ------------------------------------------------------------------------ */
 
 int max77779_max17x0x_regmap_init(struct maxfg_regmap *regmap, struct i2c_client *clnt,
 				  const struct regmap_config *regmap_config, bool tag);
-int max77779_fg_usr_lock(const struct maxfg_regmap *map, bool enabled);
+int max77779_fg_usr_lock_section(const struct maxfg_regmap *map, enum max77779_fg_reg_sections section, bool enabled);
 int max77779_fg_register_write(const struct maxfg_regmap *regmap, unsigned int reg,
 			       u16 value, bool verify);
 int max77779_fg_nregister_write(const struct maxfg_regmap *map,

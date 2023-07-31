@@ -262,7 +262,7 @@ int max77779_load_gauge_model(struct max77779_model_data *model_data)
 	}
 
 	/* Step 3.1: Unlock command */
-	ret = max77779_fg_usr_lock(regmap, false);
+	ret = max77779_fg_usr_lock_section(regmap, MAX77779_FG_ALL_SECTION, false);
 	if (ret < 0) {
 		dev_err(model_data->dev, "Error Unlock (%d)\n", ret);
 		return ret;
@@ -350,7 +350,7 @@ int max77779_load_gauge_model(struct max77779_model_data *model_data)
 		dev_err(model_data->dev, "cannot restore Config2 (%d)\n", ret);
 
 	/* Step 3.4.7: Lock command */
-	ret = max77779_fg_usr_lock(regmap, true);
+	ret = max77779_fg_usr_lock_section(regmap, MAX77779_FG_ALL_SECTION, true);
 	if (ret < 0) {
 		dev_err(model_data->dev, "Error Lock (%d)\n", ret);
 		return ret;
@@ -379,7 +379,7 @@ int max77779_load_gauge_model(struct max77779_model_data *model_data)
 	return 0;
 
 error_done:
-	rc = max77779_fg_usr_lock(regmap, true);
+	rc = max77779_fg_usr_lock_section(regmap, MAX77779_FG_ALL_SECTION, true);
 	if (rc < 0)
 		dev_err(model_data->dev, "Error Lock (%d)\n", rc);
 
