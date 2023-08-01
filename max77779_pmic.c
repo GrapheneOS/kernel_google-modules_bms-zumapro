@@ -103,62 +103,6 @@ int max77779_external_pmic_reg_write(struct i2c_client *client, unsigned int reg
 }
 EXPORT_SYMBOL_GPL(max77779_external_pmic_reg_write);
 
-int max77779_get_bcl_irq(struct i2c_client *client, u8 *irq_val)
-{
-	unsigned int vdroop_int;
-	u8 ret;
-	const u8 clr_bcl_irq_mask = (MAX77779_PMIC_VDROOP_INT_BAT_OILO2_INT_MASK |
-			MAX77779_PMIC_VDROOP_INT_BAT_OILO1_INT_MASK |
-			MAX77779_PMIC_VDROOP_INT_SYS_UVLO1_INT_MASK |
-			MAX77779_PMIC_VDROOP_INT_SYS_UVLO2_INT_MASK);
-
-	ret = max77779_external_pmic_reg_read(client, MAX77779_PMIC_VDROOP_INT, &vdroop_int);
-	if (ret < 0)
-		return IRQ_NONE;
-
-	/* Return if chg_int has all of BAT_OILO1, BAT_OILO2, SYS_UVLO1, SYS_UVLO2 cleared */
-	if ((vdroop_int & clr_bcl_irq_mask) == 0)
-		return IRQ_NONE;
-
-	/* UVLO2 has the highest priority and then BATOILO, then UVLO1 */
-	if (vdroop_int & MAX77779_PMIC_VDROOP_INT_SYS_UVLO2_INT_MASK)
-		*irq_val = UVLO2;
-	else if (vdroop_int & MAX77779_PMIC_VDROOP_INT_BAT_OILO2_INT_MASK)
-		*irq_val = BATOILO2;
-	else if (vdroop_int & MAX77779_PMIC_VDROOP_INT_BAT_OILO1_INT_MASK)
-		*irq_val = BATOILO1;
-	else if (vdroop_int & MAX77779_PMIC_VDROOP_INT_SYS_UVLO1_INT_MASK)
-		*irq_val = UVLO1;
-
-	return ret;
-}
-EXPORT_SYMBOL_GPL(max77779_get_bcl_irq);
-
-int max77779_clr_bcl_irq(struct i2c_client *client)
-{
-	u8 irq_val = 0;
-	unsigned int chg_int = 0;
-	int ret;
-
-	if (max77779_get_bcl_irq(client, &irq_val) != 0)
-		return IRQ_NONE;
-
-	if (irq_val == UVLO2)
-		chg_int = MAX77779_PMIC_VDROOP_INT_SYS_UVLO2_INT_MASK;
-	else if (irq_val == UVLO1)
-		chg_int = MAX77779_PMIC_VDROOP_INT_SYS_UVLO1_INT_MASK;
-	else if (irq_val == BATOILO1)
-		chg_int = MAX77779_PMIC_VDROOP_INT_BAT_OILO1_INT_MASK;
-	else if (irq_val == BATOILO2)
-		chg_int = MAX77779_PMIC_VDROOP_INT_BAT_OILO2_INT_MASK;
-
-	ret = max77779_external_pmic_reg_write(client, MAX77779_PMIC_VDROOP_INT, chg_int);
-	if (ret < 0)
-		return IRQ_NONE;
-	return ret;
-}
-EXPORT_SYMBOL_GPL(max77779_clr_bcl_irq);
-
 int max77779_pmic_reg_update(struct device *core_dev, unsigned int reg,
 		unsigned int mask, unsigned int val)
 {

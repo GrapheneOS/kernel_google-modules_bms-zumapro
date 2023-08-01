@@ -175,57 +175,6 @@ int max77759_external_reg_write(struct i2c_client *client, uint8_t reg, uint8_t 
 }
 EXPORT_SYMBOL_GPL(max77759_external_reg_write);
 
-int max77759_get_bcl_irq(struct i2c_client *client, u8 *irq_val)
-{
-	u8 chg_int;
-	u8 ret;
-	const u8 clr_bcl_irq_mask = (MAX77759_CHG_INT2_BAT_OILO_I |
-			MAX77759_CHG_INT2_SYS_UVLO1_I |
-			MAX77759_CHG_INT2_SYS_UVLO2_I);
-
-	ret = max77759_chg_reg_read(client, MAX77759_CHG_INT2, &chg_int);
-	if (ret < 0)
-		return IRQ_NONE;
-
-	/* Return if chg_int has all of BAT_OILO, SYS_UVLO1, SYS_UVLO2 cleared */
-	if ((chg_int & clr_bcl_irq_mask) == 0)
-		return IRQ_NONE;
-
-	/* UVLO2 has the highest priority and then BATOILO, then UVLO1 */
-	if (chg_int & MAX77759_CHG_INT2_SYS_UVLO2_I)
-		*irq_val = UVLO2;
-	else if (chg_int & MAX77759_CHG_INT2_BAT_OILO_I)
-		*irq_val = BATOILO;
-	else if (chg_int & MAX77759_CHG_INT2_SYS_UVLO1_I)
-		*irq_val = UVLO1;
-
-	return ret;
-}
-EXPORT_SYMBOL_GPL(max77759_get_bcl_irq);
-
-int max77759_clr_bcl_irq(struct i2c_client *client)
-{
-	u8 irq_val = 0;
-	u8 chg_int = 0;
-	int ret;
-
-	if (max77759_get_bcl_irq(client, &irq_val) != 0)
-		return IRQ_NONE;
-
-	if (irq_val == UVLO2)
-		chg_int = MAX77759_CHG_INT2_SYS_UVLO2_I;
-	else if (irq_val == UVLO1)
-		chg_int = MAX77759_CHG_INT2_SYS_UVLO1_I;
-	else if (irq_val == BATOILO)
-		chg_int = MAX77759_CHG_INT2_BAT_OILO_I;
-
-	ret = max77759_chg_reg_write(client, MAX77759_CHG_INT2, chg_int);
-	if (ret < 0)
-		return IRQ_NONE;
-	return ret;
-}
-EXPORT_SYMBOL_GPL(max77759_clr_bcl_irq);
-
 /* ----------------------------------------------------------------------- */
 
 int max77759_chg_reg_write(struct i2c_client *client, u8 reg, u8 value)
