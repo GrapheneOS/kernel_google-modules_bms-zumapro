@@ -4489,7 +4489,14 @@ static int msc_logic(struct batt_drv *batt_drv)
 
 	/* need a new fv_uv only on a new voltage tier.  */
 	if (vbatt_idx != batt_drv->vbatt_idx) {
-		fv_uv = profile->volt_limits[vbatt_idx];
+		bool no_back_down = (batt_drv->chg_state.f.flags & GBMS_CS_FLAG_DIRECT_CHG)
+				     && batt_drv->dc_irdrop;
+		/* Don't reduce fv_uv on next tier */
+		bool allow_next_vt_fv_uv = no_back_down && vbatt_idx > batt_drv->vbatt_idx
+					   && profile->volt_limits[vbatt_idx] > fv_uv;
+
+		if (!no_back_down || allow_next_vt_fv_uv || vbatt_idx < batt_drv->vbatt_idx)
+			fv_uv = profile->volt_limits[vbatt_idx];
 		batt_drv->checked_tier_switch_cnt = 0;
 		batt_drv->checked_ov_cnt = 0;
 	}
