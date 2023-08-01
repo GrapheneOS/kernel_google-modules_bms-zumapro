@@ -67,7 +67,6 @@ int max77779_pmic_reg_write(struct device *core_dev,
 }
 EXPORT_SYMBOL_GPL(max77779_pmic_reg_write);
 
-#if IS_ENABLED(CONFIG_GOOGLE_BCL)
 int max77779_external_pmic_reg_read(struct i2c_client *client, unsigned int reg, unsigned int *val)
 {
 	struct max77779_pmic_info *data;
@@ -159,8 +158,6 @@ int max77779_clr_bcl_irq(struct i2c_client *client)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(max77779_clr_bcl_irq);
-
-#endif /* CONFIG_GOOGLE_BCL */
 
 int max77779_pmic_reg_update(struct device *core_dev, unsigned int reg,
 		unsigned int mask, unsigned int val)
