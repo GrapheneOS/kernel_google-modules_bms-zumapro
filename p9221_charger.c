@@ -5324,10 +5324,11 @@ static void p9412_chk_rtx_ocp_work(struct work_struct *work)
 	int ret;
 
 	mutex_lock(&chgr->rtx_lock);
-	/* check TX OCP before enable 7V */
-	ret = p9412_check_rtx_ocp(chgr);
 	if (!chgr->ben_state)
 		goto done;
+
+	/* check TX OCP before enable 7V */
+	ret = p9412_check_rtx_ocp(chgr);
 	if (ret < 0) {
 		p9382_set_rtx(chgr, false);
 		goto done;
@@ -5375,8 +5376,6 @@ static ssize_t rtx_store(struct device *dev,
 		logbuffer_prlog(charger->rtx_log, "battery share off");
 		charger->rtx_reset_cnt = 0;
 		ret = p9382_set_rtx(charger, false);
-		cancel_delayed_work_sync(&charger->rtx_work);
-		cancel_delayed_work_sync(&charger->chk_rtx_ocp_work);
 		mutex_unlock(&charger->rtx_lock);
 	} else if (buf[0] == '1') {
 		mutex_lock(&charger->rtx_lock);
