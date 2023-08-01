@@ -91,6 +91,7 @@ static void p9221_ll_bpp_cep(struct p9221_charger_data *charger, int capacity);
 static int p9221_ll_check_id(struct p9221_charger_data *charger);
 static int p9221_has_dc_in(struct p9221_charger_data *charger);
 static void p9221_init_align(struct p9221_charger_data *charger);
+static int p9221_dream_defend_check_id(struct p9221_charger_data *charger);
 
 static char *align_status_str[] = {
 	"...", "M2C", "OK", "-1"
@@ -2569,7 +2570,9 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 /* trigger DD */
 static void p9221_dream_defend(struct p9221_charger_data *charger)
 {
+	struct gvotable_election *csi_type_votable = charger->csi_type_votable;
 	const ktime_t now = get_boot_sec();
+	bool is_ac = false;
 	u32 threshold;
 	int ret;
 
@@ -2580,15 +2583,22 @@ static void p9221_dream_defend(struct p9221_charger_data *charger)
 		return;
 	}
 
-	if (!charger->csi_type_votable)
+	if (!csi_type_votable)
 		charger->csi_type_votable = gvotable_election_get_handle(VOTABLE_CSI_TYPE);
+	if (csi_type_votable)
+		is_ac = gvotable_get_current_int_vote(csi_type_votable) == CSI_TYPE_Adaptive;
+
+	/* extended trigger soc for TTF calculations to ensure enough time for AC */
+	if (!is_ac)
+		charger->pdata->power_mitigate_ac_threshold = 0;
+	else if (charger->pdata->power_mitigate_ac_threshold == 0)
+		charger->pdata->power_mitigate_ac_threshold = charger->last_capacity + 1;
 
 	if (charger->mitigate_threshold > 0)
 		threshold = charger->mitigate_threshold;
-	else if (charger->csi_type_votable &&
-		 charger->pdata->power_mitigate_threshold > 0 &&
-		 gvotable_get_current_int_vote(charger->csi_type_votable) == CSI_TYPE_Adaptive)
-		threshold = charger->last_capacity - 1; /* Run dream defend when AC trigger */
+	else if (charger->pdata->power_mitigate_threshold > 0 &&
+		 charger->pdata->power_mitigate_ac_threshold > 0)
+		threshold = charger->pdata->power_mitigate_ac_threshold;
 	else
 		threshold = charger->pdata->power_mitigate_threshold;
 
@@ -2603,7 +2613,7 @@ static void p9221_dream_defend(struct p9221_charger_data *charger)
 		 * Check Tx type here as tx_id may not be ready at start
 		 * and mfg code cannot be read after LL changing to BPP mode
 		 */
-		charger->ll_bpp_cep = p9221_ll_check_id(charger);
+		charger->ll_bpp_cep = p9221_dream_defend_check_id(charger);
 		/* trigger_power_mitigation is the same as dream defend */
 		charger->trigger_power_mitigation = true;
 		ret = delayed_work_pending(&charger->power_mitigation_work);
@@ -2659,6 +2669,40 @@ static void p9221_ll_bpp_cep(struct p9221_charger_data *charger, int capacity)
 		dev_dbg(&charger->client->dev,
 			"power_mitigate: DD vote ICL = %duA\n",
 			gvotable_get_int_vote(charger->dc_icl_votable, DD_VOTER));
+}
+static int p9221_dream_defend_check_id(struct p9221_charger_data *charger)
+{
+	uint16_t ptmc_id = charger->mfg;
+	int ret;
+	u8 val;
+
+	if (ptmc_id == 0) {
+		ret = p9xxx_chip_get_tx_mfg_code(charger, &ptmc_id);
+		if (ret < 0 || ptmc_id == 0) {
+			pr_debug("%s: cannot get mfg code ptmc_id=%x (%d)\n",
+				 __func__, ptmc_id, ret);
+			return -EAGAIN;
+		}
+	}
+
+	if (ptmc_id != WLC_MFG_GOOGLE) {
+		pr_debug("%s: ptmc_id=%x\n", __func__, ptmc_id);
+		return 0;
+	}
+
+	/* NOTE: will keep the alternate limit and keep checking on 3rd party */
+	if (p9221_get_tx_id_str(charger) == NULL) {
+		pr_debug("%s: retry %x\n", __func__, charger->tx_id);
+		return -EAGAIN;
+	}
+
+	pr_debug("%s: tx_id=%08x\n", __func__, charger->tx_id);
+
+	val = (charger->tx_id & TXID_TYPE_MASK) >> TXID_TYPE_SHIFT;
+	if (charger->pdata->bpp_cep_on_dl)
+		return (val == TXID_DD_TYPE || val == TXID_DD_TYPE2);
+
+	return val == TXID_DD_TYPE2;
 }
 
 /*
@@ -3277,7 +3321,7 @@ static void p9xxx_check_ll_bpp_cep(struct p9221_charger_data *charger)
 		is_ll_bpp = false;
 
 	ret = charger->chip_get_vout_max(charger, &vout_mv);
-	if (ret < 0 || vout_mv != P9XXX_VOUT_5480MV)
+	if (ret < 0 || (!charger->pdata->ll_vout_not_set && (vout_mv != P9XXX_VOUT_5480MV)))
 		is_ll_bpp = false;
 	ret = p9221_reg_read_8(charger, P9412_CMFET_L_REG, &val8);
 	if (ret < 0 || val8 != 0)
@@ -5071,6 +5115,7 @@ static int p9382_disable_dcin_en(struct p9221_charger_data *charger, bool enable
 	return ret;
 }
 
+/* requires mutex_lock(&charger->rtx_lock) when p9382_set_rtx() called */
 static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 {
 	int ret = 0, tx_icl = -1;
@@ -5079,8 +5124,6 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 		logbuffer_prlog(charger->rtx_log, "RTx is %s\n", enable ? "enabled" : "disabled");
 		return 0;
 	}
-
-	mutex_lock(&charger->rtx_lock);
 
 	if (enable == 0) {
 		if (charger->is_rtx_mode) {
@@ -5212,8 +5255,6 @@ done:
 	dev_dbg(&charger->client->dev, "%s RTx(%d), rtx_wakelock=%d\n",
 		enable ? "enable" : "disable", charger->is_rtx_mode, charger->rtx_wakelock);
 
-	mutex_unlock(&charger->rtx_lock);
-
 	return ret;
 }
 
@@ -5264,19 +5305,24 @@ static int p9412_check_rtx_ocp(struct p9221_charger_data *chgr)
 	return 0;
 }
 
+/*
+ * Check if Tx OCP occurs during ping phase before enabling 7V
+ * acquires mutex_lock(&charger->rtx_lock) for calling p9382_set_rtx()
+ */
 static void p9412_chk_rtx_ocp_work(struct work_struct *work)
 {
 	struct p9221_charger_data *chgr = container_of(work,
 			struct p9221_charger_data, chk_rtx_ocp_work.work);
 	int ret;
 
+	mutex_lock(&chgr->rtx_lock);
 	/* check TX OCP before enable 7V */
 	ret = p9412_check_rtx_ocp(chgr);
 	if (!chgr->ben_state)
-		return;
+		goto done;
 	if (ret < 0) {
 		p9382_set_rtx(chgr, false);
-		return;
+		goto done;
 	}
 
 	ret = chgr->reg_write_8(chgr, P9412_APBSTPING_REG, P9412_APBSTPING_7V);
@@ -5288,6 +5334,8 @@ static void p9412_chk_rtx_ocp_work(struct work_struct *work)
 			      ret);
 		p9382_set_rtx(chgr, false);
 	}
+done:
+	mutex_unlock(&chgr->rtx_lock);
 }
 
 static ssize_t rtx_show(struct device *dev,
@@ -5300,8 +5348,11 @@ static ssize_t rtx_show(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%d\n", charger->ben_state);
 }
 
-/* write 1 to enable boost & switch, write 0 to 0x34, wait for 0x4c==0x4
+/*
+ * write 1 to enable boost & switch, write 0 to 0x34, wait for 0x4c==0x4
  * write 0 to write 0x80 to 0x4E, wait for 0x4c==0, disable boost & switch
+ *
+ * acquires mutex_lock(&charger->rtx_lock) for calling p9382_set_rtx()
  */
 static ssize_t rtx_store(struct device *dev,
 		       struct device_attribute *attr,
@@ -5312,19 +5363,19 @@ static ssize_t rtx_store(struct device *dev,
 	int ret;
 
 	if (buf[0] == '0') {
-		logbuffer_prlog(charger->rtx_log, "battery share off");
 		mutex_lock(&charger->rtx_lock);
+		logbuffer_prlog(charger->rtx_log, "battery share off");
 		charger->rtx_reset_cnt = 0;
-		mutex_unlock(&charger->rtx_lock);
 		ret = p9382_set_rtx(charger, false);
 		cancel_delayed_work_sync(&charger->rtx_work);
 		cancel_delayed_work_sync(&charger->chk_rtx_ocp_work);
-	} else if (buf[0] == '1') {
-		logbuffer_prlog(charger->rtx_log, "battery share on");
-		mutex_lock(&charger->rtx_lock);
-		charger->rtx_reset_cnt = 0;
 		mutex_unlock(&charger->rtx_lock);
+	} else if (buf[0] == '1') {
+		mutex_lock(&charger->rtx_lock);
+		logbuffer_prlog(charger->rtx_log, "battery share on");
+		charger->rtx_reset_cnt = 0;
 		ret = p9382_set_rtx(charger, true);
+		mutex_unlock(&charger->rtx_lock);
 	} else {
 		return -EINVAL;
 	}
@@ -5699,11 +5750,11 @@ static void p9382_txid_work(struct work_struct *work)
 	}
 }
 
+/* requires mutex_lock(&charger->rtx_lock); */
 static void p9xxx_reset_rtx_for_ocp(struct p9221_charger_data *charger)
 {
 	int ext_bst_on = 0;
 
-	mutex_lock(&charger->rtx_lock);
 	charger->rtx_reset_cnt += 1;
 
 	if (charger->rtx_reset_cnt >= RTX_RESET_COUNT_MAX) {
@@ -5711,7 +5762,6 @@ static void p9xxx_reset_rtx_for_ocp(struct p9221_charger_data *charger)
 			charger->rtx_err = RTX_HARD_OCP;
 		charger->rtx_reset_cnt = 0;
 	}
-	mutex_unlock(&charger->rtx_lock);
 
 	charger->is_rtx_mode = false;
 	p9382_set_rtx(charger, false);
@@ -5731,14 +5781,30 @@ static void p9xxx_reset_rtx_for_ocp(struct p9221_charger_data *charger)
 	}
 }
 
+/*
+ * This will be called from interrupt handler
+ * acquires mutex_lock(&charger->rtx_lock) for calling p9382_set_rtx()
+ */
 static void p9xxx_rtx_reset_work(struct work_struct *work)
 {
 	struct p9221_charger_data *charger = container_of(work,
 			struct p9221_charger_data, rtx_reset_work);
 
+	mutex_lock(&charger->rtx_lock);
+	/* Skip if RTx is turned off from UI */
+	if (!charger->ben_state)
+		goto unlock_done;
+
 	p9xxx_reset_rtx_for_ocp(charger);
+
+unlock_done:
+	mutex_unlock(&charger->rtx_lock);
 }
 
+/*
+ * This is monitor system mode when RTx is enabled
+ * acquires mutex_lock(&charger->rtx_lock) for calling p9382_set_rtx()
+ */
 static void p9382_rtx_work(struct work_struct *work)
 {
 	u8 mode_reg = 0;
@@ -5746,8 +5812,10 @@ static void p9382_rtx_work(struct work_struct *work)
 	struct p9221_charger_data *charger = container_of(work,
 			struct p9221_charger_data, rtx_work.work);
 
+	mutex_lock(&charger->rtx_lock);
+	/* Skip if RTx is turned off from UI */
 	if (!charger->ben_state)
-		return;
+		goto unlock_done;
 
 	/* Check if RTx mode is auto turn off */
 	ret = charger->chip_get_sys_mode(charger, &mode_reg);
@@ -5764,6 +5832,8 @@ static void p9382_rtx_work(struct work_struct *work)
 reschedule:
 	schedule_delayed_work(&charger->rtx_work,
 			      msecs_to_jiffies(P9382_RTX_TIMEOUT_MS));
+unlock_done:
+	mutex_unlock(&charger->rtx_lock);
 }
 
 /* Handler for rtx mode */
@@ -5829,7 +5899,7 @@ static void rtx_irq_handler(struct p9221_charger_data *charger, u16 irq_src)
 			schedule_work(&charger->rtx_reset_work);
 		} else {
 			charger->is_rtx_mode = false;
-			p9382_set_rtx(charger, false);
+			schedule_work(&charger->rtx_disable_work);
 		}
 	}
 
@@ -6312,7 +6382,10 @@ static void p9xxx_chk_rp_work(struct work_struct *work)
 	pm_relax(charger->dev);
 }
 
-
+/*
+ * This will be called from callback or interrupt handler for disable RTx
+ * acquires mutex_lock(&charger->rtx_lock) for calling p9382_set_rtx()
+ */
 static void p9382_rtx_disable_work(struct work_struct *work)
 {
 	struct p9221_charger_data *charger = container_of(work,
@@ -6320,6 +6393,7 @@ static void p9382_rtx_disable_work(struct work_struct *work)
 	char reason[GVOTABLE_MAX_REASON_LEN];
 	int tx_icl, ret = 0;
 
+	mutex_lock(&charger->rtx_lock);
 	/* Set error reason rtx is disabled due to overtemp*/
 	tx_icl = gvotable_get_current_int_vote(charger->tx_icl_votable);
 	gvotable_get_current_reason(charger->tx_icl_votable, reason, GVOTABLE_MAX_REASON_LEN);
@@ -6336,6 +6410,7 @@ static void p9382_rtx_disable_work(struct work_struct *work)
 	if (ret)
 		dev_err(&charger->client->dev,
 			"unable to disable rtx: %d\n", ret);
+	mutex_unlock(&charger->rtx_lock);
 }
 
 /* send out a uevent notification and log iout/vout */
@@ -6846,6 +6921,10 @@ static int p9221_parse_dt(struct device *dev,
 	pdata->needs_align_check = of_property_read_bool(node, "google,align_check");
 
 	pdata->disable_repeat_eop = of_property_read_bool(node, "google,disable-repeat-eop");
+
+	pdata->disable_repeat_eop = of_property_read_bool(node, "google,disable-repeat-eop");
+
+	pdata->bpp_cep_on_dl = of_property_read_bool(node, "google,bpp-cep-on-dl");
 
 	return 0;
 }
