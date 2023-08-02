@@ -107,6 +107,8 @@ struct max77779_foreach_cb_data {
 	bool use_raw;
 
 	u8 reg;
+
+	struct gvotable_election *dc_avail_votable;	/* DC_AVAIL */
 };
 
 /* internal system values */
