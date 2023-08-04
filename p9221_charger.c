@@ -6921,8 +6921,6 @@ static int p9221_parse_dt(struct device *dev,
 
 	pdata->disable_repeat_eop = of_property_read_bool(node, "google,disable-repeat-eop");
 
-	pdata->disable_repeat_eop = of_property_read_bool(node, "google,disable-repeat-eop");
-
 	pdata->bpp_cep_on_dl = of_property_read_bool(node, "google,bpp-cep-on-dl");
 
 	return 0;
