@@ -2146,6 +2146,23 @@ static int ra9530_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 
 	msleep(50);
 
+	if (chgr->pdata->has_sw_ramp) {
+		dev_dbg(&chgr->client->dev, "%s: voter=%s, icl=%d\n",
+			__func__, P9221_HPP_VOTER, P9XXX_PROPMODE_ENABLE_ICL_UA);
+		ret = p9xxx_sw_ramp_icl(chgr, P9XXX_PROPMODE_ENABLE_ICL_UA);
+		if (ret < 0)
+			return ret;
+
+		ret = gvotable_cast_int_vote(chgr->dc_icl_votable, P9221_HPP_VOTER,
+					     P9XXX_PROPMODE_ENABLE_ICL_UA, true);
+		if (ret == 0)
+			ret = gvotable_cast_int_vote(chgr->dc_icl_votable,
+						     P9221_RAMP_VOTER, 0, false);
+		if (ret < 0)
+			dev_err(&chgr->client->dev, "%s: cannot setup sw ramp (%d)\n",
+				__func__, ret);
+	}
+
 	if (!chgr->chg_mode_votable)
 		chgr->chg_mode_votable =
 			gvotable_election_get_handle(GBMS_MODE_VOTABLE);
@@ -2268,7 +2285,7 @@ err_exit:
 		int rc;
 
 		rc = gvotable_cast_int_vote(chgr->dc_icl_votable, P9221_HPP_VOTER,
-					    P9XXX_CDMODE_ENABLE_ICL_UA, false);
+					    P9XXX_PROPMODE_ENABLE_ICL_UA, false);
 		if (rc <0)
 			dev_err(&chgr->client->dev, "%s: cannot remove HPP voter (%d)\n",
 				__func__, ret);
