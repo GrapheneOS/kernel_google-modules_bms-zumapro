@@ -1314,31 +1314,6 @@ static int max1720x_get_battery_status(struct max1720x_chip *chip)
 	return status;
 }
 
-static int max1720x_get_battery_health(struct max1720x_chip *chip)
-{
-	/* For health report what ever was recently alerted and clear it */
-	/* TODO: 284191042 - Remove this and move to chargin stats */
-
-	if (chip->health_status & MAX1720X_STATUS_VMX) {
-		chip->health_status &= ~MAX1720X_STATUS_VMX;
-		return POWER_SUPPLY_HEALTH_OVERVOLTAGE;
-	}
-
-	if ((chip->health_status & MAX1720X_STATUS_TMN) &&
-	    (chip->RConfig & MAX1720X_CONFIG_TS)) {
-		chip->health_status &= ~MAX1720X_STATUS_TMN;
-		return POWER_SUPPLY_HEALTH_COLD;
-	}
-
-	if ((chip->health_status & MAX1720X_STATUS_TMX) &&
-	    (chip->RConfig & MAX1720X_CONFIG_TS)) {
-		chip->health_status &= ~MAX1720X_STATUS_TMX;
-		return POWER_SUPPLY_HEALTH_HOT;
-	}
-
-	return POWER_SUPPLY_HEALTH_GOOD;
-}
-
 static int max1720x_update_battery_qh_based_capacity(struct max1720x_chip *chip)
 {
 	u16 data;
@@ -2241,9 +2216,6 @@ static int max1720x_get_property(struct power_supply *psy,
 				      chip->cap_estimate.cap_tsettle);
 		/* return data ok */
 		err = 0;
-		break;
-	case POWER_SUPPLY_PROP_HEALTH:
-		val->intval = max1720x_get_battery_health(chip);
 		break;
 	case GBMS_PROP_CAPACITY_RAW:
 		err = max1720x_get_capacity_raw(chip, &data);

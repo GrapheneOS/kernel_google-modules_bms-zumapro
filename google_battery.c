@@ -9704,6 +9704,28 @@ static int gbatt_restore_capacity(struct batt_drv *batt_drv)
 	return ret;
 }
 
+static int gbatt_get_health(struct batt_drv *batt_drv)
+{
+	int charging_state = batt_get_charging_state(batt_drv);
+	int health = POWER_SUPPLY_HEALTH_UNKNOWN;
+
+	switch (charging_state) {
+	case BATTERY_STATUS_NORMAL:
+		health = POWER_SUPPLY_HEALTH_GOOD;
+		break;
+	case BATTERY_STATUS_TOO_COLD:
+		health = POWER_SUPPLY_HEALTH_COLD;
+		break;
+	case BATTERY_STATUS_TOO_HOT:
+		health = POWER_SUPPLY_HEALTH_HOT;
+		break;
+	default:
+		break;
+	}
+
+	return health;
+}
+
 #define TTF_REPORT_MAX_RATIO	300
 static int gbatt_get_property(struct power_supply *psy,
 				 enum power_supply_property psp,
@@ -9804,10 +9826,8 @@ static int gbatt_get_property(struct power_supply *psy,
 		} else if (!batt_drv->fg_psy) {
 			val->intval = POWER_SUPPLY_HEALTH_UNKNOWN;
 		} else {
-			rc = power_supply_get_property(batt_drv->fg_psy,
-							psp, val);
-			if (rc < 0)
-				val->intval = POWER_SUPPLY_HEALTH_UNKNOWN;
+			rc = gbatt_get_health(batt_drv);
+			val->intval = rc < 0 ? POWER_SUPPLY_HEALTH_UNKNOWN : rc;
 			batt_drv->soh = val->intval;
 		}
 		if (batt_drv->report_health != val->intval) {

@@ -710,31 +710,6 @@ static int max77779_fg_get_battery_status(struct max77779_fg_chip *chip)
 	return status;
 }
 
-static int max77779_fg_get_battery_health(struct max77779_fg_chip *chip)
-{
-	/* For health report what ever was recently alerted and clear it */
-	/* TODO: 284191042 - Remove this and move to chargin stats */
-
-	if (chip->health_status & MAX77779_FG_Status_Vmx_MASK) {
-		chip->health_status &= MAX77779_FG_Status_Vmx_CLEAR;
-		return POWER_SUPPLY_HEALTH_OVERVOLTAGE;
-	}
-
-	if ((chip->health_status & MAX77779_FG_Status_Tmn_MASK) &&
-	    (chip->RConfig & MAX77779_FG_Config_TS_MASK)) {
-		chip->health_status &= MAX77779_FG_Status_Tmn_CLEAR;
-		return POWER_SUPPLY_HEALTH_COLD;
-	}
-
-	if ((chip->health_status & MAX77779_FG_Status_Tmx_MASK) &&
-	    (chip->RConfig & MAX77779_FG_Config_TS_MASK)) {
-		chip->health_status &= MAX77779_FG_Status_Tmx_CLEAR;
-		return POWER_SUPPLY_HEALTH_HOT;
-	}
-
-	return POWER_SUPPLY_HEALTH_GOOD;
-}
-
 static int max77779_fg_update_battery_qh_based_capacity(struct max77779_fg_chip *chip)
 {
 	u16 data;
@@ -1420,9 +1395,6 @@ static int max77779_fg_get_property(struct power_supply *psy,
 				      chip->cap_estimate.cap_tsettle);
 		/* return data ok */
 		err = 0;
-		break;
-	case POWER_SUPPLY_PROP_HEALTH:
-		val->intval = max77779_fg_get_battery_health(chip);
 		break;
 	case GBMS_PROP_CAPACITY_RAW:
 		err = max77779_fg_get_capacity_raw(chip, &data);
