@@ -442,8 +442,9 @@ static int max77779_fg_model_reload(struct max77779_fg_chip *chip, bool force)
 		return -EEXIST;
 
 	/* REQUEST -> IDLE or set to the number of retries */
-	dev_info(chip->dev, "Schedule Load FG Model, ID=%d, ver:%d->%d\n",
-		 chip->batt_id, version_now, version_load);
+	gbms_logbuffer_devlog(chip->monitor_log, chip->dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+			      "Schedule Load FG Model, ID=%d, ver:%d->%d",
+			      chip->batt_id, version_now, version_load);
 
 	chip->model_reload = MAX77779_FG_LOAD_MODEL_REQUEST;
 	chip->model_ok = false;
@@ -1908,8 +1909,10 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 		mutex_lock(&chip->model_lock);
 		chip->por = true;
 
-		dev_warn(chip->dev, "POR is set (FG_INT_STS:%04x), model_reload:%d\n",
-			 fg_int_sts, chip->model_reload);
+		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
+				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+				      "POR is set (FG_INT_STS:%04x), model_reload:%d",
+				      fg_int_sts, chip->model_reload);
 
 		/* trigger model load if not on-going */
 		if (chip->model_reload != MAX77779_FG_LOAD_MODEL_REQUEST) {
@@ -2698,15 +2701,10 @@ static void max77779_fg_model_work(struct work_struct *work)
 	if (chip->model_reload > MAX77779_FG_LOAD_MODEL_IDLE) {
 
 		rc = max77779_fg_model_load(chip);
+		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
+				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+				      "Model loading complete, rc=%d", rc);
 		if (rc == 0) {
-			/*
-			 * Need to ack the interrupt here if the ISR doesn't clear it
-			 * rc = MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_FG_INT_STS,
-			 *			      MAX77779_FG_Status_PONR_MASK);
-			 */
-
-			dev_info(chip->dev, "Model loading complete, rc=%d\n", rc);
-
 			rc = max77779_fg_mask_por(chip, false);
 			if (rc < 0)
 				dev_warn(chip->dev, "unable to unmask por bit, err=%d\n", rc);
@@ -2796,7 +2794,9 @@ static int max77779_fg_init_model_data(struct max77779_fg_chip *chip)
 		else
 			dev_warn(chip->dev, "GMSR: model data erased\n");
 
-		dev_warn(chip->dev, "FG Version Changed, Reload\n");
+		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
+				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+				      "FG Version Changed, Reload");
 
 		ret = max77779_fg_full_reset(chip);
 		if (ret < 0)
