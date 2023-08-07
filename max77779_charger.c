@@ -346,18 +346,14 @@ static int max77779_read_vbatt(struct max77779_chgr_data *data, int *vbatt)
 
 static int max77779_read_wcin(struct max77779_chgr_data *data, int *vbyp)
 {
-	unsigned tmp;
+	u16 tmp;
 	int ret;
 
-	ret = max77779_readn(data->regmap, MAX77779_CHG_WCIN_V_ADC_L, (uint8_t*)&tmp, 4);
+	ret = max77779_readn(data->regmap, MAX77779_CHG_WCIN_V_ADC_L, (uint8_t*)&tmp, 2);
 	if (ret) {
 		pr_err("Failed to read %x\n", MAX77779_CHG_WCIN_V_ADC_L);
 		return ret;
 	}
-
-	/* swap L and H sides to get correct value */
-	tmp |= ((tmp & 0xff) << 16);
-	tmp = tmp >> 8;
 
 	/* LSB: 0.625 */
 	*vbyp = div_u64((u64) tmp * 625, 1000);
@@ -1674,34 +1670,49 @@ static int max77779_wcin_voltage_now(struct max77779_chgr_data *chg,
 
 #define MAX77779_WCIN_RAW_TO_UA	166
 
-/* current is valid only when charger mode is one of the following */
-static bool max77779_current_check_mode(struct max77779_chgr_data *data)
+static int max77779_current_check_mode(struct max77779_chgr_data *data)
 {
 	int ret;
 	u8 reg;
 
 	ret = max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_00, &reg);
 	if (ret < 0)
-		return false;
+		return ret;
 
-	return reg == 5 || reg == 6 || reg == 7 || reg == 0xe || reg == 0xf;
+	return _max77779_chg_cnfg_00_mode_get(reg);
 }
 
-/* only valid in mode 5, 6, 7, e, f */
+/* current is valid only when charger mode is one of the following */
+static bool max77779_current_check_chgin_mode(struct max77779_chgr_data *data)
+{
+	u8 reg;
+
+	reg = max77779_current_check_mode(data);
+
+	return reg == 1 || reg == 4 || reg == 5 || reg == 6 || reg == 7 || reg == 0xc || reg == 0xd;
+}
+
+/* current is valid only when charger mode is one of the following */
+static bool max77779_current_check_wcin_mode(struct max77779_chgr_data *data)
+{
+	u8 reg;
+
+	reg = max77779_current_check_mode(data);
+
+	return reg == 0xe || reg == 0xf;
+}
+
+/* only valid in mode e, f */
 static int max77779_wcin_current_now(struct max77779_chgr_data *data, int *iic)
 {
-	unsigned tmp;
+	u16 tmp;
 	int ret;
 
-	ret = max77779_readn(data->regmap, MAX77779_CHG_WCIN_I_ADC_L, (uint8_t*)&tmp, 4);
+	ret = max77779_readn(data->regmap, MAX77779_CHG_WCIN_I_ADC_L, (uint8_t*)&tmp, 2);
 	if (ret) {
 		pr_err("Failed to read %x\n", MAX77779_CHG_WCIN_I_ADC_L);
 		return ret;
 	}
-
-	/* swap L and H sides to get correct value */
-	tmp |= ((tmp & 0xff) << 16);
-	tmp = tmp >> 8;
 
 	*iic = tmp * MAX77779_WCIN_RAW_TO_UA;
 	return 0;
@@ -1735,8 +1746,9 @@ static int max77779_wcin_get_prop(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
 		val->intval = 0;
-		if (max77779_wcin_is_online(chgr))
-			rc = max77779_wcin_current_now(chgr, &val->intval);
+		if (!max77779_wcin_is_online(chgr) || !max77779_current_check_wcin_mode(chgr))
+			break;
+		rc = max77779_wcin_current_now(chgr, &val->intval);
 		break;
 	default:
 		return -EINVAL;
@@ -2053,21 +2065,17 @@ exit_done:
 
 #define MAX77779_CHGIN_RAW_TO_UA	166
 
-/* only valid in mode 5, 6, 7, e, f */
+/* only valid in mode 1, 5, 6, 7, c, d */
 static int max77779_chgin_current_now(struct max77779_chgr_data *data, int *iic)
 {
-	unsigned tmp;
+	u16 tmp;
 	int ret;
 
-	ret = max77779_readn(data->regmap, MAX77779_CHG_CHGIN_I_ADC_L, (uint8_t*)&tmp, 4);
+	ret = max77779_readn(data->regmap, MAX77779_CHG_CHGIN_I_ADC_L, (uint8_t*)&tmp, 2);
 	if (ret) {
 		pr_err("Failed to read %x\n", MAX77779_CHG_CHGIN_I_ADC_L);
 		return ret;
 	}
-
-	/* swap L and H sides to get correct value */
-	tmp |= ((tmp & 0xff) << 16);
-	tmp = tmp >> 8;
 
 	*iic = tmp * MAX77779_CHGIN_RAW_TO_UA;
 	return 0;
@@ -2176,6 +2184,20 @@ static int max77779_psy_set_property(struct power_supply *psy,
 	return ret;
 }
 
+static int max77779_read_current_now(struct max77779_chgr_data *data, int *intval)
+{
+	int ret = 0;
+
+	if (max77779_wcin_is_online(data) && max77779_current_check_wcin_mode(data))
+		ret = max77779_wcin_current_now(data, intval);
+	else if (max77779_chgin_is_online(data) && max77779_current_check_chgin_mode(data))
+		ret = max77779_chgin_current_now(data, intval);
+	else
+		*intval = 0;
+
+	return ret;
+}
+
 static int max77779_psy_get_property(struct power_supply *psy,
 				     enum power_supply_property psp,
 				     union power_supply_propval *pval)
@@ -2234,18 +2256,7 @@ static int max77779_psy_get_property(struct power_supply *psy,
 			pval->intval = rc;
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
-		if (!max77779_current_check_mode(data)) {
-			pval->intval = 0;
-			break;
-		}
-
-		if (max77779_wcin_is_online(data))
-			rc = max77779_wcin_current_now(data, &pval->intval);
-		else if (max77779_chgin_is_online(data))
-			rc = max77779_chgin_current_now(data, &pval->intval);
-		else
-			rc = -EINVAL;
-
+		rc = max77779_read_current_now(data, &pval->intval);
 		if (rc < 0)
 			pval->intval = rc;
 		break;
