@@ -2193,6 +2193,14 @@ static int gcpm_psy_get_property(struct power_supply *psy,
 		gbms_propval_int64val(pval) = chg_state.v;
 		break;
 
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
+		pval->intval = gcpm->cc_max;
+		break;
+
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
+		pval->intval = gcpm->fv_uv;
+		break;
+
 	/* route to the active charger */
 	default:
 		route = true;
