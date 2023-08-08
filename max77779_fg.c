@@ -2461,6 +2461,21 @@ static int debug_gmsr_reset(void *data, u64 val)
 
 DEFINE_SIMPLE_ATTRIBUTE(debug_reset_gmsr_fops, NULL, debug_gmsr_reset, "%llu\n");
 
+static int debug_ini_reload(void *data, u64 val)
+{
+	struct max77779_fg_chip *chip = data;
+	int ret;
+
+	if (chip->model_data)
+		max77779_free_data(chip->model_data);
+	/* re-init the model data (lookup in DT) */
+	ret = max77779_fg_init_model(chip);
+	dev_info(chip->dev, "ini_model (ret=%d)\n", ret);
+
+	return ret;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(debug_ini_reload_fops, NULL, debug_ini_reload, "%llu\n");
 /*
  * TODO: add the building blocks of google capacity
  *
@@ -2543,6 +2558,9 @@ static int max77779_fg_init_sysfs(struct max77779_fg_chip *chip)
 	/* reset fg eeprom data for debugging */
 	debugfs_create_file("cnhs_reset", 0400, de, chip, &debug_reset_cnhs_fops);
 	debugfs_create_file("gmsr_reset", 0400, de, chip, &debug_reset_gmsr_fops);
+
+	/* reloaded INI */
+	debugfs_create_file("ini_reload", 0400, de, chip, &debug_ini_reload_fops);
 
 	/* capacity fade */
 	debugfs_create_u32("bhi_fcn_count", 0644, de, &chip->bhi_fcn_count);
