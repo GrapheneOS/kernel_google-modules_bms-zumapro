@@ -205,8 +205,6 @@ static int max77779_update_custom_parameters(struct max77779_model_data *model_d
 		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_NVM_nFullSOCThr, cp->fullsocthr);
 	if (ret == 0)
 		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_NVM_nMiscCfg, cp->misccfg);
-	if (ret == 0)
-		ret = REGMAP_WRITE(regmap, MAX77779_FG_Config2, cp->config2);
 
 	/* In INI but not part of model loading guide */
 	if (ret == 0)
@@ -326,6 +324,11 @@ int max77779_load_gauge_model(struct max77779_model_data *model_data)
 		goto error_done;
 	}
 
+	/* b/296312718: Config2 rewrite here */
+	ret = REGMAP_WRITE(regmap, MAX77779_FG_Config2, model_data->parameters.config2);
+	if (ret < 0)
+		dev_err(model_data->dev, "cannot restore Config2 (%d)\n", ret);
+
 	/* Step 3.4.5: Update QRTable20 and QRTable30 */
 	ret = REGMAP_WRITE_VERIFY(regmap, MAX77779_FG_QRTable20,
 				  model_data->parameters.qresidual20);
@@ -343,11 +346,6 @@ int max77779_load_gauge_model(struct max77779_model_data *model_data)
 		dev_err(model_data->dev, "cannot restore HibCFG (%d)\n", ret);
 		goto error_done;
 	}
-
-	/* FIXME: Config2 change to 0x0 after 3.4.4, rewrite here */
-	ret = REGMAP_WRITE(regmap, MAX77779_FG_Config2, model_data->parameters.config2);
-	if (ret < 0)
-		dev_err(model_data->dev, "cannot restore Config2 (%d)\n", ret);
 
 	/* Step 3.4.7: Lock command */
 	ret = max77779_fg_usr_lock_section(regmap, MAX77779_FG_ALL_SECTION, true);
