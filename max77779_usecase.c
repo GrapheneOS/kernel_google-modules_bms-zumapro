@@ -128,14 +128,14 @@ static int gs201_wlc_tx_enable(struct max77779_usecase_data *uc_data,
 
 	return ret;
 }
-static int gs201_wlc_tx_config(struct max77779_usecase_data *uc_data)
+static int gs201_wlc_tx_config(struct max77779_usecase_data *uc_data, int use_case)
 {
 	u8 val;
 	int ret = 0;
 
 	/* No reverse 1:2 available, we need to configure sequoia */
 	if (!uc_data->reverse12_en) {
-		if (uc_data->use_case == GSU_MODE_WLC_TX) {
+		if (use_case == GSU_MODE_WLC_TX) {
 			ret = max77779_chg_reg_write(uc_data->client,
 						     MAX77779_CHG_CNFG_11,
 						     MAX77779_CHG_REVERSE_BOOST_VOUT_7V);
@@ -466,7 +466,7 @@ int gs201_to_usecase(struct max77779_usecase_data *uc_data, int use_case)
 		break;
 	case GSU_MODE_WLC_TX:
 	case GSU_MODE_USB_CHG_WLC_TX:
-		ret = gs201_wlc_tx_config(uc_data);
+		ret = gs201_wlc_tx_config(uc_data, use_case);
 		break;
 	case GSU_MODE_WLC_RX:
 		if (from_uc == GSU_MODE_USB_OTG_WLC_RX) {
