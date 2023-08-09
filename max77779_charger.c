@@ -619,7 +619,7 @@ static int max77779_get_usecase(struct max77779_foreach_cb_data *cb_data,
 		return max77779_get_otg_usecase(cb_data, uc_data);
 
 	/* USB will disable wlc_rx */
-	if (cb_data->buck_on)
+	if (cb_data->buck_on && !uc_data->dcin_is_dock)
 		wlc_rx = false;
 
 	/* buck_on is wired, wlc_rx is wireless, might still need rTX */
@@ -682,6 +682,10 @@ static int max77779_get_usecase(struct max77779_foreach_cb_data *cb_data,
 			mode = MAX77779_CHGR_MODE_ALL_OFF;
 			usecase = GSU_MODE_WLC_DC;
 		}
+
+		if (uc_data->dcin_is_dock)
+			usecase = GSU_MODE_DOCK;
+
 	} else {
 
 		/* MODE_BUCK_ON is inflow */
@@ -775,6 +779,12 @@ static int max77779_set_insel(struct max77779_chgr_data *data,
 			insel_value |= MAX77779_CHG_CNFG_12_WCINSEL;
 
 		force_wlc = true;
+	}
+
+	/* always disable USB when Dock is present */
+	if (uc_data->dcin_is_dock && max77779_wcin_is_valid(data) && !cb_data->wlcin_off) {
+		insel_value &= ~MAX77779_CHG_CNFG_12_CHGINSEL;
+		insel_value |= MAX77779_CHG_CNFG_12_WCINSEL;
 	}
 
 	if (from_uc != use_case || force_wlc || wlc_on) {
@@ -3135,6 +3145,8 @@ static int max77779_charger_probe(struct i2c_client *client,
 		dev_err(dev, "Invalid value of USB OTG voltage, set to 5000\n");
 		data->uc_data.otg_value = MAX77779_CHG_CNFG_11_OTG_VBYP_5000MV;
 	}
+
+	data->uc_data.dcin_is_dock = of_property_read_bool(dev->of_node, "max77779,dcin-is-dock");
 
 	data->init_complete = 1;
 	data->resume_complete = 1;

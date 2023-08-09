@@ -36,6 +36,8 @@ struct max77779_usecase_data {
 	struct max77779_usecase_mode modes;
 	bool init_done;
 	int use_case;
+
+	bool dcin_is_dock;
 };
 
 enum gsu_usecases {
@@ -56,6 +58,8 @@ enum gsu_usecases {
 	GSU_MODE_WLC_TX 	= 11,	/* 6-2, 1056, */
 	GSU_MODE_USB_OTG_WLC_TX = 12,
 	GSU_MODE_USB_WLC_RX	= 13,
+
+	GSU_MODE_DOCK		= 14,
 };
 
 extern int gs201_wlc_en(struct max77779_usecase_data *uc_data, bool wlc_on);
