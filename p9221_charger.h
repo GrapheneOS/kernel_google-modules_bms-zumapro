@@ -659,6 +659,7 @@ struct p9221_fod_data {
 struct p9221_charger_platform_data {
 	int				irq_gpio;
 	int				irq_int;
+	u64				irq_flag;
 	int				irq_det_gpio;
 	int				irq_det_int;
 	int				qien_gpio;

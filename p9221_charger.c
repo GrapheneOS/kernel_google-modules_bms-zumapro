@@ -6640,7 +6640,13 @@ static int p9221_parse_dt(struct device *dev,
 	}
 	pdata->irq_gpio = ret;
 	pdata->irq_int = gpio_to_irq(pdata->irq_gpio);
-	dev_info(dev, "gpio:%d, gpio_irq:%d\n", pdata->irq_gpio, pdata->irq_int);
+	ret = of_property_read_u32(node, "idt,irq_flag", &data);
+	if (ret == 0)
+		pdata->irq_flag = (u64)data;
+	else
+		pdata->irq_flag = IRQF_TRIGGER_LOW | IRQF_ONESHOT;
+	dev_info(dev, "gpio:%d, gpio_irq:%d irq_flag:0x%04llx\n",
+		 pdata->irq_gpio, pdata->irq_int, pdata->irq_flag);
 
 	/* Optional Detect IRQ */
 	ret = of_get_named_gpio(node, "idt,irq_det_gpio", 0);
@@ -7386,14 +7392,18 @@ static int p9221_charger_probe(struct i2c_client *client,
 		p9221_vote_defaults(charger);
 	}
 
+	/*
+	 * irq_type should use "IRQF_TRIGGER_LOW" or we will
+	 * missing some interrupts.
+	 * this issue happened on R3 b/154789273.
+	 */
 	ret = devm_request_threaded_irq(
 		&client->dev, charger->pdata->irq_int, NULL,
-		p9221_irq_thread, IRQF_TRIGGER_LOW | IRQF_ONESHOT,
+		p9221_irq_thread, charger->pdata->irq_flag,
 		"p9221-irq", charger);
-	if (ret) {
+	if (ret)
 		dev_err(&client->dev, "Failed to request IRQ\n");
-		return ret;
-	}
+
 	device_init_wakeup(charger->dev, true);
 
 	/*
