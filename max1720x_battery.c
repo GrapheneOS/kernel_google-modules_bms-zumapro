@@ -2157,7 +2157,7 @@ static int max1720x_get_fade_rate(struct max1720x_chip *chip)
 		return -EIO;
 	}
 
-	dev_info(chip->dev, "%s: hist_idx=%d\n", __func__, hist_idx);
+	dev_dbg(chip->dev, "%s: hist_idx=%d\n", __func__, hist_idx);
 
 	/* no fade for new battery (less than 30 cycles) */
 	if (hist_idx < bhi_fcn_count)
@@ -2176,7 +2176,7 @@ static int max1720x_get_fade_rate(struct max1720x_chip *chip)
 		ret = gbms_storage_read_data(GBMS_TAG_HIST, &hist,
 					     sizeof(hist), hist_idx);
 
-		dev_info(chip->dev, "%s: idx=%d hist.fc=%d (%x) ret=%d\n", __func__,
+		dev_dbg(chip->dev, "%s: idx=%d hist.fc=%d (%x) ret=%d\n", __func__,
 			hist_idx, hist.fullcapnom, hist.fullcapnom, ret);
 
 		if (ret < 0)
