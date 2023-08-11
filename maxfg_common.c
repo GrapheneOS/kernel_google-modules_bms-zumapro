@@ -46,7 +46,7 @@ int maxfg_get_fade_rate(struct device *dev, int bhi_fcn_count)
 		return -EIO;
 	}
 
-	dev_info(dev, "%s: hist_idx=%d\n", __func__, hist_idx);
+	dev_dbg(dev, "%s: hist_idx=%d\n", __func__, hist_idx);
 
 	/* no fade for new battery (less than 30 cycles) */
 	if (hist_idx < bhi_fcn_count)
@@ -65,7 +65,7 @@ int maxfg_get_fade_rate(struct device *dev, int bhi_fcn_count)
 		ret = gbms_storage_read_data(GBMS_TAG_HIST, &hist,
 					     sizeof(hist), hist_idx);
 
-		dev_info(dev, "%s: idx=%d hist.fc=%d (%x) ret=%d\n", __func__,
+		dev_dbg(dev, "%s: idx=%d hist.fc=%d (%x) ret=%d\n", __func__,
 			hist_idx, hist.fullcapnom, hist.fullcapnom, ret);
 
 		if (ret < 0)
