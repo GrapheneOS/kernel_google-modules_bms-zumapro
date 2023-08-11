@@ -5355,19 +5355,14 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 		/*
 		 * Check if WLC online
 		 * NOTE: when used CHARGER_MODE will also prevent this.
-		 *
-		 * TODO(b/280096024): temporarily disabled for 9530 bringup
-		 * until sequoia integration is done. Need to remove this line after
 		 */
-		if (charger->chip_id != RA9530_CHIP_ID) {
-			if (charger->online) {
-				dev_err(&charger->client->dev,
-					"rTX is not allowed during WLC\n");
-				logbuffer_log(charger->rtx_log,
-					      "rTX is not allowed during WLC\n");
-				charger->rtx_reset_cnt = 0;
-				goto done;
-			}
+		if (charger->online) {
+			dev_err(&charger->client->dev,
+				"rTX is not allowed during WLC\n");
+			logbuffer_log(charger->rtx_log,
+				      "rTX is not allowed during WLC\n");
+			charger->rtx_reset_cnt = 0;
+			goto done;
 		}
 
 		/*
