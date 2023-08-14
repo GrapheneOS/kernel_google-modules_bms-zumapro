@@ -2417,13 +2417,10 @@ int p9221_set_auth_dc_icl(struct p9221_charger_data *charger, bool enable)
 		}
 	}
 
-	if (!charger->dc_icl_votable)
-		goto exit;
-
 	if (enable && !charger->auth_delay) {
 		dev_info(&charger->client->dev, "Enable Auth ICL (%d)\n", ret);
 		charger->auth_delay = true;
-	} else if (!enable) {
+	} else if (!enable && charger->auth_delay) {
 		dev_info(&charger->client->dev, "Disable Auth ICL (%d)\n", ret);
 		charger->auth_delay = false;
 		cancel_delayed_work(&charger->auth_dc_icl_work);
