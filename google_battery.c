@@ -1438,11 +1438,17 @@ static int fan_level_cb(struct gvotable_election *el,
 	struct batt_drv *batt_drv = gvotable_get_data(el);
 	const int last_lvl = batt_drv->fan_last_level;
 	int lvl = GVOTABLE_PTR_TO_INT(vote);
+	const union gbms_ce_adapter_details *ad = &batt_drv->ce_data.adapter_details;
 
 	if (!batt_drv)
 		return 0;
 
 	if (batt_drv->fan_last_level == lvl)
+		return 0;
+
+	if (ad->ad_type != CHG_EV_ADAPTER_TYPE_WLC &&
+	    ad->ad_type != CHG_EV_ADAPTER_TYPE_WLC_EPP &&
+	    ad->ad_type != CHG_EV_ADAPTER_TYPE_WLC_SPP)
 		return 0;
 
 	pr_debug("FAN_LEVEL %d->%d reason=%s\n",
