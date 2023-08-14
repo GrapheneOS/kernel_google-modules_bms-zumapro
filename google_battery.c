@@ -479,6 +479,7 @@ struct batt_drv {
 
 	struct mutex batt_lock;
 	struct mutex chg_lock;
+	struct mutex hda_tz_lock;
 
 	/* battery work */
 	int fg_status;
@@ -572,6 +573,10 @@ struct batt_drv {
 	/* battery virtual sensor */
 	struct thermal_zone_device *batt_vs_tz;
 	struct thermal_zone_device *batt_vs_mp_tz;
+	struct thermal_zone_device *batt_vs_hda_tz;
+	struct gvotable_election *hda_tz_votable;
+	int hda_tz_limit;
+	int hda_tz_vote;
 	int batt_vs_w;
 	int soc_mp_limit_low;
 	int soc_mp_limit_high;
@@ -860,6 +865,32 @@ static int batt_vs_mp_tz_get(struct thermal_zone_device *tzd, int *batt_vs)
 
 static struct thermal_zone_device_ops batt_vs_mp_tz_ops = {
 	.get_temp = batt_vs_mp_tz_get,
+};
+
+static int hda_tz_cb(struct gvotable_election *el,
+			      const char *reason, void *vote)
+{
+	struct batt_drv *batt_drv = gvotable_get_data(el);
+
+	mutex_lock(&batt_drv->hda_tz_lock);
+	batt_drv->hda_tz_vote = GVOTABLE_PTR_TO_INT(vote);
+	mutex_unlock(&batt_drv->hda_tz_lock);
+	return 0;
+}
+
+static int batt_vs_hda_tz_get(struct thermal_zone_device *tzd, int *batt_vs)
+{
+	struct batt_drv *batt_drv = tzd->devdata;
+	int ret;
+
+	mutex_lock(&batt_drv->hda_tz_lock);
+	ret = batt_drv->hda_tz_vote;
+	mutex_unlock(&batt_drv->hda_tz_lock);
+	return ret;
+}
+
+static struct thermal_zone_device_ops batt_vs_hda_tz_ops = {
+	.get_temp = batt_vs_hda_tz_get,
 };
 
 static int psy_changed(struct notifier_block *nb,
@@ -3933,7 +3964,8 @@ static int bhi_individual_conditions_index(const struct health_data *health_data
 	const int bhi_indi_cap = health_data->bhi_indi_cap;
 
 	if (health_data->bhi_data.battery_age >= ONE_YEAR_HRS ||
-	    cur_impedance >= age_impedance_max || cur_capacity_pct <= bhi_indi_cap)
+	    (cur_impedance > 0 && age_impedance_max > 0 && cur_impedance >= age_impedance_max) ||
+	    cur_capacity_pct <= bhi_indi_cap)
 		return health_data->need_rep_threshold * 100;
 
 	return BHI_ALGO_FULL_HEALTH;
@@ -8445,6 +8477,7 @@ static int batt_init_debugfs(struct batt_drv *batt_drv)
 	debugfs_create_u32("mp_soc_limit_high", 0600, de, &batt_drv->soc_mp_limit_high);
 	debugfs_create_u32("mp_therm_limit", 0600, de, &batt_drv->therm_mp_limit);
 	debugfs_create_u32("mp_max_ratio_limit", 0600, de, &batt_drv->max_ratio_mp_limit);
+	debugfs_create_u32("hda_tz_limit", 0600, de, &batt_drv->hda_tz_limit);
 	debugfs_create_file("ssoc_uicurve", 0644, de, batt_drv,
 			    &debug_ssoc_uicurve_cstr_fops);
 	debugfs_create_file("force_psy_update", 0400, de, batt_drv,
@@ -10136,6 +10169,7 @@ static void google_battery_init_work(struct work_struct *work)
 	mutex_init(&batt_drv->stats_lock);
 	mutex_init(&batt_drv->cc_data.lock);
 	mutex_init(&batt_drv->bpst_state.lock);
+	mutex_init(&batt_drv->hda_tz_lock);
 
 	if (!batt_drv->fg_psy) {
 
@@ -10399,6 +10433,16 @@ static void google_battery_init_work(struct work_struct *work)
 		batt_drv->batt_vs_mp_tz = NULL;
 	} else {
 		thermal_zone_device_update(batt_drv->batt_vs_mp_tz, THERMAL_DEVICE_UP);
+	}
+
+	batt_drv->batt_vs_hda_tz = thermal_zone_device_register("thb_hda", 0, 0,
+								batt_drv, &batt_vs_hda_tz_ops,
+								NULL, 0, 0);
+	if (IS_ERR(batt_drv->batt_vs_hda_tz)) {
+		pr_err("batt_vs_hda_tz register failed. err: %ld\n",
+			PTR_ERR(batt_drv->batt_vs_hda_tz));
+	} else {
+		thermal_zone_device_update(batt_drv->batt_vs_hda_tz, THERMAL_DEVICE_UP);
 	}
 
 	ret = of_property_read_u32(batt_drv->device->of_node, "google,morepower-soc-limit-low",
@@ -10665,6 +10709,23 @@ static int google_battery_probe(struct platform_device *pdev)
 		gvotable_set_default(batt_drv->point_full_ui_soc_votable, (void *)DISABLE_POINT_FULL_UI_SOC);
 		gvotable_election_set_name(batt_drv->point_full_ui_soc_votable, VOTABLE_CHARGING_UISOC);
 	}
+
+	batt_drv->hda_tz_votable =
+		gvotable_create_int_election(NULL, gvotable_comparator_int_max, hda_tz_cb, batt_drv);
+	if (IS_ERR_OR_NULL(batt_drv->hda_tz_votable)) {
+		ret = PTR_ERR(batt_drv->hda_tz_votable);
+		dev_err(batt_drv->device, "Fail to create hda_tz_votable (%d)\n", ret);
+		batt_drv->hda_tz_votable = NULL;
+	} else {
+		gvotable_set_vote2str(batt_drv->hda_tz_votable, gvotable_v2s_int);
+		gvotable_set_default(batt_drv->hda_tz_votable, (void *)0);
+		gvotable_election_set_name(batt_drv->hda_tz_votable, VOTABLE_HDA_TZ);
+	}
+
+	ret = of_property_read_u32(pdev->dev.of_node, "google,hda-tz-limit",
+				   &batt_drv->hda_tz_limit);
+	if (ret < 0)
+		batt_drv->hda_tz_limit = -1;
 
 	/* AACR server side */
 	batt_drv->aacr_cycle_grace = AACR_START_CYCLE_DEFAULT;
