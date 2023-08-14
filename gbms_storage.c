@@ -707,15 +707,19 @@ static ssize_t debug_read_tag_data(struct file *filp,
 				   size_t count, loff_t *ppos)
 {
 	struct gbms_cache_entry *ce = filp->private_data;
-	char *buf;
+	char *buf, tmp[8];
 	int ret;
 
 	if (!ce->count)
 		return -ENODATA;
 
-	buf = kzalloc(sizeof(char) * ce->count, GFP_KERNEL);
-	if (!buf)
-		return -ENOMEM;
+	if (ce->count < sizeof(tmp)) {
+		buf = tmp;
+	} else {
+		buf = kzalloc(sizeof(char) * ce->count, GFP_KERNEL);
+		if (!buf)
+			return -ENOMEM;
+	}
 
 	ret = gbms_storage_read(ce->tag, buf, ce->count);
 	if (ret < 0)
@@ -724,7 +728,8 @@ static ssize_t debug_read_tag_data(struct file *filp,
 	ret = simple_read_from_buffer(user_buf, count, ppos, buf, ce->count);
 
 rtag_free_mem:
-	kfree(buf);
+	if (buf != tmp)
+		kfree(buf);
 
 	return ret;
 }
@@ -734,15 +739,19 @@ static ssize_t debug_write_tag_data(struct file *filp,
 				    size_t count, loff_t *ppos)
 {
 	struct gbms_cache_entry *ce = filp->private_data;
-	char *buf;
+	char *buf, tmp[8];
 	int ret;
 
 	if (!ce->count)
 		return -ENODATA;
 
-	buf = kzalloc(sizeof(char) * ce->count, GFP_KERNEL);
-	if (!buf)
-		return -ENOMEM;
+	if (ce->count < sizeof(tmp)) {
+		buf = tmp;
+	} else {
+		buf = kzalloc(sizeof(char) * ce->count, GFP_KERNEL);
+		if (!buf)
+			return -ENOMEM;
+	}
 
 	ret = simple_write_to_buffer(buf, ce->count, ppos, user_buf, count);
 	if (!ret) {
@@ -753,7 +762,8 @@ static ssize_t debug_write_tag_data(struct file *filp,
 	ret = gbms_storage_write(ce->tag, buf, ce->count);
 
 wtag_free_mem:
-	kfree(buf);
+	if (buf != tmp)
+		kfree(buf);
 
 	return (ret < 0) ? ret : count;
 }
