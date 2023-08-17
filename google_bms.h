@@ -101,6 +101,8 @@ struct gbms_chg_profile {
 	S(EXT1),	\
 	S(EXT2),	\
 	S(EXT_UNKNOWN), \
+	S(USB_UNKNOWN), \
+	S(WLC_UNKNOWN), \
 
 #define CHG_EV_ADAPTER_STRING(s)	#s
 #define _CHG_EV_ADAPTER_PRIMITIVE_CAT(a, ...) a ## __VA_ARGS__
@@ -643,6 +645,18 @@ struct bhi_weight {
 	int w_ci;
 	int w_ii;
 	int w_sd;
+};
+
+enum bhi_fg_recalibration_mode {
+	REC_MODE_RESET = 0,
+	REC_MODE_BEST_TIME,
+	REC_MODE_IMMEDIATE,
+	REC_MODE_RESTART,
+};
+
+enum bhi_fg_recalibration_state {
+	REC_STATE_OK = 0,
+	REC_STATE_SCHEDULED,
 };
 
 /* Charging Speed */

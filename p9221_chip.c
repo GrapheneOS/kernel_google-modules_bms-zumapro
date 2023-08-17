@@ -26,6 +26,7 @@
 #define P9412_GPIO_CPOUT21_EN           2
 #define P9XXX_GPIO_CPOUT_CTL_EN         3
 #define P9XXX_GPIO_DC_SW_EN             4
+#define P9XXX_GPIO_ONLINE_SPOOF         5
 #define P9XXX_GPIO_VBUS_EN              15
 
 /* Simple Chip Specific Accessors */
@@ -1050,7 +1051,6 @@ static int p9412_chip_tx_apbst_enable(struct p9221_charger_data *chgr)
 static void rtx_current_limit_opt(struct p9221_charger_data *chgr)
 {
 	int ret;
-
 	/* Set API limit to 1.35A */
 	ret = chgr->reg_write_16(chgr, P9412_I_API_Limit, chgr->tx_api_limit);
 	logbuffer_log(chgr->rtx_log, "set api limit to %dMA", chgr->tx_api_limit);
@@ -2563,6 +2563,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 	chgr->chip_get_vout = p9xxx_chip_get_vout;
 	chgr->chip_set_cmd = p9xxx_chip_set_cmd_reg;
 	chgr->chip_get_op_freq = p9xxx_chip_get_op_freq;
+	chgr->chip_get_op_duty = p9xxx_chip_get_op_duty;
 	chgr->chip_get_vrect = p9xxx_chip_get_vrect;
 	chgr->chip_get_vcpout = p9xxx_chip_get_vcpout;
 	chgr->chip_get_tx_epp_guarpwr = p9xxx_get_tx_epp_guarpwr;
@@ -2822,6 +2823,13 @@ static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 		break;
 	case P9XXX_GPIO_DC_SW_EN:
 		ret = p9xxx_gpio_set_value(charger, charger->pdata->dc_switch_gpio, value);
+		break;
+	case P9XXX_GPIO_ONLINE_SPOOF:
+		if (charger->pdata->irq_det_gpio >= 0 && charger->det_status == 0 && charger->online) {
+			logbuffer_prlog(charger->log, "pxxx_gpio online_spoof=1");
+			charger->online_spoof = true;
+			cancel_delayed_work(&charger->stop_online_spoof_work);
+		}
 		break;
 	default:
 		ret = -EINVAL;

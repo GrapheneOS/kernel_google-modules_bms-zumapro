@@ -30,6 +30,7 @@ struct max77759_chgr_data {
 	bool charge_done;
 	bool chgin_input_suspend;
 	bool wcin_input_suspend;
+	bool wlc_spoof;
 	bool thm2_sts;
 
 	int irq_gpio;
@@ -66,7 +67,10 @@ struct max77759_chgr_data {
 	/* debug interface, register to read or write */
 	u32 debug_reg_address;
 
+	struct gvotable_election *aicl_active_el;
+
 	int chg_term_voltage;
 	int chg_term_volt_debounce;
 };
+
 #endif

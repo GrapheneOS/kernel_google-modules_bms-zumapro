@@ -384,6 +384,7 @@ struct health_data
 	/* recalibration */
 	u8 cal_mode;
 	u8 cal_state;
+	int cal_target;
 };
 
 #define POWER_METRICS_MAX_DATA	50
@@ -451,7 +452,7 @@ struct batt_temp_filter {
 	int resume_delay_time;
 	int last_idx;
 };
-
+#define NB_FAN_BT_LIMITS 4
 /* battery driver state */
 struct batt_drv {
 	struct device *device;
@@ -570,7 +571,14 @@ struct batt_drv {
 
 	/* battery virtual sensor */
 	struct thermal_zone_device *batt_vs_tz;
+	struct thermal_zone_device *batt_vs_mp_tz;
 	int batt_vs_w;
+	int soc_mp_limit_low;
+	int soc_mp_limit_high;
+	int therm_mp_limit;
+	int max_ratio_mp_limit;
+	bool mp_debounce;
+	bool need_mp;
 
 	/* used to detect battery replacements and reset statistics */
 	enum batt_paired_state pairing_state;
@@ -593,6 +601,7 @@ struct batt_drv {
 
 	/* Fan control */
 	int fan_level;
+	int fan_bt_limits[NB_FAN_BT_LIMITS];
 
 	/* AACR: Aged Adjusted Charging Rate */
 	enum batt_aacr_state aacr_state;
@@ -638,12 +647,17 @@ struct batt_drv {
 	/* charging policy */
 	struct gvotable_election *charging_policy_votable;
 	int charging_policy;
+
 	int batt_id;
 };
 
 static int gbatt_get_temp(struct batt_drv *batt_drv, int *temp);
 
 static int gbatt_get_capacity(struct batt_drv *batt_drv);
+static int ssoc_get_capacity(const struct batt_ssoc_state *ssoc);
+static int batt_ttf_estimate(ktime_t *res, struct batt_drv *batt_drv);
+
+static int gbatt_restore_capacity(struct batt_drv *batt_drv);
 
 static int gbatt_restore_capacity(struct batt_drv *batt_drv);
 
@@ -737,6 +751,117 @@ static int batt_vs_tz_get(struct thermal_zone_device *tzd, int *batt_vs)
 
 static struct thermal_zone_device_ops batt_vs_tz_ops = {
 	.get_temp = batt_vs_tz_get,
+};
+
+#define SOC_MP_LIMIT_LOW	(50)
+#define SOC_MP_LIMIT_HIGH	(80)
+#define THERM_MP_LIMIT		(0)
+#define MAX_RATIO_MP_LIMIT	(70)
+
+static int batt_get_thermal_level(struct batt_drv *batt_drv)
+{
+	int thermal_level = -1;
+	if (!batt_drv->thermal_level_votable)
+		batt_drv->thermal_level_votable = gvotable_election_get_handle(VOTABLE_THERMAL_LVL);
+	if (batt_drv->thermal_level_votable)
+		thermal_level = gvotable_get_current_int_vote(batt_drv->thermal_level_votable);
+	return thermal_level;
+}
+
+static bool batt_mp_adapter_qual(struct batt_drv *batt_drv)
+{
+	union gbms_ce_adapter_details ad;
+	int demand = (batt_drv->cc_max * 75) / 100;
+	int adapter_cap;
+
+	/* can adapter provide 75% of demand */
+	ad.v = batt_drv->ce_data.adapter_details.v;
+	adapter_cap = ad.ad_amperage * 100000;
+	if (adapter_cap <= demand) {
+		dev_dbg(batt_drv->device, "%s: adapter power insuff: capability: %d, demand: %d\n",
+			__func__, adapter_cap, demand);
+		return false;
+	}
+	return true;
+}
+
+static bool batt_mp_ttf_qual(struct batt_drv *batt_drv)
+{
+	ktime_t res = 0;
+	const int max_ratio = batt_ttf_estimate(&res, batt_drv);
+
+	if (max_ratio < MAX_RATIO_MP_LIMIT) {
+		dev_dbg(batt_drv->device, "%s: max_ratio under limit: max_ratio: %d, limit: %d\n",
+			__func__, max_ratio, MAX_RATIO_MP_LIMIT);
+		return false;
+	}
+
+	return true;
+}
+
+/* returns true if need more power allocation for batt charging */
+static bool batt_needs_more_power(struct batt_drv *batt_drv, int ibatt)
+{
+	int capacity, thermal_level;
+
+	dev_dbg(batt_drv->device, "%s: Start. \n", __func__);
+	if (batt_drv->chg_state.f.chg_status != POWER_SUPPLY_STATUS_CHARGING) {
+		dev_dbg(batt_drv->device, "%s: Status not = CHARGING %d\n", __func__,
+			batt_drv->chg_state.f.chg_status);
+		goto done;
+	}
+
+	if (batt_drv->chg_health.rest_state != CHG_HEALTH_DISABLED) {
+		dev_dbg(batt_drv->device, "%s: rest state not _DISABLED %d\n", __func__,
+			batt_drv->chg_health.rest_state);
+		goto done;
+	}
+
+	if (ibatt > batt_drv->cc_max / 10) {
+		dev_dbg(batt_drv->device, "%s: current less than 10 percent demand ibatt: %d, cc_max: %d\n",
+			__func__, ibatt, batt_drv->cc_max);
+		goto done;
+	}
+
+	thermal_level = batt_get_thermal_level(batt_drv);
+	if (thermal_level > batt_drv->therm_mp_limit) {
+		dev_dbg(batt_drv->device, "%s: thermal level under limit lvl: %d, limit: %d\n",
+			__func__, thermal_level, batt_drv->therm_mp_limit);
+		goto done;
+	}
+
+	capacity = gbatt_get_capacity(batt_drv);
+	if (capacity >= batt_drv->soc_mp_limit_high)
+		batt_drv->mp_debounce = true;
+	else if (capacity <= batt_drv->soc_mp_limit_low)
+		batt_drv->mp_debounce = false;
+	if (batt_drv->mp_debounce) {
+		dev_dbg(batt_drv->device, "%s: in capacity debounce capacity[now:%d, low:%d, high:%d]\n",
+			__func__, capacity, batt_drv->soc_mp_limit_low, batt_drv->soc_mp_limit_high);
+		goto done;
+	}
+
+	if (!batt_mp_adapter_qual(batt_drv))
+		goto done;
+
+	if (!batt_mp_ttf_qual(batt_drv))
+		goto done;
+
+	dev_dbg(batt_drv->device, "%s: Need more power\n", __func__);
+	return true;
+done:
+	dev_dbg(batt_drv->device, "%s: Don't need more power\n", __func__);
+	return false;
+}
+
+static int batt_vs_mp_tz_get(struct thermal_zone_device *tzd, int *batt_vs)
+{
+	struct batt_drv *batt_drv = tzd->devdata;
+	return batt_drv->need_mp;
+}
+
+static struct thermal_zone_device_ops batt_vs_mp_tz_ops = {
+	.get_temp = batt_vs_mp_tz_get,
 };
 
 static int psy_changed(struct notifier_block *nb,
@@ -1207,13 +1332,13 @@ static int fan_bt_calculate_level(struct batt_drv *batt_drv)
 		return level;
 	}
 
-	if (temp <= FAN_BT_LIMIT_NOT_CARE)
+	if (temp <= batt_drv->fan_bt_limits[0])
 		level = FAN_LVL_NOT_CARE;
-	else if (temp <= FAN_BT_LIMIT_LOW)
+	else if (temp <= batt_drv->fan_bt_limits[1])
 		level = FAN_LVL_LOW;
-	else if (temp <= FAN_BT_LIMIT_MED)
-		level = FAN_LVL_LOW;
-	else if (temp <= FAN_BT_LIMIT_HIGH)
+	else if (temp <= batt_drv->fan_bt_limits[2])
+		level = FAN_LVL_MED;
+	else if (temp <= batt_drv->fan_bt_limits[3])
 		level = FAN_LVL_HIGH;
 	else
 		level = FAN_LVL_ALARM;
@@ -2497,19 +2622,37 @@ static void batt_update_csi_stat(struct batt_drv *batt_drv)
 	int thermal_level = 0;
 	ktime_t elap;
 
-	if (chg_state_is_disconnected(&batt_drv->chg_state) && csi_stats->vol_in != 0) {
-		/* update disconnected data */
-		const int vol_out = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
-		const int cc_out = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_CHARGE_COUNTER);
-
-		if (vol_out < 0 || cc_out < 0)
+	if (chg_state_is_disconnected(&batt_drv->chg_state)) {
+		/* Only update CSI stats when plugged and charging */
+		if(csi_stats->time_stat_last_update == 0)
 			return;
 
-		csi_stats->vol_out = vol_out / 1000;
-		csi_stats->cc_out = cc_out / 1000;
-		csi_stats->ssoc_out = ssoc;
+		/* update disconnected data */
+		if(csi_stats->vol_in != 0) {
+			const int vol_out = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
+			const int cc_out = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_CHARGE_COUNTER);
 
-		return;
+			if (vol_out < 0 || cc_out < 0)
+				return;
+
+			csi_stats->vol_out = vol_out / 1000;
+			csi_stats->cc_out = cc_out / 1000;
+			csi_stats->ssoc_out = ssoc;
+
+			logbuffer_log(batt_drv->ttf_stats.ttf_log,
+				"csi_stats: %s,%d,%d,%d,%d,%lld,%d,%d,%lld,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
+				 gbms_chg_ev_adapter_s(csi_stats->ad_type), csi_stats->ad_voltage * 100,
+				 csi_stats->ad_amperage * 100, csi_stats->ssoc_in, csi_stats->ssoc_out,
+				 csi_stats->time_sum / 60, csi_stats->aggregate_type, csi_stats->aggregate_status,
+				 csi_stats->time_effective / 60, csi_stats->temp_min, csi_stats->temp_max,
+				 csi_stats->vol_in, csi_stats->vol_out, csi_stats->cc_in, csi_stats->cc_out,
+				 (int)(csi_stats->thermal_severity[0] * 100 / csi_stats->time_sum),
+				 (int)(csi_stats->thermal_severity[1] * 100 / csi_stats->time_sum),
+				 (int)(csi_stats->thermal_severity[2] * 100 / csi_stats->time_sum),
+				 (int)(csi_stats->thermal_severity[3] * 100 / csi_stats->time_sum),
+				 (int)(csi_stats->thermal_severity[4] * 100 / csi_stats->time_sum));
+			return;
+		}
 	}
 
 	/* initial connected data */
@@ -2543,11 +2686,7 @@ static void batt_update_csi_stat(struct batt_drv *batt_drv)
 	if (batt_temp > csi_stats->temp_max)
 		csi_stats->temp_max = batt_temp;
 
-	if (!batt_drv->thermal_level_votable)
-		batt_drv->thermal_level_votable = gvotable_election_get_handle(VOTABLE_THERMAL_LVL);
-	if (batt_drv->thermal_level_votable)
-		thermal_level = gvotable_get_current_int_vote(batt_drv->thermal_level_votable);
-
+	thermal_level = batt_get_thermal_level(batt_drv);
 	if (thermal_level >= CSI_THERMAL_SEVERITY_MAX)
 		thermal_level = CSI_THERMAL_SEVERITY_MAX - 1;
 	if (thermal_level < 0)
@@ -2638,6 +2777,11 @@ log_and_done:
 	if (ssoc == -1 || current_speed < 0)
 		current_speed = 0;
 
+	if (ssoc == -1 || ssoc != csi_stats->ssoc) {
+		csi_stats->thermal_lvl_min = 0;
+		csi_stats->thermal_lvl_max = 0;
+	}
+
 	csi_stats->ssoc = ssoc;
 	csi_stats->csi_speed_min = current_speed;
 	csi_stats->csi_speed_max = current_speed;
@@ -2688,15 +2832,33 @@ static int csi_type_cb(struct gvotable_election *el, const char *reason,
 
 	return 0;
 }
+static bool batt_is_trickle(struct batt_ssoc_state *ssoc_state)
+{
+	return ssoc_state->bd_trickle_cnt > 0 &&
+		ssoc_state->bd_trickle_enable &&
+		!ssoc_state->bd_trickle_dry_run;
+}
+
+static bool batt_csi_status_is_dock(const struct batt_drv *batt_drv)
+{
+	int dock_status;
+
+	if (!batt_drv->csi_status_votable)
+		return false;
+
+	dock_status = gvotable_get_int_vote(batt_drv->csi_status_votable, "CSI_STATUS_DEFEND_DOCK");
+	return dock_status == CSI_STATUS_Defender_Dock;
+}
 
 /* all reset on disconnect */
 static void batt_update_csi_type(struct batt_drv *batt_drv)
 {
 	const bool is_disconnected = chg_state_is_disconnected(&batt_drv->chg_state);
-	const bool is_trickle = batt_drv->ssoc_state.bd_trickle_cnt > 0;
+	const bool is_trickle = batt_is_trickle(&batt_drv->ssoc_state);
 	const bool is_ac = batt_drv->msc_state == MSC_HEALTH ||
 			batt_drv->msc_state == MSC_HEALTH_PAUSE ||
 			batt_drv->msc_state == MSC_HEALTH_ALWAYS_ON;
+	const bool is_dock = batt_csi_status_is_dock(batt_drv);
 
 	if (!batt_drv->csi_type_votable) {
 		batt_drv->csi_type_votable =
@@ -2707,7 +2869,7 @@ static void batt_update_csi_type(struct batt_drv *batt_drv)
 
 	/* normal or full if connected, nothing otherwise */
 	gvotable_cast_long_vote(batt_drv->csi_type_votable, "CSI_TYPE_CONNECTED",
-				is_disconnected ? CSI_TYPE_None : CSI_TYPE_Normal,
+				(is_disconnected && !is_dock) ? CSI_TYPE_None : CSI_TYPE_Normal,
 				true);
 
 	/* SW JEITA */
@@ -2785,7 +2947,7 @@ static void batt_update_csi_status(struct batt_drv *batt_drv)
 	const int temp_hot_idx = profile->temp_nb_limits - 1;
 	const bool is_cold = batt_drv->batt_temp < profile->temp_limits[0];
 	const bool is_hot = batt_drv->batt_temp >= profile->temp_limits[temp_hot_idx];
-	const bool is_trickle = batt_drv->ssoc_state.bd_trickle_cnt > 0;
+	const bool is_trickle = batt_is_trickle(&batt_drv->ssoc_state);
 	const bool is_disconnected = chg_state_is_disconnected(&batt_drv->chg_state);
 	const union gbms_ce_adapter_details *ad = &batt_drv->ce_data.adapter_details;
 
@@ -4243,6 +4405,90 @@ static int bhi_cycle_count_residency(struct gbatt_ccbin_data *ccd , int soc_limi
 	return (under * BHI_ALGO_FULL_HEALTH) / (under + over);
 }
 
+/*
+ * initial or done   detect abnormal      FG reset/learning    FG learning done
+ * STATE_OK    --->  STATE_SCHEDULED ---> STATE_SCHEDULED ---> STATE_OK
+ * MODE_RESET  --->  MODE_BEST_TIME  ---> MODE_RESTART    ---> MODE_RESET
+ *                  (MODE_IMMEDIATE)
+ */
+#define MAX_CAPACITY_RATIO 115
+static int batt_bhi_update_recalibration_status(struct batt_drv *batt_drv)
+{
+	const int design_capacity = batt_drv->battery_capacity; /* mAh */
+	u8 cal_state = batt_drv->health_data.cal_state;
+	u8 cal_mode = batt_drv->health_data.cal_mode;
+	int full_cap_nom = 0, recal_state, ret = 0;
+	bool is_best_time = false;
+
+	recal_state = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_RECAL_FG);
+	if (recal_state < 0)
+		return recal_state;
+	if (recal_state != 0) {
+		cal_state = REC_STATE_SCHEDULED;
+		cal_mode = REC_MODE_RESTART;
+		goto done;
+	}
+
+	if (cal_mode == REC_MODE_BEST_TIME) {
+		if (batt_drv->msc_state == MSC_HEALTH_PAUSE)
+			is_best_time = true;
+		if (batt_drv->chg_done == true)
+			is_best_time = true;
+	}
+
+	if (cal_mode == REC_MODE_IMMEDIATE)
+		is_best_time = true;
+
+	if (is_best_time) {
+		ret = GPSY_SET_PROP(batt_drv->fg_psy, GBMS_PROP_RECAL_FG,
+				    batt_drv->health_data.cal_target);
+		if (ret == 0) {
+			cal_state = REC_STATE_SCHEDULED;
+			cal_mode = REC_MODE_RESTART;
+		}
+		goto done;
+	}
+
+	if (cal_mode == REC_MODE_RESTART && recal_state == 0) {
+		cal_state = REC_STATE_OK;
+		cal_mode = REC_MODE_RESET;
+		goto done;
+	}
+
+	/* read full capacity value */
+	ret = GPSY_GET_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_CHARGE_FULL);
+	if (ret < 0)
+		goto done;
+	full_cap_nom = ret / 1000;
+
+	/*
+	 * compare with design value, allow to reset FG if conditions match
+	 * and wait for appropriate time to execute
+	 */
+	if (full_cap_nom > (design_capacity * MAX_CAPACITY_RATIO / 100)) {
+		cal_state = REC_STATE_SCHEDULED;
+		cal_mode = REC_MODE_BEST_TIME;
+	}
+
+done:
+	if (batt_drv->health_data.cal_state != cal_state ||
+	    batt_drv->health_data.cal_mode != cal_mode) {
+		gbms_logbuffer_prlog(batt_drv->ttf_stats.ttf_log, LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG,
+				     "RE_CAL: cal_state: %d -> %d, cal_mode:%d -> %d\n",
+				     batt_drv->health_data.cal_state, cal_state,
+				     batt_drv->health_data.cal_mode, cal_mode);
+		batt_drv->health_data.cal_state = cal_state;
+		batt_drv->health_data.cal_mode = cal_mode;
+		if (full_cap_nom)
+			gbms_logbuffer_prlog(batt_drv->ttf_stats.ttf_log,
+					     LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG,
+					     "RE_CAL: full_cap_nom:%d, design_capacity:%d\n",
+					     full_cap_nom, design_capacity);
+	}
+
+	return ret;
+}
+
 /* call holding mutex_lock(&batt_drv->chg_lock)  */
 static int batt_bhi_stats_update_all(struct batt_drv *batt_drv)
 {
@@ -4544,6 +4790,8 @@ static int msc_logic(struct batt_drv *batt_drv)
 	batt_drv->msc_state = msc_state;
 	batt_drv->ce_data.last_update = now;
 	mutex_unlock(&batt_drv->stats_lock);
+
+	batt_drv->need_mp = batt_needs_more_power(batt_drv, ibatt);
 
 	changed = batt_drv->temp_idx != temp_idx ||
 		  batt_drv->vbatt_idx != vbatt_idx ||
@@ -5066,6 +5314,11 @@ static int batt_init_chg_profile(struct batt_drv *batt_drv)
 	ret = of_property_read_u32(gbms_batt_id_node(batt_drv->device->of_node),
 				   "google,chg-battery-capacity",
 				    &batt_drv->battery_capacity);
+	/* google,chg-battery-capacity does not exist in the child_node */
+	if (ret < 0)
+		ret = of_property_read_u32(batt_drv->device->of_node,
+					   "google,chg-battery-capacity",
+					    &batt_drv->battery_capacity);
 	if (ret < 0)
 		pr_warn("read chg-battery-capacity from gauge\n");
 
@@ -5392,6 +5645,21 @@ static int debug_set_fv_dc_ratio(void *data, u64 val)
 
 DEFINE_SIMPLE_ATTRIBUTE(debug_fv_dc_ratio_fops,
 			debug_get_fv_dc_ratio, debug_set_fv_dc_ratio, "%llu\n");
+
+static int debug_get_mp_tz(void *data, u64 *val)
+{
+	struct batt_drv *batt_drv = (struct batt_drv *)data;
+
+	*val = batt_drv->need_mp;
+	return 0;
+}
+
+static int debug_set_mp_tz(void *data, u64 val)
+{
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(debug_mp_tz_fops, debug_get_mp_tz, debug_set_mp_tz, "%llu\n");
 
 static ssize_t debug_get_ssoc_uicurve(struct file *filp,
 					   char __user *buf,
@@ -7199,7 +7467,7 @@ static ssize_t manufacturing_date_show(struct device *dev,
 	struct bm_date *date = &batt_drv->health_data.bhi_data.bm_date;
 	struct rtc_time tm;
 
-	/* read manufacturing date when data is not successfully read in probe */
+	/* read manufacturing date when data is not loaded yet */
 	if (date->bm_y == 0) {
 		int ret;
 
@@ -7476,9 +7744,21 @@ static ssize_t health_set_cal_mode_store(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	/* TODO: implement set recalibration mode */
-	batt_drv->health_data.cal_mode = value;
+	mutex_lock(&batt_drv->chg_lock);
+	if (batt_drv->health_data.cal_state == REC_STATE_SCHEDULED)
+		goto exit_done;
 
+	gbms_logbuffer_prlog(batt_drv->ttf_stats.ttf_log, LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG,
+			     "RE_CAL: cal_state: %d, cal_mode:%d -> %d\n",
+			     batt_drv->health_data.cal_state,
+			     batt_drv->health_data.cal_mode, value);
+	batt_drv->health_data.cal_mode = value;
+	ret = batt_bhi_update_recalibration_status(batt_drv);
+	if (ret < 0)
+		count = ret;
+
+exit_done:
+	mutex_unlock(&batt_drv->chg_lock);
 	return count;
 }
 
@@ -7513,17 +7793,18 @@ static ssize_t health_set_trend_points_store(struct device *dev,
 	struct bhi_data *bhi_data = &batt_drv->health_data.bhi_data;
 	u16 trend[BHI_TREND_POINTS_SIZE];
 	const int buf_len = strlen(buf);
-	int cnt = 0, len = 0, batt_id;
+	int cnt = 0, len = 0;
+	u16 batt_id;
 
 	do {
-		cnt = sscanf(&buf[len], "%d,%hu,%hu,%hu,%hu,%hu,%hu,%hu,%hu", &batt_id,
+		cnt = sscanf(&buf[len], "%hu,%hu,%hu,%hu,%hu,%hu,%hu,%hu,%hu", &batt_id,
 			     &trend[0], &trend[1], &trend[2], &trend[3],
 			     &trend[4], &trend[5], &trend[6], &trend[7]);
 
 		if (cnt != BHI_TREND_POINTS_SIZE + 1)
 			return -ERANGE;
 
-		if (batt_id == batt_drv->batt_id) {
+		if ((int)batt_id == batt_drv->batt_id) {
 			memcpy(&bhi_data->trend, trend, sizeof(trend));
 			break;
 		}
@@ -7560,17 +7841,18 @@ static ssize_t health_set_low_boundary_store(struct device *dev,
 	struct bhi_data *bhi_data = &batt_drv->health_data.bhi_data;
 	u16 l_bound[BHI_TREND_POINTS_SIZE];
 	const int buf_len = strlen(buf);
-	int cnt = 0, len = 0, batt_id;
+	int cnt = 0, len = 0;
+	u16 batt_id;
 
 	do {
-		cnt = sscanf(&buf[len], "%d,%hu,%hu,%hu,%hu,%hu,%hu,%hu,%hu", &batt_id,
+		cnt = sscanf(&buf[len], "%hu,%hu,%hu,%hu,%hu,%hu,%hu,%hu,%hu", &batt_id,
 			     &l_bound[0], &l_bound[1], &l_bound[2], &l_bound[3],
 			     &l_bound[4], &l_bound[5], &l_bound[6], &l_bound[7]);
 
 		if (cnt != BHI_TREND_POINTS_SIZE + 1)
 			return -ERANGE;
 
-		if (batt_id == batt_drv->batt_id) {
+		if ((int)batt_id == batt_drv->batt_id) {
 			memcpy(&bhi_data->l_bound, l_bound, sizeof(l_bound));
 			break;
 		}
@@ -8160,6 +8442,11 @@ static int batt_init_debugfs(struct batt_drv *batt_drv)
 	debugfs_create_file("ssoc_uic", 0644, de, batt_drv, &debug_ssoc_uic_fops);
 	debugfs_create_file("ssoc_rls", 0444, de, batt_drv, &debug_ssoc_rls_fops);
 	debugfs_create_file("fv_dc_ratio", 0644, de, batt_drv, &debug_fv_dc_ratio_fops);
+	debugfs_create_file("mp_tz", 0644, de, batt_drv, &debug_mp_tz_fops);
+	debugfs_create_u32("mp_soc_limit_low", 0600, de, &batt_drv->soc_mp_limit_low);
+	debugfs_create_u32("mp_soc_limit_high", 0600, de, &batt_drv->soc_mp_limit_high);
+	debugfs_create_u32("mp_therm_limit", 0600, de, &batt_drv->therm_mp_limit);
+	debugfs_create_u32("mp_max_ratio_limit", 0600, de, &batt_drv->max_ratio_mp_limit);
 	debugfs_create_file("ssoc_uicurve", 0644, de, batt_drv,
 			    &debug_ssoc_uicurve_cstr_fops);
 	debugfs_create_file("force_psy_update", 0400, de, batt_drv,
@@ -8683,7 +8970,7 @@ static void batt_init_temp_filter(struct batt_drv *batt_drv)
 	temp_filter->force_update = true;
 	mod_delayed_work(system_wq, &temp_filter->work, 0);
 
-	pr_info("temperture filter: default:%ds, fast:%ds, resume:%dms\n",
+	pr_info("temperature filter: default:%ds, fast:%ds, resume:%dms\n",
 		temp_filter->default_interval / 1000, temp_filter->fast_interval / 1000,
 		temp_filter->resume_delay_time);
 }
@@ -8721,7 +9008,7 @@ static void google_battery_temp_filter_work(struct work_struct *work)
 
 	/* logging if big difference */
 	if (abs(val.intval - temp_filter->sample[temp_filter->last_idx]) > TEMP_FILTER_LOG_DIFF)
-		pr_info("temperture filter: [%d, %d, %d, %d, %d] val:%d idx:%d interval=%dms\n",
+		pr_info("temperature filter: [%d, %d, %d, %d, %d] val:%d idx:%d interval=%dms\n",
 			temp_filter->sample[0], temp_filter->sample[1], temp_filter->sample[2],
 			temp_filter->sample[3], temp_filter->sample[4], val.intval,
 			temp_filter->last_idx, interval);
@@ -8738,7 +9025,7 @@ static void google_battery_temp_filter_work(struct work_struct *work)
 	mutex_unlock(&temp_filter->lock);
 
 done:
-	pr_debug("temperture filter: [%d, %d, %d, %d, %d] interval=%dms\n",
+	pr_debug("temperature filter: [%d, %d, %d, %d, %d] interval=%dms\n",
 		 temp_filter->sample[0], temp_filter->sample[1], temp_filter->sample[2],
 		 temp_filter->sample[3], temp_filter->sample[4], interval);
 	mod_delayed_work(system_wq, &temp_filter->work, msecs_to_jiffies(interval));
@@ -8788,7 +9075,8 @@ static int point_full_ui_soc_cb(struct gvotable_election *el,
 	if (ssoc_state->point_full_ui_soc == soc)
 		return 0;
 
-	pr_info("update point_full_ui_soc: %d -> %d\n", ssoc_state->point_full_ui_soc, soc);
+	dev_info(batt_drv->device, "update point_full_ui_soc: %d -> %d\n",
+		 ssoc_state->point_full_ui_soc, soc);
 
 	ssoc_state->point_full_ui_soc = soc;
 
@@ -9021,6 +9309,11 @@ static void google_battery_work(struct work_struct *work)
 			break;
 		}
 	}
+
+	/* check recalibration conditions */
+	ret = batt_bhi_update_recalibration_status(batt_drv);
+	if (ret < 0)
+		pr_err("bhi update recalibration not available (%d)\n", ret);
 
 	mutex_unlock(&batt_drv->chg_lock);
 
@@ -9738,10 +10031,45 @@ static int batt_bhi_init(struct batt_drv *batt_drv)
 	health_data->bhi_debug_imp_index = 0;
 	health_data->bhi_debug_sd_index = 0;
 	health_data->bhi_debug_health_index = 0;
+	/* TODO: restore cal_state/cal_mode if reboot */
+	health_data->cal_state = REC_STATE_OK;
+	health_data->cal_mode = REC_MODE_RESET;
 
 	return 0;
 }
 
+static void batt_fan_bt_init(struct batt_drv *batt_drv) {
+	int nb_fan_bt, ret;
+
+	nb_fan_bt = of_property_count_elems_of_size(batt_drv->device->of_node,
+						    "google,fan-bt-limits", sizeof(u32));
+	if (nb_fan_bt == NB_FAN_BT_LIMITS) {
+		ret = of_property_read_u32_array(batt_drv->device->of_node,
+						 "google,fan-bt-limits",
+						 batt_drv->fan_bt_limits,
+						 nb_fan_bt);
+		if (ret == 0) {
+			int i;
+
+			pr_info("FAN_BT_LIMITS: ");
+			for (i = 0; i < nb_fan_bt; i++)
+				pr_info("%d ", batt_drv->fan_bt_limits[i]);
+
+			return;
+		} else {
+			pr_err("Fail to read google,fan-bt-limits from dtsi, ret=%d\n", ret);
+		}
+	}
+	batt_drv->fan_bt_limits[0] = FAN_BT_LIMIT_NOT_CARE;
+	batt_drv->fan_bt_limits[1] = FAN_BT_LIMIT_LOW;
+	batt_drv->fan_bt_limits[2] = FAN_BT_LIMIT_MED;
+	batt_drv->fan_bt_limits[3] = FAN_BT_LIMIT_HIGH;
+
+	pr_info("Use default FAN_BT_LIMITS: %d %d %d %d\n", batt_drv->fan_bt_limits[0],
+							    batt_drv->fan_bt_limits[1],
+							    batt_drv->fan_bt_limits[2],
+							    batt_drv->fan_bt_limits[3]);
+}
 
 static int batt_prop_iter(int index, gbms_tag_t *tag, void *ptr)
 {
@@ -10063,6 +10391,38 @@ static void google_battery_init_work(struct work_struct *work)
 		pr_info("google,batt-vs-tz-name is %s\n", batt_vs_tz_name);
 	}
 
+	/* battery virtual sensor for more power */
+	batt_drv->batt_vs_mp_tz = thermal_zone_device_register("mdis_morepower", 0, 0,
+								batt_drv, &batt_vs_mp_tz_ops,
+								NULL, 0, 0);
+	if (IS_ERR(batt_drv->batt_vs_mp_tz)) {
+		pr_err("batt_vs_mp tz register failed. err: %ld\n",
+			PTR_ERR(batt_drv->batt_vs_mp_tz));
+		batt_drv->batt_vs_mp_tz = NULL;
+	} else {
+		thermal_zone_device_update(batt_drv->batt_vs_mp_tz, THERMAL_DEVICE_UP);
+	}
+
+	ret = of_property_read_u32(batt_drv->device->of_node, "google,morepower-soc-limit-low",
+				   &batt_drv->soc_mp_limit_low);
+	if (ret < 0)
+		batt_drv->soc_mp_limit_low = SOC_MP_LIMIT_LOW;
+
+	ret = of_property_read_u32(batt_drv->device->of_node, "google,morepower-soc-limit-high",
+				   &batt_drv->soc_mp_limit_high);
+	if (ret < 0)
+		batt_drv->soc_mp_limit_high = SOC_MP_LIMIT_HIGH;
+
+	ret = of_property_read_u32(batt_drv->device->of_node, "google,morepower_therm_limit",
+				   &batt_drv->therm_mp_limit);
+	if (ret < 0)
+		batt_drv->therm_mp_limit = THERM_MP_LIMIT;
+
+	ret = of_property_read_u32(batt_drv->device->of_node, "google,morepower_max_ratio_limit",
+				   &batt_drv->max_ratio_mp_limit);
+	if (ret < 0)
+		batt_drv->max_ratio_mp_limit = MAX_RATIO_MP_LIMIT;
+
 	batt_drv->dc_irdrop = of_property_read_bool(node, "google,dc-irdrop");
 	if (batt_drv->dc_irdrop)
 		pr_info("dc irdrop is enabled\n");
@@ -10251,6 +10611,8 @@ static int google_battery_probe(struct platform_device *pdev)
 		thermal_zone_device_update(batt_drv->tz_dev, THERMAL_DEVICE_UP);
 	}
 
+	/* Fan levels limits from battery temperature */
+	batt_fan_bt_init(batt_drv);
 	batt_drv->fan_level = -1;
 	batt_drv->fan_last_level = -1;
 	batt_drv->fan_level_votable =

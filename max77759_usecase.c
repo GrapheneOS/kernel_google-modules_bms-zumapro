@@ -252,14 +252,20 @@ static int gs101_ext_mode(struct max77759_usecase_data *uc_data, int mode)
 	return ret;
 }
 
-int gs101_wlc_en(struct max77759_usecase_data *uc_data, bool wlc_on)
+int gs101_wlc_en(struct max77759_usecase_data *uc_data, enum wlc_state_t state)
 {
 	int ret = 0;
+	int wlc_on = 0;
 
-	pr_debug("%s: cpout_en=%d wlc_en=%d wlc_vbus_en=%d wlc_on=%d\n", __func__,
-		 uc_data->cpout_en, uc_data->wlc_en, uc_data->wlc_vbus_en, wlc_on);
+	if (state == WLC_ENABLED)
+		wlc_on = 1;
+
+	pr_debug("%s: cpout_en=%d wlc_en=%d wlc_vbus_en=%d wlc_on=%d wlc_state=%d\n", __func__,
+		 uc_data->cpout_en, uc_data->wlc_en, uc_data->wlc_vbus_en, wlc_on, state);
 
 	if (uc_data->cpout_en >= 0) {
+		if (state == WLC_SPOOFED && uc_data->wlc_spoof_gpio)
+			gpio_set_value_cansleep(uc_data->wlc_spoof_gpio, 1);
 		gpio_set_value_cansleep(uc_data->cpout_en, wlc_on);
 	} else if (!wlc_on) {
 		/*
@@ -303,7 +309,7 @@ static int gs101_wlc_tx_enable(struct max77759_usecase_data *uc_data,
 		usleep_range(100 * USEC_PER_MSEC, 100 * USEC_PER_MSEC + 100);
 
 		/* p9412 will not be in RX when powered from EXT */
-		ret = gs101_wlc_en(uc_data, true);
+		ret = gs101_wlc_en(uc_data, WLC_ENABLED);
 		if (ret < 0)
 			return ret;
 
@@ -311,7 +317,7 @@ static int gs101_wlc_tx_enable(struct max77759_usecase_data *uc_data,
 			gpio_set_value_cansleep(uc_data->cpout21_en, 0);
 	} else {
 		/* p9412 is already off from insel */
-		ret = gs101_wlc_en(uc_data, false);
+		ret = gs101_wlc_en(uc_data, WLC_DISABLED);
 		if (ret < 0)
 			return ret;
 
@@ -580,7 +586,7 @@ int gs101_to_standby(struct max77759_usecase_data *uc_data, int use_case)
 		}
 
 		/* re-enable wlc IC if disabled */
-		ret = gs101_wlc_en(uc_data, true);
+		ret = gs101_wlc_en(uc_data, WLC_ENABLED);
 		if (ret < 0)
 			pr_err("%s: cannot enable WLC (%d)\n", __func__, ret);
 	}
@@ -1338,6 +1344,7 @@ static void gs101_setup_default_usecase(struct max77759_usecase_data *uc_data)
 	uc_data->wlc_en = -EPROBE_DEFER;
 	uc_data->wlc_vbus_en = -EPROBE_DEFER;
 	uc_data->cpout_en = -EPROBE_DEFER;
+	uc_data->wlc_spoof_gpio = -EPROBE_DEFER;
 	uc_data->cpout_ctl = -EPROBE_DEFER;
 	uc_data->cpout21_en = -EPROBE_DEFER;
 
@@ -1416,6 +1423,9 @@ bool gs101_setup_usecases(struct max77759_usecase_data *uc_data,
 	/*  wlc_rx -> wlc_rx+otg disable cpout */
 	if (uc_data->cpout_en == -EPROBE_DEFER)
 		uc_data->cpout_en = of_get_named_gpio(node, "max77759,cpout-en", 0);
+	/*  wlc_rx thermal throttle -> spoof online */
+	if (uc_data->wlc_spoof_gpio == -EPROBE_DEFER)
+	    uc_data->wlc_spoof_gpio = of_get_named_gpio(node, "max77759,wlc-spoof-gpio", 0);
 	/* to 5.2V in p9412 */
 	if (uc_data->cpout_ctl == -EPROBE_DEFER)
 		uc_data->cpout_ctl = of_get_named_gpio(node, "max77759,cpout-ctl", 0);
