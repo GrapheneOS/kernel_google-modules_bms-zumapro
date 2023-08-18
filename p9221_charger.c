@@ -44,6 +44,8 @@
 #define WLC_ALIGN_DEFAULT_OFFSET_LOW_CURRENT	    125000
 #define WLC_ALIGN_DEFAULT_OFFSET_HIGH_CURRENT	    139000
 #define HPP_FOD_VOUT_THRESHOLD_UV	17500000
+#define WLC_ALIGN_LOWER_LIMIT		(0)
+#define WLC_ALIGN_UPPER_LIMIT		(90)
 
 #define WLC_HPP_SOC_LIMIT	80
 #define PROP_MODE_PWR_DEFAULT	30
@@ -638,6 +640,7 @@ static void p9xxx_ll_adjust_soc(struct p9221_charger_data *charger, int soc)
 /*
  * Put the default ICL back to BPP, reset OCP voter
  * @pre charger && charger->dc_icl_votable && charger->client->dev
+ * gvotable_cast_int_vote can handle NULL votable, so don't need check
  */
 static void p9221_vote_defaults(struct p9221_charger_data *charger)
 {
@@ -685,6 +688,8 @@ static void p9221_vote_defaults(struct p9221_charger_data *charger)
 			       P9221_HPP_VOTER, 0, false);
 	gvotable_cast_int_vote(charger->dc_avail_votable,
 			       DD_VOTER, 0, false);
+	gvotable_cast_int_vote(charger->hda_tz_votable,
+			       P9221_WLC_VOTER, 0, false);
 }
 
 static int p9221_set_switch_reg(struct p9221_charger_data *charger, bool enable)
@@ -3390,6 +3395,13 @@ static void p9221_set_online(struct p9221_charger_data *charger)
 
 	p9221_charge_stats_init(&charger->chg_data);
 	mutex_unlock(&charger->stats_lock);
+
+	if (charger->pdata->hda_tz_wlc) {
+		if (!charger->hda_tz_votable)
+			charger->hda_tz_votable = gvotable_election_get_handle(VOTABLE_HDA_TZ);
+		gvotable_cast_int_vote(charger->hda_tz_votable, P9221_WLC_VOTER,
+				HDA_TZ_WLC_ADAPTER, true);
+	}
 
 	ret = p9221_reg_read_8(charger, P9221_CUSTOMER_ID_REG, &cid);
 	if (ret)
@@ -7032,6 +7044,8 @@ static int p9xxx_parse_dt(struct device *dev,
 		pdata->wait_prop_irq_ms = data;
 
 	pdata->bpp_cep_on_dl = of_property_read_bool(node, "google,bpp-cep-on-dl");
+
+	pdata->hda_tz_wlc = of_property_read_bool(node, "google,hda-tz-wlc");
 
 	return 0;
 }
