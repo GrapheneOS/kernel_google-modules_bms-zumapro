@@ -265,6 +265,8 @@ struct max1720x_chip {
 
 	/* battery current criteria for report status charge */
 	u32 status_charge_threshold_ma;
+
+	struct wakeup_source *get_prop_ws;
 };
 
 #define MAX1720_EMPTY_VOLTAGE(profile, temp, cycle) \
@@ -1226,11 +1228,11 @@ static void max1720x_prime_battery_qh_capacity(struct max1720x_chip *chip,
 
 	if (chip->regmap_nvram.regmap) {
 		REGMAP_WRITE(&chip->regmap_nvram, MAX17XXX_QHCA, ~mcap);
-		dev_info(chip->dev, "Capacity primed to %d on %s\n",
+		dev_dbg(chip->dev, "Capacity primed to %d on %s\n",
 			mcap, psy_status_str[status]);
 
 		REGMAP_WRITE(&chip->regmap_nvram, MAX17XXX_QHQH, data);
-		dev_info(chip->dev, "QH primed to %d on %s\n",
+		dev_dbg(chip->dev, "QH primed to %d on %s\n",
 			data, psy_status_str[status]);
 	}
 }
@@ -1558,7 +1560,7 @@ static u16 max1720x_save_battery_cycle(const struct max1720x_chip *chip,
 	if (ret < 0) {
 		dev_info(chip->dev, "Fail to write %d eeprom cycle count (%d)", reg_cycle, ret);
 	} else {
-		dev_info(chip->dev, "update saved cycle:%d -> %d\n", eeprom_cycle, reg_cycle);
+		dev_dbg(chip->dev, "update saved cycle:%d -> %d\n", eeprom_cycle, reg_cycle);
 		eeprom_cycle = reg_cycle;
 	}
 
@@ -1619,6 +1621,11 @@ static int max1720x_get_cycle_count_offset(struct max1720x_chip *chip)
 }
 
 static int max1720x_get_cycle_count(struct max1720x_chip *chip)
+{
+	return chip->cycle_count;
+}
+
+static int max1720x_update_cycle_count(struct max1720x_chip *chip)
 {
 	int err, cycle_count;
 	u16 reg_cycle;
@@ -2192,12 +2199,14 @@ static int max1720x_get_property(struct power_supply *psy,
 	u16 data = 0;
 	int idata;
 
+	__pm_stay_awake(chip->get_prop_ws);
 	mutex_lock(&chip->model_lock);
 
 	pm_runtime_get_sync(chip->dev);
 	if (!chip->init_complete || !chip->resume_complete) {
 		pm_runtime_put_sync(chip->dev);
 		mutex_unlock(&chip->model_lock);
+		__pm_relax(chip->get_prop_ws);
 		return -EAGAIN;
 	}
 	pm_runtime_put_sync(chip->dev);
@@ -2311,6 +2320,7 @@ static int max1720x_get_property(struct power_supply *psy,
 			    chip->model_reload != MAX_M5_LOAD_MODEL_REQUEST) {
 				/* trigger reload model and clear of POR */
 				mutex_unlock(&chip->model_lock);
+				__pm_relax(chip->get_prop_ws);
 				max1720x_fg_irq_thread_fn(-1, chip);
 				return err;
 			}
@@ -2411,6 +2421,8 @@ static int max1720x_get_property(struct power_supply *psy,
 		pr_debug("error %d reading prop %d\n", err, psp);
 
 	mutex_unlock(&chip->model_lock);
+	__pm_relax(chip->get_prop_ws);
+
 	return err;
 }
 
@@ -2970,10 +2982,12 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 		if (max1720x_check_drift_on_soc(&chip->drift_data))
 			max1720x_fixup_capacity(chip, plugged);
 
-		if (storm)
+		if (storm) {
 			pr_debug("Force power_supply_change in storm\n");
-		else
+		} else {
 			max1720x_monitor_log_data(chip, false);
+			max1720x_update_cycle_count(chip);
+		}
 
 		storm = false;
 	}
@@ -5739,6 +5753,10 @@ static void max1720x_init_work(struct work_struct *work)
 	ret = batt_ce_load_data(&chip->regmap_nvram, &chip->cap_estimate);
 	if (ret == 0)
 		batt_ce_dump_data(&chip->cap_estimate, chip->ce_log);
+
+	chip->get_prop_ws = wakeup_source_register(NULL, "GetProp");
+	if (!chip->get_prop_ws)
+		dev_info(chip->dev, "failed to register wakeup sources\n");
 }
 
 /* TODO: fix detection of 17301 for non samples looking at FW version too */
@@ -6151,6 +6169,8 @@ static void max1720x_remove(struct i2c_client *client)
 
 	if (chip->secondary)
 		i2c_unregister_device(chip->secondary);
+
+	wakeup_source_unregister(chip->get_prop_ws);
 }
 
 static const struct of_device_id max1720x_of_match[] = {

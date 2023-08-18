@@ -637,6 +637,8 @@ static int gbatt_get_temp(struct batt_drv *batt_drv, int *temp);
 
 static int gbatt_get_capacity(struct batt_drv *batt_drv);
 
+static int gbatt_restore_capacity(struct batt_drv *batt_drv);
+
 static int batt_get_filter_temp(struct batt_temp_filter *temp_filter)
 {
 	int sum = 0, max, min, i;
@@ -1401,13 +1403,12 @@ done:
  * SSOC jumping around or taking long time to coverge. Could technically read
  * charger voltage and estimate SOC% based on empty and full voltage.
  */
-static int ssoc_init(struct batt_ssoc_state *ssoc_state,
-		     struct device_node *node,
-		     struct power_supply *fg_psy)
+static int ssoc_init(struct batt_drv *batt_drv)
 {
+	struct batt_ssoc_state *ssoc_state = &batt_drv->ssoc_state;
 	int ret, capacity;
 
-	ret = ssoc_rl_read_dt(&ssoc_state->ssoc_rl_state, node);
+	ret = ssoc_rl_read_dt(&ssoc_state->ssoc_rl_state, batt_drv->device->of_node);
 	if (ret < 0)
 		ssoc_state->ssoc_rl_state.rl_track_target = 1;
 	ssoc_state->ssoc_rl_state.rl_ssoc_target = -1;
@@ -1420,7 +1421,7 @@ static int ssoc_init(struct batt_ssoc_state *ssoc_state,
 	ssoc_uicurve_dup(ssoc_state->ssoc_curve, chg_curve);
 	ssoc_state->ssoc_curve_type = SSOC_UIC_TYPE_NONE;
 
-	ret = ssoc_work(ssoc_state, fg_psy);
+	ret = ssoc_work(ssoc_state, batt_drv->fg_psy);
 	if (ret < 0)
 		return -EIO;
 
@@ -1437,6 +1438,14 @@ static int ssoc_init(struct batt_ssoc_state *ssoc_state,
 						ssoc_state->ssoc_rl);
 
 	}
+
+	dump_ssoc_state(&batt_drv->ssoc_state, batt_drv->ssoc_log);
+
+	ret = gbatt_restore_capacity(batt_drv);
+	if (ret < 0)
+		dev_warn(batt_drv->device, "unable to restore capacity, ret=%d\n", ret);
+	else
+		ssoc_state->save_soc_available = true;
 
 	return 0;
 }
@@ -2480,19 +2489,37 @@ static void batt_update_csi_stat(struct batt_drv *batt_drv)
 	int thermal_level = 0;
 	ktime_t elap;
 
-	if (chg_state_is_disconnected(&batt_drv->chg_state) && csi_stats->vol_in != 0) {
-		/* update disconnected data */
-		const int vol_out = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
-		const int cc_out = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_CHARGE_COUNTER);
-
-		if (vol_out < 0 || cc_out < 0)
+	if (chg_state_is_disconnected(&batt_drv->chg_state)) {
+		/* Only update CSI stats when plugged and charging */
+		if(csi_stats->time_stat_last_update == 0)
 			return;
 
-		csi_stats->vol_out = vol_out / 1000;
-		csi_stats->cc_out = cc_out / 1000;
-		csi_stats->ssoc_out = ssoc;
+		/* update disconnected data */
+		if(csi_stats->vol_in != 0) {
+			const int vol_out = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
+			const int cc_out = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_CHARGE_COUNTER);
 
-		return;
+			if (vol_out < 0 || cc_out < 0)
+				return;
+
+			csi_stats->vol_out = vol_out / 1000;
+			csi_stats->cc_out = cc_out / 1000;
+			csi_stats->ssoc_out = ssoc;
+
+			logbuffer_log(batt_drv->ttf_stats.ttf_log,
+				"csi_stats: %s,%d,%d,%d,%d,%lld,%d,%d,%lld,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
+				 gbms_chg_ev_adapter_s(csi_stats->ad_type), csi_stats->ad_voltage * 100,
+				 csi_stats->ad_amperage * 100, csi_stats->ssoc_in, csi_stats->ssoc_out,
+				 csi_stats->time_sum / 60, csi_stats->aggregate_type, csi_stats->aggregate_status,
+				 csi_stats->time_effective / 60, csi_stats->temp_min, csi_stats->temp_max,
+				 csi_stats->vol_in, csi_stats->vol_out, csi_stats->cc_in, csi_stats->cc_out,
+				 (int)(csi_stats->thermal_severity[0] * 100 / csi_stats->time_sum),
+				 (int)(csi_stats->thermal_severity[1] * 100 / csi_stats->time_sum),
+				 (int)(csi_stats->thermal_severity[2] * 100 / csi_stats->time_sum),
+				 (int)(csi_stats->thermal_severity[3] * 100 / csi_stats->time_sum),
+				 (int)(csi_stats->thermal_severity[4] * 100 / csi_stats->time_sum));
+			return;
+		}
 	}
 
 	/* initial connected data */
@@ -2667,15 +2694,33 @@ static int csi_type_cb(struct gvotable_election *el, const char *reason,
 
 	return 0;
 }
+static bool batt_is_trickle(struct batt_ssoc_state *ssoc_state)
+{
+	return ssoc_state->bd_trickle_cnt > 0 &&
+		ssoc_state->bd_trickle_enable &&
+		!ssoc_state->bd_trickle_dry_run;
+}
+
+static bool batt_csi_status_is_dock(const struct batt_drv *batt_drv)
+{
+	int dock_status;
+
+	if (!batt_drv->csi_status_votable)
+		return false;
+
+	dock_status = gvotable_get_int_vote(batt_drv->csi_status_votable, "CSI_STATUS_DEFEND_DOCK");
+	return dock_status == CSI_STATUS_Defender_Dock;
+}
 
 /* all reset on disconnect */
 static void batt_update_csi_type(struct batt_drv *batt_drv)
 {
 	const bool is_disconnected = chg_state_is_disconnected(&batt_drv->chg_state);
-	const bool is_trickle = batt_drv->ssoc_state.bd_trickle_cnt > 0;
+	const bool is_trickle = batt_is_trickle(&batt_drv->ssoc_state);
 	const bool is_ac = batt_drv->msc_state == MSC_HEALTH ||
 			batt_drv->msc_state == MSC_HEALTH_PAUSE ||
 			batt_drv->msc_state == MSC_HEALTH_ALWAYS_ON;
+	const bool is_dock = batt_csi_status_is_dock(batt_drv);
 
 	if (!batt_drv->csi_type_votable) {
 		batt_drv->csi_type_votable =
@@ -2686,7 +2731,7 @@ static void batt_update_csi_type(struct batt_drv *batt_drv)
 
 	/* normal or full if connected, nothing otherwise */
 	gvotable_cast_long_vote(batt_drv->csi_type_votable, "CSI_TYPE_CONNECTED",
-				is_disconnected ? CSI_TYPE_None : CSI_TYPE_Normal,
+				(is_disconnected && !is_dock) ? CSI_TYPE_None : CSI_TYPE_Normal,
 				true);
 
 	/* SW JEITA */
@@ -2764,7 +2809,7 @@ static void batt_update_csi_status(struct batt_drv *batt_drv)
 	const int temp_hot_idx = profile->temp_nb_limits - 1;
 	const bool is_cold = batt_drv->batt_temp < profile->temp_limits[0];
 	const bool is_hot = batt_drv->batt_temp >= profile->temp_limits[temp_hot_idx];
-	const bool is_trickle = batt_drv->ssoc_state.bd_trickle_cnt > 0;
+	const bool is_trickle = batt_is_trickle(&batt_drv->ssoc_state);
 	const bool is_disconnected = chg_state_is_disconnected(&batt_drv->chg_state);
 	const union gbms_ce_adapter_details *ad = &batt_drv->ce_data.adapter_details;
 
@@ -4444,7 +4489,14 @@ static int msc_logic(struct batt_drv *batt_drv)
 
 	/* need a new fv_uv only on a new voltage tier.  */
 	if (vbatt_idx != batt_drv->vbatt_idx) {
-		fv_uv = profile->volt_limits[vbatt_idx];
+		bool no_back_down = (batt_drv->chg_state.f.flags & GBMS_CS_FLAG_DIRECT_CHG)
+				     && batt_drv->dc_irdrop;
+		/* Don't reduce fv_uv on next tier */
+		bool allow_next_vt_fv_uv = no_back_down && vbatt_idx > batt_drv->vbatt_idx
+					   && profile->volt_limits[vbatt_idx] > fv_uv;
+
+		if (!no_back_down || allow_next_vt_fv_uv || vbatt_idx < batt_drv->vbatt_idx)
+			fv_uv = profile->volt_limits[vbatt_idx];
 		batt_drv->checked_tier_switch_cnt = 0;
 		batt_drv->checked_ov_cnt = 0;
 	}
@@ -8472,21 +8524,15 @@ static void gbatt_record_over_temp(struct batt_drv *batt_drv)
 static int gbatt_save_capacity(struct batt_ssoc_state *ssoc_state)
 {
 	const int ui_soc = ssoc_get_capacity(ssoc_state);
-	const int gdf_soc = ssoc_get_real(ssoc_state);
-	int ret = 0, save_now;
+	int ret = 0;
 
 	if (!ssoc_state->save_soc_available)
 		return ret;
 
-	if (ui_soc == gdf_soc)
-		save_now = 0xffff;
-	else
-		save_now = ui_soc;
-
-	if (ssoc_state->save_soc != (u16)save_now) {
-		ssoc_state->save_soc = (u16)save_now;
+	if (ssoc_state->save_soc != (u16)ui_soc) {
+		ssoc_state->save_soc = (u16)ui_soc;
 		ret = gbms_storage_write(GBMS_TAG_RSOC, &ssoc_state->save_soc,
-							sizeof(ssoc_state->save_soc));
+					 sizeof(ssoc_state->save_soc));
 	}
 
 	return ret;
@@ -9249,29 +9295,26 @@ static int gbatt_set_health(struct batt_drv *batt_drv, int health)
 	return 0;
 }
 
-#define RESTORE_SOC_THRESHOLD	5
+#define RESTORE_SOC_LOWER_THRESHOLD	2
+#define RESTORE_SOC_UPPER_THRESHOLD	5
 static int gbatt_restore_capacity(struct batt_drv *batt_drv)
 {
 	struct batt_ssoc_state *ssoc_state = &batt_drv->ssoc_state;
-	int ret = 0, save_soc, gdf_soc;
+	int ret = 0, save_soc, gdf_soc, delta;
 
 	ret = gbms_storage_read(GBMS_TAG_RSOC, &ssoc_state->save_soc,
 						sizeof(ssoc_state->save_soc));
-
 	if (ret < 0)
 		return ret;
 
-	if (ssoc_state->save_soc) {
-		save_soc = (int)ssoc_state->save_soc;
-		gdf_soc = qnum_toint(ssoc_state->ssoc_gdf);
-		pr_info("save_soc:%d, gdf:%d", save_soc, gdf_soc);
+	save_soc = (int)ssoc_state->save_soc;
+	gdf_soc = qnum_toint(ssoc_state->ssoc_gdf);
+	delta = save_soc - gdf_soc;
 
-		if ((save_soc < gdf_soc) ||
-		    (save_soc - gdf_soc) > RESTORE_SOC_THRESHOLD)
-			return ret;
+	dev_info(batt_drv->device, "save_soc:%d, gdf:%d\n", save_soc, gdf_soc);
 
+	if (delta >= RESTORE_SOC_LOWER_THRESHOLD && delta <= RESTORE_SOC_UPPER_THRESHOLD)
 		gbatt_reset_curve(batt_drv, save_soc);
-	}
 
 	return ret;
 }
@@ -9854,17 +9897,9 @@ static void google_battery_init_work(struct work_struct *work)
 	/* cycle count is cached: read here bc SSOC, chg_profile might use it */
 	batt_update_cycle_count(batt_drv);
 
-	ret = ssoc_init(&batt_drv->ssoc_state, node, fg_psy);
+	ret = ssoc_init(batt_drv);
 	if (ret < 0 && batt_drv->batt_present)
 		goto retry_init_work;
-
-	dump_ssoc_state(&batt_drv->ssoc_state, batt_drv->ssoc_log);
-
-	ret = gbatt_restore_capacity(batt_drv);
-	if (ret < 0)
-		pr_warn("unable to restore capacity, ret=%d\n", ret);
-	else
-		batt_drv->ssoc_state.save_soc_available = true;
 
 	/* could read EEPROM and history here */
 
