@@ -2367,6 +2367,9 @@ static int pca9468_set_new_cc_max(struct pca9468_charger *pca9468, int cc_max)
 		goto done;
 	}
 
+	if (pca9468->ta_max_cur && pca9468->ta_max_cur < iin_max)
+		iin_max = pca9468->ta_max_cur;
+
 	ret = pca9468_set_new_iin(pca9468, iin_max);
 	if (ret == 0)
 		pca9468->cc_max = cc_max;
