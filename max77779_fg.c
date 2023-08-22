@@ -1590,6 +1590,9 @@ static int max77779_fg_get_property(struct power_supply *psy,
 	case GBMS_PROP_BATT_ID:
 		val->intval = chip->batt_id;
 		break;
+	case GBMS_PROP_RECAL_FG:
+		/* TODO: under porting */
+		break;
 	default:
 		err = -EINVAL;
 		break;
@@ -1688,6 +1691,9 @@ static int max77779_fg_set_property(struct power_supply *psy,
 		break;
 	case GBMS_PROP_FG_REG_LOGGING:
 		max77779_fg_monitor_log_data(chip, !!val->intval);
+		break;
+	case GBMS_PROP_RECAL_FG:
+		/* TODO: under porting */
 		break;
 	default:
 		return -EINVAL;
