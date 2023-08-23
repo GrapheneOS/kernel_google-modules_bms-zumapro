@@ -4,12 +4,12 @@
  *
  */
 
-#include <soc/google/bcl.h>
 #include "gs101_usecase.h"
 
 #ifndef MAX77759_CHARGER_H_
 #define MAX77759_CHARGER_H_
 
+#include "max777x9_bcl.h"
 struct max77759_chgr_data {
 	struct device *dev;
 
@@ -67,12 +67,6 @@ struct max77759_chgr_data {
 	u32 debug_reg_address;
 
 	struct gvotable_election *aicl_active_el;
-
-	/* thermal BCL */
-#if IS_ENABLED(CONFIG_GOOGLE_BCL)
-	struct bcl_device *bcl_dev;
-	struct delayed_work init_bcl;
-#endif
 
 	int chg_term_voltage;
 	int chg_term_volt_debounce;

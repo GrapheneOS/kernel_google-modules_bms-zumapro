@@ -9,6 +9,7 @@ filegroup(
     ]),
     visibility = [
         "//private/devices/google:__subpackages__",
+        "//private/google-modules/power/mitigation:__subpackages__",
         "//private/google-modules/power/reset:__subpackages__",
     ],
 )
@@ -42,6 +43,7 @@ kernel_module(
     kernel_build = "//private/google-modules/soc/gs:gs_kernel_build",
     visibility = [
         "//private/devices/google:__subpackages__",
+        "//private/google-modules/power/mitigation:__subpackages__",
         "//private/google-modules/power/reset:__subpackages__",
         "//private/google-modules/soc/gs:__pkg__",
     ],
