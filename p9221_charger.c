@@ -3598,9 +3598,13 @@ static void p9221_notifier_check_dc(struct p9221_charger_data *charger)
 		/* stop spoofing is queued */
 		if (cancel_delayed_work(&charger->stop_online_spoof_work)) {
 			logbuffer_prlog(charger->log, "dc=1: online_spoof=0");
+			if (charger->online_spoof)
+				disable_irq(charger->pdata->irq_det_int);
 			charger->online_spoof = false;
 		} else {
 			dev_err(&charger->client->dev, "Error: no spoof work even though spoof=1 && dc=1\n");
+			if (charger->online_spoof)
+				disable_irq(charger->pdata->irq_det_int);
 			charger->online_spoof = false;
 		}
 	}
@@ -6336,6 +6340,7 @@ static void p9xxx_stop_online_spoof_work(struct work_struct *work)
 	if (charger->online_spoof) {
 		/* timeout after WLC re-enabled */
 		logbuffer_prlog(charger->log, "timeout: online_spoof=0");
+		disable_irq(charger->pdata->irq_det_int);
 		charger->online_spoof = false;
 	}
 }
@@ -6351,6 +6356,7 @@ static void p9xxx_change_det_status_work(struct work_struct *work)
 	if (charger->det_status != det_gpio) {
 		if (det_gpio == 1 && charger->det_status == 0 && charger->online_spoof) {
 			logbuffer_prlog(charger->log, "det=0: online_spoof=0");
+			disable_irq(charger->pdata->irq_det_int);
 			charger->online_spoof = false;
 		}
 		charger->det_status = det_gpio;
@@ -7485,6 +7491,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 		}
 		charger->det_status = gpio_get_value(charger->pdata->irq_det_gpio);
 		enable_irq_wake(charger->pdata->irq_det_int);
+		disable_irq(charger->pdata->irq_det_int);
 	}
 
 	charger->last_capacity = -1;
