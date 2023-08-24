@@ -2144,7 +2144,7 @@ static int max1720x_get_age(struct max1720x_chip *chip)
 }
 
 #define MAX_HIST_FULLCAP	0x3FF
-static int max1720x_get_fade_rate(struct max1720x_chip *chip)
+static int max1720x_get_fade_rate(struct max1720x_chip *chip, int *fade_rate)
 {
 	struct max17x0x_eeprom_history hist = { 0 };
 	int bhi_fcn_count = chip->bhi_fcn_count;
@@ -2188,10 +2188,11 @@ static int max1720x_get_fade_rate(struct max1720x_chip *chip)
 
 	/* convert from max17x0x_eeprom_history to percent */
 	ratio = fcn_sum / (bhi_fcn_count * 8);
-	if (ratio > 100)
-		ratio = 100;
 
-	return 100 - ratio;
+	/* allow negative value when capacity larger than design */
+	*fade_rate = 100 - ratio;
+
+	return 0;
 }
 
 
@@ -2414,7 +2415,7 @@ static int max1720x_get_property(struct power_supply *psy,
 		val->intval = batt_ce_full_estimate(&chip->cap_estimate);
 		break;
 	case GBMS_PROP_CAPACITY_FADE_RATE:
-		val->intval = max1720x_get_fade_rate(chip);
+		err = max1720x_get_fade_rate(chip, &val->intval);
 		break;
 	case GBMS_PROP_BATT_ID:
 		val->intval = chip->batt_id;
