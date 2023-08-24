@@ -4006,16 +4006,12 @@ static int bhi_cap_data_update(struct bhi_data *bhi_data, struct batt_drv *batt_
 	int cap_fade;
 
 	/* GBMS_PROP_CAPACITY_FADE_RATE is in percent */
-	if (fade_rate < 0 || designcap < 0)
+	if (designcap < 0)
 		return -ENODATA;
 	if (bhi_data->pack_capacity <= 0)
 		return -EINVAL;
 
 	cap_fade = fade_rate * designcap / (bhi_data->pack_capacity * 1000);
-	if (cap_fade < 0)
-		return -ENODATA;
-	if (cap_fade > 100)
-		cap_fade = 100;
 
 	bhi_data->capacity_fade = cap_fade;
 
@@ -4071,12 +4067,21 @@ static int bhi_calc_cap_index(int algo, struct batt_drv *batt_drv)
 	 */
 
 	index = (capacity_health * BHI_ALGO_FULL_HEALTH) / bhi_data->pack_capacity;
-	if (index > BHI_ALGO_FULL_HEALTH)
-		index = BHI_ALGO_FULL_HEALTH;
 
 	pr_debug("%s: algo=%d index=%d ch=%d, ca=%d, pc=%d, fr=%d\n", __func__,
 		algo, index, capacity_health, capacity_aacr, bhi_data->pack_capacity,
 		bhi_data->capacity_fade);
+
+	return index;
+}
+
+static int bhi_cap_index_bound(int bhi_algo, int index)
+{
+	if (index < 0)
+		return BHI_ALGO_FULL_HEALTH;
+
+	if (index > BHI_ALGO_FULL_HEALTH && bhi_algo > BHI_ALGO_ACHI)
+		return BHI_ALGO_FULL_HEALTH;
 
 	return index;
 }
@@ -4192,8 +4197,6 @@ static int bhi_calc_imp_index(int algo, const struct health_data *health_data)
 	/* The limit is 2x of activation. */
 	imp_index = (2 * bhi_data->act_impedance - cur_impedance) * BHI_ALGO_FULL_HEALTH /
 		    bhi_data->act_impedance;
-	if (imp_index < 0)
-		imp_index = 0;
 
 	pr_debug("%s: algo=%d index=%d current=%d, activation=%d\n", __func__,
 		 algo, imp_index, cur_impedance, bhi_data->act_impedance);
@@ -4380,14 +4383,13 @@ static int batt_bhi_stats_update(struct batt_drv *batt_drv)
 		health_data->bhi_data.cycle_count = batt_drv->cycle_count;
 
 	index = bhi_calc_cap_index(bhi_algo, batt_drv);
-	if (index < 0)
-		index = BHI_ALGO_FULL_HEALTH;
+	index = bhi_cap_index_bound(bhi_algo, index);
 	changed |= health_data->bhi_cap_index != index;
 	health_data->bhi_cap_index = index;
 
 	index = bhi_calc_imp_index(bhi_algo, health_data);
 	if (index < 0)
-		index = BHI_ALGO_FULL_HEALTH;
+		index = 0;
 	changed |= health_data->bhi_imp_index != index;
 	health_data->bhi_imp_index = index;
 

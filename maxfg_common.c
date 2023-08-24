@@ -34,7 +34,7 @@ void dump_model(struct device *dev, u16 model_start, u16 *data, int count)
 }
 EXPORT_SYMBOL_GPL(dump_model);
 
-int maxfg_get_fade_rate(struct device *dev, int bhi_fcn_count)
+int maxfg_get_fade_rate(struct device *dev, int bhi_fcn_count, int *fade_rate)
 {
 	struct maxfg_eeprom_history hist = { 0 };
 	int ret, ratio, i, fcn_sum = 0;
@@ -77,9 +77,10 @@ int maxfg_get_fade_rate(struct device *dev, int bhi_fcn_count)
 
 	/* convert from maxfg_eeprom_history to percent */
 	ratio = fcn_sum / (bhi_fcn_count * 8);
-	if (ratio > 100)
-		ratio = 100;
 
-	return 100 - ratio;
+	/* allow negative value when capacity larger than design */
+	*fade_rate = 100 - ratio;
+
+	return 0;
 }
 EXPORT_SYMBOL_GPL(maxfg_get_fade_rate);

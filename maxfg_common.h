@@ -228,6 +228,6 @@ static inline int maxfg_regmap_writeverify(const struct maxfg_regmap *map,
 
 /* dump FG model data */
 void dump_model(struct device *dev, u16 model_start, u16 *data, int count);
-int maxfg_get_fade_rate(struct device *dev, int bhi_fcn_count);
+int maxfg_get_fade_rate(struct device *dev, int bhi_fcn_count, int *fade_rate);
 
 #endif  // MAXFG_COMMON_H_
