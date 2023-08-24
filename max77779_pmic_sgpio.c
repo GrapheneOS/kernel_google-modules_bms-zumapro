@@ -199,19 +199,13 @@ static int max77779_pmic_sgpio_set_irq_type(struct irq_data *d,
 
 	switch (type) {
 	case IRQF_TRIGGER_NONE:
-		info->trig_type[d->hwirq] = MAX77779_SGPIO_CNFG_IRQ_DISABLE;
-		break;
 	case IRQF_TRIGGER_RISING:
-		info->trig_type[d->hwirq] = MAX77779_SGPIO_CNFG_IRQ_RISING;
-		break;
 	case IRQF_TRIGGER_FALLING:
-		info->trig_type[d->hwirq] = MAX77779_SGPIO_CNFG_IRQ_FALLING;
-		break;
 	case (IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING):
-		info->trig_type[d->hwirq] = MAX77779_SGPIO_CNFG_IRQ_BOTH;
-		break;
 	case IRQF_TRIGGER_HIGH:
 	case IRQF_TRIGGER_LOW:
+		info->trig_type[d->hwirq] = type;
+		break;
 	default:
 		return -EINVAL;
 	}
@@ -227,6 +221,26 @@ static void max77779_pmic_sgpio_bus_lock(struct irq_data *d)
 	mutex_lock(&info->lock);
 }
 
+static int max77779_pmic_sgpio_irqf2cnfg(unsigned int irqf)
+{
+	switch (irqf) {
+	case IRQF_TRIGGER_NONE:
+		return MAX77779_SGPIO_CNFG_IRQ_DISABLE;
+	case IRQF_TRIGGER_RISING:
+		return MAX77779_SGPIO_CNFG_IRQ_RISING;
+	case IRQF_TRIGGER_FALLING:
+		return MAX77779_SGPIO_CNFG_IRQ_FALLING;
+	case (IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING):
+		return MAX77779_SGPIO_CNFG_IRQ_BOTH;
+	case IRQF_TRIGGER_HIGH:
+		return MAX77779_SGPIO_CNFG_IRQ_RISING;
+	case IRQF_TRIGGER_LOW:
+		return MAX77779_SGPIO_CNFG_IRQ_FALLING;
+	default:
+		return MAX77779_SGPIO_CNFG_IRQ_DISABLE;
+	}
+}
+
 static void max77779_pmic_sgpio_bus_sync_unlock(struct irq_data *d)
 {
 	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
@@ -235,6 +249,7 @@ static void max77779_pmic_sgpio_bus_sync_unlock(struct irq_data *d)
 	unsigned int id;
 	unsigned int reg;
 	unsigned int unmasked;
+	unsigned int cnfg_val;
 
 	if (!(info->trig_type_u | info->mask_u))
 		goto unlock_out;
@@ -252,11 +267,13 @@ static void max77779_pmic_sgpio_bus_sync_unlock(struct irq_data *d)
 		id = __ffs(info->mask_u);
 		unmasked = !(info->mask & BIT(id));
 		reg = MAX77779_SGPIO_CNFG0 + id;
+		cnfg_val = max77779_pmic_sgpio_irqf2cnfg(info->trig_type[id]);
+		cnfg_val <<= MAX77779_SGPIO_CNFG0_IRQ_SEL_SHIFT;
 
 		if (unmasked)
 			max77779_pmic_reg_update(core, reg,
 					MAX77779_SGPIO_CNFG0_IRQ_SEL_MASK,
-					info->trig_type[id] << MAX77779_SGPIO_CNFG0_IRQ_SEL_SHIFT);
+					cnfg_val);
 
 		info->mask_u &= ~BIT(id);
 	}
@@ -265,15 +282,51 @@ unlock_out:
 	mutex_unlock(&info->lock);
 }
 
+static bool max77779_sgpio_handle_nested_irq(struct max77779_pmic_sgpio_info *info,
+					     int offset)
+{
+	struct irq_domain *domain = info->gpio_chip.irq.domain;
+	unsigned int sgpio_sts_reg = MAX77779_SGPIO_CNFG0 + offset;
+	int sub_irq;
+	struct device *core = info->core;
+	unsigned int sgpio_sts;
+	unsigned int sgpio_val;
+	unsigned int trig_type;
+	bool lvl_active;
+	int err;
+
+	sub_irq = irq_find_mapping(domain, offset);
+	if (sub_irq)
+		handle_nested_irq(sub_irq);
+
+	trig_type = info->trig_type[offset];
+	if (trig_type & (IRQF_TRIGGER_HIGH | IRQF_TRIGGER_LOW)) {
+		/* check that the level condition has been handled */
+		err = max77779_pmic_reg_read(core, sgpio_sts_reg, &sgpio_sts);
+		if (err) {
+			dev_err_ratelimited(info->dev, "read error %d\n", err);
+			return true;
+		}
+
+		sgpio_val = sgpio_sts & MAX77779_SGPIO_CNFG0_DATA_MASK;
+		trig_type = info->trig_type[offset];
+		lvl_active = ((trig_type == IRQF_TRIGGER_LOW) && !sgpio_val) ||
+			     ((trig_type == IRQF_TRIGGER_HIGH) && sgpio_val);
+
+		return !lvl_active;
+	}
+	return true;
+}
+
 static irqreturn_t max77779_sgpio_irq_handler(int irq, void *ptr)
 {
 	struct max77779_pmic_sgpio_info *info = ptr;
 	struct device *core = info->core;
-	struct irq_domain *domain = info->gpio_chip.irq.domain;
 	unsigned int sgpio_int;
-	int sub_irq;
+	unsigned int sgpio_handled = 0;
 	int offset;
 	int err;
+	bool handled;
 
 	err = max77779_pmic_reg_read(core, MAX77779_SGPIO_INT,
 			&sgpio_int);
@@ -284,14 +337,18 @@ static irqreturn_t max77779_sgpio_irq_handler(int irq, void *ptr)
 
 	for (offset = 0; offset < MAX77779_SGPIO_NUM_GPIOS; offset++) {
 		if (sgpio_int & BIT(offset)) {
-			sub_irq = irq_find_mapping(domain, offset);
-			if (sub_irq)
-				handle_nested_irq(sub_irq);
+			handled = max77779_sgpio_handle_nested_irq(info,
+					offset);
+			sgpio_handled |= handled << offset;
 		}
 	}
 
+	/*
+	 * Only clear the handled bits.
+	 * We will be called again for any that don't get cleared.
+	 */
 	err = max77779_pmic_reg_write(core, MAX77779_SGPIO_INT,
-			sgpio_int);
+			sgpio_handled);
 	if (err)
 		dev_err_ratelimited(info->dev, "write error %d\n", err);
 
