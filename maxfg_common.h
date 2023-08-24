@@ -9,6 +9,7 @@
 #define MAXFG_COMMON_H_
 
 #include <linux/device.h>
+#include <linux/regmap.h>
 
 #define MAX1720X_GAUGE_TYPE	0
 #define MAX1730X_GAUGE_TYPE	1

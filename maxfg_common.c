@@ -15,6 +15,7 @@
  */
 
 #include <linux/cdev.h>
+#include "maxfg_common.h"
 
 /* dump FG model data */
 void dump_model(struct device *dev, u16 model_start, u16 *data, int count)
