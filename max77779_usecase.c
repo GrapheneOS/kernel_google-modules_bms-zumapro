@@ -772,7 +772,7 @@ void gs201_dump_usecasase_config(struct max77779_usecase_data *uc_data)
 		 uc_data->bst_on, uc_data->ext_bst_ctl, uc_data->ext_bst_mode);
 	pr_info("wlc_en:%d, reverse12_en:%d rtx_ready:%d\n",
 		uc_data->wlc_en, uc_data->reverse12_en, uc_data->rtx_ready);
-	pr_info("rx_to_rx_otg:%d ext_otg_only:%d\n",
-		uc_data->rx_otg_en, uc_data->ext_otg_only);
+	pr_info("rx_to_rx_otg:%d ext_otg_only:%d wlc_spoof_gpio:%d\n",
+		uc_data->rx_otg_en, uc_data->ext_otg_only, uc_data->wlc_spoof_gpio);
 }
 

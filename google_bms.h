@@ -493,6 +493,7 @@ const char *gbms_chg_ev_adapter_s(int adapter);
 #define VOTABLE_DC_CHG_AVAIL	"DC_AVAIL"
 #define REASON_DC_DRV		"DC_DRV"
 #define REASON_MDIS		"MDIS"
+#define REASON_THERM		"THERMAL_DAEMON_VOTER"
 
 #define HDA_TZ_WLC_NONE		(0)
 #define HDA_TZ_WLC_ADAPTER	(1)
