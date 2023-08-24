@@ -103,6 +103,8 @@
 #define WLCDC_AUTH_CHECK_INIT_DELAY_MS	(6 * 1000)
 #define P9XXX_DC_ICL_GPP_UA		1500000
 
+#define I2C_LOG_NUM			128
+
 /*
  * P9221 common registers
  */
@@ -965,6 +967,9 @@ struct p9221_charger_data {
 	bool				votable_init_done;
 	u32				trigger_dd;
 	u32				low_neg_pwr_icl;
+	int				enable_i2c_debug;
+	char				*i2c_txdebug_buf;
+	char				*i2c_rxdebug_buf;
 
 #if IS_ENABLED(CONFIG_GPIOLIB)
 	struct gpio_chip gpio;

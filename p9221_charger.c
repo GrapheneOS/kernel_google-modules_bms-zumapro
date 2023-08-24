@@ -173,6 +173,26 @@ static int p9221_reg_read_n(struct p9221_charger_data *charger, u16 reg,
 		return nret;
 	}
 
+	if (charger->enable_i2c_debug) {
+		const int buf_size = I2C_LOG_NUM * 3 + 1;
+		int i, len = n;
+
+		if (!charger->i2c_rxdebug_buf)
+			charger->i2c_rxdebug_buf = kmalloc(buf_size, GFP_KERNEL);
+
+		for (i = 0; len > 0; i++) {
+			const int count = len > I2C_LOG_NUM ? I2C_LOG_NUM : len;
+			const int offset = i * I2C_LOG_NUM;
+
+			p9221_hex_str((u8 *)buf + offset, count,
+				      charger->i2c_rxdebug_buf, buf_size, 0);
+			dev_info(&charger->client->dev,
+				 "i2c read %d bytes from reg %04x, offset: %04x: %s\n",
+				 count, reg, offset, charger->i2c_rxdebug_buf);
+			len -= I2C_LOG_NUM;
+		}
+	}
+
 	return (ret == 2) ? 0 : -EIO;
 }
 
@@ -225,6 +245,26 @@ static int p9221_reg_write_n(struct p9221_charger_data *charger, u16 reg,
 			"%s: i2c write error, reg: 0x%x, n: %zd ret: %d (%d)\n",
 			__func__, reg, n, ret, nret);
 		return nret;
+	}
+
+	if (charger->enable_i2c_debug) {
+		const int buf_size = I2C_LOG_NUM * 3 + 1;
+		int i, len = n;
+
+		if (!charger->i2c_txdebug_buf)
+			charger->i2c_txdebug_buf = kmalloc(buf_size, GFP_KERNEL);
+
+		for (i = 0; len > 0; i++) {
+			const int count = len > I2C_LOG_NUM ? I2C_LOG_NUM : len;
+			const int offset = i * I2C_LOG_NUM;
+
+			p9221_hex_str((u8 *)buf + offset, count,
+				      charger->i2c_txdebug_buf, buf_size, 0);
+			dev_info(&charger->client->dev,
+				 "i2c write %d bytes to reg %04x, offset: %04x: %s\n",
+				 count, reg, offset, charger->i2c_txdebug_buf);
+			len -= I2C_LOG_NUM;
+		}
 	}
 
 	return 0;
@@ -7989,6 +8029,8 @@ static int p9221_charger_probe(struct i2c_client *client,
 				   &charger->ra9530_tx_plim);
 		debugfs_create_u32("de_ocp_ua", 0644, charger->debug_entry,
 				   &charger->wlc_ocp);
+		debugfs_create_u32("enable_i2c_debug", 0644, charger->debug_entry,
+				   &charger->enable_i2c_debug);
 	}
 
 	/* can independently read battery capacity */
@@ -8102,6 +8144,10 @@ static void p9221_charger_remove(struct i2c_client *client)
 
 	wakeup_source_unregister(charger->align_ws);
 	wakeup_source_unregister(charger->det_status_ws);
+	if (charger->i2c_rxdebug_buf)
+		kfree(charger->i2c_rxdebug_buf);
+	if (charger->i2c_txdebug_buf)
+		kfree(charger->i2c_txdebug_buf);
 }
 
 static const struct i2c_device_id p9221_charger_id_table[] = {
