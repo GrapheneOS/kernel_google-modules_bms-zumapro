@@ -711,6 +711,7 @@ static int p9221_set_switch_reg(struct p9221_charger_data *charger, bool enable)
 #define EPP_MODE_REQ_VOUT		12000
 #define WLC_VOUT_RAMP_DOWN_MV		15300
 #define WLC_VOUT_CFG_STEP		40		/* b/194346461 ramp down VOUT */
+#define WLC_VOUT_MARGIN_MV		100
 static int p9xxx_set_bypass_mode(struct p9221_charger_data *charger)
 {
 	const int req_pwr_mv = charger->de_epp_neg_pwr > 0 ?
@@ -743,7 +744,7 @@ static int p9xxx_set_bypass_mode(struct p9221_charger_data *charger)
 		if (!vout_mv)
 			vout_mv = vout_now;
 		if (vout_mv < vout_target) {
-			if (vout_now < vout_target) {
+			if (vout_now < vout_target + WLC_VOUT_MARGIN_MV) {
 				dev_info(&charger->client->dev,
 					 "%s: underflow vout=%d (target=%d)\n",
 					 __func__, vout_now, vout_target);
@@ -869,6 +870,7 @@ static int p9221_reset_wlc_dc(struct p9221_charger_data *charger)
 					P9221_HPP_VOTER, false);
 	} else {
 		charger->prop_mode_en = false;
+		charger->negotiation_complete = false;
 		p9221_write_fod(charger);
 	}
 	ret = p9xxx_chip_set_cmfet_reg(charger, P9412_CMFET_DEFAULT);
@@ -1124,6 +1126,7 @@ static void p9221_set_offline(struct p9221_charger_data *charger)
 	if (!charger->wait_for_online)
 		p9221_reset_wlc_dc(charger);
 	charger->prop_mode_en = false;
+	charger->negotiation_complete = false;
 	charger->hpp_hv = false;
 	charger->fod_mode = -1;
 	charger->extended_int_recv = false;
@@ -2578,7 +2581,7 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 		}
 
 		if (!(charger->prop_mode_en && p9xxx_is_capdiv_en(charger))) {
-			ret = charger->chip_capdiv_en(charger, CDMODE_BYPASS_MODE);
+			ret = p9221_reset_wlc_dc(charger);
 			if (ret < 0)
 				dev_warn(&charger->client->dev,
 					 "Cannot change to bypass mode (%d)\n", ret);
@@ -6281,8 +6284,15 @@ static void p9221_irq_handler(struct p9221_charger_data *charger, u16 irq_src)
 		u8 mode;
 
 		res = charger->chip_get_sys_mode(charger, &mode);
-		if (res == 0 && mode == P9XXX_SYS_OP_MODE_PROPRIETARY)
+		if (res == 0 && mode == P9XXX_SYS_OP_MODE_PROPRIETARY) {
+			/*
+			 * If proprietary mode is enabled, indicates a pending interrupt
+			 * when the negotiation process is complete.
+			 */
+			if (charger->prop_mode_en == true)
+				charger->negotiation_complete = true;
 			charger->prop_mode_en = true;
+		}
 
 		/* charger->prop_mode_en is reset on disconnect */
 	}

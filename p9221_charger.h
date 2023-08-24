@@ -896,6 +896,7 @@ struct p9221_charger_data {
 	bool				chg_on_rtx;
 	bool				is_rtx_mode;
 	bool				prop_mode_en;
+	bool				negotiation_complete;
 	bool				no_fod;
 	u32				de_q_value;
 	u16				fw_rev;

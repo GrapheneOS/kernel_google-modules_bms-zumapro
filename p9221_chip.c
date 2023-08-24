@@ -2118,8 +2118,14 @@ static int ra9530_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 		return 0;
 	}
 
-	if (val8 == P9XXX_SYS_OP_MODE_PROPRIETARY)
+	/* wait for PropModeStat interrupt/wait Vout raise to request power */
+	max_wait_time = chgr->de_wait_prop_irq_ms > 0 ?
+			chgr->de_wait_prop_irq_ms : chgr->pdata->wait_prop_irq_ms;
+
+	if (val8 == P9XXX_SYS_OP_MODE_PROPRIETARY) {
+		chgr->prop_mode_en = true;
 		goto request_pwr;
+	}
 
 	ret = p9xxx_chip_get_tx_mfg_code(chgr, &chgr->mfg);
 	if (chgr->mfg != WLC_MFG_GOOGLE) {
@@ -2188,8 +2194,7 @@ static int ra9530_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 	/*
 	 * wait for PropModeStat interrupt, register 0x37[4] for 60 * 50 = 3 secs
 	 */
-        max_wait_time = chgr->de_wait_prop_irq_ms > 0 ? chgr->de_wait_prop_irq_ms : chgr->pdata->wait_prop_irq_ms;
-        loop_cnt = max_wait_time / 50;
+	loop_cnt = max_wait_time / 50;
 	for (loops = loop_cnt ; loops ; loops--) {
 		if (chgr->prop_mode_en) {
 			dev_info(&chgr->client->dev, "PROP_MODE: Proprietary Mode Enabled\n");
@@ -2251,10 +2256,13 @@ request_pwr:
 		goto err_exit;
 	}
 
-	for (i = 0; i < 30; i += 1) {
-		usleep_range(100 * USEC_PER_MSEC, 120 * USEC_PER_MSEC);
+	loop_cnt = max_wait_time / 50;
+	for (loops = loop_cnt ; loops ; loops--) {
+		usleep_range(50 * USEC_PER_MSEC, 60 * USEC_PER_MSEC);
 		if (!chgr->online)
 			chgr->prop_mode_en = false;
+		if (chgr->negotiation_complete)
+			break;
 	}
 
 err_exit:
@@ -2281,8 +2289,11 @@ err_exit:
 			 cdmode, pwr_stp, prop_req_pwr, prop_cur_pwr);
 	}
 
-	if (!chgr->prop_mode_en) {
+	if (!chgr->prop_mode_en || !chgr->negotiation_complete) {
 		int rc;
+
+		dev_dbg(&chgr->client->dev, "%s prop_mode_en=%d,negotiation_complete=%d\n",
+			__func__, chgr->prop_mode_en, chgr->negotiation_complete);
 
 		rc = gvotable_cast_int_vote(chgr->dc_icl_votable, P9221_HPP_VOTER,
 					    P9XXX_PROPMODE_ENABLE_ICL_UA, false);
@@ -2298,7 +2309,7 @@ err_exit:
 		}
 	}
 
-	return chgr->prop_mode_en;
+	return chgr->prop_mode_en && chgr->negotiation_complete;
 }
 
 void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id)
