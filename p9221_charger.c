@@ -2416,6 +2416,7 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 		if (feat_enable) {
 			pr_debug("%s: Feature check OK\n", __func__);
 		} else if (charger->auth_delay) {
+			dev_info(&charger->client->dev, "Auth delay\n");
 			mutex_unlock(&charger->auth_lock);
 			return -EAGAIN;
 		} else {
@@ -4199,6 +4200,7 @@ static ssize_t p9221_store_txlen(struct device *dev,
 	ret = p9221_send_data(charger);
 	if (ret) {
 		charger->tx_done = true;
+		set_renego_state(charger, P9XXX_AVAILABLE);
 		return ret;
 	}
 
