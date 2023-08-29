@@ -759,6 +759,7 @@ struct p9221_charger_ints_bit {
 	u16				pp_rcvd_bit;
 	u16				cc_error_bit;
 	u16				cc_reset_bit;
+	u16				cc_vout_bit;
 	u16				propmode_stat_bit;
 	u16				cdmode_change_bit;
 	u16				cdmode_err_bit;
@@ -929,6 +930,7 @@ struct p9221_charger_data {
 	bool				send_eop;
 	wait_queue_head_t		ccreset_wq;
 	bool				cc_reset_pending;
+	bool				cc_vout_ready;
 	int				send_txid_cnt;
 	bool				sw_ramp_done;
 	bool				hpp_hv;
@@ -1025,6 +1027,7 @@ struct p9221_charger_data {
 	int (*chip_send_txid)(struct p9221_charger_data *chgr);
 	int (*chip_send_csp_in_txmode)(struct p9221_charger_data *chgr, u8 stat);
 	int (*chip_capdiv_en)(struct p9221_charger_data *chgr, u8 mode);
+	bool (*chip_is_calibrated)(struct p9221_charger_data *chgr);
 };
 
 u8 p9221_crc8(u8 *pdata, size_t nbytes, u8 crc);

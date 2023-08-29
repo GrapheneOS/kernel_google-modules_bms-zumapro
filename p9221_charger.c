@@ -548,11 +548,12 @@ static int p9221_send_csp(struct p9221_charger_data *charger, u8 stat)
 
 	if (charger->online) {
 		int wcin;
+		const bool ext_bit = p9221_is_epp(charger) &&
+				     charger->ints.extended_mode_bit &&
+				     !charger->extended_int_recv;
 
 		wcin = p9221_has_dc_in(charger);
-		if (wcin <= 0 ||
-		    (p9221_is_epp(charger) &&
-		     charger->ints.extended_mode_bit && !charger->extended_int_recv)) {
+		if (wcin <= 0 || ext_bit || !charger->chip_is_calibrated(charger)) {
 			charger->last_capacity = -1;
 			dev_dbg(&charger->client->dev,
 				"skip to send CSP=%d wcin=%d extended_int_recv=%d\n",
@@ -1130,6 +1131,7 @@ static void p9221_set_offline(struct p9221_charger_data *charger)
 	charger->online = false;
 	charger->online_at = 0;
 	charger->check_rp = RP_NOTSET;
+	charger->cc_vout_ready = false;
 	cancel_delayed_work(&charger->charge_stats_hda_work);
 	p9221_dump_charge_stats(charger);
 	mutex_unlock(&charger->stats_lock);
@@ -2366,21 +2368,6 @@ unlock_done:
 	mutex_unlock(&charger->stats_lock);
 }
 
-static bool is_epp_calibration_done(struct p9221_charger_data *charger)
-{
-	u8 reg;
-	int ret;
-
-	ret = p9221_reg_read_8(charger, P9412_EPP_CAL_STATE_REG, &reg);
-
-	if (charger->chip_id == RA9530_CHIP_ID)
-		return ((ret == 0) && ((reg & RA9530_EPP_CAL_STATE_MASK) == 0));
-
-	dev_info(&charger->client->dev, "EPP_CAL_STATE_REG=%02x\n", reg);
-
-	return ((ret == 0) && ((reg & P9412_EPP_CAL_STATE_MASK) == 0));
-}
-
 static bool feature_check_fast_charge(struct p9221_charger_data *charger)
 {
 	struct p9221_charger_feature *chg_fts = &charger->chg_features;
@@ -2543,7 +2530,7 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 			return -EOPNOTSUPP;
 
 		/* need to check calibration is done before re-negotiate */
-		if (!is_epp_calibration_done(charger)) {
+		if (!charger->chip_is_calibrated(charger)) {
 			dev_warn(&charger->client->dev, "Calibrating\n");
 			return -EAGAIN;
 		}
@@ -4460,6 +4447,11 @@ static ssize_t p9221_store_txlen(struct device *dev,
 	if (!p9221_is_epp(charger) && !charger->trigger_power_mitigation)
 		return -EINVAL;
 
+	if (!charger->chip_is_calibrated(charger)) {
+		dev_warn(&charger->client->dev, "Calibrating for tx\n");
+		return -EAGAIN;
+	}
+
 	charger->tx_len = len;
 
 	ret = set_renego_state(charger, P9XXX_SEND_DATA);
@@ -4835,7 +4827,7 @@ static ssize_t wpc_ready_show(struct device *dev,
 		return scnprintf(buf, PAGE_SIZE, "N\n");
 
 	return scnprintf(buf, PAGE_SIZE, "%c\n",
-			 is_epp_calibration_done(charger) ? 'Y' : 'N');
+			 charger->chip_is_calibrated(charger) ? 'Y' : 'N');
 }
 
 static DEVICE_ATTR_RO(wpc_ready);
@@ -6336,6 +6328,9 @@ static void p9221_irq_handler(struct p9221_charger_data *charger, u16 irq_src)
 
 	p9221_check_dc_reset(charger, irq_src);
 
+	if (irq_src & charger->ints.vout_changed_bit)
+		charger->cc_vout_ready = true;
+
 	if (irq_src & charger->ints.stat_limit_mask)
 		p9221_over_handle(charger, irq_src);
 
@@ -7520,6 +7515,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	charger->extended_int_recv = false;
 	charger->trigger_dd = DREAM_DEBOUNCE_TIME_S;
 	charger->det_status = 1;
+	charger->cc_vout_ready = false;
 	mutex_init(&charger->io_lock);
 	mutex_init(&charger->cmd_lock);
 	mutex_init(&charger->stats_lock);

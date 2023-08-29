@@ -2312,6 +2312,41 @@ err_exit:
 	return chgr->prop_mode_en && chgr->negotiation_complete;
 }
 
+static bool p9xxx_chip_is_calibrated(struct p9221_charger_data *chgr)
+{
+	return true;
+}
+
+static bool p9412_chip_is_calibrated(struct p9221_charger_data *chgr)
+{
+	u8 val;
+	int ret;
+
+	ret = chgr->reg_read_8(chgr, P9412_EPP_CAL_STATE_REG, &val);
+
+	if (ret)
+		return false;
+
+	dev_dbg(&chgr->client->dev, "EPP_CAL_STATE_REG=%02x\n", val);
+
+	return (val & P9412_EPP_CAL_STATE_MASK) == 0;
+}
+
+static bool ra9530_chip_is_calibrated(struct p9221_charger_data *chgr)
+{
+	u8 val;
+	int ret;
+
+	ret = chgr->reg_read_8(chgr, P9412_EPP_CAL_STATE_REG, &val);
+
+	if (ret)
+		return false;
+
+	dev_dbg(&chgr->client->dev, "EPP_CAL_STATE_REG=%02x\n", val);
+
+	return chgr->cc_vout_ready && (val & RA9530_EPP_CAL_STATE_MASK) == 0;
+}
+
 void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id)
 {
 	chgr->ints.mode_changed_bit = P9221R5_STAT_MODECHANGED;
@@ -2329,6 +2364,7 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 		chgr->ints.pp_rcvd_bit = P9412_STAT_PPRCVD;
 		chgr->ints.cc_error_bit = P9412_STAT_CCERROR;
 		chgr->ints.cc_reset_bit = 0;
+		chgr->ints.cc_vout_bit = 0;
 		chgr->ints.propmode_stat_bit = P9412_PROP_MODE_STAT_INT;
 		chgr->ints.cdmode_change_bit = P9412_CDMODE_CHANGE_INT;
 		chgr->ints.cdmode_err_bit = P9412_CDMODE_ERROR_INT;
@@ -2355,6 +2391,7 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 		chgr->ints.pp_rcvd_bit = P9412_STAT_PPRCVD;
 		chgr->ints.cc_error_bit = P9412_STAT_CCERROR;
 		chgr->ints.cc_reset_bit = 0;
+		chgr->ints.cc_vout_bit = P9221R5_STAT_VOUTCHANGED;
 		chgr->ints.propmode_stat_bit = P9412_PROP_MODE_STAT_INT;
 		chgr->ints.cdmode_change_bit = 0; // No capdiv mode
 		chgr->ints.cdmode_err_bit = 0; // No capdiv mode
@@ -2380,6 +2417,7 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 		chgr->ints.pp_rcvd_bit = P9221R5_STAT_PPRCVD;
 		chgr->ints.cc_error_bit = P9221R5_STAT_CCERROR;
 		chgr->ints.cc_reset_bit = P9221R5_STAT_CCRESET;
+		chgr->ints.cc_vout_bit = 0;
 		chgr->ints.propmode_stat_bit = 0;
 		chgr->ints.cdmode_change_bit = 0;
 		chgr->ints.cdmode_err_bit = 0;
@@ -2405,6 +2443,7 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 		chgr->ints.pp_rcvd_bit = P9222_STAT_PPRCVD;
 		chgr->ints.cc_error_bit = P9222_STAT_CCERROR;
 		chgr->ints.cc_reset_bit = 0;
+		chgr->ints.cc_vout_bit = 0;
 		chgr->ints.propmode_stat_bit = 0;
 		chgr->ints.cdmode_change_bit = 0;
 		chgr->ints.cdmode_err_bit = 0;
@@ -2430,6 +2469,7 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 		chgr->ints.pp_rcvd_bit = P9221R5_STAT_PPRCVD;
 		chgr->ints.cc_error_bit = P9221R5_STAT_CCERROR;
 		chgr->ints.cc_reset_bit = P9221R5_STAT_CCRESET;
+		chgr->ints.cc_vout_bit = 0;
 		chgr->ints.propmode_stat_bit = 0;
 		chgr->ints.cdmode_change_bit = 0;
 		chgr->ints.cdmode_err_bit = 0;
@@ -2456,7 +2496,8 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 				   chgr->ints.cc_reset_bit |
 				   chgr->ints.pp_rcvd_bit |
 				   chgr->ints.cc_error_bit |
-				   chgr->ints.cc_data_rcvd_bit);
+				   chgr->ints.cc_data_rcvd_bit |
+				   chgr->ints.cc_vout_bit);
 	chgr->ints.prop_mode_mask = (chgr->ints.propmode_stat_bit |
 				     chgr->ints.cdmode_change_bit |
 				     chgr->ints.cdmode_err_bit);
@@ -2583,6 +2624,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 	chgr->chip_get_op_bridge = p9221_chip_get_op_bridge;
 	chgr->chip_get_tx_pwr = p9221_chip_get_tx_pwr;
 	chgr->chip_get_rx_pwr = p9221_chip_get_rx_pwr;
+	chgr->chip_is_calibrated = p9xxx_chip_is_calibrated;
 
 	switch (chip_id) {
 	case P9412_CHIP_ID:
@@ -2617,6 +2659,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->chip_get_op_duty = p9xxx_chip_get_op_duty;
 		chgr->chip_get_tx_pwr = p9xxx_chip_get_tx_pwr;
 		chgr->chip_get_rx_pwr = p9xxx_chip_get_rx_pwr;
+		chgr->chip_is_calibrated = p9412_chip_is_calibrated;
 		break;
 	case RA9530_CHIP_ID:
 		chgr->rtx_state = RTX_AVAILABLE;
@@ -2650,6 +2693,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->chip_get_op_bridge = ra9530_chip_get_op_bridge;
 		chgr->chip_get_tx_pwr = p9xxx_chip_get_tx_pwr;
 		chgr->chip_get_rx_pwr = p9xxx_chip_get_rx_pwr;
+		chgr->chip_is_calibrated = ra9530_chip_is_calibrated;
 		break;
 	case P9382A_CHIP_ID:
 		chgr->rtx_state = RTX_AVAILABLE;
