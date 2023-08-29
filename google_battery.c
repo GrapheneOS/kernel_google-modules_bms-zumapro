@@ -863,7 +863,12 @@ done:
 static int batt_vs_mp_tz_get(struct thermal_zone_device *tzd, int *batt_vs)
 {
 	struct batt_drv *batt_drv = tzd->devdata;
-	return batt_drv->need_mp;
+
+	if (!batt_vs)
+		return -EINVAL;
+
+	*batt_vs = batt_drv->need_mp;
+	return 0;
 }
 
 static struct thermal_zone_device_ops batt_vs_mp_tz_ops = {
@@ -884,12 +889,14 @@ static int hda_tz_cb(struct gvotable_election *el,
 static int batt_vs_hda_tz_get(struct thermal_zone_device *tzd, int *batt_vs)
 {
 	struct batt_drv *batt_drv = tzd->devdata;
-	int ret;
+
+	if (!batt_vs)
+		return -EINVAL;
 
 	mutex_lock(&batt_drv->hda_tz_lock);
-	ret = batt_drv->hda_tz_vote;
+	*batt_vs = batt_drv->hda_tz_vote;
 	mutex_unlock(&batt_drv->hda_tz_lock);
-	return ret;
+	return 0;
 }
 
 static struct thermal_zone_device_ops batt_vs_hda_tz_ops = {
