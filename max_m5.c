@@ -1267,9 +1267,14 @@ error_done:
 
 int max_m5_check_recal_state(struct max_m5_data *m5_data, int algo, u16 eeprom_cycle)
 {
-	struct maxfg_regmap *regmap = m5_data->regmap;
+	struct maxfg_regmap *regmap;
 	u16 learncfg, status, reg_cycle, dqacc, dpacc, new_cap;
 	int ret;
+
+	if (!m5_data)
+		return 0;
+
+	regmap = m5_data->regmap;
 
 	if (m5_data->recal.state == RE_CAL_STATE_IDLE)
 		return 0;
@@ -1353,6 +1358,9 @@ int max_m5_recalibration(struct max_m5_data *m5_data, int algo, u16 cap)
 
 int max_m5_recal_state(const struct max_m5_data *m5_data)
 {
+	if (!m5_data)
+		return 0;
+
 	return m5_data->recal.state;
 }
 
