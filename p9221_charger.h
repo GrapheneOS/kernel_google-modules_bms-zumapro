@@ -796,6 +796,7 @@ struct p9221_charger_data {
 	struct gvotable_election	*point_full_ui_soc_votable;
 	struct gvotable_election	*dc_avail_votable;
 	struct gvotable_election	*hda_tz_votable;
+	struct gvotable_election	*bcl_wlc_votable;
 	struct notifier_block		nb;
 	struct mutex			io_lock;
 	struct mutex			cmd_lock;

@@ -79,6 +79,16 @@ enum wlc_chg_mode {
 	WLC_HPP_HV,
 };
 
+#define BCL_WLC 	"BCL_WLC"
+#define BCL_DEV_VOTER 	"BCL_DEV_VOTER"
+#define BCL_WLC_VOTE	0
+
+enum wlc_bcl_rtx_mode {
+       WLC_ENABLED_TX,
+       WLC_DISABLED_TX,
+};
+
+
 #define P9221_CRC8_POLYNOMIAL		0x07	/* (x^8) + x^2 + x + 1 */
 DECLARE_CRC8_TABLE(p9221_crc8_table);
 
@@ -5517,15 +5527,24 @@ static ssize_t rtx_store(struct device *dev,
 
 	p9xxx_setup_all(charger->dev->of_node, charger->pdata);
 
+	if (!charger->bcl_wlc_votable)
+		charger->bcl_wlc_votable = gvotable_election_get_handle(BCL_WLC);
+	if (!charger->bcl_wlc_votable)
+		return -ENOENT;
+
 	if (buf[0] == '0') {
 		mutex_lock(&charger->rtx_lock);
 		logbuffer_prlog(charger->rtx_log, "battery share off");
+		gvotable_cast_vote(charger->bcl_wlc_votable, BCL_DEV_VOTER, (void *)BCL_WLC_VOTE,
+				   WLC_DISABLED_TX);
 		charger->rtx_reset_cnt = 0;
 		ret = p9382_set_rtx(charger, false);
 		mutex_unlock(&charger->rtx_lock);
 	} else if (buf[0] == '1') {
 		mutex_lock(&charger->rtx_lock);
 		logbuffer_prlog(charger->rtx_log, "battery share on");
+		gvotable_cast_vote(charger->bcl_wlc_votable, BCL_DEV_VOTER, (void *)BCL_WLC_VOTE,
+				   WLC_ENABLED_TX);
 		charger->rtx_reset_cnt = 0;
 		ret = p9382_set_rtx(charger, true);
 		mutex_unlock(&charger->rtx_lock);
@@ -6564,6 +6583,16 @@ static void p9382_rtx_disable_work(struct work_struct *work)
 			      "over temp vote %d to tx_icl, voter: %s",
 			      tx_icl, reason);
 	}
+
+	if (!charger->bcl_wlc_votable)
+		charger->bcl_wlc_votable = gvotable_election_get_handle(BCL_WLC);
+	if (!charger->bcl_wlc_votable) {
+		mutex_unlock(&charger->rtx_lock);
+		return;
+	}
+
+	gvotable_cast_vote(charger->bcl_wlc_votable, BCL_DEV_VOTER, (void *)BCL_WLC_VOTE,
+			   WLC_DISABLED_TX);
 
 	/* Disable rtx mode */
 	ret = p9382_set_rtx(charger, false);
