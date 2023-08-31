@@ -4493,13 +4493,13 @@ static void max1720x_rc_work(struct work_struct *work)
 	int interval = RC_WORK_TIME_MS;
 	u16 data, learncfg;
 	bool to_rc1, to_rc2;
-	int ret, soc, temp;
+	int ret = 0, soc, temp;
 
 	if (!chip->rc_switch.available || !chip->rc_switch.enable)
 		return;
 
-	if (chip->por)
-		return;
+	if (chip->por || !chip->resume_complete)
+		goto reschedule;
 
 	/* Read SOC */
 	ret = REGMAP_READ(&chip->regmap, MAX_M5_REPSOC, &data);
