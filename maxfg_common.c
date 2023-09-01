@@ -121,12 +121,12 @@ EXPORT_SYMBOL_GPL(maxfg_reg_read);
 
 #define REG_HALF_HIGH(reg)     ((reg >> 8) & 0x00FF)
 #define REG_HALF_LOW(reg)      (reg & 0x00FF)
-int maxfg_collect_history_data(void *buff, size_t size, bool is_por,
+int maxfg_collect_history_data(void *buff, size_t size, bool is_por, u16 designcap,
 			       struct maxfg_regmap *regmap, struct maxfg_regmap *regmap_debug)
 {
 	struct maxfg_eeprom_history hist = { 0 };
-	u16 data, designcap;
-	int ret;
+	u16 data;
+	int temp, ret;
 
 	if (is_por)
 		return -EINVAL;
@@ -150,25 +150,27 @@ int maxfg_collect_history_data(void *buff, size_t size, bool is_por,
 	/* Convert LSB from 3.2hours(192min) to 5days(7200min) */
 	hist.timerh = data * 192 / 7200;
 
-	ret = maxfg_reg_read(regmap, MAXFG_TAG_descap, &designcap);
-	if (ret)
-		return ret;
+	if (!designcap) {
+		ret = maxfg_reg_read(regmap, MAXFG_TAG_descap, &designcap);
+		if (ret)
+			return ret;
+	}
 
 	/* multiply by 100 to convert from mAh to %, LSB 0.125% */
 	ret = maxfg_reg_read(regmap, MAXFG_TAG_fcnom, &data);
 	if (ret)
 		return ret;
 
-	data = data * 800 / designcap;
-	hist.fullcapnom = data > MAX_HIST_FULLCAP ? MAX_HIST_FULLCAP : data;
+	temp = (int)data * 800 / (int)designcap;
+	hist.fullcapnom = temp > MAX_HIST_FULLCAP ? MAX_HIST_FULLCAP : temp;
 
 	/* multiply by 100 to convert from mAh to %, LSB 0.125% */
 	ret = maxfg_reg_read(regmap, MAXFG_TAG_fcrep, &data);
 	if (ret)
 		return ret;
 
-	data = data * 800 / designcap;
-	hist.fullcaprep = data > MAX_HIST_FULLCAP ? MAX_HIST_FULLCAP : data;
+	temp = (int)data * 800 / (int)designcap;
+	hist.fullcaprep = temp > MAX_HIST_FULLCAP ? MAX_HIST_FULLCAP : temp;
 
 	ret = maxfg_reg_read(regmap, MAXFG_TAG_msoc, &data);
 	if (ret)

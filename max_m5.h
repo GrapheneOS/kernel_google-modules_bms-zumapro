@@ -162,6 +162,7 @@ int max_m5_recalibration(struct max_m5_data *m5_data, int algo, u16 cap);
 int max_m5_check_recal_state(struct max_m5_data *m5_data, int algo, u16 eeprom_cycle);
 int m5_init_custom_parameters(struct device *dev, struct max_m5_data *m5_data,
 			      struct device_node *node);
+u16 max_m5_get_designcap(const struct max_m5_data *m5_data);
 
 /*
  * max_m5 might use the low 8 bits of devname to keep the model version number

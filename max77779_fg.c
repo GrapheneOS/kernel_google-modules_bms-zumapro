@@ -130,6 +130,7 @@ struct max77779_fg_chip {
 	int cycle_count;
 	int cycle_count_offset;
 	u16 eeprom_cycle;
+	u16 designcap;
 
 	bool init_complete;
 	bool resume_complete;
@@ -2024,6 +2025,7 @@ static int max77779_fg_init_model(struct max77779_fg_chip *chip)
 	} else {
 		dev_info(chip->dev, "model_data ok for ID=%d\n", chip->batt_id);
 		chip->model_reload = MAX77779_FG_LOAD_MODEL_IDLE;
+		chip->designcap = max77779_get_designcap(chip->model_data);
 	}
 
 	return 0;
@@ -2905,7 +2907,7 @@ static int max77779_fg_prop_read(gbms_tag_t tag, void *buff, size_t size,
 
 	switch (tag) {
 	case GBMS_TAG_CLHI:
-		ret = maxfg_collect_history_data(buff, size, chip->por,
+		ret = maxfg_collect_history_data(buff, size, chip->por, chip->designcap,
 						 &chip->regmap, &chip->regmap_debug);
 		break;
 
@@ -2974,6 +2976,8 @@ static void max77779_fg_init_work(struct work_struct *work)
 	 * NOTE: will clear the POR bit and trigger model load if needed
 	 */
 	max77779_fg_irq_thread_fn(-1, chip);
+
+	max77779_fg_update_cycle_count(chip);
 
 	dev_info(chip->dev, "init_work done\n");
 }

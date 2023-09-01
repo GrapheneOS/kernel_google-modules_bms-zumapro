@@ -192,6 +192,7 @@ struct max1720x_chip {
 	int cycle_count;
 	int cycle_count_offset;
 	u16 eeprom_cycle;
+	u16 designcap;
 
 	bool init_complete;
 	bool resume_complete;
@@ -3532,6 +3533,7 @@ static int max1720x_init_model(struct max1720x_chip *chip)
 		pr_debug("model_data ok for ID=%d, algo=%d\n",
 			 chip->batt_id, chip->drift_data.algo_ver);
 		chip->model_reload = MAX_M5_LOAD_MODEL_IDLE;
+		chip->designcap = max_m5_get_designcap(chip->model_data);
 	}
 
 	return 0;
@@ -5458,7 +5460,7 @@ static int max17x0x_prop_read(gbms_tag_t tag, void *buff, size_t size,
 
 	switch (tag) {
 	case GBMS_TAG_CLHI:
-		ret = maxfg_collect_history_data(buff, size, chip->por,
+		ret = maxfg_collect_history_data(buff, size, chip->por, chip->designcap,
 						 &chip->regmap, &chip->regmap);
 		break;
 
@@ -5549,6 +5551,8 @@ static void max1720x_init_work(struct work_struct *work)
 	/* Force dump log once to get initial data */
 	if (!chip->por)
 		max1720x_monitor_log_data(chip, true);
+
+	max1720x_update_cycle_count(chip);
 
 	dev_info(chip->dev, "init_work done\n");
 	if (chip->gauge_type == -1)
