@@ -213,6 +213,7 @@ struct max1720x_chip {
 	int cycle_count;
 	int cycle_count_offset;
 	u16 eeprom_cycle;
+	u16 designcap;
 
 	bool init_complete;
 	bool resume_complete;
@@ -3629,6 +3630,7 @@ static int max1720x_init_model(struct max1720x_chip *chip)
 		pr_debug("model_data ok for ID=%d, algo=%d\n",
 			 chip->batt_id, chip->drift_data.algo_ver);
 		chip->model_reload = MAX_M5_LOAD_MODEL_IDLE;
+		chip->designcap = max_m5_get_designcap(chip->model_data);
 	}
 
 	return 0;
@@ -5306,7 +5308,7 @@ static int max17x0x_collect_history_data(void *buff, size_t size,
 {
 	struct max17x0x_eeprom_history hist = { 0 };
 	u16 data, designcap;
-	int ret;
+	int temp, ret;
 
 	if (chip->por)
 		return -EINVAL;
@@ -5330,25 +5332,29 @@ static int max17x0x_collect_history_data(void *buff, size_t size,
 	/* Convert LSB from 3.2hours(192min) to 5days(7200min) */
 	hist.timerh = data * 192 / 7200;
 
-	ret = REGMAP_READ(&chip->regmap, MAX1720X_DESIGNCAP, &designcap);
-	if (ret)
-		return ret;
+	if (chip->designcap) {
+		designcap = chip->designcap;
+	} else {
+		ret = REGMAP_READ(&chip->regmap, MAX1720X_DESIGNCAP, &designcap);
+		if (ret)
+			return ret;
+	}
 
 	/* multiply by 100 to convert from mAh to %, LSB 0.125% */
 	ret = REGMAP_READ(&chip->regmap, MAX1720X_FULLCAPNOM, &data);
 	if (ret)
 		return ret;
 
-	data = data * 800 / designcap;
-	hist.fullcapnom = data > MAX_HIST_FULLCAP ? MAX_HIST_FULLCAP : data;
+	temp = (int)data * 800 / (int)designcap;
+	hist.fullcapnom = temp > MAX_HIST_FULLCAP ? MAX_HIST_FULLCAP : temp;
 
 	/* multiply by 100 to convert from mAh to %, LSB 0.125% */
 	ret = REGMAP_READ(&chip->regmap, MAX1720X_FULLCAPREP, &data);
 	if (ret)
 		return ret;
 
-	data = data * 800 / designcap;
-	hist.fullcaprep = data > MAX_HIST_FULLCAP ? MAX_HIST_FULLCAP : data;
+	temp = (int)data * 800 / (int)designcap;
+	hist.fullcaprep = temp > MAX_HIST_FULLCAP ? MAX_HIST_FULLCAP : temp;
 
 	ret = REGMAP_READ(&chip->regmap, MAX1720X_MIXSOC, &data);
 	if (ret)
@@ -5736,6 +5742,8 @@ static void max1720x_init_work(struct work_struct *work)
 	 * NOTE: will clear the POR bit and trigger model load if needed
 	 */
 	max1720x_fg_irq_thread_fn(-1, chip);
+
+	max1720x_update_cycle_count(chip);
 
 	dev_info(chip->dev, "init_work done\n");
 	if (chip->gauge_type == -1)

@@ -893,6 +893,11 @@ int max_m5_model_read_state(struct max_m5_data *m5_data)
 	return rc;
 }
 
+int max_m5_get_designcap(const struct max_m5_data *m5_data)
+{
+	return m5_data->parameters.designcap;
+}
+
 ssize_t max_m5_model_state_cstr(char *buf, int max,
 				struct max_m5_data *m5_data)
 {
