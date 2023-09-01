@@ -2523,6 +2523,34 @@ DEFINE_SIMPLE_ATTRIBUTE(debug_ini_reload_fops, NULL, debug_ini_reload, "%llu\n")
  *	break;
  */
 
+static int fg_fw_update_set(void* data, u64 val) {
+	int ret = -EINVAL;
+	uint8_t op_st = (uint8_t)val;
+	struct max77779_fg_chip *chip = data;
+
+	if (chip)
+		ret = gbms_storage_write(GBMS_TAG_FGST, &op_st, 1);
+
+	dev_info(chip->dev, "set FG operation status: %02x, (ret=%d)\n", op_st, ret);
+	return 0;
+}
+
+static int fg_fw_update_get(void* data, u64* val) {
+	int ret = -EINVAL;
+	uint8_t op_st = 0xff;
+	struct max77779_fg_chip *chip = data;
+
+	if (chip)
+		ret = gbms_storage_read(GBMS_TAG_FGST, &op_st, 1);
+	*val = op_st;
+
+	dev_info(chip->dev, "get FG operation status: %02x, (ret=%d)\n", op_st, ret);
+
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(debug_fw_update_fops, fg_fw_update_get, fg_fw_update_set, "%llu\n");
+
 static ssize_t act_impedance_store(struct device *dev,
 				   struct device_attribute *attr,
 				   const char *buf, size_t count) {
@@ -2600,6 +2628,9 @@ static int max77779_fg_init_sysfs(struct max77779_fg_chip *chip)
 
 	/* capacity fade */
 	debugfs_create_u32("bhi_fcn_count", 0644, de, &chip->bhi_fcn_count);
+
+	/* fuel gauge operation status */
+	debugfs_create_file("fw_update", 0600, de, chip, &debug_fw_update_fops);
 
 	return 0;
 }
