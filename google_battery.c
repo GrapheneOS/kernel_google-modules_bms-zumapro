@@ -2806,13 +2806,13 @@ log_and_done:
 		const int cc = GPSY_GET_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_CHARGE_COUNTER);
 		ktime_t res = 0;
 		const int max_ratio = batt_ttf_estimate(&res, batt_drv);
-		u64 hours;
-		u32 remaining_sec;
+		u64 hours = 0;
+		u32 remaining_sec = 0;
 
 		if (max_ratio < 0)
 			res = 0;
-
-		hours = div_u64_rem(res, 3600, &remaining_sec);
+		if (res > 0)
+			hours = div_u64_rem(res, 3600, &remaining_sec);
 
 		gbms_logbuffer_prlog(batt_drv->ttf_stats.ttf_log, LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG,
 				     "ssoc=%d temp=%d CSI[speed=%d,%d,%d type=%d status=%d lvl=%d,%d"
@@ -5240,6 +5240,8 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 
 		/* reset ttf tier */
 		ttf_tier_reset(&batt_drv->ttf_stats);
+
+		batt_log_csi_ttf_info(batt_drv);
 	}
 
 	/*
