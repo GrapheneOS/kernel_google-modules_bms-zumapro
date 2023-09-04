@@ -4947,7 +4947,7 @@ static ssize_t qien_store(struct device *dev,
 	if (charger->pdata->qien_gpio < 0)
 		return -ENODEV;
 
-	gpio_set_value_cansleep(charger->pdata->qien_gpio, buf[0] != '0');
+	gvotable_cast_bool_vote(charger->wlc_disable_votable, "DEBUG_VOTER", buf[0] != '0');
 
 	return count;
 }
