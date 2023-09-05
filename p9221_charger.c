@@ -7135,6 +7135,15 @@ static int p9221_wlc_disable_callback(struct gvotable_election *el,
 	int disable = GVOTABLE_PTR_TO_INT(vote);
 	u8 val = P9221_EOP_UNKNOWN;
 
+	if (!charger->online_spoof &&
+	    disable && (charger->last_disable == 0 || charger->last_disable == -1) &&
+	    charger->online && gvotable_get_int_vote(el, P9221_WLC_VOTER)) {
+		logbuffer_prlog(charger->log, "wlc_disable: online_spoof=1");
+		enable_irq(charger->pdata->irq_det_int);
+		charger->online_spoof = true;
+		cancel_delayed_work(&charger->stop_online_spoof_work);
+	}
+
 	if (charger->online_spoof && charger->last_disable && !disable)
 		schedule_delayed_work(&charger->stop_online_spoof_work, msecs_to_jiffies(2000));
 
