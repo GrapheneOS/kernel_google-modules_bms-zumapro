@@ -1720,7 +1720,7 @@ static int max77759_dcicl_callback(struct gvotable_election *el,
 			dc_icl, ret);
 
 	/* will trigger a CHARGER_MODE callback */
-	if (strcmp(reason, REASON_MDIS) == 0)
+	if (suspend && strcmp(reason, REASON_MDIS) == 0)
 		data->wlc_spoof = true;
 
 	ret = max77759_wcin_input_suspend(data, suspend, "DC_ICL");
