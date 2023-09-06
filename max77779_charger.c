@@ -729,7 +729,10 @@ static int max77779_get_usecase(struct max77779_foreach_cb_data *cb_data,
 		if (dc_on && cb_data->wlc_rx) {
 			/* WLC_DC->WLC_DC+USB -> ignore dc_on */
 		} else if (dc_on) {
-			mode = uc_data->modes.usb_dc_mode;
+			if (uc_data->reverse12_en)
+				mode = MAX77779_CHGR_MODE_ALL_OFF;
+			else
+				mode = MAX77779_CHGR_MODE_ALLOW_BYP;
 			usecase = GSU_MODE_USB_DC;
 		} else if (cb_data->stby_on && !chgr_on) {
 			mode = MAX77779_CHGR_MODE_ALL_OFF;

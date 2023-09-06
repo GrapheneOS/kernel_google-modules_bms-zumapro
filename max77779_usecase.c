@@ -640,12 +640,6 @@ bool gs201_setup_usecases(struct max77779_usecase_data *uc_data,
 	/* OPTIONAL: support reverse 1:2 mode for RTx */
 	uc_data->reverse12_en = of_property_read_bool(node, "max77779,reverse_12-en");
 
-	/* USB_DC usecases default:Ultra */
-	ret = of_property_read_u8(node, "max77779,usb_dc_mode",
-				  &uc_data->modes.usb_dc_mode);
-	if (ret < 0)
-		uc_data->modes.usb_dc_mode = MAX77779_CHGR_MODE_ALL_OFF;
-
 	return gs201_setup_usecases_done(uc_data);
 }
 

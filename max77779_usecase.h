@@ -9,10 +9,6 @@
 
 #define MAX77779_CHG_CNFG_05_WCSM_ILIM_1400_MA 0xA
 
-struct max77779_usecase_mode {
-	u8 usb_dc_mode;
-};
-
 struct max77779_usecase_data {
 	int otg_enable;		/* enter/exit from OTG cases */
 	int ext_bst_ctl;	/* SEQ VENDOR_EXTBST.EXT_BST_EN */
@@ -31,7 +27,6 @@ struct max77779_usecase_data {
 	u8 otg_value;		/* CHG_CNFG_11:VBYPSET for USB OTG Voltage */
 
 	struct i2c_client *client;
-	struct max77779_usecase_mode modes;
 	bool init_done;
 	int use_case;
 
