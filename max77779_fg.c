@@ -3205,12 +3205,13 @@ static int max77779_read_gauge_type(struct max77779_fg_chip *chip)
 static bool max77779_fg_dbg_is_reg(struct device *dev, unsigned int reg)
 {
 	switch (reg) {
-		case 0x9C ... 0x9E:
-		case 0xA5 ... 0xA7:
+		case 0x9C ... 0x9F:
+		case 0xA0 ... 0xA7:
 		case 0xA9:
+		case 0xAF:
 		case 0xB1 ... 0xB3:
-		case 0xB6:
-		case 0xBC:
+		case 0xB6 ... 0xB7:
+		case 0xBB ... 0xBC:
 		case 0xC0:
 		case 0xC6:
 		case 0xC8 ... 0xCA:
