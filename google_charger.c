@@ -1553,6 +1553,7 @@ static void thermal_stats_update(struct chg_drv *chg_drv) {
 
 	/* The value from the votable may be uninitialized (negative). */
 	if (thermal_level <= 0) {
+		gvotable_cast_int_vote(chg_drv->thermal_level_votable, "THERMAL_UPDATE", 0, false);
 		/* Do not log any stats in level 0, so store updated time. */
 		mutex_lock(&chg_drv->stats_lock);
 		chg_drv->thermal_stats_last_update = get_boot_sec();

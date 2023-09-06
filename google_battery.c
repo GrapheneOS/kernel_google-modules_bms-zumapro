@@ -631,6 +631,9 @@ struct batt_drv {
 	bool dc_irdrop;
 
 	int batt_id;
+
+	/* for testing drain battery not shutdown */
+	int restrict_level_critical;
 };
 
 static int gbatt_get_temp(struct batt_drv *batt_drv, int *temp);
@@ -3781,7 +3784,8 @@ static int bhi_individual_conditions_index(const struct health_data *health_data
 	const int bhi_indi_cap = health_data->bhi_indi_cap;
 
 	if (health_data->bhi_data.battery_age >= ONE_YEAR_HRS ||
-	    cur_impedance >= age_impedance_max || cur_capacity_pct <= bhi_indi_cap)
+	    (cur_impedance > 0 && age_impedance_max > 0 && cur_impedance >= age_impedance_max) ||
+	    cur_capacity_pct <= bhi_indi_cap)
 		return health_data->need_rep_threshold * 100;
 
 	return BHI_ALGO_FULL_HEALTH;
@@ -8214,6 +8218,9 @@ static int batt_init_debugfs(struct batt_drv *batt_drv)
 	/* shutdown flag */
 	debugfs_create_u32("boot_to_os_attempts", 0660, de, &batt_drv->boot_to_os_attempts);
 
+	/* drain test */
+	debugfs_create_u32("restrict_level_critical", 0644, de, &batt_drv->restrict_level_critical);
+
 	return 0;
 }
 
@@ -8274,7 +8281,11 @@ static bool gbatt_check_critical_level(const struct batt_drv *batt_drv,
 	if (fg_status == POWER_SUPPLY_STATUS_UNKNOWN)
 		return true;
 
-	if (soc == 0 && ssoc_state->buck_enabled == 1 &&
+	if (batt_drv->restrict_level_critical || soc != 0)
+		return false;
+
+	/* debounce with battery voltage (if set) for VBATT_CRITICAL_DEADLINE_SEC at boot */
+	if (ssoc_state->buck_enabled == 1 &&
 	    fg_status == POWER_SUPPLY_STATUS_DISCHARGING) {
 		const ktime_t now = get_boot_sec();
 		int vbatt;
@@ -8290,7 +8301,8 @@ static bool gbatt_check_critical_level(const struct batt_drv *batt_drv,
 		return (vbatt < 0) ? : vbatt < batt_drv->batt_critical_voltage;
 	}
 
-	return false;
+	/* here soc == 0, shutdown if not connected or if state is not charging  */
+	return ssoc_state->buck_enabled == 0 || fg_status != POWER_SUPPLY_STATUS_CHARGING;
 }
 
 #define SSOC_LEVEL_FULL		SSOC_SPOOF
@@ -8320,8 +8332,6 @@ static int gbatt_get_capacity_level(const struct batt_drv *batt_drv,
 		capacity_level = POWER_SUPPLY_CAPACITY_LEVEL_NORMAL;
 	} else if (soc > SSOC_LEVEL_LOW) {
 		capacity_level = POWER_SUPPLY_CAPACITY_LEVEL_LOW;
-	} else if (ssoc_state->buck_enabled == 0) {
-		capacity_level = POWER_SUPPLY_CAPACITY_LEVEL_CRITICAL;
 	} else if (ssoc_state->buck_enabled == -1) {
 		/* only at startup, this should not happen */
 		capacity_level = POWER_SUPPLY_CAPACITY_LEVEL_UNKNOWN;
