@@ -10,14 +10,12 @@
 #define MAX77779_CHG_CNFG_05_WCSM_ILIM_1400_MA 0xA
 
 struct max77779_usecase_mode {
-	u8 usb_otg_wlc_rx_chgr_on_mode;
-	u8 usb_otg_wlc_rx_chgr_off_mode;
-	u8 usb_otg_mode;
 	u8 usb_dc_mode;
 };
 
 struct max77779_usecase_data {
 	int otg_enable;		/* enter/exit from OTG cases */
+	int ext_bst_ctl;	/* SEQ VENDOR_EXTBST.EXT_BST_EN */
 	bool rx_otg_en;		/* enable WLC_RX -> WLC_RX + OTG case */
 	int dc_sw_gpio;		/* WLC-DC switch enable */
 
@@ -53,7 +51,7 @@ enum gsu_usecases {
 
 	GSU_MODE_USB_OTG_WLC_RX = 7,	/* 7, 524, */
 	GSU_MODE_USB_OTG 	= 9,	/* 5-1, 516,*/
-	GSU_MODE_USB_OTG_FRS	= GSU_MODE_USB_OTG,
+	GSU_MODE_USB_OTG_FRS	= 10,
 
 	GSU_MODE_WLC_TX 	= 11,	/* 6-2, 1056, */
 	GSU_MODE_USB_OTG_WLC_TX = 12,

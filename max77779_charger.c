@@ -485,8 +485,14 @@ static int max77779_foreach_callback(void *data, const char *reason,
 			 reason ? reason : "<>", mode);
 		cb_data->buck_on += 1;
 		break;
-	/* USB: OTG, source */
+	/* USB: OTG, source, fast role swap case */
 	case GBMS_USB_OTG_FRS_ON:
+		if (!cb_data->frs_on)
+			cb_data->reason = reason;
+		pr_debug("%s: FRS_ON vote=0x%x\n", __func__, mode);
+		cb_data->frs_on += 1;
+		break;
+	/* USB: boost mode, source, normally external boost */
 	case GBMS_USB_OTG_ON:
 		if (!cb_data->otg_on)
 			cb_data->reason = reason;
@@ -530,11 +536,13 @@ static bool cb_data_is_chgr_on(const struct max77779_foreach_cb_data *cb_data)
 }
 
 /*
- * Case	USB_chg USB_otg	WLC_chg	WLC_TX	PMIC_Charger	Name
+ * Case	USB_chg USB_otg	WLC_chg	WLC_TX	PMIC_Charger	Ext_B	Name
  * -------------------------------------------------------------------------------------
- * 7	0	1	1	0	IF-PMIC-WCIN	USB_OTG_WLC_RX
- * 9	0	1	0	0	0		USB_OTG / USB_OTG_FRS
+ * 7	0	1	1	0	IF-PMIC-WCIN	1	USB_OTG_WLC_RX
+ * 9	0	1	0	0	0		1	USB_OTG
+ * 10   0       1       0       0       OTG_5V          0	USB_OTG_FRS
  * -------------------------------------------------------------------------------------
+ * Ext_Boost = 0 off, 1 = OTG 5V
  * WLC_chg = 0 off, 1 = on, 2 = PPS
  *
  * NOTE: do not call with (cb_data->wlc_rx && cb_data->wlc_tx)
@@ -555,8 +563,16 @@ static int max77779_get_otg_usecase(struct max77779_foreach_cb_data *cb_data,
 
 	if (!cb_data->wlc_rx && !cb_data->wlc_tx) {
 		/* 9: USB_OTG or  10: USB_OTG_FRS */
-		usecase = GSU_MODE_USB_OTG;
-		mode = uc_data->modes.usb_otg_mode;
+		if (cb_data->frs_on) {
+			usecase = GSU_MODE_USB_OTG_FRS;
+			mode = MAX77779_CHGR_MODE_OTG_BOOST_ON;
+		} else {
+			usecase = GSU_MODE_USB_OTG;
+			if (uc_data->ext_bst_ctl >= 0)
+				mode = MAX77779_CHGR_MODE_ALL_OFF;
+			else
+				mode = MAX77779_CHGR_MODE_OTG_BOOST_ON;
+		}
 
 		/* b/188730136  OTG cases with DC on */
 		if (dc_on)
@@ -566,10 +582,17 @@ static int max77779_get_otg_usecase(struct max77779_foreach_cb_data *cb_data,
 		return -EINVAL;
 	} else if (cb_data->wlc_rx) {
 		usecase = GSU_MODE_USB_OTG_WLC_RX;
-		if (chgr_on)
-			mode = uc_data->modes.usb_otg_wlc_rx_chgr_on_mode;
-		else
-			mode = uc_data->modes.usb_otg_wlc_rx_chgr_off_mode;
+		if (chgr_on) {
+			if (uc_data->ext_bst_ctl >= 0)
+				mode = MAX77779_CHGR_MODE_CHGR_BUCK_ON;
+			else
+				mode = MAX77779_CHGR_MODE_CHGR_OTG_BUCK_BOOST_ON;
+		} else {
+			if (uc_data->ext_bst_ctl >= 0)
+				mode = MAX77779_CHGR_MODE_BUCK_ON;
+			else
+				mode = MAX77779_CHGR_MODE_CHGR_OTG_BUCK_BOOST_ON;
+		}
 	} else if (dc_on) {
 		return -EINVAL;
 	} else {
@@ -615,7 +638,7 @@ static int max77779_get_usecase(struct max77779_foreach_cb_data *cb_data,
 		cb_data->otg_on = 0;
 
 	/* OTG modes override the others, might need to move under usb_wlc */
-	if (cb_data->otg_on)
+	if (cb_data->otg_on || cb_data->frs_on)
 		return max77779_get_otg_usecase(cb_data, uc_data);
 
 	/* USB will disable wlc_rx */
@@ -969,12 +992,12 @@ static int max77779_mode_callback(struct gvotable_election *el,
 
 	dev_info(data->dev, "%s:%s full=%d raw=%d stby_on=%d, dc_on=%d, chgr_on=%d, buck_on=%d,"
 		" otg_on=%d, wlc_tx=%d wlc_rx=%d usb_wlc=%d"
-		" chgin_off=%d wlcin_off=%d\n",
+		" chgin_off=%d wlcin_off=%d frs_on=%d\n",
 		__func__, trigger ? trigger : "<>",
 		data->charge_done, cb_data.use_raw, cb_data.stby_on, cb_data.dc_on,
 		cb_data.chgr_on, cb_data.buck_on, cb_data.otg_on,
 		cb_data.wlc_tx, cb_data.wlc_rx, cb_data.usb_wlc,
-		cb_data.chgin_off, cb_data.wlcin_off);
+		cb_data.chgin_off, cb_data.wlcin_off, cb_data.frs_on);
 
 	/* just use raw "as is", no changes to switches etc */
 	if (cb_data.use_raw) {
@@ -982,6 +1005,7 @@ static int max77779_mode_callback(struct gvotable_election *el,
 		use_case = GSU_RAW_MODE;
 	} else {
 		struct max77779_usecase_data *uc_data = &data->uc_data;
+		bool use_internal_bst;
 
 		/* insel needs it, otg usecases needs it */
 		if (!uc_data->init_done) {
@@ -989,6 +1013,15 @@ static int max77779_mode_callback(struct gvotable_election *el,
 						data->dev->of_node);
 			gs201_dump_usecasase_config(uc_data);
 		}
+
+		/*
+		 * force FRS if ext boost or NBC is not enabled
+		 * TODO: move to setup_usecase
+		 */
+		use_internal_bst = uc_data->vin_is_valid < 0 &&
+				   uc_data->ext_bst_ctl < 0;
+		if (cb_data.otg_on && use_internal_bst)
+			cb_data.frs_on = cb_data.otg_on;
 
 		/* figure out next use case if not in raw mode */
 		use_case = max77779_get_usecase(&cb_data, uc_data);

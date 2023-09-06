@@ -15,6 +15,8 @@
 #include "max77779.h"
 #include "max77779_charger.h"
 
+static int gs201_otg_enable(struct max77779_usecase_data *uc_data, bool enable);
+
 /* ----------------------------------------------------------------------- */
 static int max77779_chgr_reg_read(struct i2c_client *client, u8 reg, u8 *value)
 {
@@ -212,7 +214,8 @@ int gs201_to_standby(struct max77779_usecase_data *uc_data, int use_case)
 		need_stby = use_case != GSU_MODE_USB_CHG_WLC_TX &&
 			    use_case != GSU_MODE_WLC_RX &&
 			    use_case != GSU_MODE_DOCK &&
-			    use_case != GSU_MODE_USB_DC;
+			    use_case != GSU_MODE_USB_DC &&
+			    use_case != GSU_MODE_USB_OTG_FRS;
 		break;
 	case GSU_MODE_WLC_RX:
 		need_stby = use_case != GSU_MODE_USB_OTG_WLC_RX &&
@@ -228,6 +231,16 @@ int gs201_to_standby(struct max77779_usecase_data *uc_data, int use_case)
 	case GSU_MODE_USB_OTG:
 		from_otg = true;
 		if (use_case == GSU_MODE_USB_OTG_WLC_RX)
+			break;
+
+		gs201_otg_enable(uc_data, false);
+
+		need_stby = true;
+		break;
+
+	case GSU_MODE_USB_OTG_FRS:
+		from_otg = true;
+		if (use_case == GSU_MODE_USB_CHG)
 			break;
 
 		need_stby = true;
@@ -339,7 +352,7 @@ static int gs201_otg_mode(struct max77779_usecase_data *uc_data, int to)
  *
  * NOTE: the USB stack expects VBUS to be on after voting for the usecase.
  */
-static int gs201_otg_enable(struct max77779_usecase_data *uc_data)
+static int gs201_otg_enable_frs(struct max77779_usecase_data *uc_data)
 {
 	int ret;
 
@@ -361,6 +374,12 @@ static int gs201_otg_enable(struct max77779_usecase_data *uc_data)
 	return ret;
 }
 
+static int gs201_otg_enable(struct max77779_usecase_data *uc_data, bool enable)
+{
+	gpio_set_value_cansleep(uc_data->ext_bst_ctl, enable);
+	return 0;
+}
+
 /*
  * Case	USB_chg USB_otg	WLC_chg	WLC_TX	PMIC_Charger	Name
  * -------------------------------------------------------------------------------------
@@ -376,7 +395,7 @@ static int gs201_standby_to_otg(struct max77779_usecase_data *uc_data, int use_c
 {
 	int ret;
 
-	ret = gs201_otg_enable(uc_data);
+	ret = gs201_otg_enable(uc_data, true);
 
 	if (ret == 0)
 		usleep_range(5 * USEC_PER_MSEC, 5 * USEC_PER_MSEC + 100);
@@ -403,7 +422,8 @@ static int gs201_to_otg_usecase(struct max77779_usecase_data *uc_data, int use_c
 	int ret = 0;
 
 	switch (from_uc) {
-	/* 9: stby to USB OTG, mode = 1 */
+	/* 9: stby to USB OTG */
+	/* 10: stby to USB_OTG_FRS */
 	case GSU_MODE_STANDBY:
 		ret = gs201_standby_to_otg(uc_data, use_case);
 		if (ret < 0) {
@@ -415,10 +435,12 @@ static int gs201_to_otg_usecase(struct max77779_usecase_data *uc_data, int use_c
 	case GSU_MODE_USB_CHG:
 	case GSU_MODE_USB_CHG_WLC_TX:
 		/* need to go through stby out of this */
-		if (use_case != GSU_MODE_USB_OTG)
+		if (use_case != GSU_MODE_USB_OTG && use_case != GSU_MODE_USB_OTG_FRS)
 			return -EINVAL;
-
-		ret = gs201_otg_enable(uc_data);
+		else if (use_case == GSU_MODE_USB_OTG)
+			ret = gs201_otg_enable(uc_data, true);
+		else
+			ret = gs201_otg_enable_frs(uc_data);
 	break;
 
 
@@ -443,10 +465,12 @@ static int gs201_to_otg_usecase(struct max77779_usecase_data *uc_data, int use_c
 		}
 	break;
 	case GSU_MODE_USB_OTG_WLC_RX:
-		/* b/179816224: WLC_RX + OTG -> OTG */
-		if (use_case == GSU_MODE_USB_OTG) {
-			/* pvp TODO: is it just WLC Rx disable? */
-		}
+		if (use_case == GSU_MODE_USB_OTG_FRS)
+			return -EINVAL;
+	break;
+	case GSU_MODE_USB_OTG_FRS:
+		if (use_case == GSU_MODE_USB_OTG_WLC_RX)
+			return -EINVAL;
 	break;
 
 	default:
@@ -464,6 +488,7 @@ int gs201_to_usecase(struct max77779_usecase_data *uc_data, int use_case)
 
 	switch (use_case) {
 	case GSU_MODE_USB_OTG:
+	case GSU_MODE_USB_OTG_FRS:
 	case GSU_MODE_USB_OTG_WLC_RX:
 		ret = gs201_to_otg_usecase(uc_data, use_case);
 		break;
@@ -555,7 +580,8 @@ int max77779_otg_vbyp_mv_to_code(u8 *code, int vbyp)
 
 static bool gs201_setup_usecases_done(struct max77779_usecase_data *uc_data)
 {
-	return (uc_data->wlc_en != -EPROBE_DEFER);
+	return (uc_data->wlc_en != -EPROBE_DEFER) &&
+		(uc_data->ext_bst_ctl != -EPROBE_DEFER);
 
 	/* TODO: handle platform specific differences..	*/
 }
@@ -567,6 +593,8 @@ static void gs201_setup_default_usecase(struct max77779_usecase_data *uc_data)
 	uc_data->otg_enable = -EPROBE_DEFER;
 
 	uc_data->wlc_en = -EPROBE_DEFER;
+
+	uc_data->ext_bst_ctl = -EPROBE_DEFER;
 
 	uc_data->init_done = false;
 
@@ -606,26 +634,11 @@ bool gs201_setup_usecases(struct max77779_usecase_data *uc_data,
 	/* OPTIONAL: support wlc_rx -> wlc_rx+otg */
 	uc_data->rx_otg_en = of_property_read_bool(node, "max77779,rx-to-rx-otg-en");
 
+	if (uc_data->ext_bst_ctl == -EPROBE_DEFER)
+		uc_data->ext_bst_ctl = of_get_named_gpio(node, "max77779,extbst-ctl", 0);
+
 	/* OPTIONAL: support reverse 1:2 mode for RTx */
 	uc_data->reverse12_en = of_property_read_bool(node, "max77779,reverse_12-en");
-
-	/* USB_OTG_WLC_RX usecases default:Proto */
-	ret = of_property_read_u8(node, "max77779,usb_otg_wlc_rx_chgr_on_mode",
-				  &uc_data->modes.usb_otg_wlc_rx_chgr_on_mode);
-	if (ret < 0)
-		uc_data->modes.usb_otg_wlc_rx_chgr_on_mode =
-			 MAX77779_CHGR_MODE_CHGR_BUCK_BOOST_UNO_ON;
-
-	ret = of_property_read_u8(node, "max77779,usb_otg_wlc_rx_chgr_off_mode",
-				  &uc_data->modes.usb_otg_wlc_rx_chgr_off_mode);
-	if (ret < 0)
-		uc_data->modes.usb_otg_wlc_rx_chgr_off_mode = MAX77779_CHGR_MODE_OTG_BUCK_BOOST_ON;
-
-	/* USB_OTG usecases default:Proto */
-	ret = of_property_read_u8(node, "max77779,usb_otg_mode",
-				  &uc_data->modes.usb_otg_mode);
-	if (ret < 0)
-		uc_data->modes.usb_otg_mode = MAX77779_CHGR_MODE_ALL_OFF;
 
 	/* USB_DC usecases default:Ultra */
 	ret = of_property_read_u8(node, "max77779,usb_dc_mode",
@@ -638,7 +651,7 @@ bool gs201_setup_usecases(struct max77779_usecase_data *uc_data,
 
 void gs201_dump_usecasase_config(struct max77779_usecase_data *uc_data)
 {
-	pr_info("wlc_en:%d, rx_to_rx_otg:%d, reverse12_en:%d\n",
-		uc_data->wlc_en, uc_data->rx_otg_en, uc_data->reverse12_en);
+	pr_info("wlc_en:%d, rx_to_rx_otg:%d, reverse12_en:%d, ext_bst_ctl: %d\n",
+		uc_data->wlc_en, uc_data->rx_otg_en, uc_data->reverse12_en, uc_data->ext_bst_ctl);
 }
 
