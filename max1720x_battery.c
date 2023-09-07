@@ -4981,9 +4981,6 @@ static int max1720x_init_chip(struct max1720x_chip *chip)
 			dev_warn(chip->dev, "Cannot write 0x0 to Config(%d)\n", ret);
 	}
 
-	/* fuel gauge model needs to know the batt_id */
-	mutex_init(&chip->model_lock);
-
 	/*
 	 * The behavior of the drift workaround changes with the capacity
 	 * learning algo used in the part. Integrated FG might have
@@ -5797,10 +5794,6 @@ static void max1720x_init_work(struct work_struct *work)
 	ret = batt_ce_load_data(&chip->regmap_nvram, &chip->cap_estimate);
 	if (ret == 0)
 		batt_ce_dump_data(&chip->cap_estimate, chip->ce_log);
-
-	chip->get_prop_ws = wakeup_source_register(NULL, "GetProp");
-	if (!chip->get_prop_ws)
-		dev_info(chip->dev, "failed to register wakeup sources\n");
 }
 
 /* TODO: fix detection of 17301 for non samples looking at FW version too */
@@ -6084,6 +6077,13 @@ static int max1720x_probe(struct i2c_client *client,
 		chip->max1720x_psy_desc.name = "maxfg";
 
 	dev_info(dev, "max1720x_psy_desc.name=%s\n", chip->max1720x_psy_desc.name);
+
+	/* fuel gauge model needs to know the batt_id */
+	mutex_init(&chip->model_lock);
+
+	chip->get_prop_ws = wakeup_source_register(NULL, "GetProp");
+	if (!chip->get_prop_ws)
+		dev_info(chip->dev, "failed to register wakeup sources\n");
 
 	chip->max1720x_psy_desc.type = POWER_SUPPLY_TYPE_BATTERY;
 	chip->max1720x_psy_desc.get_property = max1720x_get_property;
