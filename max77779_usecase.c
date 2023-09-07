@@ -620,8 +620,6 @@ static void gs201_setup_default_usecase(struct max77779_usecase_data *uc_data)
 bool gs201_setup_usecases(struct max77779_usecase_data *uc_data,
 			  struct device_node *node)
 {
-	int ret;
-
 	if (!node) {
 		gs201_setup_default_usecase(uc_data);
 		return false;

@@ -2345,8 +2345,8 @@ static void p9221_charge_stats_hda_work(struct work_struct *work)
 	if (charger->chg_data.adapter_type == TXID_DD_TYPE)
 		tz_vote = HDA_TZ_WLC_EPP_1P;
 
-	if (charger->hda_tz_votable && charger->chg_data.adapter_type == TXID_DD_TYPE
-	    || charger->chg_data.adapter_type == TXID_DD_TYPE2)
+	if (charger->hda_tz_votable && ((charger->chg_data.adapter_type == TXID_DD_TYPE)
+	    || (charger->chg_data.adapter_type == TXID_DD_TYPE2)))
 		gvotable_cast_int_vote(charger->hda_tz_votable, P9221_WLC_VOTER,
 					tz_vote, tz_vote);
 
