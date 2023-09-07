@@ -7540,7 +7540,6 @@ static const DEVICE_ATTR_RO(manufacturing_date);
 
 #define FIRST_USAGE_DATE_DEFAULT	1606780800 //2020-12-01
 #define FIRST_USAGE_DATE_MAX		2147483647 //2038-01-19
-#define YEAR_IN_SECOND			31536000
 
 static ssize_t first_usage_date_store(struct device *dev,
 				      struct device_attribute *attr,
@@ -7597,10 +7596,6 @@ static ssize_t first_usage_date_store(struct device *dev,
 			/* not sooner then manufacture date */
 			if (date_in_epoch < mdate_in_epoch)
 				date_in_epoch = mdate_in_epoch;
-
-			/* not later than manufacture date plus two years */
-			if (date_in_epoch > (mdate_in_epoch + YEAR_IN_SECOND * 2))
-				date_in_epoch = (mdate_in_epoch + YEAR_IN_SECOND * 2);
 		}
 		rtc_time64_to_tm(date_in_epoch, &tm);
 
