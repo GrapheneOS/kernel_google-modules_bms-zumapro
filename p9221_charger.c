@@ -1278,26 +1278,17 @@ static void p9221_dcin_work(struct work_struct *work)
 			struct p9221_charger_data, dcin_work.work);
 
 	res = p9221_reg_read_16(charger, P9221_STATUS_REG, &status_reg);
-	if (res != 0) {
-		dev_info(&charger->client->dev,
-			"timeout waiting for dc-in, online=%d\n",
-			charger->online);
-		logbuffer_log(charger->log,
-			"dc_in: timeout online=%d", charger->online);
+	if (res == 0)
+		logbuffer_log(charger->log, "dc_in: timeout online=%d status=%04x", charger->online, status_reg);
+	else
+		logbuffer_log(charger->log, "dc_in: timeout online=%d res=%d", charger->online, res);
+	dev_info(&charger->client->dev, "timeout waiting for dc-in, online=%d\n", charger->online);
 
-		if (charger->online)
-			p9221_set_offline(charger);
+	if (charger->online)
+	    p9221_set_offline(charger);
 
-		power_supply_changed(charger->wc_psy);
-		pm_relax(charger->dev);
-
-		return;
-	}
-
-	schedule_delayed_work(&charger->dcin_work,
-			msecs_to_jiffies(P9221_DCIN_TIMEOUT_MS));
-	logbuffer_log(charger->log, "dc_in: check online=%d status=%x",
-			charger->online, status_reg);
+	power_supply_changed(charger->wc_psy);
+	pm_relax(charger->dev);
 }
 
 static void force_set_fod(struct p9221_charger_data *charger)
