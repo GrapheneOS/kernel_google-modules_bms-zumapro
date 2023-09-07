@@ -2909,9 +2909,6 @@ static int max77779_fg_init_chip(struct max77779_fg_chip *chip)
 			dev_warn(chip->dev, "Cannot write 0x0 to Config(%d)\n", ret);
 	}
 
-	/* fuel gauge model needs to know the batt_id */
-	mutex_init(&chip->model_lock);
-
 	/*
 	 * FG model is ony used for integrated FG (MW). Loading a model might
 	 * change the capacity drift WAR algo_ver and design_capacity.
@@ -3441,6 +3438,9 @@ static int max77779_fg_probe(struct i2c_client *client,
 		chip->max77779_fg_psy_desc.name = "max77779fg";
 
 	dev_info(dev, "max77779_fg_psy_desc.name=%s\n", chip->max77779_fg_psy_desc.name);
+
+	/* fuel gauge model needs to know the batt_id */
+	mutex_init(&chip->model_lock);
 
 	chip->max77779_fg_psy_desc.type = POWER_SUPPLY_TYPE_BATTERY;
 	chip->max77779_fg_psy_desc.get_property = max77779_fg_get_property;
