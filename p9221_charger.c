@@ -4921,6 +4921,38 @@ static ssize_t rtx_err_show(struct device *dev,
 
 static DEVICE_ATTR_RO(rtx_err);
 
+static ssize_t ldo_en_show(struct device *dev,
+			   struct device_attribute *attr,
+			   char *buf)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct p9221_charger_data *charger = i2c_get_clientdata(client);
+	int value;
+
+	if (charger->pdata->ldo_en_gpio < 0)
+		return -ENODEV;
+
+	value = gpio_get_value_cansleep(charger->pdata->ldo_en_gpio);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", value != 0);
+}
+
+static ssize_t ldo_en_store(struct device *dev,
+			    struct device_attribute *attr,
+			    const char *buf, size_t count)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct p9221_charger_data *charger = i2c_get_clientdata(client);
+
+	if (charger->pdata->ldo_en_gpio < 0)
+		return -ENODEV;
+
+	gpio_set_value_cansleep(charger->pdata->ldo_en_gpio, buf[0] != '0');
+
+	return count;
+}
+static DEVICE_ATTR_RW(ldo_en);
+
 static ssize_t qien_show(struct device *dev,
 			 struct device_attribute *attr,
 			 char *buf)
@@ -5708,6 +5740,7 @@ static struct attribute *p9221_attributes[] = {
 	&dev_attr_wpc_ready.attr,
 	&dev_attr_qien.attr,
 	&dev_attr_align_delta.attr,
+	&dev_attr_ldo_en.attr,
 	NULL
 };
 
@@ -6734,8 +6767,16 @@ static bool p9xxx_setup_rx(struct device_node *node,
 			 pdata->slct_gpio, pdata->slct_value);
 	}
 
+	/* QI_EXT_LDO_EN */
+	pdata->ldo_en_gpio = of_get_named_gpio(node, "idt,gpio_ldo_en", 0);
+	if (pdata->ldo_en_gpio > 0)
+		pr_info("%s: QI_EXT_LDO_EN gpio:%d\n", __func__, pdata->ldo_en_gpio);
+
 	if (pdata->qien_gpio > 0)
 		gpio_direction_output(pdata->qien_gpio, 0);
+
+	if (pdata->ldo_en_gpio > 0)
+		gpio_direction_output(pdata->ldo_en_gpio, 0);
 
 	if (pdata->qi_vbus_en > 0)
 		gpio_direction_output(pdata->qi_vbus_en,
@@ -6748,7 +6789,8 @@ static bool p9xxx_setup_rx(struct device_node *node,
 	return pdata->qien_gpio != -EPROBE_DEFER &&
 	       pdata->qi_vbus_en != -EPROBE_DEFER &&
 	       pdata->wlc_en != -EPROBE_DEFER &&
-	       pdata->slct_gpio != -EPROBE_DEFER;
+	       pdata->slct_gpio != -EPROBE_DEFER &&
+	       pdata->ldo_en_gpio != -EPROBE_DEFER;
 }
 
 static bool p9xxx_setup_tx(struct device_node *node,

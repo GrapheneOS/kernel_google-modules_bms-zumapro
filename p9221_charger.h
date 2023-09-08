@@ -670,6 +670,7 @@ struct p9221_charger_platform_data {
 	int				irq_det_gpio;
 	int				irq_det_int;
 	int				qien_gpio;
+	int				ldo_en_gpio;
 	int				slct_gpio;
 	int				slct_value;
 	int				ben_gpio;
