@@ -6893,6 +6893,8 @@ static int p9xxx_parse_dt(struct device *dev,
 		pdata->irq_flag = IRQF_TRIGGER_LOW | IRQF_ONESHOT;
 	dev_info(dev, "gpio:%d, gpio_irq:%d irq_flag:0x%04llx\n",
 		 pdata->irq_gpio, pdata->irq_int, pdata->irq_flag);
+	if (pdata->irq_int < 0)
+		return -EPROBE_DEFER;
 
 	/* Optional Detect IRQ */
 	ret = of_get_named_gpio(node, "idt,irq_det_gpio", 0);
