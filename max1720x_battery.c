@@ -866,7 +866,6 @@ static void max1720x_history_free(struct max1720x_history *hi)
  */
 static enum power_supply_property max1720x_battery_props[] = {
 	POWER_SUPPLY_PROP_STATUS,
-	POWER_SUPPLY_PROP_HEALTH,
 	POWER_SUPPLY_PROP_CAPACITY,		/* replace with _RAW */
 	POWER_SUPPLY_PROP_CHARGE_COUNTER,
 	POWER_SUPPLY_PROP_CHARGE_FULL,

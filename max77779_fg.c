@@ -296,7 +296,6 @@ static int format_battery_history_entry(char *temp, int size, int page_size, u16
  */
 static enum power_supply_property max77779_fg_battery_props[] = {
 	POWER_SUPPLY_PROP_STATUS,
-	POWER_SUPPLY_PROP_HEALTH,
 	POWER_SUPPLY_PROP_CAPACITY,		/* replace with _RAW */
 	POWER_SUPPLY_PROP_CHARGE_COUNTER,
 	POWER_SUPPLY_PROP_CHARGE_FULL,
