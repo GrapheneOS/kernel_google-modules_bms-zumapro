@@ -4008,14 +4008,16 @@ static int hist_get_index(int cycle_count, const struct batt_drv *batt_drv)
 static int bhi_cap_data_update(struct bhi_data *bhi_data, struct batt_drv *batt_drv)
 {
 	struct power_supply *fg_psy = batt_drv->fg_psy;
-	const int fade_rate = GPSY_GET_PROP(fg_psy, GBMS_PROP_CAPACITY_FADE_RATE);
+	int cap_fade, rc;
+	const int fade_rate = GPSY_GET_INT_PROP(fg_psy, GBMS_PROP_CAPACITY_FADE_RATE, &rc);
 	const int designcap = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN);
-	int cap_fade;
 
 	/* GBMS_PROP_CAPACITY_FADE_RATE is in percent */
 	if (designcap < 0)
 		return -ENODATA;
 	if (bhi_data->pack_capacity <= 0)
+		return -EINVAL;
+	if (rc)
 		return -EINVAL;
 
 	cap_fade = fade_rate * designcap / (bhi_data->pack_capacity * 1000);

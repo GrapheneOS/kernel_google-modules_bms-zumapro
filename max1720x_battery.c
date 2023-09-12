@@ -2180,7 +2180,7 @@ static int max1720x_get_fade_rate(struct max1720x_chip *chip, int *fade_rate)
 		dev_dbg(chip->dev, "%s: idx=%d hist.fc=%d (%x) ret=%d\n", __func__,
 			hist_idx, hist.fullcapnom, hist.fullcapnom, ret);
 
-		if (ret < 0)
+		if (ret < 0 || ret != sizeof(hist))
 			return -EINVAL;
 
 		/* hist.fullcapnom = fullcapnom * 800 / designcap */
