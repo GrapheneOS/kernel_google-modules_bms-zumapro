@@ -506,7 +506,7 @@ int max77779_save_state_data(struct max77779_model_data *model_data)
 	    rb.crc != model_data->model_save.crc)
 		return -EINVAL;
 
-	return ret;
+	return 0;
 }
 
 /* 0 ok, < 0 error. Call after reading from the FG */
