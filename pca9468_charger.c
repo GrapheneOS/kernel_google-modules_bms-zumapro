@@ -131,6 +131,7 @@ static int adc_gain[16] = { 0,  1,  2,  3,  4,  5,  6,  7,
 #define PCA9468_SC_CLK_DITHER_LIMIT_DEF	0xF	/* 10% */
 
 #define PCA9468_TIER_SWITCH_DELTA	25000	/* uV */
+#define PCA9468_TA_MAX_CUR_MULT_DEF	1	/* No WLC Cap Div */
 
 /* INT1 Register Buffer */
 enum {
@@ -4736,6 +4737,12 @@ static int of_pca9468_dt(struct device *dev,
 			pdata->sc_clk_dither_limit);
 	pdata->sc_clk_dither_en = of_property_read_bool(np_pca9468, "pca9468,spread-spectrum");
 	pr_info("%s: pca9468,spread-spectrum is %u\n", __func__, pdata->sc_clk_dither_en);
+
+	ret = of_property_read_u32(np_pca9468, "pca9468,ta-max-cur-mult", &pdata->ta_max_cur_mult);
+	if (ret)
+		pdata->ta_max_cur_mult = PCA9468_TA_MAX_CUR_MULT_DEF;
+	else
+		pr_info("%s: pca9468,ta-max-cur-mult is %d\n", __func__, pdata->ta_max_cur_mult);
 
 #ifdef CONFIG_THERMAL
 	/* USBC thermal zone */
