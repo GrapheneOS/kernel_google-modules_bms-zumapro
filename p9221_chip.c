@@ -27,6 +27,7 @@
 #define P9XXX_GPIO_CPOUT_CTL_EN         3
 #define P9XXX_GPIO_DC_SW_EN             4
 #define P9XXX_GPIO_ONLINE_SPOOF         5
+#define P9XXX_GPIO_RTX_STATE            6
 #define P9XXX_GPIO_VBUS_EN              15
 
 /* Simple Chip Specific Accessors */
@@ -2856,6 +2857,7 @@ static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 {
 	struct p9221_charger_data *charger = gpiochip_get_data(chip);
 	int ret = 0;
+	int prev_state;
 	u8 mode;
 
 	switch (offset) {
@@ -2898,6 +2900,26 @@ static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 			charger->online_spoof = true;
 			cancel_delayed_work(&charger->stop_online_spoof_work);
 		}
+		break;
+	case P9XXX_GPIO_RTX_STATE:
+		mutex_lock(&charger->rtx_gpio_lock);
+		prev_state = charger->rtx_gpio_state;
+
+		if (!charger->pdata->has_rtx_gpio || prev_state == RTX_RETRY) {
+			mutex_unlock(&charger->rtx_gpio_lock);
+			break;
+		}
+
+		if (value == 0)
+			charger->rtx_gpio_state = prev_state == RTX_READY ?
+						  RTX_RETRY : RTX_NOT_SUPP;
+		else
+			charger->rtx_gpio_state = RTX_READY;
+
+		if (charger->rtx_gpio_state == RTX_NOT_SUPP)
+			charger->rtx_err = RTX_CHRG_NOT_SUP;
+
+		mutex_unlock(&charger->rtx_gpio_lock);
 		break;
 	default:
 		ret = -EINVAL;

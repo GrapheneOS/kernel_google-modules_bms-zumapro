@@ -724,6 +724,7 @@ struct p9221_charger_platform_data {
 	bool				has_wlc_dc;
 	bool				gpp_enhanced;
 	bool				has_rtx;
+	bool				has_rtx_gpio;
 	u32				power_mitigate_threshold;
 	u32				power_mitigate_ac_threshold;
 	u32				alignment_scalar_low_current;
@@ -911,6 +912,7 @@ struct p9221_charger_data {
 	int				rtx_reset_cnt;
 	int				rtx_ocp_chk_ms;
 	int				rtx_total_delay;
+	int				rtx_gpio_state;
 	bool				chg_on_rtx;
 	bool				is_rtx_mode;
 	bool				prop_mode_en;
@@ -931,6 +933,7 @@ struct p9221_charger_data {
 	bool				trigger_power_mitigation;
 	bool				wait_for_online;
 	struct mutex			rtx_lock;
+	struct mutex			rtx_gpio_lock;
 	bool				rtx_wakelock;
 	ktime_t				online_at;
 	bool				p9412_gpio_ctl;
@@ -1075,6 +1078,14 @@ enum p9382_rtx_err {
 	RTX_OVER_TEMP,
 	RTX_TX_CONFLICT,
 	RTX_HARD_OCP,
+	RTX_CHRG_NOT_SUP,
+};
+
+enum p9xxx_rtx_gpio_state {
+	RTX_WAIT = 0,
+	RTX_READY,
+	RTX_NOT_SUPP,
+	RTX_RETRY,
 };
 
 enum p9xxx_renego_state {
