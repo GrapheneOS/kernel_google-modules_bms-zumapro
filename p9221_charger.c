@@ -5587,6 +5587,32 @@ static ssize_t has_wlc_dc_store(struct device *dev,
 
 static DEVICE_ATTR_RW(has_wlc_dc);
 
+static ssize_t gpp_enhanced_show(struct device *dev,
+				 struct device_attribute *attr,
+				 char *buf)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct p9221_charger_data *charger = i2c_get_clientdata(client);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", charger->pdata->gpp_enhanced);
+}
+
+/* write 1 to enable GPP15W feature
+ * write 0 to disable GPP15W feature and skip Auth DC_ICL
+ */
+static ssize_t gpp_enhanced_store(struct device *dev,
+				  struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct p9221_charger_data *charger = i2c_get_clientdata(client);
+
+	charger->pdata->gpp_enhanced = buf[0] == '1';
+	return count;
+}
+
+static DEVICE_ATTR_RW(gpp_enhanced);
+
 static ssize_t log_current_filtered_show(struct device *dev,
 					 struct device_attribute *attr,
 					 char *buf)
@@ -5681,6 +5707,7 @@ static struct attribute *p9221_attributes[] = {
 	&dev_attr_ext_ben.attr,
 	&dev_attr_qi_vbus_en.attr,
 	&dev_attr_has_wlc_dc.attr,
+	&dev_attr_gpp_enhanced.attr,
 	&dev_attr_log_current_filtered.attr,
 	&dev_attr_charge_stats.attr,
 	&dev_attr_fw_rev.attr,
