@@ -6476,7 +6476,7 @@ static void p9xxx_change_det_status_work(struct work_struct *work)
 {
 	struct p9221_charger_data *charger = container_of(work,
 			struct p9221_charger_data, change_det_status_work.work);
-	const int det_gpio = gpio_get_value(charger->pdata->irq_det_gpio);
+	const int det_gpio = gpio_get_value_cansleep(charger->pdata->irq_det_gpio);
 
 	/* Debounce det status */
 	logbuffer_log(charger->log, "irq_det debounce: val=%d", det_gpio);
@@ -6494,7 +6494,7 @@ static void p9xxx_change_det_status_work(struct work_struct *work)
 static irqreturn_t p9221_irq_det_thread(int irq, void *irq_data)
 {
 	struct p9221_charger_data *charger = irq_data;
-	const int det_gpio = gpio_get_value(charger->pdata->irq_det_gpio);
+	const int det_gpio = gpio_get_value_cansleep(charger->pdata->irq_det_gpio);
 	int debounce_interval = -1;
 
 	logbuffer_log(charger->log, "irq_det: value=%d, status=%d, online=%d ben=%d",
@@ -7656,7 +7656,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 		if (ret) {
 			dev_err(&client->dev, "Failed to request IRQ_DET\n");
 		} else {
-			charger->det_status = gpio_get_value(charger->pdata->irq_det_gpio);
+			charger->det_status = gpio_get_value_cansleep(charger->pdata->irq_det_gpio);
 			enable_irq_wake(charger->pdata->irq_det_int);
 		}
 	}
