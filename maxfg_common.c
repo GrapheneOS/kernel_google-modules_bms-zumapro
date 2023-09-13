@@ -33,3 +33,53 @@ void dump_model(struct device *dev, u16 model_start, u16 *data, int count)
 	}
 }
 EXPORT_SYMBOL_GPL(dump_model);
+
+int maxfg_get_fade_rate(struct device *dev, int bhi_fcn_count)
+{
+	struct maxfg_eeprom_history hist = { 0 };
+	int ret, ratio, i, fcn_sum = 0;
+	u16 hist_idx;
+
+	ret = gbms_storage_read(GBMS_TAG_HCNT, &hist_idx, sizeof(hist_idx));
+	if (ret < 0) {
+		dev_err(dev, "failed to get history index (%d)\n", ret);
+		return -EIO;
+	}
+
+	dev_info(dev, "%s: hist_idx=%d\n", __func__, hist_idx);
+
+	/* no fade for new battery (less than 30 cycles) */
+	if (hist_idx < bhi_fcn_count)
+		return 0;
+
+	while (hist_idx >= BATT_MAX_HIST_CNT && bhi_fcn_count > 1) {
+		hist_idx--;
+		bhi_fcn_count--;
+		if (bhi_fcn_count == 1) {
+			hist_idx = BATT_MAX_HIST_CNT - 1;
+			break;
+		}
+	}
+
+	for (i = bhi_fcn_count; i ; i--, hist_idx--) {
+		ret = gbms_storage_read_data(GBMS_TAG_HIST, &hist,
+					     sizeof(hist), hist_idx);
+
+		dev_info(dev, "%s: idx=%d hist.fc=%d (%x) ret=%d\n", __func__,
+			hist_idx, hist.fullcapnom, hist.fullcapnom, ret);
+
+		if (ret < 0)
+			return -EINVAL;
+
+		/* hist.fullcapnom = fullcapnom * 800 / designcap */
+		fcn_sum += hist.fullcapnom;
+	}
+
+	/* convert from maxfg_eeprom_history to percent */
+	ratio = fcn_sum / (bhi_fcn_count * 8);
+	if (ratio > 100)
+		ratio = 100;
+
+	return 100 - ratio;
+}
+EXPORT_SYMBOL_GPL(maxfg_get_fade_rate);

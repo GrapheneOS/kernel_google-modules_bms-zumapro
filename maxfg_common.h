@@ -10,6 +10,8 @@
 
 #include <linux/device.h>
 #include <linux/regmap.h>
+#include "gbms_power_supply.h"
+#include "google_bms.h"
 
 #define MAX1720X_GAUGE_TYPE	0
 #define MAX1730X_GAUGE_TYPE	1
@@ -41,6 +43,26 @@ enum max17x0x_reg_types {
 	GBMS_ATOM_TYPE_ZONE = 2,
 	GBMS_ATOM_TYPE_SET = 3,
 };
+
+#define MAX_HIST_FULLCAP	0x3FF
+
+#pragma pack(1)
+struct maxfg_eeprom_history {
+	u16 tempco;
+	u16 rcomp0;
+	u8 timerh;
+	unsigned fullcapnom:10;
+	unsigned fullcaprep:10;
+	unsigned mixsoc:6;
+	unsigned vfsoc:6;
+	unsigned maxvolt:4;
+	unsigned minvolt:4;
+	unsigned maxtemp:4;
+	unsigned mintemp:4;
+	unsigned maxchgcurr:4;
+	unsigned maxdischgcurr:4;
+};
+#pragma pack()
 
 /* this is a map for u16 registers */
 #define ATOM_INIT_MAP(...)			\
@@ -206,5 +228,6 @@ static inline int maxfg_regmap_writeverify(const struct maxfg_regmap *map,
 
 /* dump FG model data */
 void dump_model(struct device *dev, u16 model_start, u16 *data, int count);
+int maxfg_get_fade_rate(struct device *dev, int bhi_fcn_count);
 
 #endif  // MAXFG_COMMON_H_

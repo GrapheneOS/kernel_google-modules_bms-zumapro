@@ -32,8 +32,6 @@
 #include <linux/device.h>
 #include <linux/fs.h> /* register_chrdev, unregister_chrdev */
 #include <linux/seq_file.h> /* seq_read, seq_lseek, single_release */
-#include "gbms_power_supply.h"
-#include "google_bms.h"
 #include "max77779_fg.h"
 #include "max77779_pmic.h"
 
@@ -95,24 +93,6 @@ struct gbatt_capacity_estimation {
 #define MAX77779_LSB 1
 
 #define MAX77779_FG_NDGB_ADDRESS 0x37
-
-#pragma pack(1)
-struct max77779_fg_eeprom_history {
-	u16 tempco;
-	u16 rcomp0;
-	u8 timerh;
-	unsigned fullcapnom:10;
-	unsigned fullcaprep:10;
-	unsigned mixsoc:6;
-	unsigned vfsoc:6;
-	unsigned maxvolt:4;
-	unsigned minvolt:4;
-	unsigned maxtemp:4;
-	unsigned mintemp:4;
-	unsigned maxchgcurr:4;
-	unsigned maxdischgcurr:4;
-};
-#pragma pack()
 
 struct max77779_fg_chip {
 	struct device *dev;
@@ -1239,58 +1219,6 @@ static int max77779_fg_get_age(struct max77779_fg_chip *chip)
 	return reg_to_time_hr(timerh, chip);
 }
 
-/* TODO b/284191528 - Add to common code file */
-#define MAX_HIST_FULLCAP	0x3FF
-static int max77779_fg_get_fade_rate(struct max77779_fg_chip *chip)
-{
-	struct max77779_fg_eeprom_history hist = { 0 };
-	int bhi_fcn_count = chip->bhi_fcn_count;
-	int ret, ratio, i, fcn_sum = 0;
-	u16 hist_idx;
-
-	ret = gbms_storage_read(GBMS_TAG_HCNT, &hist_idx, sizeof(hist_idx));
-	if (ret < 0) {
-		dev_err(chip->dev, "failed to get history index (%d)\n", ret);
-		return -EIO;
-	}
-
-	dev_info(chip->dev, "%s: hist_idx=%d\n", __func__, hist_idx);
-
-	/* no fade for new battery (less than 30 cycles) */
-	if (hist_idx < bhi_fcn_count)
-		return 0;
-
-	while (hist_idx >= BATT_MAX_HIST_CNT && bhi_fcn_count > 1) {
-		hist_idx--;
-		bhi_fcn_count--;
-		if (bhi_fcn_count == 1) {
-			hist_idx = BATT_MAX_HIST_CNT - 1;
-			break;
-		}
-	}
-
-	for (i = bhi_fcn_count; i ; i--, hist_idx--) {
-		ret = gbms_storage_read_data(GBMS_TAG_HIST, &hist,
-					     sizeof(hist), hist_idx);
-
-		dev_info(chip->dev, "%s: idx=%d hist.fc=%d (%x) ret=%d\n", __func__,
-			hist_idx, hist.fullcapnom, hist.fullcapnom, ret);
-
-		if (ret < 0)
-			return -EINVAL;
-
-		/* hist.fullcapnom = fullcapnom * 800 / designcap */
-		fcn_sum += hist.fullcapnom;
-	}
-
-	/* convert from max77779_fg_eeprom_history to percent */
-	ratio = fcn_sum / (bhi_fcn_count * 8);
-	if (ratio > 100)
-		ratio = 100;
-
-	return 100 - ratio;
-}
-
 #define MAX77779_FG_CHECK_FW_VER	1
 #define MAX77779_FG_AVAILABLE_FW_VER	15
 #define MAX77779_FG_FW_VER_TEMP	220
@@ -1556,7 +1484,7 @@ static int max77779_fg_get_property(struct power_supply *psy,
 		val->intval = batt_ce_full_estimate(&chip->cap_estimate);
 		break;
 	case GBMS_PROP_CAPACITY_FADE_RATE:
-		val->intval = max77779_fg_get_fade_rate(chip);
+		val->intval = maxfg_get_fade_rate(chip->dev, chip->bhi_fcn_count);
 		break;
 	case GBMS_PROP_BATT_ID:
 		val->intval = chip->batt_id;
@@ -2958,7 +2886,7 @@ static int max77779_fg_init_chip(struct max77779_fg_chip *chip)
 static int max77779_fg_collect_history_data(void *buff, size_t size,
 					    struct max77779_fg_chip *chip)
 {
-	struct max77779_fg_eeprom_history hist = { 0 };
+	struct maxfg_eeprom_history hist = { 0 };
 	u16 data, designcap;
 	int ret;
 
