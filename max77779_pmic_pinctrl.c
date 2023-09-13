@@ -16,6 +16,9 @@
 
 #include "max77779_pmic.h"
 
+#define MAX77779_SGPIO_CNFGx_MODE_INPUT		0b01
+#define MAX77779_SGPIO_CNFGx_MODE_OUTPUT	0b10
+
 /* DEBUG     */
 struct pin_state {
 	bool pull_up;
@@ -127,7 +130,8 @@ static int max77779_pinconf_set(struct pinctrl_dev *pctldev,
 	int i;
 
 	for (i = 0; i < num_configs; i++) {
-		int param = pinconf_to_config_param(configs[i]);
+		u32 param = pinconf_to_config_param(configs[i]);
+		u32 arg = pinconf_to_config_argument(configs[i]);
 
 		switch (param) {
 		case PIN_CONFIG_BIAS_PULL_UP:
@@ -138,14 +142,11 @@ static int max77779_pinconf_set(struct pinctrl_dev *pctldev,
 				err = max77779_pmic_reg_update(info->core,
 						MAX77779_SGPIO_PD, BIT(pin), ~BIT(pin));
 				if (err)
-					return err;
+					break;
 			}
 
 			err = max77779_pmic_reg_update(info->core,
 					MAX77779_SGPIO_PU, BIT(pin), enable << pin);
-			if (err)
-				return err;
-
 			break;
 		}
 		case PIN_CONFIG_BIAS_PULL_DOWN:
@@ -156,7 +157,7 @@ static int max77779_pinconf_set(struct pinctrl_dev *pctldev,
 				err = max77779_pmic_reg_update(info->core,
 						MAX77779_SGPIO_PU, BIT(pin), ~BIT(pin));
 				if (err)
-					return err;
+					break;
 			}
 
 			err = max77779_pmic_reg_update(info->core,
@@ -171,17 +172,44 @@ static int max77779_pinconf_set(struct pinctrl_dev *pctldev,
 			err = max77779_pmic_reg_update(info->core,
 					MAX77779_SGPIO_PU, BIT(pin), ~BIT(pin));
 			if (err)
-				return err;
+				break;
 
 			err = max77779_pmic_reg_update(info->core,
 					MAX77779_SGPIO_PD, BIT(pin), ~BIT(pin));
-			if (err)
-				return err;
+			break;
+		}
+		case PIN_CONFIG_INPUT_ENABLE:
+		{
+			unsigned int reg = MAX77779_SGPIO_CNFG0 + pin;
+			unsigned int mask = MAX77779_SGPIO_CNFG0_MODE_MASK;
+			unsigned int rval;
 
+			rval = MAX77779_SGPIO_CNFGx_MODE_INPUT << MAX77779_SGPIO_CNFG0_MODE_SHIFT;
+			err =  max77779_pmic_reg_update(info->core, reg, mask, rval);
+			break;
+		}
+		case PIN_CONFIG_OUTPUT:
+		case PIN_CONFIG_OUTPUT_ENABLE:
+		{
+			unsigned int reg = MAX77779_SGPIO_CNFG0 + pin;
+			unsigned int mask = MAX77779_SGPIO_CNFG0_MODE_MASK |
+					MAX77779_SGPIO_CNFG0_DATA_MASK;
+			unsigned int rval;
+
+			rval = (!!arg) << MAX77779_SGPIO_CNFG0_DATA_SHIFT;
+			rval |= MAX77779_SGPIO_CNFGx_MODE_OUTPUT
+					<< MAX77779_SGPIO_CNFG0_MODE_SHIFT;
+			err =  max77779_pmic_reg_update(info->core, reg, mask, rval);
 			break;
 		}
 		default:
 			err = -ENOTSUPP;
+		}
+
+		if (err) {
+			dev_err(info->dev,
+				"Failed to set config %u on pin %u err = %d\n",
+				param, pin, err);
 			break;
 		}
 	}
@@ -190,6 +218,7 @@ static int max77779_pinconf_set(struct pinctrl_dev *pctldev,
 }
 
 static const struct pinconf_ops max77779_pinconf_ops = {
+	.is_generic = true,
 	.pin_config_get = max77779_pinconf_get,
 	.pin_config_set = max77779_pinconf_set,
 };
