@@ -1132,6 +1132,7 @@ static void p9221_set_offline(struct p9221_charger_data *charger)
 	charger->online_at = 0;
 	charger->check_rp = RP_NOTSET;
 	charger->cc_vout_ready = false;
+	charger->set_auth_icl = false;
 	cancel_delayed_work(&charger->charge_stats_hda_work);
 	p9221_dump_charge_stats(charger);
 	mutex_unlock(&charger->stats_lock);
@@ -2459,8 +2460,15 @@ int p9221_set_auth_dc_icl(struct p9221_charger_data *charger, bool enable)
 		alarm_try_to_cancel(&charger->auth_dc_icl_alarm);
 	}
 
-	ret = gvotable_cast_int_vote(charger->dc_icl_votable, AUTH_DC_ICL_VOTER,
-				     icl_ua, enable);
+	if (enable)
+		ret = p9xxx_sw_ramp_icl(charger, icl_ua);
+
+	if (ret == 0)
+		ret = gvotable_cast_int_vote(charger->dc_icl_votable, AUTH_DC_ICL_VOTER,
+					     icl_ua, enable);
+	if (ret == 0)
+		ret = gvotable_cast_int_vote(charger->dc_icl_votable,
+					     P9221_RAMP_VOTER, 0, false);
 	if (ret < 0)
 		goto exit;
 
@@ -2564,7 +2572,7 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 		feat_enable = feature_check_fast_charge(charger);
 		if (feat_enable) {
 			pr_debug("%s: Feature check OK\n", __func__);
-		} else if (charger->auth_delay) {
+		} else if (charger->auth_delay || !charger->set_auth_icl) {
 			mutex_unlock(&charger->auth_lock);
 			dev_info(&charger->client->dev, "Auth delay\n");
 			return -EAGAIN;
@@ -3535,25 +3543,6 @@ static void p9221_set_online(struct p9221_charger_data *charger)
 
 	schedule_delayed_work(&charger->charge_stats_hda_work,
 			      msecs_to_jiffies(P9221_CHARGE_STATS_TIMEOUT_MS));
-
-	/* Auth: set alternate ICL for comms and start auth timers */
-	if (charger->pdata->has_wlc_dc || charger->pdata->gpp_enhanced) {
-		const ktime_t timeout = ms_to_ktime(WLCDC_DEBOUNCE_TIME_S * 1000);
-
-		mutex_lock(&charger->auth_lock);
-
-		ret = p9221_set_auth_dc_icl(charger, true);
-		if (ret < 0)
-			dev_err(&charger->client->dev, "cannot set Auth ICL: %d\n", ret);
-
-		pm_stay_awake(charger->dev);
-		alarm_start_relative(&charger->auth_dc_icl_alarm, timeout);
-		schedule_delayed_work(&charger->auth_dc_icl_work,
-				      msecs_to_jiffies(WLCDC_AUTH_CHECK_INIT_DELAY_MS));
-
-		mutex_unlock(&charger->auth_lock);
-	}
-
 }
 
 static int p9221_set_bpp_vout(struct p9221_charger_data *charger)
@@ -5643,6 +5632,50 @@ static ssize_t gpp_enhanced_store(struct device *dev,
 
 static DEVICE_ATTR_RW(gpp_enhanced);
 
+static ssize_t authstart_store(struct device *dev,
+			       struct device_attribute *attr,
+			       const char *buf, size_t count)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct p9221_charger_data *charger = i2c_get_clientdata(client);
+	const bool is_enhanced = charger->pdata->has_wlc_dc ||
+				 charger->pdata->gpp_enhanced;
+	const bool need_auth = charger->is_mfg_google ||
+			       charger->mfg == WLC_MFG_108_FOR_GOOGLE;
+	int ret;
+
+	if (buf[0] != '1' || !charger->chip_is_calibrated(charger))
+		return -EINVAL;
+
+	if (charger->set_auth_icl)
+		return 0;
+
+	if (!need_auth || !is_enhanced) {
+		charger->set_auth_icl = true;
+		return 0;
+	} else {
+		const ktime_t timeout = ms_to_ktime(WLCDC_DEBOUNCE_TIME_S * 1000);
+
+		mutex_lock(&charger->auth_lock);
+
+		charger->set_auth_icl = true;
+		ret = p9221_set_auth_dc_icl(charger, true);
+		if (ret < 0)
+			dev_err(&charger->client->dev, "cannot set Auth ICL: %d\n", ret);
+
+		pm_stay_awake(charger->dev);
+		alarm_start_relative(&charger->auth_dc_icl_alarm, timeout);
+		schedule_delayed_work(&charger->auth_dc_icl_work,
+				      msecs_to_jiffies(WLCDC_AUTH_CHECK_INIT_DELAY_MS));
+
+		mutex_unlock(&charger->auth_lock);
+
+		return ret;
+	}
+}
+
+static DEVICE_ATTR_WO(authstart);
+
 static ssize_t log_current_filtered_show(struct device *dev,
 					 struct device_attribute *attr,
 					 char *buf)
@@ -5738,6 +5771,7 @@ static struct attribute *p9221_attributes[] = {
 	&dev_attr_qi_vbus_en.attr,
 	&dev_attr_has_wlc_dc.attr,
 	&dev_attr_gpp_enhanced.attr,
+	&dev_attr_authstart.attr,
 	&dev_attr_log_current_filtered.attr,
 	&dev_attr_charge_stats.attr,
 	&dev_attr_fw_rev.attr,
@@ -7526,6 +7560,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	charger->trigger_dd = DREAM_DEBOUNCE_TIME_S;
 	charger->det_status = 1;
 	charger->cc_vout_ready = false;
+	charger->set_auth_icl = false;
 	mutex_init(&charger->io_lock);
 	mutex_init(&charger->cmd_lock);
 	mutex_init(&charger->stats_lock);

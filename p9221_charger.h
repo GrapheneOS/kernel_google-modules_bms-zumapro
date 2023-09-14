@@ -933,6 +933,7 @@ struct p9221_charger_data {
 	wait_queue_head_t		ccreset_wq;
 	bool				cc_reset_pending;
 	bool				cc_vout_ready;
+	bool				set_auth_icl;
 	int				send_txid_cnt;
 	bool				sw_ramp_done;
 	bool				hpp_hv;
