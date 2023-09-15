@@ -1100,7 +1100,14 @@ static qnum_t ssoc_rl_max_delta(const struct batt_ssoc_rl_state *rls,
 				int bucken, ktime_t delta_time)
 {
 	int i;
-	const qnum_t max_delta = div_s64(((qnumd_t)rls->rl_delta_max_soc * delta_time),
+	qnum_t max_delta;
+
+	if (delta_time > rls->rl_delta_max_time &&
+		((qnum_toint(rls->rl_delta_max_soc) * delta_time) / rls->rl_delta_max_time) > 100) {
+		return qnum_fromint(100);
+	}
+
+	max_delta = div_s64(((qnumd_t)rls->rl_delta_max_soc * delta_time),
 				  (rls->rl_delta_max_time ? rls->rl_delta_max_time : 1));
 
 	if (rls->rl_fast_track)
