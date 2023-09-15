@@ -924,6 +924,11 @@ struct p9221_charger_data {
 	int				rtx_ocp_chk_ms;
 	int				rtx_total_delay;
 	int				rtx_gpio_state;
+	u16				rtx_ocp;
+	u16				rtx_api_limit;
+	u16				rtx_freq_low_limit;
+	u16				rtx_fod_thrsh;
+	u16				ra9530_rtx_plim;
 	bool				chg_on_rtx;
 	bool				is_rtx_mode;
 	bool				prop_mode_en;
@@ -931,11 +936,6 @@ struct p9221_charger_data {
 	bool				no_fod;
 	u32				de_q_value;
 	u16				fw_rev;
-	u16				tx_ocp;
-	u16				tx_api_limit;
-	u16				tx_freq_low_limit;
-	u16				tx_fod_thrsh;
-	u16				ra9530_tx_plim;
 	u32				wlc_ocp;
 	struct mutex			stats_lock;
 	struct p9221_charge_stats	chg_data;

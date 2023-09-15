@@ -4147,7 +4147,7 @@ static ssize_t p9221_show_status(struct device *dev,
 	uint32_t tx_id = 0;
 	u32 val32;
 	u16 val16;
-	u8 val8, mode_reg;
+	u8 val8;
 
 	if (!p9221_is_online(charger))
 		return -ENODEV;
@@ -4167,7 +4167,6 @@ static ssize_t p9221_show_status(struct device *dev,
 	ret = charger->chip_get_sys_mode(charger, &val8);
 	count += p9221_add_buffer(buf, val8, count, ret,
 				  "mode        : ", "%02x\n");
-	mode_reg = val8;
 
 	ret = charger->chip_get_vout(charger, &val32);
 	count += p9221_add_buffer(buf, P9221_MV_TO_UV(val32), count, ret,
@@ -4181,7 +4180,7 @@ static ssize_t p9221_show_status(struct device *dev,
 	count += p9221_add_buffer(buf, P9221_MA_TO_UA(val32), count, ret,
 				  "iout        : ", "%u uA\n");
 
-	if (charger->ben_state == 1)
+	if (charger->ben_state == RTX_BEN_ON)
 		ret = charger->chip_get_tx_ilim(charger, &val32);
 	else
 		ret = charger->chip_get_rx_ilim(charger, &val32);
@@ -4192,7 +4191,7 @@ static ssize_t p9221_show_status(struct device *dev,
 	count += p9221_add_buffer(buf, P9221_KHZ_TO_HZ(val32), count, ret,
 				  "freq        : ", "%u hz\n");
 
-	if (mode_reg == P9XXX_SYS_OP_MODE_TX_MODE) {
+	if (charger->ben_state == RTX_BEN_ON) {
 		ret = charger->chip_get_op_duty(charger, &val32);
 		count += p9221_add_buffer(buf, val32, count, ret,
 					  "duty        : ", "%u %%\n");
@@ -8084,16 +8083,16 @@ static int p9221_charger_probe(struct i2c_client *client,
 		debugfs_create_u32("de_hpp_neg_pwr", 0644, charger->debug_entry, &charger->de_hpp_neg_pwr);
 		debugfs_create_u32("de_epp_neg_pwr", 0644, charger->debug_entry, &charger->de_epp_neg_pwr);
 		debugfs_create_u32("de_wait_prop_irq_ms", 0644, charger->debug_entry, &charger->de_wait_prop_irq_ms);
-		debugfs_create_u16("de_tx_ocp_ma", 0644, charger->debug_entry,
-				   &charger->tx_ocp);
-		debugfs_create_u16("de_tx_api_limit_ma", 0644, charger->debug_entry,
-				   &charger->tx_api_limit);
-		debugfs_create_u16("de_tx_freq_low_khz", 0644, charger->debug_entry,
-				   &charger->tx_freq_low_limit);
-		debugfs_create_u16("de_tx_fod_thrsh_mw", 0644, charger->debug_entry,
-				   &charger->tx_fod_thrsh);
-		debugfs_create_u16("de_tx_plim_ma", 0644, charger->debug_entry,
-				   &charger->ra9530_tx_plim);
+		debugfs_create_u16("de_rtx_ocp_ma", 0644, charger->debug_entry,
+				   &charger->rtx_ocp);
+		debugfs_create_u16("de_rtx_api_limit_ma", 0644, charger->debug_entry,
+				   &charger->rtx_api_limit);
+		debugfs_create_u16("de_rtx_freq_low_khz", 0644, charger->debug_entry,
+				   &charger->rtx_freq_low_limit);
+		debugfs_create_u16("de_rtx_fod_thrsh_mw", 0644, charger->debug_entry,
+				   &charger->rtx_fod_thrsh);
+		debugfs_create_u16("de_rtx_plim_ma", 0644, charger->debug_entry,
+				   &charger->ra9530_rtx_plim);
 		debugfs_create_u32("de_ocp_ua", 0644, charger->debug_entry,
 				   &charger->wlc_ocp);
 		debugfs_create_u32("enable_i2c_debug", 0644, charger->debug_entry,

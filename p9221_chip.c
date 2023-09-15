@@ -1053,9 +1053,10 @@ static int p9412_chip_tx_apbst_enable(struct p9221_charger_data *chgr)
 static void rtx_current_limit_opt(struct p9221_charger_data *chgr)
 {
 	int ret;
+
 	/* Set API limit to 1.35A */
-	ret = chgr->reg_write_16(chgr, P9412_I_API_Limit, chgr->tx_api_limit);
-	logbuffer_log(chgr->rtx_log, "set api limit to %dMA", chgr->tx_api_limit);
+	ret = chgr->reg_write_16(chgr, P9412_I_API_Limit, chgr->rtx_api_limit);
+	logbuffer_log(chgr->rtx_log, "set api limit to %dMA", chgr->rtx_api_limit);
 	/* Set API Hyst to 0.8A */
 	ret |= chgr->reg_write_8(chgr, P9412_I_API_Hys, P9412_I_API_Hys_08);
 
@@ -1143,8 +1144,8 @@ static int ra9530_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 	}
 
 	/* Set ping phase current limit to 0.9A */
-	ret = chgr->reg_write_16(chgr, RA9530_PLIM_REG, chgr->ra9530_tx_plim);
-	logbuffer_log(chgr->rtx_log, "write %#02x to %#02x", chgr->ra9530_tx_plim, RA9530_PLIM_REG);
+	ret = chgr->reg_write_16(chgr, RA9530_PLIM_REG, chgr->ra9530_rtx_plim);
+	logbuffer_log(chgr->rtx_log, "write %#02x to %#02x", chgr->ra9530_rtx_plim, RA9530_PLIM_REG);
 
 	if (ret < 0)
 		return ret;
@@ -1161,8 +1162,8 @@ static int ra9530_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 			      "error waiting for tx_mode (%d)", ret);
 		return ret;
 	}
-	ret = chgr->reg_write_16(chgr, P9412_TXOCP_REG, chgr->tx_ocp);
-	logbuffer_log(chgr->rtx_log, "configure TX OCP to %dMA", chgr->tx_ocp);
+	ret = chgr->reg_write_16(chgr, P9412_TXOCP_REG, chgr->rtx_ocp);
+	logbuffer_log(chgr->rtx_log, "configure TX OCP to %dMA", chgr->rtx_ocp);
 	if (ret < 0)
 		return ret;
 	if (chgr->pdata->hw_ocp_det) {
@@ -1171,7 +1172,7 @@ static int ra9530_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 		 * Set Frequency low limit to 120kHz
 		 * val = (clock/freq)-1 in number of 60MHz clock cycles
 		 */
-		val = chgr->tx_freq_low_limit;
+		val = chgr->rtx_freq_low_limit;
 		val = (val > 0 && val <= 60000) ?
 			(60000 / val) - 1 : RA9530_MIN_FREQ_PER_120;
 		ret = chgr->reg_write_16(chgr, P9412_MIN_FREQ_PER, val);
@@ -1182,8 +1183,8 @@ static int ra9530_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 
 
 	/* Set Foreign Object Detection Threshold to 1600mW */
-	ret = chgr->reg_write_16(chgr, P9412_TX_FOD_THRSH_REG, chgr->tx_fod_thrsh);
-	logbuffer_log(chgr->rtx_log, "set RTxFOD threshold : %dMW", chgr->tx_fod_thrsh);
+	ret = chgr->reg_write_16(chgr, P9412_TX_FOD_THRSH_REG, chgr->rtx_fod_thrsh);
+	logbuffer_log(chgr->rtx_log, "set RTxFOD threshold : %dMW", chgr->rtx_fod_thrsh);
 	if (ret < 0)
 		logbuffer_log(chgr->rtx_log, "RTxFOD fail, ret=%d\n", ret);
 
@@ -2575,7 +2576,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_mot_addr = P9412_MOT_REG;
 		chgr->reg_cmfet_addr = P9412_CMFET_L_REG;
 		chgr->reg_epp_tx_guarpwr_addr = P9221R5_EPP_TX_GUARANTEED_POWER_REG;
-		chgr->tx_api_limit = P9412_I_API_Limit_1350MA;
+		chgr->rtx_api_limit = P9412_I_API_Limit_1350MA;
 		chgr->reg_freq_limit_addr = 0;
 		break;
 	case RA9530_CHIP_ID:
@@ -2593,10 +2594,10 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_mot_addr = 0;
 		chgr->reg_cmfet_addr = RA9530_CMFET_REG;
 		chgr->reg_epp_tx_guarpwr_addr = P9221R5_EPP_TX_GUARANTEED_POWER_REG;
-		chgr->tx_api_limit = RA9530_I_API_Limit_1350MA;
-		chgr->tx_ocp = RA9530_TXOCP_1400MA;
-		chgr->tx_fod_thrsh = RA9530_TX_FOD_THRSH_1600;
-		chgr->ra9530_tx_plim = RA9530_PLIM_900MA;
+		chgr->rtx_api_limit = RA9530_I_API_Limit_1350MA;
+		chgr->rtx_ocp = RA9530_TXOCP_1400MA;
+		chgr->rtx_fod_thrsh = RA9530_TX_FOD_THRSH_1600;
+		chgr->ra9530_rtx_plim = RA9530_PLIM_900MA;
 		chgr->wlc_ocp = RA9530_ILIM_MAX_UA;
 		chgr->low_neg_pwr_icl = RA9530_ILIM_500UA;
 		chgr->det_off_debounce = 1000;
@@ -2662,7 +2663,6 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 	chgr->chip_get_vout = p9xxx_chip_get_vout;
 	chgr->chip_set_cmd = p9xxx_chip_set_cmd_reg;
 	chgr->chip_get_op_freq = p9xxx_chip_get_op_freq;
-	chgr->chip_get_op_duty = p9xxx_chip_get_op_duty;
 	chgr->chip_get_vrect = p9xxx_chip_get_vrect;
 	chgr->chip_get_vcpout = p9xxx_chip_get_vcpout;
 	chgr->chip_get_tx_epp_guarpwr = p9xxx_get_tx_epp_guarpwr;
