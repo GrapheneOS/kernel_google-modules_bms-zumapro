@@ -1247,6 +1247,9 @@ static int ln8411_stop_charging(struct ln8411_charger *ln8411)
 	/* used to start DC and during errors */
 	ln8411->retry_cnt = 0;
 
+	ln8411->prev_ta_cur = 0;
+	ln8411->prev_ta_vol = 0;
+
 	/* close stats */
 	ln8411_chg_stats_done(&ln8411->chg_data, ln8411);
 	ln8411_chg_stats_dump(ln8411);
@@ -3709,6 +3712,96 @@ error:
 	return ret;
 }
 
+/*
+ * return 1 if apdo switch, 0 if no switch. < 0 on err.
+ * TODO : lower input current per TCPC spec
+ */
+static int ln8411_check_apdo_switch(struct ln8411_charger *ln8411)
+{
+	unsigned int ta_max_vol, ta_max_cur, ta_objpos;
+	unsigned int new_ta_cur, new_ta_max_cur, val;
+	int ret;
+
+	dev_dbg(ln8411->dev, "%s: START: ta_vol: %d, prev_ta_vol: %d, ta_cur: %d, prev_ta_cur: %d\n",
+		__func__, ln8411->ta_vol, ln8411->prev_ta_vol, ln8411->ta_cur, ln8411->prev_ta_cur);
+
+	ta_max_vol = ln8411->ta_vol;
+	ta_max_cur = ln8411->ta_cur;
+
+	ret = ln8411_get_apdo_index(ln8411, &ta_max_vol, &ta_max_cur, &ta_objpos);
+	if (ret) {
+		dev_dbg(ln8411->dev, "%s: error getting apdo index (%d)\n", __func__, ret);
+		return ret;
+	}
+
+	if (ln8411->prev_ta_cur == ln8411->ta_cur && ln8411->prev_ta_vol == ln8411->ta_vol) {
+		ln8411->ta_objpos = ta_objpos;
+		return 0;
+	}
+
+	if (ta_objpos == ln8411->ta_objpos) {
+		dev_dbg(ln8411->dev, "%s: stay at apdo %d\n", __func__, ta_objpos);
+		return 0;
+	}
+
+	if (ln8411->prev_ta_cur < ln8411->ta_cur) {
+		/* Should never happen as we limit to ta_max_cur */
+		dev_err(ln8411->dev, "%s: ta_cur: %d > ta_max_cur %d causing APDO switch\n",
+				__func__, ln8411->ta_cur, ln8411->ta_max_cur);
+		ln8411->ta_cur = ln8411->ta_max_cur;
+		ret = -EINVAL;
+	} else if (ln8411->prev_ta_vol != ln8411->ta_vol) {
+		const long power = (ln8411->prev_ta_cur / 1000) * (ln8411->prev_ta_vol / 1000);
+
+		new_ta_cur = (power / (ln8411->ta_vol / 1000)) * 1000;
+		new_ta_max_cur = new_ta_cur;
+		ta_max_vol = ln8411->ta_vol;
+		dev_dbg(ln8411->dev, "%s: find new ta_cur: ta_vol: %d, ta_cur: %d\n",
+			__func__, ln8411->ta_vol, new_ta_cur);
+		ret = ln8411_get_apdo_index(ln8411, &ta_max_vol, &new_ta_max_cur, &ta_objpos);
+		if (ret) {
+			new_ta_max_cur = 0;
+			ta_max_vol = ln8411->ta_vol;
+			ret = ln8411_get_apdo_index(ln8411, &ta_max_vol, &new_ta_max_cur, &ta_objpos);
+			if (ret) {
+				dev_err(ln8411->dev, "No available APDO to switch to (%d)\n", ret);
+			} else {
+				/* APDO can't provide needed ta_cur, so limit to max */
+				val = new_ta_max_cur / PD_MSG_TA_CUR_STEP;
+				ln8411->ta_cur = val * PD_MSG_TA_CUR_STEP;
+				ln8411->ta_max_cur = ln8411->ta_cur;
+				ln8411->ta_max_vol = ta_max_vol;
+			}
+		} else {
+			val = new_ta_cur / PD_MSG_TA_CUR_STEP;
+			ln8411->ta_cur = val * PD_MSG_TA_CUR_STEP;
+			ln8411->ta_max_vol = ta_max_vol;
+			ln8411->ta_max_cur = new_ta_max_cur;
+		}
+	}
+
+	if (!ret && ta_objpos != ln8411->ta_objpos) {
+		const int temp_cur = ln8411->ta_cur;
+
+		dev_info(ln8411->dev, "ta_vol: %d->%d, ta_cur: %d->%d, ta_pos: %d->%d\n",
+			ln8411->prev_ta_vol, ln8411->ta_vol, ln8411->prev_ta_cur, ln8411->ta_cur,
+			ln8411->ta_objpos, ta_objpos);
+
+		ln8411->ta_objpos = ta_objpos;
+
+		/* Send one message immediately */
+		/* force only voltage change */
+		ln8411->ta_cur = ln8411->prev_ta_cur;
+		ret = ln8411_send_pd_message(ln8411, PD_MSG_REQUEST_APDO);
+		if (ret < 0)
+			return ret;
+		ln8411->ta_cur = temp_cur;
+		ret = 1;
+	}
+
+	return ret;
+}
+
 static int ln8411_send_message(struct ln8411_charger *ln8411)
 {
 	int val, ret;
@@ -3746,8 +3839,19 @@ static int ln8411_send_message(struct ln8411_charger *ln8411)
 		dev_dbg(ln8411->dev, "%s: ta_type=%d, ta_vol=%d ta_cur=%d\n", __func__,
 			 ln8411->ta_type, ln8411->ta_vol, ln8411->ta_cur);
 
+		if (!ln8411->prev_ta_cur)
+			ln8411->prev_ta_cur = ln8411->ta_cur;
+		if (!ln8411->prev_ta_vol)
+			ln8411->prev_ta_vol = ln8411->ta_vol;
+
+		ln8411_check_apdo_switch(ln8411);
 		/* Send PD Message */
 		ret = ln8411_send_pd_message(ln8411, PD_MSG_REQUEST_APDO);
+		if (ret >= 0) {
+			ln8411->prev_ta_cur = ln8411->ta_cur;
+			ln8411->prev_ta_vol = ln8411->ta_vol;
+		}
+
 	}
 
 skip_pps:

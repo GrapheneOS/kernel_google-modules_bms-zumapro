@@ -263,8 +263,8 @@ int ln8411_send_pd_message(struct ln8411_charger *ln8411,
  * call holding mutex_unlock(&ln8411->lock);
  */
 int ln8411_get_apdo_max_power(struct ln8411_charger *ln8411,
-			       unsigned int ta_max_vol,
-			       unsigned int ta_max_cur)
+			      unsigned int ta_max_vol,
+			      unsigned int ta_max_cur)
 {
 	int ret;
 
@@ -300,6 +300,49 @@ int ln8411_get_apdo_max_power(struct ln8411_charger *ln8411,
 
 	ln8411_chg_stats_set_apdo(&ln8411->chg_data,
 				 ln8411->pps_data.src_caps[ln8411->ta_objpos - 1]);
+
+	return 0;
+}
+
+/*
+ * Get the first APDO satisfying give ta_vol, ta_cur from the CC/PD driver.
+ *
+ * call holding mutex_unlock(&ln8411->lock);
+ */
+int ln8411_get_apdo_index(struct ln8411_charger *ln8411,
+			  unsigned int *ta_max_vol,
+			  unsigned int *ta_max_cur,
+			  unsigned int *ta_objpos)
+{
+	int ret;
+	unsigned long ta_max_pwr;
+
+	/* limits */
+	*ta_objpos = 0; /* if !=0 will return the ca */
+
+	/* check the phandle */
+	ret = ln8411_usbpd_setup(ln8411);
+	if (ret != 0) {
+		dev_err(ln8411->dev, "cannot find TCPM %d\n", ret);
+		ln8411->pd = NULL;
+		return ret;
+	}
+
+	/* technically already in pda_data since check online does it */
+	ret = pps_get_src_cap(&ln8411->pps_data, ln8411->pd);
+	if (ret < 0)
+		return ret;
+
+	ret = pps_get_apdo_max_power(&ln8411->pps_data, ta_objpos,
+				     ta_max_vol, ta_max_cur,
+				     &ta_max_pwr);
+	if (ret < 0) {
+		pr_err("cannot determine the apdo index ret = %d\n", ret);
+		return ret;
+	}
+
+	pr_debug("%s: APDO pos=%u max_v=%u max_c=%u max_pwr=%lu\n", __func__,
+		 *ta_objpos, *ta_max_vol, *ta_max_cur, ta_max_pwr);
 
 	return 0;
 }

@@ -305,6 +305,49 @@ int pca9468_get_apdo_max_power(struct pca9468_charger *pca9468,
 	return 0;
 }
 
+/*
+ * Get the first APDO satisfying give ta_vol, ta_cur from the CC/PD driver.
+ *
+ * call holding mutex_unlock(&pca9468->lock);
+ */
+int pca9468_get_apdo_index(struct pca9468_charger *pca9468,
+			   unsigned int *ta_max_vol,
+			   unsigned int *ta_max_cur,
+			   unsigned int *ta_objpos)
+{
+	int ret;
+	unsigned long ta_max_pwr;
+
+	/* limits */
+	*ta_objpos = 0; /* if !=0 will return the ca */
+
+	/* check the phandle */
+	ret = pca9468_usbpd_setup(pca9468);
+	if (ret != 0) {
+		dev_err(pca9468->dev, "cannot find TCPM %d\n", ret);
+		pca9468->pd = NULL;
+		return ret;
+	}
+
+	/* technically already in pda_data since check online does it */
+	ret = pps_get_src_cap(&pca9468->pps_data, pca9468->pd);
+	if (ret < 0)
+		return ret;
+
+	ret = pps_get_apdo_max_power(&pca9468->pps_data, ta_objpos,
+				     ta_max_vol, ta_max_cur,
+				     &ta_max_pwr);
+	if (ret < 0) {
+		pr_err("cannot determine the apdo index ret = %d\n", ret);
+		return ret;
+	}
+
+	pr_debug("%s: APDO pos=%u max_v=%u max_c=%u max_pwr=%lu\n", __func__,
+		 *ta_objpos, *ta_max_vol, *ta_max_cur, ta_max_pwr);
+
+	return 0;
+}
+
 /* WLC_DC ---------------------------------------------------------------- */
 /* call holding mutex_unlock(&pca9468->lock); */
 struct power_supply *pca9468_get_rx_psy(struct pca9468_charger *pca9468)

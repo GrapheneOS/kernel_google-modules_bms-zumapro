@@ -1213,6 +1213,8 @@ static int pca9468_stop_charging(struct pca9468_charger *pca9468)
 	/* used to start DC and during errors */
 	pca9468->retry_cnt = 0;
 
+	pca9468->prev_ta_cur = 0;
+	pca9468->prev_ta_vol = 0;
 	/* close stats */
 	p9468_chg_stats_done(&pca9468->chg_data, pca9468);
 	p9468_chg_stats_dump(pca9468);
@@ -3676,6 +3678,96 @@ error:
 	return ret;
 }
 
+/*
+ * return 1 if apdo switch, 0 if no switch. < 0 on err.
+ * TODO : lower input current per TCPC spec
+ */
+static int pca9468_check_apdo_switch(struct pca9468_charger *pca9468)
+{
+	unsigned int ta_max_vol, ta_max_cur, ta_objpos;
+	unsigned int new_ta_cur, new_ta_max_cur, val;
+	int ret;
+
+	dev_dbg(pca9468->dev, "%s:START: ta_vol: %d, prev_ta_vol: %d, ta_cur: %d, prev_ta_cur: %d\n",
+		__func__, pca9468->ta_vol, pca9468->prev_ta_vol, pca9468->ta_cur, pca9468->prev_ta_cur);
+
+	ta_max_vol = pca9468->ta_vol;
+	ta_max_cur = pca9468->ta_cur;
+
+	ret = pca9468_get_apdo_index(pca9468, &ta_max_vol, &ta_max_cur, &ta_objpos);
+	if (ret) {
+		dev_dbg(pca9468->dev, "%s: error getting apdo index (%d)\n", __func__, ret);
+		return ret;
+	}
+
+	if (pca9468->prev_ta_cur == pca9468->ta_cur && pca9468->prev_ta_vol == pca9468->ta_vol) {
+		pca9468->ta_objpos = ta_objpos;
+		return 0;
+	}
+
+	if (ta_objpos == pca9468->ta_objpos) {
+		dev_dbg(pca9468->dev, "%s: stay at apdo %d\n", __func__, ta_objpos);
+		return 0;
+	}
+
+	if (pca9468->prev_ta_cur < pca9468->ta_cur) {
+		/* Should never happen as we limit to ta_max_cur */
+		dev_err(pca9468->dev, "%s: ta_cur: %d > ta_max_cur %d causing APDO switch\n",
+				__func__, pca9468->ta_cur, pca9468->ta_max_cur);
+		pca9468->ta_cur = pca9468->ta_max_cur;
+		ret = -EINVAL;
+	} else if (pca9468->prev_ta_vol != pca9468->ta_vol) {
+		const long power = (pca9468->prev_ta_cur / 1000) * (pca9468->prev_ta_vol / 1000);
+
+		new_ta_cur = (power / (pca9468->ta_vol / 1000)) * 1000;
+		new_ta_max_cur = new_ta_cur;
+		ta_max_vol = pca9468->ta_vol;
+		dev_dbg(pca9468->dev, "%s: find new ta_cur: ta_vol: %d, ta_cur: %d\n",
+			__func__, pca9468->ta_vol, new_ta_cur);
+		ret = pca9468_get_apdo_index(pca9468, &ta_max_vol, &new_ta_max_cur, &ta_objpos);
+		if (ret) {
+			new_ta_max_cur = 0;
+			ta_max_vol = pca9468->ta_vol;
+			ret = pca9468_get_apdo_index(pca9468, &ta_max_vol, &new_ta_max_cur, &ta_objpos);
+			if (ret) {
+				dev_err(pca9468->dev, "No available APDO to switch to (%d)\n", ret);
+			} else {
+				/* APDO can't provide needed ta_cur, so limit to max */
+				val = new_ta_max_cur / PD_MSG_TA_CUR_STEP;
+				pca9468->ta_cur = val * PD_MSG_TA_CUR_STEP;
+				pca9468->ta_max_cur = pca9468->ta_cur;
+				pca9468->ta_max_vol = ta_max_vol;
+			}
+		} else {
+			val = new_ta_cur / PD_MSG_TA_CUR_STEP;
+			pca9468->ta_cur = val * PD_MSG_TA_CUR_STEP;
+			pca9468->ta_max_vol = ta_max_vol;
+			pca9468->ta_max_cur = new_ta_max_cur;
+		}
+	}
+
+	if (!ret && ta_objpos != pca9468->ta_objpos) {
+		const int temp_cur = pca9468->ta_cur;
+
+		dev_info(pca9468->dev, "ta_vol: %d->%d, ta_cur: %d->%d, ta_pos: %d->%d\n",
+			pca9468->prev_ta_vol, pca9468->ta_vol, pca9468->prev_ta_cur, pca9468->ta_cur,
+			pca9468->ta_objpos, ta_objpos);
+
+		pca9468->ta_objpos = ta_objpos;
+
+		/* Send one message immediately */
+		/* force only voltage change */
+		pca9468->ta_cur = pca9468->prev_ta_cur;
+		ret = pca9468_send_pd_message(pca9468, PD_MSG_REQUEST_APDO);
+		if (ret < 0)
+			return ret;
+		pca9468->ta_cur = temp_cur;
+		ret = 1;
+	}
+
+	return ret;
+}
+
 static int pca9468_send_message(struct pca9468_charger *pca9468)
 {
 	int val, ret;
@@ -3713,8 +3805,18 @@ static int pca9468_send_message(struct pca9468_charger *pca9468)
 		pr_debug("%s: ta_type=%d, ta_vol=%d ta_cur=%d\n", __func__,
 			 pca9468->ta_type, pca9468->ta_vol, pca9468->ta_cur);
 
+		if (!pca9468->prev_ta_cur)
+			pca9468->prev_ta_cur = pca9468->ta_cur;
+		if (!pca9468->prev_ta_vol)
+			pca9468->prev_ta_vol = pca9468->ta_vol;
+
+		pca9468_check_apdo_switch(pca9468);
 		/* Send PD Message */
 		ret = pca9468_send_pd_message(pca9468, PD_MSG_REQUEST_APDO);
+		if (ret >= 0) {
+			pca9468->prev_ta_cur = pca9468->ta_cur;
+			pca9468->prev_ta_vol = pca9468->ta_vol;
+		}
 	}
 
 skip_pps:

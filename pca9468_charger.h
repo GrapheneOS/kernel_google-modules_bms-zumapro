@@ -205,6 +205,10 @@ struct pca9468_charger {
 	unsigned int		ta_vol;
 	unsigned int		ta_objpos;
 
+	/* need for APDO switch test */
+	unsigned int		prev_ta_cur;
+	unsigned int		prev_ta_vol;
+
 	/* same as pps_data */
 	unsigned int		ta_max_cur;
 	unsigned int		ta_max_vol;
@@ -341,6 +345,8 @@ int pca9468_usbpd_setup(struct pca9468_charger *pca9468);
 int pca9468_send_pd_message(struct pca9468_charger *pca9468, unsigned int msg_type);
 int pca9468_get_apdo_max_power(struct pca9468_charger *pca9468,
 			       unsigned int ta_max_vol, unsigned int ta_max_cur);
+int pca9468_get_apdo_index(struct pca9468_charger *pca9468, unsigned int *ta_max_vol,
+			   unsigned int *ta_max_cur, unsigned int *ta_objpos);
 int pca9468_send_rx_voltage(struct pca9468_charger *pca9468, unsigned int msg_type);
 int pca9468_get_rx_max_power(struct pca9468_charger *pca9468);
 int pca9468_set_ta_type(struct pca9468_charger *pca9468, int pps_index);

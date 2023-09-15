@@ -204,6 +204,10 @@ struct ln8411_charger {
 	u32			ta_vol;
 	u32			ta_objpos;
 
+	/* need for APDO switch test */
+	unsigned int		prev_ta_cur;
+	unsigned int		prev_ta_vol;
+
 	/* same as pps_data */
 	u32			ta_max_cur;
 	u32			ta_max_vol;
@@ -354,6 +358,8 @@ s32 ln8411_usbpd_setup(struct ln8411_charger *ln8411);
 s32 ln8411_send_pd_message(struct ln8411_charger *ln8411, u32 msg_type);
 s32 ln8411_get_apdo_max_power(struct ln8411_charger *ln8411,
 			    u32 ta_max_vol, u32 ta_max_cur);
+int ln8411_get_apdo_index(struct ln8411_charger *ln8411, unsigned int *ta_max_vol,
+			  unsigned int *ta_max_cur, unsigned int *ta_objpos);
 s32 ln8411_send_rx_voltage(struct ln8411_charger *ln8411, u32 msg_type);
 s32 ln8411_get_rx_max_power(struct ln8411_charger *ln8411);
 s32 ln8411_set_ta_type(struct ln8411_charger *ln8411, s32 pps_index);
