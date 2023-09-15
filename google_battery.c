@@ -87,6 +87,7 @@
 #define BHI_ALGO_ROUND_INDEX		50
 #define BHI_CC_MARGINAL_THRESHOLD_DEFAULT	800
 #define BHI_CC_NEED_REP_THRESHOLD_DEFAULT	1000
+#define BHI_CYCLE_GRACE_DEFAULT		200
 
 #define BHI_ROUND_INDEX(index) 		\
 	(((index) + BHI_ALGO_ROUND_INDEX) / 100)
@@ -9705,7 +9706,7 @@ static int batt_bhi_init(struct batt_drv *batt_drv)
 	ret = of_property_read_u32(batt_drv->device->of_node, "google,bhi-cycle-grace",
 				   &health_data->bhi_cycle_grace);
 	if (ret < 0)
-		health_data->bhi_cycle_grace = 0;
+		health_data->bhi_cycle_grace = BHI_CYCLE_GRACE_DEFAULT;
 
 	/* design is the value used to build the charge table */
 	health_data->bhi_data.pack_capacity = batt_drv->battery_capacity;
