@@ -4102,15 +4102,21 @@ static int bhi_calc_sd_index(int algo, const struct health_data *health_data)
 static int bhi_cycle_count_index(const struct health_data *health_data)
 {
 	const int cc = health_data->bhi_data.cycle_count;
-	const int cc_mt = health_data->cycle_count_marginal_threshold;
+	int cc_mt = health_data->cycle_count_marginal_threshold;
 	const int cc_nrt = health_data->cycle_count_need_rep_threshold;
-	const int h_mt = health_data->marginal_threshold;
+	int h_mt = health_data->marginal_threshold;
 	const int h_nrt = health_data->need_rep_threshold;
 	int cc_index;
 
 	/* threshold should be reasonable */
 	if (h_mt < h_nrt || cc_nrt <= cc_mt)
 		return BHI_ALGO_FULL_HEALTH;
+
+	/* remove marginal_threshold */
+	if (h_mt == h_nrt) {
+		h_mt = 100;
+		cc_mt = 0;
+	}
 
 	/* use interpolation to get index via cycle count/health threshold */
 	cc_index = (h_mt - h_nrt) * (cc - cc_nrt) / (cc_mt - cc_nrt) + h_nrt;
