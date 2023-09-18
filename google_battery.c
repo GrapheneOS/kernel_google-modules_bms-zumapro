@@ -1149,7 +1149,7 @@ static qnum_t ssoc_apply_rl(struct batt_ssoc_state *ssoc)
 	} else {
 		qnum_t step;
 		const ktime_t delta_time = now - rls->rl_ssoc_last_update;
-		const ktime_t max_delta = ssoc_rl_max_delta(rls,
+		const qnum_t max_delta = ssoc_rl_max_delta(rls,
 							   ssoc->buck_enabled,
 							   delta_time);
 
