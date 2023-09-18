@@ -289,6 +289,9 @@ static int ttf_pwr_ratio(const struct batt_ttf_stats *stats,
 	 */
 
 	/* ratio for elap time: it doesn't work if reference is not maximal */
+	if (equiv_icl == 0)
+		return -EINVAL;
+
 	if (equiv_icl < avg_cc)
 		ratio = (avg_cc * 100) / equiv_icl;
 	else
