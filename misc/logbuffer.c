@@ -231,7 +231,6 @@ struct logbuffer *logbuffer_register(const char *name)
 
 	instance->buffer = vzalloc(buffer_entries * LOGBUFFER_ENTRY_SIZE);
 	if (!instance->buffer) {
-		instance = ERR_PTR(-ENOMEM);
 		goto free_instance;
 	}
 
