@@ -68,6 +68,7 @@
 
 #define P9221_TX_TIMEOUT_MS			(20 * 1000)
 #define P9221_DCIN_TIMEOUT_MS			(1 * 1000)
+#define P9221_DCIN_WAIT_CNT			4
 #define P9221_CHARGE_STATS_TIMEOUT_MS		(10 * 1000)
 #define P9221_VRECT_TIMEOUT_MS			(2 * 1000)
 #define P9221_ALIGN_TIMEOUT_MS			(2 * 1000)
@@ -864,6 +865,7 @@ struct p9221_charger_data {
 	bool				check_np;
 	bool				check_dc;
 	bool				check_det;
+	int				dcin_waitcnt;
 	int				last_capacity;
 	bool				resume_complete;
 	bool				icl_ramp;

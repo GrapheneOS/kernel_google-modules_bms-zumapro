@@ -1280,14 +1280,28 @@ static void p9221_dcin_work(struct work_struct *work)
 			struct p9221_charger_data, dcin_work.work);
 
 	res = p9221_reg_read_16(charger, P9221_STATUS_REG, &status_reg);
+
+	if (res == 0 && charger->dcin_waitcnt) {
+		charger->dcin_waitcnt--;
+		schedule_delayed_work(&charger->dcin_work,
+				      msecs_to_jiffies(P9221_DCIN_TIMEOUT_MS));
+		logbuffer_log(charger->log, "dc_in: check online=%d status=%04x",
+			      charger->online, status_reg);
+		return;
+	}
+
 	if (res == 0)
-		logbuffer_log(charger->log, "dc_in: timeout online=%d status=%04x", charger->online, status_reg);
+		logbuffer_log(charger->log, "dc_in: timeout online=%d status=%04x",
+			      charger->online, status_reg);
 	else
-		logbuffer_log(charger->log, "dc_in: timeout online=%d res=%d", charger->online, res);
-	dev_info(&charger->client->dev, "timeout waiting for dc-in, online=%d\n", charger->online);
+		logbuffer_log(charger->log, "dc_in: timeout online=%d res=%d",
+			      charger->online, res);
+
+	dev_info(&charger->client->dev, "timeout waiting for dc-in, online=%d\n",
+		 charger->online);
 
 	if (charger->online)
-	    p9221_set_offline(charger);
+		p9221_set_offline(charger);
 
 	power_supply_changed(charger->wc_psy);
 	pm_relax(charger->dev);
@@ -3480,6 +3494,7 @@ static void p9221_set_online(struct p9221_charger_data *charger)
 	charger->cc_data_lock.cc_rcv_at = 0;
 	charger->last_capacity = -1;
 	charger->online_at = get_boot_sec();
+	charger->dcin_waitcnt = P9221_DCIN_WAIT_CNT;
 
 	/* reset data for the new charging entry */
 
