@@ -570,6 +570,7 @@
 #define RA9530_MIN_FREQ_PER_120			0x1f3	/* 60000/120 - 1 */
 #define RA9530_TX_FB_HB_REG			0x1A0
 #define RA9530_ILIM_MAX_UA			(1700 * 1000)
+#define RA9530_ILIM_500UA			(500 * 1000)
 #define P9XXX_OP_DUTY_REG			0xA6
 #define P9XXX_TX_CUR_PWR_REG			0xAC
 #define P9XXX_RX_CUR_PWR_REG			0xCE
@@ -948,6 +949,7 @@ struct p9221_charger_data {
 	int				det_off_debounce;
 	bool				votable_init_done;
 	u32				trigger_dd;
+	u32				low_neg_pwr_icl;
 
 #if IS_ENABLED(CONFIG_GPIOLIB)
 	struct gpio_chip gpio;

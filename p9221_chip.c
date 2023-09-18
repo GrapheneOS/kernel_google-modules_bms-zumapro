@@ -1767,10 +1767,10 @@ static void p9xxx_check_neg_power(struct p9221_charger_data *chgr)
 		 * base on firmware 17
 		 * Vout is 5V when Tx<10W, use BPP ICL
 		 */
-		chgr->dc_icl_epp_neg = P9221_DC_ICL_BPP_UA;
+		chgr->dc_icl_epp_neg = chgr->low_neg_pwr_icl;
 		dev_info(&chgr->client->dev,
 			 "EPP less than 10W,use dc_icl=%dmA,np=%02x\n",
-			 P9221_DC_ICL_BPP_UA/1000, np8);
+			 chgr->low_neg_pwr_icl / 1000, np8);
 	} else if (np8 < P9XXX_NEG_POWER_11W) {
 		chgr->dc_icl_epp_neg = P9XXX_DC_ICL_EPP_1000;
 		dev_info(&chgr->client->dev,
@@ -2519,6 +2519,7 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 {
 	chgr->wlc_ocp = P9221R5_ILIM_MAX_UA;
+	chgr->low_neg_pwr_icl = P9221_DC_ICL_BPP_UA;
 
 	switch (chip_id) {
 	case P9412_CHIP_ID:
@@ -2558,6 +2559,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->tx_fod_thrsh = RA9530_TX_FOD_THRSH_1600;
 		chgr->ra9530_tx_plim = RA9530_PLIM_900MA;
 		chgr->wlc_ocp = RA9530_ILIM_MAX_UA;
+		chgr->low_neg_pwr_icl = RA9530_ILIM_500UA;
 		break;
 	case P9382A_CHIP_ID:
 		chgr->reg_tx_id_addr = P9382_PROP_TX_ID_REG;
