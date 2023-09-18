@@ -3102,7 +3102,7 @@ static int batt_calc_charging_speed(struct batt_drv *batt_drv)
 
 	/* Get nominal demand current via ttf table */
 	nominal_demand = ttf_ref_cc(&batt_drv->ttf_stats, soc);
-	if (nominal_demand < 0)
+	if (nominal_demand <= 0)
 		return -1;
 
 	/*
