@@ -191,7 +191,7 @@ static int gbms_read_cccm_limits(struct gbms_chg_profile *profile,
 	if (profile->temp_nb_limits <= 0) {
 		ret = profile->temp_nb_limits;
 		gbms_err(profile, "cannot read chg-temp-limits, ret=%d\n", ret);
-		return ret;
+		return -EINVAL;
 	}
 	if (profile->temp_nb_limits > GBMS_CHG_TEMP_NB_LIMITS_MAX) {
 		gbms_err(profile, "chg-temp-nb-limits exceeds driver max: %d\n",
@@ -218,7 +218,7 @@ static int gbms_read_cccm_limits(struct gbms_chg_profile *profile,
 	if (profile->volt_nb_limits <= 0) {
 		ret = profile->volt_nb_limits;
 		gbms_err(profile, "cannot read chg-cv-limits, ret=%d\n", ret);
-		return ret;
+		return -EINVAL;
 	}
 	if (profile->volt_nb_limits > GBMS_CHG_VOLT_NB_LIMITS_MAX) {
 		gbms_err(profile, "chg-cv-nb-limits exceeds driver max: %d\n",
