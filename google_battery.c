@@ -7304,6 +7304,7 @@ static ssize_t aacr_state_store(struct device *dev,
 	switch (val) {
 	case BATT_AACR_DISABLED:
 		state = BATT_AACR_DISABLED;
+		algo = BATT_AACR_DISABLED;
 		break;
 	case BATT_AACR_ENABLED:
 		state = BATT_AACR_ENABLED;
