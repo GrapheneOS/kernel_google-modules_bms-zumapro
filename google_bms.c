@@ -821,9 +821,10 @@ EXPORT_SYMBOL_GPL(gbms_logbuffer_devlog);
 
 bool chg_state_is_disconnected(const union gbms_charger_state *chg_state)
 {
-	return ((chg_state->f.flags & GBMS_CS_FLAG_BUCK_EN) == 0) &&
+	return (((chg_state->f.flags & GBMS_CS_FLAG_BUCK_EN) == 0) &&
 	       (chg_state->f.chg_status == POWER_SUPPLY_STATUS_DISCHARGING ||
-	       chg_state->f.chg_status == POWER_SUPPLY_STATUS_UNKNOWN);
+	       chg_state->f.chg_status == POWER_SUPPLY_STATUS_UNKNOWN)) ||
+	       (chg_state->f.flags & GBMS_CS_FLAG_INPUT_SUSPEND);
 }
 EXPORT_SYMBOL_GPL(chg_state_is_disconnected);
 

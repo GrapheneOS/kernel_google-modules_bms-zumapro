@@ -164,6 +164,12 @@ struct chg_termination {
 	int usb_5v;
 };
 
+enum chg_input_suspend_state {
+	CHG_INPUT_SUSPEND_DISABLED = 0,
+	CHG_INPUT_SUSPEND_ENABLED_DISCHARGING,
+	CHG_INPUT_SUSPEND_ENABLED_CHARGER_STATUS,
+};
+
 /* re-evaluate FCC when switching power supplies */
 static int chg_therm_update_fcc(struct chg_drv *chg_drv);
 static void chg_reset_termination_data(struct chg_drv *chg_drv);
@@ -324,7 +330,7 @@ struct chg_drv {
 
 	/* debug */
 	struct dentry *debug_entry;
-	bool debug_input_suspend;
+	uint8_t debug_input_suspend;
 
 	/* dock_defend */
 	struct delayed_work bd_dd_work;
@@ -1216,6 +1222,15 @@ static int chg_work_roundtrip(struct chg_drv *chg_drv,
 
 	if (chg_is_custom_enabled(upperbd, lowerbd))
 		chg_state->f.flags |= GBMS_CS_FLAG_CCLVL;
+
+	if (chg_drv->debug_input_suspend) {
+		chg_state->f.flags |= GBMS_CS_FLAG_INPUT_SUSPEND;
+
+		if (chg_drv->debug_input_suspend == CHG_INPUT_SUSPEND_ENABLED_DISCHARGING) {
+			chg_state->f.flags &= ~GBMS_CS_FLAG_BUCK_EN;
+			chg_state->f.chg_status = POWER_SUPPLY_STATUS_DISCHARGING;
+		}
+	}
 
 	/*
 	 * The trigger of DREAM-DEFEND might look like a short disconnect.
@@ -3497,7 +3512,12 @@ static int chg_set_input_suspend(void *data, u64 val)
 	if (rc < 0)
 		return rc;
 
-	chg_drv->debug_input_suspend = (val != 0);
+	if (val > CHG_INPUT_SUSPEND_ENABLED_CHARGER_STATUS) {
+		pr_err("Error! Invalid input suspend value\n");
+		return -EINVAL;
+	}
+
+	chg_drv->debug_input_suspend = val;
 
 	if (chg_drv->chg_psy)
 		power_supply_changed(chg_drv->chg_psy);

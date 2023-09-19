@@ -401,13 +401,14 @@ struct gbms_charging_event {
 	(((ti) >= 0 && (vi) >= 0) ? profile->cccm_limits[((ti) * profile->volt_nb_limits) + (vi)] : 0)
 
 /* newgen charging */
-#define GBMS_CS_FLAG_BUCK_EN	BIT(0)
-#define GBMS_CS_FLAG_DONE	BIT(1)
-#define GBMS_CS_FLAG_CC		BIT(2)
-#define GBMS_CS_FLAG_CV		BIT(3)
-#define GBMS_CS_FLAG_ILIM	BIT(4)
-#define GBMS_CS_FLAG_CCLVL	BIT(5)
-#define GBMS_CS_FLAG_DIRECT_CHG	BIT(6)
+#define GBMS_CS_FLAG_BUCK_EN		BIT(0)
+#define GBMS_CS_FLAG_DONE		BIT(1)
+#define GBMS_CS_FLAG_CC			BIT(2)
+#define GBMS_CS_FLAG_CV			BIT(3)
+#define GBMS_CS_FLAG_ILIM		BIT(4)
+#define GBMS_CS_FLAG_CCLVL		BIT(5)
+#define GBMS_CS_FLAG_DIRECT_CHG		BIT(6)
+#define GBMS_CS_FLAG_INPUT_SUSPEND	BIT(7)
 
 union gbms_charger_state {
 	uint64_t v;

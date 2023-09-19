@@ -9549,7 +9549,10 @@ static int gbatt_get_status(struct batt_drv *batt_drv,
 	int err, ssoc;
 
 	if (batt_drv->ssoc_state.buck_enabled == 0) {
-		val->intval = POWER_SUPPLY_STATUS_DISCHARGING;
+		if (batt_drv->chg_state.f.chg_status == POWER_SUPPLY_STATUS_NOT_CHARGING)
+			val->intval = batt_drv->chg_state.f.chg_status;
+		else
+			val->intval = POWER_SUPPLY_STATUS_DISCHARGING;
 		return 0;
 	}
 
