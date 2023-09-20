@@ -24,6 +24,7 @@ struct max77779_usecase_data {
 	int wlc_en;		/* wlcrx/chgin coex */
 	int wlc_vbus_en;	/* b/202526678 */
 	bool reverse12_en;	/* reverse 1:2 mode */
+	int wlc_spoof_gpio;	/* wlcrx thermal throttle */
 
 	u8 otg_ilim;		/* TODO: TCPM to control this? */
 	u8 otg_vbyp;		/* TODO: TCPM to control this? */
@@ -74,7 +75,13 @@ enum gsu_rtx_state {
 	GSU_RTX_DISABLED,
 };
 
-extern int gs201_wlc_en(struct max77779_usecase_data *uc_data, bool wlc_on);
+enum wlc_state_t {
+	WLC_DISABLED = 0,
+	WLC_ENABLED = 1,
+	WLC_SPOOFED = 2,
+};
+
+extern int gs201_wlc_en(struct max77779_usecase_data *uc_data, enum wlc_state_t state);
 extern int gs201_to_standby(struct max77779_usecase_data *uc_data, int use_case);
 extern int gs201_to_usecase(struct max77779_usecase_data *uc_data, int use_case);
 extern int gs201_finish_usecase(struct max77779_usecase_data *uc_data, int use_case);

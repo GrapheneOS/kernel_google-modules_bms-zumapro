@@ -91,17 +91,21 @@ static int max77779_chgr_insel_write(struct i2c_client *client, u8 mask, u8 valu
 
 /* ----------------------------------------------------------------------- */
 
-int gs201_wlc_en(struct max77779_usecase_data *uc_data, bool wlc_on)
+int gs201_wlc_en(struct max77779_usecase_data *uc_data, enum wlc_state_t state)
 {
-	int ret = 0;
+	const int wlc_on = state == WLC_ENABLED;
 
-	pr_debug("%s: wlc_en=%d wlc_on=%d\n", __func__,
-		 uc_data->wlc_en, wlc_on);
+	pr_debug("%s: wlc_en=%d wlc_on=%d wlc_state=%d\n", __func__,
+		 uc_data->wlc_en, wlc_on, state);
 
-	if (uc_data->wlc_en >= 0)
-		gpio_set_value_cansleep(uc_data->wlc_en, wlc_on);
+	if (uc_data->wlc_en < 0)
+		return 0;
 
-	return ret;
+	gpio_set_value_cansleep(uc_data->wlc_spoof_gpio,
+				state == WLC_SPOOFED && uc_data->wlc_spoof_gpio);
+	gpio_set_value_cansleep(uc_data->wlc_en, wlc_on);
+
+	return 0;
 }
 
 /* RTX reverse wireless charging */
@@ -122,7 +126,7 @@ static int gs201_wlc_tx_enable(struct max77779_usecase_data *uc_data, int use_ca
 				       __func__);
 		}
 
-		ret = gs201_wlc_en(uc_data, false);
+		ret = gs201_wlc_en(uc_data, WLC_DISABLED);
 		if (ret < 0)
 			pr_err("%s: cannot disable WLC (%d)\n", __func__, ret);
 
@@ -164,7 +168,7 @@ static int gs201_wlc_tx_enable(struct max77779_usecase_data *uc_data, int use_ca
 		return -EINVAL;
 	}
 
-	ret = gs201_wlc_en(uc_data, true);
+	ret = gs201_wlc_en(uc_data, WLC_ENABLED);
 	if (ret < 0)
 		pr_err("%s: cannot enable WLC (%d)\n", __func__, ret);
 
@@ -625,7 +629,7 @@ int gs201_finish_usecase(struct max77779_usecase_data *uc_data, int use_case)
 			if (ret < 0)
 				return ret;
 
-			ret = gs201_wlc_en(uc_data, true); /* re-enable wlc in case of rx */
+			ret = gs201_wlc_en(uc_data, WLC_ENABLED); /* re-enable wlc in case of rx */
 			if (ret < 0)
 				return ret;
 
@@ -675,7 +679,8 @@ static bool gs201_setup_usecases_done(struct max77779_usecase_data *uc_data)
 	       (uc_data->bst_on != -EPROBE_DEFER) &&
 	       (uc_data->ext_bst_mode != -EPROBE_DEFER) &&
 	       (uc_data->ext_bst_ctl != -EPROBE_DEFER) &&
-	       (uc_data->rtx_ready != -EPROBE_DEFER);
+	       (uc_data->rtx_ready != -EPROBE_DEFER) &&
+	       (uc_data->wlc_spoof_gpio != -EPROBE_DEFER);
 
 	/* TODO: handle platform specific differences..	*/
 }
@@ -693,6 +698,8 @@ static void gs201_setup_default_usecase(struct max77779_usecase_data *uc_data)
 
 	uc_data->wlc_en = -EPROBE_DEFER;
 	uc_data->rtx_ready = -EPROBE_DEFER;
+
+	uc_data->wlc_spoof_gpio = -EPROBE_DEFER;
 
 	uc_data->init_done = false;
 
@@ -737,6 +744,10 @@ bool gs201_setup_usecases(struct max77779_usecase_data *uc_data,
 	/*  wlc_rx: disable when chgin, CPOUT is safe */
 	if (uc_data->wlc_en == -EPROBE_DEFER)
 		uc_data->wlc_en = of_get_named_gpio(node, "max77779,wlc-en", 0);
+
+	/*  wlc_rx thermal throttle -> spoof online */
+	if (uc_data->wlc_spoof_gpio == -EPROBE_DEFER)
+	    uc_data->wlc_spoof_gpio = of_get_named_gpio(node, "max77759,wlc-spoof-gpio", 0);
 
 	/* OPTIONAL: support wlc_rx -> wlc_rx+otg */
 	uc_data->rx_otg_en = of_property_read_bool(node, "max77779,rx-to-rx-otg-en");

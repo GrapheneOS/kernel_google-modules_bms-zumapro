@@ -63,6 +63,7 @@ struct max77779_chgr_data {
 	bool charge_done;
 	bool chgin_input_suspend;
 	bool wcin_input_suspend;
+	bool wlc_spoof;
 	bool thm2_sts;
 
 	int irq_gpio;
