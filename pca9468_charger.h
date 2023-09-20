@@ -273,7 +273,7 @@ struct pca9468_charger {
 
 	struct gvotable_election *dc_avail;
 /* Google Integration END */
-
+	bool			ftm_mode; /* factory test, will ignore usb pps */
 };
 
 /* Direct Charging State */

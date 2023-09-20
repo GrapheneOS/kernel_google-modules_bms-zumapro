@@ -1144,6 +1144,9 @@ static int pca9468_recover_ta(struct pca9468_charger *pca9468)
 {
 	int ret;
 
+	if (pca9468->ftm_mode)
+		return 0;
+
 	if (pca9468->ta_type == TA_TYPE_WIRELESS) {
 		pca9468->ta_vol = 0; /* set to a value to change rx vol */
 		ret = pca9468_send_rx_voltage(pca9468, MSG_REQUEST_FIXED_PDO);
@@ -3345,6 +3348,8 @@ static int pca9468_preset_dcmode(struct pca9468_charger *pca9468)
 
 	/* Check the TA type and set the charging mode */
 	if (pca9468->ta_type == TA_TYPE_WIRELESS) {
+		if (pca9468->ftm_mode)
+			goto error;
 		/*
 		 * Set the RX max voltage to enough high value to find RX
 		 * maximum voltage initially
@@ -3373,6 +3378,8 @@ static int pca9468_preset_dcmode(struct pca9468_charger *pca9468)
 	} else {
 		const unsigned int ta_max_vol = pca9468->pdata->ta_max_vol * pca9468->chg_mode;
 
+		if (pca9468->ftm_mode)
+			goto skip_pps;
 		/*
 		 * Get the APDO max for 2:1 mode.
 		 * Returns ->ta_max_vol, ->ta_max_cur, ->ta_max_pwr and
@@ -3406,6 +3413,7 @@ static int pca9468_preset_dcmode(struct pca9468_charger *pca9468)
 			goto error;
 		}
 
+skip_pps:
 		/*
 		 * ->ta_max_cur is too high for startup, needs to target
 		 * CC before hitting max current AND work to ta_max_cur
@@ -3537,8 +3545,9 @@ exit_done:
 		pca9468->timer_period = 0;
 	}
 
-	mod_delayed_work(pca9468->dc_wq, &pca9468->timer_work,
-			 msecs_to_jiffies(pca9468->timer_period));
+	if (!pca9468->ftm_mode)
+		mod_delayed_work(pca9468->dc_wq, &pca9468->timer_work,
+				 msecs_to_jiffies(pca9468->timer_period));
 	mutex_unlock(&pca9468->lock);
 	return ret;
 }
@@ -3578,7 +3587,8 @@ static int pca9468_start_direct_charging(struct pca9468_charger *pca9468)
 		goto error_done;
 
 	/* configure DC charging type for the requested index */
-	ret = pca9468_set_ta_type(pca9468, pca9468->pps_index);
+	if (!pca9468->ftm_mode)
+		ret = pca9468_set_ta_type(pca9468, pca9468->pps_index);
 	pr_info("%s: Current ta_type=%d, chg_mode=%d\n", __func__,
 		pca9468->ta_type, pca9468->chg_mode);
 	if (ret < 0)
@@ -3676,6 +3686,9 @@ static int pca9468_send_message(struct pca9468_charger *pca9468)
 
 	pr_debug("%s: ====== START ======= \n", __func__);
 
+	if (pca9468->ftm_mode)
+		goto skip_pps;
+
 	/* Adjust TA current and voltage step */
 	if (pca9468->ta_type == TA_TYPE_WIRELESS) {
 		/* RX voltage resolution is 100mV */
@@ -3704,6 +3717,7 @@ static int pca9468_send_message(struct pca9468_charger *pca9468)
 		ret = pca9468_send_pd_message(pca9468, PD_MSG_REQUEST_APDO);
 	}
 
+skip_pps:
 	switch (pca9468->charging_state) {
 	case DC_STATE_PRESET_DC:
 		pca9468->timer_id = TIMER_PRESET_CONFIG;
@@ -3737,7 +3751,9 @@ static int pca9468_send_message(struct pca9468_charger *pca9468)
 		pca9468->timer_id = TIMER_CHECK_ACTIVE;
 	}
 
-	if (pca9468->ta_type == TA_TYPE_WIRELESS)
+	if (pca9468->ftm_mode)
+		pca9468->timer_period = 0;
+	else if (pca9468->ta_type == TA_TYPE_WIRELESS)
 		pca9468->timer_period = PCA9468_PDMSG_WLC_WAIT_T;
 	else
 		pca9468->timer_period = PCA9468_PDMSG_WAIT_T;
@@ -3916,13 +3932,14 @@ static void pca9468_pps_request_work(struct work_struct *work)
 {
 	struct pca9468_charger *pca9468 = container_of(work,
 					struct pca9468_charger, pps_work.work);
-	int ret;
+	int ret = 0;
 
 	pr_debug("%s: =========START=========\n", __func__);
 	pr_debug("%s: = charging_state=%u == \n", __func__,
 		 pca9468->charging_state);
 
-	ret = pca9468_send_pd_message(pca9468, PD_MSG_REQUEST_APDO);
+	if (!pca9468->ftm_mode)
+		ret = pca9468_send_pd_message(pca9468, PD_MSG_REQUEST_APDO);
 	if (ret < 0)
 		pr_err("%s: Error-send_pd_message\n", __func__);
 
@@ -4542,11 +4559,15 @@ static enum power_supply_property pca9468_mains_properties[] = {
 	POWER_SUPPLY_PROP_PRESENT,
 	POWER_SUPPLY_PROP_ONLINE,
 	POWER_SUPPLY_PROP_CHARGE_TYPE,
-	POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT,
+	POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
+	POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX,
 	POWER_SUPPLY_PROP_TEMP,
 	/* same as POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT */
 	POWER_SUPPLY_PROP_CURRENT_MAX,
 	POWER_SUPPLY_PROP_CURRENT_NOW,
+	POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT,
+	POWER_SUPPLY_PROP_STATUS,
+	POWER_SUPPLY_PROP_TEMP,
 	POWER_SUPPLY_PROP_VOLTAGE_MAX,
 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
 	POWER_SUPPLY_PROP_STATUS,
@@ -4847,6 +4868,28 @@ static int debug_adc_chan_set(void *data, u64 val)
 DEFINE_SIMPLE_ATTRIBUTE(debug_adc_chan_ops, debug_adc_chan_get,
 			debug_adc_chan_set, "%llu\n");
 
+static int debug_ftm_mode_get(void *data, u64 *val)
+{
+	struct pca9468_charger *pca9468 = data;
+	*val = pca9468->ftm_mode;
+	return 0;
+}
+
+static int debug_ftm_mode_set(void *data, u64 val)
+{
+	struct pca9468_charger *pca9468 = data;
+
+	if (val) {
+		pca9468->ftm_mode = true;
+		pca9468->ta_type = TA_TYPE_USBPD;
+		pca9468->chg_mode = CHG_2TO1_DC_MODE;
+	} else {
+		pca9468->ftm_mode = false;
+	}
+
+	return 0;
+}
+DEFINE_SIMPLE_ATTRIBUTE(debug_ftm_mode_ops, debug_ftm_mode_get, debug_ftm_mode_set, "%llu\n");
 
 static int debug_pps_index_get(void *data, u64 *val)
 {
@@ -5027,6 +5070,8 @@ static int pca9468_create_fs_entries(struct pca9468_charger *chip)
 			    &debug_adc_chan_ops);
 	debugfs_create_file("pps_index", 0644, chip->debug_root, chip,
 			    &debug_pps_index_ops);
+	debugfs_create_file("ftm_mode", 0644, chip->debug_root, chip,
+			    &debug_ftm_mode_ops);
 
 	return 0;
 }
