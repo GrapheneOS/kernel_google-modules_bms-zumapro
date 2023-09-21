@@ -20,6 +20,7 @@
 #endif
 
 #include <linux/kernel.h>
+#include <linux/interrupt.h>
 #include <linux/printk.h>
 #include <linux/module.h>
 #include <linux/of.h>
@@ -120,6 +121,10 @@ enum {
 
 #define MDIS_REASON_SETUP "SETUP"
 
+#define COP_WARN_BACKOFF_MS 9000
+#define COP_WARN_DEFAULT_OFFSET_MA 100
+#define COP_WARN_DEFAULT_TRIGGER_COUNT 3
+
 struct mdis_thermal_device
 {
 	struct gcpm_drv *gcpm;
@@ -134,6 +139,7 @@ struct mdis_thermal_device
 
 struct gcpm_drv  {
 	struct device *device;
+	struct platform_device *pdev;
 	struct power_supply *psy;
 	struct delayed_work init_work;
 
@@ -257,8 +263,13 @@ struct gcpm_drv  {
 	bool resume_complete;
 	struct notifier_block chg_nb;
 
-	/* Charge Overcurrent Protection Enabled*/
-	bool cop_enabled;
+	/* Charge Overcurrent Protection */
+	bool cop_supported;
+	int cop_warn_count;
+	int cop_warn_trigger;
+	int cop_current_offset;
+	int cop_saved_offset;
+	struct delayed_work cop_warn_work;
 
 	/* tie up to charger mode */
 	struct gvotable_election *gbms_mode;
@@ -419,6 +430,18 @@ static uint64_t gcpm_get_charger_state(const struct gcpm_drv *gcpm,
 		return 0;
 
 	return chg_state.v;
+}
+
+static int gcpm_resume_check(struct gcpm_drv *gcpm)
+{
+	int ret = 0;
+
+	pm_runtime_get_sync(gcpm->device);
+	if (!gcpm->init_complete || !gcpm->resume_complete)
+		ret = -EAGAIN;
+	pm_runtime_put_sync(gcpm->device);
+
+	return ret;
 }
 
 /*
@@ -1927,6 +1950,28 @@ static int gcpm_dc_chg_avail_callback(struct gvotable_election *el,
 	return 0;
 }
 
+static void gcpm_route_cc_max_to_main_charger(struct gcpm_drv *gcpm,
+					      const union power_supply_propval *pval)
+{
+	struct power_supply *main_chg_psy = NULL;
+	int ret;
+
+	/* Route to main charger if COP enabled */
+	main_chg_psy = gcpm_chg_get_default(gcpm);
+	if (!main_chg_psy) {
+		pr_err("invalid default charger for"
+		       "prop=POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX\n");
+		return;
+	}
+
+	ret = power_supply_set_property(main_chg_psy,
+					POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
+					pval);
+	if (ret < 0 && ret != -EAGAIN)
+		pr_err("cannot route POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX"
+		       "to default:%s (%d)\n", gcpm_psy_name(main_chg_psy), ret);
+}
+
 /* --------------------------------------------------------------------- */
 
 
@@ -1939,13 +1984,10 @@ static int gcpm_psy_set_property(struct power_supply *psy,
 	bool ta_check = false;
 	bool route = true;
 	int ret = 0;
+	bool cc_max_changed;
 
-	pm_runtime_get_sync(gcpm->device);
-	if (!gcpm->init_complete || !gcpm->resume_complete) {
-		pm_runtime_put_sync(gcpm->device);
+	if (gcpm_resume_check(gcpm))
 		return -EAGAIN;
-	}
-	pm_runtime_put_sync(gcpm->device);
 
 	mutex_lock(&gcpm->chg_psy_lock);
 	switch (psp) {
@@ -2009,14 +2051,22 @@ static int gcpm_psy_set_property(struct power_supply *psy,
 				pr_err("%s: cannot start default (%d)\n",
 				       __func__, ret);
 
-			pr_info("%s: ChargeDisable value=%d dc_index=%d dc_state=%d\n",
-				__func__, pval->intval, gcpm->dc_index, gcpm->dc_state);
+			pr_info("%s: ChargeDisable value=%d dc_index=%d dc_state=%d"
+				" cop_offset=%d->0\n",
+				__func__, pval->intval, gcpm->dc_index, gcpm->dc_state,
+				gcpm->cop_saved_offset);
 
 			/*
 			 * route = true so active will get the property.
 			 * No need to re-check the TA selection on disable.
 			 */
 			ta_check = false;
+
+			/* Cancel COP work on disconnect */
+			cancel_delayed_work(&gcpm->cop_warn_work);
+			gcpm->cop_warn_count = 0;
+			gcpm->cop_current_offset = 0;
+			gcpm->cop_saved_offset = 0;
 		} else if (gcpm->dc_state <= DC_IDLE) {
 			/*
 			 * ->dc_state will be DC_DISABLED if DC was disabled
@@ -2058,11 +2108,18 @@ static int gcpm_psy_set_property(struct power_supply *psy,
 	 * either routed to the main-charger directly or voted on GCPM_FCC.
 	 */
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
-		route = !gcpm_chg_is_cp_active(gcpm);
 		ta_check = gcpm->cc_max != pval->intval;
-		pr_debug("%s: route=%d ta_check=%d cc_max=%d->%d dc_index=%d\n",
-			 __func__, route, ta_check, gcpm->cc_max, pval->intval,
-			 gcpm->dc_index);
+		route = ta_check && !gcpm_chg_is_cp_active(gcpm);
+
+		if (!pval->intval)
+			gcpm->cop_current_offset = 0;
+
+		cc_max_changed = ta_check || (gcpm->cop_current_offset != gcpm->cop_saved_offset);
+		if (cc_max_changed)
+			pr_debug("%s: route=%d ta_check=%d cc_max=%d->%d dc_index=%d"
+				 " cop_offset:%d->%d\n",
+				 __func__, route, ta_check, gcpm->cc_max, pval->intval,
+				 gcpm->dc_index, gcpm->cop_saved_offset, gcpm->cop_current_offset);
 		gcpm->cc_max = pval->intval;
 		break;
 
@@ -2136,24 +2193,27 @@ done:
 	 * to the main-charger.
 	 */
 	if (psp == POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX) {
-		if (!route && gcpm->cop_enabled) {
-			struct power_supply *main_chg_psy = NULL;
+		int cc_max = gcpm->cc_max + gcpm->cop_current_offset;
 
-			/* Route to main charger if COP enabled */
-			main_chg_psy = gcpm_chg_get_default(gcpm);
-			if (main_chg_psy) {
-				ret = power_supply_set_property(main_chg_psy, psp, pval);
-				if (ret < 0 && ret != -EAGAIN) {
-					pr_err("cannot route prop=%d to default:%s (%d)\n", psp,
-						gcpm_psy_name(main_chg_psy), ret);
-				}
-			} else {
-				pr_err("invalid default charger for prop=%d\n", psp);
-			}
+		if (gcpm->cop_current_offset && cc_max_changed && (cc_max >= 0)) {
+			pr_info("COP warn throttling cc_max=%d->%d\n",
+				gcpm->cc_max + gcpm->cop_saved_offset , cc_max);
+		} else {
+			if (cc_max < 0)
+				pr_err("COP error applying throttling, cur_offset:%d cc_max:%u\n",
+					gcpm->cop_current_offset,
+					gcpm->cc_max);
+
+			cc_max = gcpm->cc_max;
 		}
-		gcpm_update_gcpm_fcc(gcpm, "CC_MAX", gcpm->cc_max, !route);
-	}
 
+		if (cc_max_changed && gcpm->cop_supported)
+			gcpm_route_cc_max_to_main_charger(gcpm, pval);
+
+		gcpm_update_gcpm_fcc(gcpm, "CC_MAX", cc_max, !route);
+
+		gcpm->cop_saved_offset = gcpm->cop_current_offset;
+	}
 	mutex_unlock(&gcpm->chg_psy_lock);
 
 	/* the charger should not call into gcpm: this can change though */
@@ -2170,12 +2230,8 @@ static int gcpm_psy_get_property(struct power_supply *psy,
 	bool route = false;
 	int ret = 0;
 
-	pm_runtime_get_sync(gcpm->device);
-	if (!gcpm->init_complete || !gcpm->resume_complete) {
-		pm_runtime_put_sync(gcpm->device);
+	if (gcpm_resume_check(gcpm))
 		return -EAGAIN;
-	}
-	pm_runtime_put_sync(gcpm->device);
 
 	mutex_lock(&gcpm->chg_psy_lock);
 	chg_psy = gcpm_chg_get_active(gcpm);
@@ -3413,6 +3469,62 @@ static int gcpm_init_mdis(struct gcpm_drv *gcpm)
 	return 0;
 }
 
+static void gcpm_cop_warn_work(struct work_struct *work)
+{
+	struct gcpm_drv *gcpm = container_of(work, struct gcpm_drv,
+					     cop_warn_work.work);
+	const int offset = gcpm->cop_current_offset;
+
+	mutex_lock(&gcpm->chg_psy_lock);
+
+	/*
+	 * COP warn irq triggering calls this after X seconds wait
+	 * If the number of times that COP has triggered is above the threshold
+	 * gcpm->cop_warn_trigger, we throttle the cc_max by COP_WARN_DEFAULT_OFFSET_MA.
+	 *
+	 * Throttling continues until COP triggers less than gcpm->cop_warn_trigger in which case we
+	 * remove the throttling altogether.
+	 *
+	 * If the throttle value has changed, we trigger a charge loop to set the cc_max
+	 */
+
+	if (gcpm->cop_warn_count < gcpm->cop_warn_trigger) {
+		gcpm->cop_current_offset = 0;
+	} else {
+		gcpm->cop_current_offset -= COP_WARN_DEFAULT_OFFSET_MA;
+		dev_dbg(gcpm->device, "%s: scheduling cop_warn_work\n", __func__);
+		schedule_delayed_work(&gcpm->cop_warn_work,
+				      msecs_to_jiffies(COP_WARN_BACKOFF_MS));
+	}
+
+	dev_dbg(gcpm->device, "COP warn count:%d offset:%d\n", gcpm->cop_warn_count,
+		gcpm->cop_current_offset);
+
+	gcpm->cop_warn_count = 0;
+	if (offset != gcpm->cop_current_offset)
+		power_supply_changed(gcpm->psy);
+	mutex_unlock(&gcpm->chg_psy_lock);
+}
+
+static irqreturn_t google_cpm_cop_warn_irq_handler(int irq, void *ptr)
+{
+	struct gcpm_drv *gcpm = ptr;
+
+	if (gcpm_resume_check(gcpm))
+		return IRQ_HANDLED;
+
+	dev_warn(gcpm->device, "COP Warn triggered cc_max:%u\n", gcpm->cc_max);
+	/* Schedule work on the first instance of COP Warn */
+	if (gcpm->cop_warn_count == 0) {
+		dev_dbg(gcpm->device, "%s: scheduling cop_warn_work\n", __func__);
+		schedule_delayed_work(&gcpm->cop_warn_work,
+				      msecs_to_jiffies(COP_WARN_BACKOFF_MS));
+	}
+	gcpm->cop_warn_count++;
+
+	return IRQ_HANDLED;
+}
+
 /* this can run */
 static void gcpm_init_work(struct work_struct *work)
 {
@@ -3555,6 +3667,24 @@ static void gcpm_init_work(struct work_struct *work)
 		schedule_delayed_work(&gcpm->init_work, jif);
 		mutex_unlock(&gcpm->chg_psy_lock);
 		return;
+	}
+
+	if (gcpm->cop_supported) {
+		int irq_in = platform_get_irq(gcpm->pdev, 0);
+
+		if (irq_in < 0) {
+			dev_err(gcpm->device, "%s failed to get irq ret = %d\n", __func__, irq_in);
+		} else {
+			ret = devm_request_threaded_irq(gcpm->device, irq_in, NULL,
+							google_cpm_cop_warn_irq_handler,
+							IRQF_TRIGGER_LOW |
+							IRQF_SHARED |
+							IRQF_ONESHOT,
+							"google_cpm_cop_warn",
+							gcpm);
+			if (ret < 0)
+				dev_err(gcpm->device, "Error setting up cop warn irq\n");
+		}
 	}
 
 	pr_info("google_cpm init_work done %d/%d pps=%d wlc_dc=%d\n",
@@ -3968,6 +4098,9 @@ static struct dentry *gcpm_init_fs(struct gcpm_drv *gcpm)
 	debugfs_create_file("taper_step_current", 0644, de, gcpm, &gcpm_debug_taper_step_current_fops);
 	debugfs_create_file("taper_step_interval", 0644, de, gcpm, &gcpm_debug_taper_step_interval_fops);
 
+	if (gcpm->cop_supported)
+		debugfs_create_u32("cop_warn_trigger", 0644, de, &gcpm->cop_warn_trigger);
+
 	return de;
 }
 
@@ -4123,13 +4256,13 @@ static int google_cpm_probe(struct platform_device *pdev)
 	struct power_supply_config psy_cfg = { 0 };
 	const char *tmp_name = NULL;
 	struct gcpm_drv *gcpm;
-	struct device_node *tmp_node;
 	int ret;
 
 	gcpm = devm_kzalloc(&pdev->dev, sizeof(*gcpm), GFP_KERNEL);
 	if (!gcpm)
 		return -ENOMEM;
 
+	gcpm->pdev = pdev;
 	gcpm->device = &pdev->dev;
 	gcpm->force_active = -1;
 	gcpm->dc_ctl = GCPM_DC_CTL_DEFAULT;
@@ -4143,6 +4276,8 @@ static int google_cpm_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&gcpm->select_work, gcpm_chg_select_work);
 	INIT_DELAYED_WORK(&gcpm->init_work, gcpm_init_work);
 	INIT_DELAYED_WORK(&gcpm->fcc_retry_work, gcpm_fcc_retry_work);
+	INIT_DELAYED_WORK(&gcpm->cop_warn_work, gcpm_cop_warn_work);
+
 	mutex_init(&gcpm->chg_psy_lock);
 
 	gcpm->gcpm_ws = wakeup_source_register(NULL, "google-cpm");
@@ -4287,9 +4422,8 @@ static int google_cpm_probe(struct platform_device *pdev)
 	gcpm->no_init_wlc_ta_vol = of_property_read_bool(pdev->dev.of_node,
 							"google,no-init-wlc-ta-vol");
 
-	tmp_node = of_parse_phandle(pdev->dev.of_node, "google,max77779_chg", 0);
-	if (tmp_node)
-		gcpm->cop_enabled = of_property_read_bool(tmp_node, "google,cop-enabled");
+	gcpm->cop_supported = of_property_read_bool(pdev->dev.of_node, "google,cop-supported");
+	gcpm->cop_warn_trigger = COP_WARN_DEFAULT_TRIGGER_COUNT;
 
 	dev_info(gcpm->device, "taper ts_m=%d ts_ccs=%d ts_i=%d ts_cnt=%d ts_g=%d ts_v=%d ts_c=%d\n",
 		 gcpm->taper_step_fv_margin, gcpm->taper_step_cc_step,
