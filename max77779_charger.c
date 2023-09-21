@@ -23,6 +23,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/of.h>
 #include <linux/of_gpio.h>
+#include <linux/of_irq.h>
 #include <linux/regmap.h>
 #include <linux/thermal.h>
 #include <linux/debugfs.h>
@@ -1280,99 +1281,100 @@ static bool max77779_is_cop_enabled(struct max77779_chgr_data *data)
 }
 
 /* Accepts current in uA */
-static int max77779_set_cop_warn(struct max77779_chgr_data *data, unsigned int max_value)
+static int max77779_set_cop_warn(struct max77779_chgr_data *data, uint32_t max_value)
 {
 	int ret;
 
 	max_value *= MAX77779_COP_SENSE_RESISTOR_VAL;
 	max_value /= 1000; /* Convert to uV */
 
-	ret = max77779_reg_write(data->regmap, MAX77779_CHG_COP_WARN_L, (max_value & 0xff));
+	if (max_value > 0xFFFF) {
+		dev_err(data->dev, "Setting COP warn value too large val:%u\n", max_value);
+		return -EINVAL;
+	}
+
+	ret = max77779_writen(data->regmap, MAX77779_CHG_COP_WARN_L, /* NOTYPO */
+			     (uint8_t*)&max_value, 2);
 	if (ret) {
 		dev_err(data->dev, "Error writing MAX77779_CHG_COP_WARN_L ret:%d", ret);
 		return ret;
 	}
-	ret = max77779_reg_write(data->regmap, MAX77779_CHG_COP_WARN_H, ((max_value >> 8) & 0xff));
-	if (ret)
-		dev_err(data->dev, "Error writing MAX77779_CHG_COP_WARN_H ret:%d", ret);
 
 	return ret;
 }
 
-static int max77779_get_cop_warn(struct max77779_chgr_data *data, unsigned int *max_value)
+static int max77779_get_cop_warn(struct max77779_chgr_data *data, uint32_t *max_value)
 {
 	int ret;
-	u8 temp_l, temp_h;
+	u16 temp;
 
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_COP_WARN_L, &temp_l);
+	ret = max77779_readn(data->regmap, MAX77779_CHG_COP_WARN_L, (uint8_t*)&temp, 2);
 	if (ret) {
 		dev_err(data->dev, "Error reading MAX77779_CHG_COP_WARN_L ret:%d", ret);
 		return ret;
 	}
 
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_COP_WARN_H, &temp_h);
-	if (ret)
-		dev_err(data->dev, "Error reading MAX77779_CHG_COP_WARN_H ret:%d", ret);
-
-	*max_value = (temp_l | (temp_h << 8)) * 1000 / MAX77779_COP_SENSE_RESISTOR_VAL;
+	*max_value = temp * 1000 / MAX77779_COP_SENSE_RESISTOR_VAL;
 
 	return ret;
 }
 
 /* Accepts current in uA */
-static int max77779_set_cop_limit(struct max77779_chgr_data *data, unsigned int max_value)
+static int max77779_set_cop_limit(struct max77779_chgr_data *data, uint32_t max_value)
 {
 	int ret;
 
 	max_value *= MAX77779_COP_SENSE_RESISTOR_VAL;
 	max_value /= 1000; /* Convert to uV */
 
-	ret = max77779_reg_write(data->regmap, MAX77779_CHG_COP_LIMIT_L, (max_value & 0xff));
+	if (max_value > 0xFFFF) {
+		dev_err(data->dev, "Setting COP limit value too large val:%u\n", max_value);
+		return -EINVAL;
+	}
+
+	ret = max77779_writen(data->regmap, MAX77779_CHG_COP_LIMIT_L, /* NOTYPO */
+			     (uint8_t*)&max_value, 2);
 	if (ret) {
 		dev_err(data->dev, "Error writing MAX77779_CHG_COP_LIMIT_L ret:%d", ret);
 		return ret;
 	}
-	ret = max77779_reg_write(data->regmap, MAX77779_CHG_COP_LIMIT_H, ((max_value >> 8) & 0xff));
-	if (ret)
-		dev_err(data->dev, "Error writing MAX77779_CHG_COP_LIMIT_H ret:%d", ret);
 
 	return ret;
 }
 
-static int max77779_get_cop_limit(struct max77779_chgr_data *data, unsigned int *max_value)
+static int max77779_get_cop_limit(struct max77779_chgr_data *data, uint32_t *max_value)
 {
 	int ret;
-	u8 temp_l, temp_h;
+	u16 temp;
 
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_COP_LIMIT_L, &temp_l);
+	ret = max77779_readn(data->regmap, MAX77779_CHG_COP_LIMIT_L, (uint8_t*)&temp, 2);
 	if (ret) {
 		dev_err(data->dev, "Error reading MAX77779_CHG_COP_LIMIT_L ret:%d", ret);
 		return ret;
 	}
 
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_COP_LIMIT_H, &temp_h);
-	if (ret)
-		dev_err(data->dev, "Error reading MAX77779_CHG_COP_LIMIT_H ret:%d", ret);
-
-	*max_value = (temp_l | (temp_h << 8)) * 1000 / MAX77779_COP_SENSE_RESISTOR_VAL;
+	*max_value = temp * 1000 / MAX77779_COP_SENSE_RESISTOR_VAL;
 
 	return ret;
 }
 
+static void max77779_cop_enable_work(struct work_struct *work)
+{
+	struct max77779_chgr_data *data = container_of(work, struct max77779_chgr_data,
+						       cop_enable_work.work);
+
+	max77779_enable_cop(data, true);
+}
+
 static int max77779_cop_config(struct max77779_chgr_data * data)
 {
-	bool cop_enabled;
 	int ret = 0;
-
-	if (!data)
-		return -EINVAL;
 
 	/* TODO: b/293487608 Support COP limit */
 	/* Setting limit to MAX to not trip */
-	max77779_set_cop_limit(data, 0xffff * 1000 / MAX77779_COP_SENSE_RESISTOR_VAL);
-
-	cop_enabled = of_property_read_bool(data->dev->of_node, "google,cop-enabled");
-	ret = max77779_enable_cop(data, cop_enabled);
+	ret = max77779_set_cop_limit(data, 0xffff * 1000 / MAX77779_COP_SENSE_RESISTOR_VAL);
+	if (ret < 0)
+		dev_err(data->dev, "Error setting COP limit to max\n");
 
 	return ret;
 }
@@ -1405,7 +1407,8 @@ static int max77779_set_charger_current_max_ua(struct max77779_chgr_data *data,
 		return ret;
 	}
 
-	ret = max77779_set_cop_warn(data, current_ua * MAX7779_COP_WARN_THRESHOLD / 100);
+	/* TODO: b/296588527 handle charge tier transitions */
+	ret = max77779_set_cop_warn(data, current_ua * MAX77779_COP_WARN_THRESHOLD / 100);
 	if (ret < 0)
 		dev_err(data->dev, "cannot set cop warn (%d)\n", ret);
 
@@ -2647,7 +2650,7 @@ BATTERY_DEBUG_ATTRIBUTE(debug_all_reg_fops, max77779_chg_show_reg_all, NULL);
 static int max77779_chg_debug_cop_warn_read(void *d, u64 *val)
 {
 	struct max77779_chgr_data *data = d;
-	unsigned int reg = 0;
+	uint32_t reg = 0;
 	int ret;
 
 	if(max77779_resume_check(data))
@@ -2675,7 +2678,7 @@ DEFINE_SIMPLE_ATTRIBUTE(debug_cop_warn_fops, max77779_chg_debug_cop_warn_read,
 static int max77779_chg_debug_cop_limit_read(void *d, u64 *val)
 {
 	struct max77779_chgr_data *data = d;
-	unsigned int reg = 0;
+	uint32_t reg = 0;
 	int ret;
 
 	if(max77779_resume_check(data))
@@ -2826,9 +2829,7 @@ static u8 max77779_int_mask[MAX77779_CHG_INT_COUNT] = {
 	  MAX77779_CHG_INT_THM2_I_MASK),
 	(u8)~(MAX77779_CHG_INT2_INSEL_I_MASK |
 	  MAX77779_CHG_INT2_CHG_STA_TO_I_MASK |
-	  MAX77779_CHG_INT2_CHG_STA_DONE_I_MASK |
-	  MAX77779_CHG_INT2_COP_WARN_I_MASK |
-	  MAX77779_CHG_INT2_COP_ALERT_I_MASK)
+	  MAX77779_CHG_INT2_CHG_STA_DONE_I_MASK)
 };
 
 static irqreturn_t max77779_chgr_irq(int irq, void *client)
@@ -2838,7 +2839,6 @@ static irqreturn_t max77779_chgr_irq(int irq, void *client)
 	u8 chg_int_clr[MAX77779_CHG_INT_COUNT];
 	bool broadcast;
 	int ret;
-	unsigned int cop;
 
 	if (max77779_resume_check(data)) {
 		if (data->init_complete && !data->irq_disabled) {
@@ -2855,9 +2855,12 @@ static irqreturn_t max77779_chgr_irq(int irq, void *client)
 	if ((chg_int[0] & ~max77779_int_mask[0]) == 0 &&
 	    (chg_int[1] & ~max77779_int_mask[1]) == 0)
 		return IRQ_NONE;
-
-	chg_int_clr[0] = chg_int[0];
-	chg_int_clr[1] = chg_int[1];
+	/*
+	 * Only clear the interrupts that are masked. The other interrupts will
+	 * be routed to other drivers to handle via the chrg interrupt controller.
+	 */
+	chg_int_clr[0] = chg_int[0] & ~max77779_int_mask[0];
+	chg_int_clr[1] = chg_int[1] & ~max77779_int_mask[1];
 
 	ret = max77779_writen(data->regmap, MAX77779_CHG_INT, /* NOTYPO */
                               chg_int_clr, 2);
@@ -2879,7 +2882,6 @@ static irqreturn_t max77779_chgr_irq(int irq, void *client)
 			return IRQ_NONE;
 	}
 
-	/* TODO: make this an interrupt controller */
 	if (chg_int[1] & MAX77779_CHG_INT2_CHG_STA_TO_I_MASK) {
 		pr_debug("%s: TOP_OFF\n", __func__);
 
@@ -2910,17 +2912,6 @@ static irqreturn_t max77779_chgr_irq(int irq, void *client)
 
 		pr_debug("%s: CHARGE DONE charge_done=%d->%d\n", __func__,
 			 charge_done, data->charge_done);
-	}
-
-	if (chg_int[1] & MAX77779_CHG_INT2_COP_WARN_I_MASK) {
-		max77779_get_cop_warn(data, &cop);
-		if (cop)
-			pr_warn("%s: COP Warn triggered at %dmA", __func__, cop / 1000);
-	}
-
-	if (chg_int[1] & MAX77779_CHG_INT2_COP_ALERT_I_MASK) {
-		max77779_get_cop_limit(data, &cop);
-		pr_err("%s: COP Limit triggered at %dmA", __func__, cop / 1000);
 	}
 
 	/* wired input is changed */
@@ -2978,6 +2969,79 @@ static irqreturn_t max77779_chgr_irq(int irq, void *client)
 	return IRQ_HANDLED;
 }
 
+static bool max77779_chrg_irq_is_internal(uint16_t intsrc_sts)
+{
+	return (((intsrc_sts & 0xff) & ~max77779_int_mask[0]) != 0) ||
+	       ((((intsrc_sts & 0xff00) >> 8) & ~max77779_int_mask[1]) != 0);
+}
+
+/*
+ * Interrupts handled:
+ * 0 = BYP_I
+ * 1 = THM2_I
+ * 2 = INLIM_I
+ * 3 = BAT_I
+ * 4 = CHG_I
+ * 5 = WCIN_I
+ * 6 = CHGIN_I
+ * 7 = AICL_I
+ * 8 = CHG_STA_DONE_I
+ * 9 = CHG_STA_TO_I
+ * 10 = CHG_STA_CV_I
+ * 11 = CHG_STA_CC_I
+ * 12 = COP_WARN_I
+ * 13 = COP_ALERT_I
+ * 14 = COP_LIMIT_WD_I
+ * 15 = INSEL_I
+ */
+static irqreturn_t max77779_chg_irq_handler(int irq, void *ptr)
+{
+	struct max77779_chgr_data *data = ptr;
+	int sub_irq;
+	u16 intsrc_sts;
+	int offset, ret = IRQ_NONE;
+	u16 irq_handled = 0;
+
+	if (max77779_resume_check(data)) {
+		if (data->init_complete && !data->irq_disabled) {
+			data->irq_disabled = true;
+			disable_irq_nosync(data->irq_int);
+		}
+		return IRQ_HANDLED;
+	}
+
+	ret = max77779_readn(data->regmap, MAX77779_CHG_INT, (uint8_t*)&intsrc_sts, 2);
+	if (ret) {
+		dev_err_ratelimited(data->dev, "%s: read error %d\n", __func__, ret);
+		return IRQ_NONE;
+	}
+
+	pr_debug("max77779_chg_irq_handler INT: %02x %02x\n",
+		(intsrc_sts & 0xff), (intsrc_sts & 0xff00) >> 8);
+
+	for (offset = 0; offset < MAX77779_CHG_NUM_IRQS; offset++)
+	{
+		if (intsrc_sts & (1 << offset)) {
+			sub_irq = irq_find_mapping(data->domain, offset);
+			if (sub_irq && !(data->mask & (1 << offset))) {
+				irq_handled |= (1 << offset);
+				handle_nested_irq(sub_irq);
+			}
+		}
+	}
+
+	ret = max77779_writen(data->regmap, MAX77779_CHG_INT, (uint8_t*)&irq_handled, 2); /* NOTYPO */
+	if (ret) {
+		dev_err_ratelimited(data->dev, "%s: write error %d\n", __func__, ret);
+		return IRQ_NONE;
+	}
+
+	if (!data->disable_internal_irq_handler && max77779_chrg_irq_is_internal(intsrc_sts))
+		ret = max77779_chgr_irq(irq, ptr);
+
+	return irq_handled ? IRQ_HANDLED : ret;
+}
+
 static int max77779_setup_votables(struct max77779_chgr_data *data)
 {
 	int ret;
@@ -3029,6 +3093,152 @@ static int max77779_setup_votables(struct max77779_chgr_data *data)
 	return 0;
 }
 
+/* CHG_INT Interrupts */
+static void max77779_chg_irq_mask(struct irq_data *d)
+{
+	struct max77779_chgr_data *data = irq_data_get_irq_chip_data(d);
+
+	data->mask |= BIT(d->hwirq);
+	data->mask_u |= BIT(d->hwirq);
+}
+
+static void max77779_chg_irq_unmask(struct irq_data *d)
+{
+	struct max77779_chgr_data *data = irq_data_get_irq_chip_data(d);
+	const u8 mask = MAX77779_CHG_INT2_COP_WARN_I_MASK |
+			MAX77779_CHG_INT2_COP_ALERT_I_MASK |
+			MAX77779_CHG_INT2_COP_LIMIT_WD_I_MASK;
+	/*
+	 * COP is enabled if a driver registers a COP related interrupt with this driver.
+	 * COP warn INT: COP warn interrupt will throttle cc_max to charge pump
+	 * COP limit INT: COP limit will set mode to 0 and disable charge pump
+	 * COP limit watchdog INT: If watchdog is not pet after 80s, set mode to 0
+	 * and disable charge pump
+	 */
+	if ((d->hwirq > 8) && ((1 << (d->hwirq - 8)) & mask))
+		schedule_delayed_work(&data->cop_enable_work, 0);
+
+	data->mask &= ~BIT(d->hwirq);
+	data->mask_u |= BIT(d->hwirq);
+}
+
+static void max77779_chg_irq_disable(struct irq_data *d)
+{
+	max77779_chg_irq_mask(d);
+}
+
+static void max77779_chg_irq_enable(struct irq_data *d)
+{
+	max77779_chg_irq_unmask(d);
+}
+
+static int max77779_chg_set_irq_type(struct irq_data *d, unsigned int type)
+{
+	struct max77779_chgr_data *data = irq_data_get_irq_chip_data(d);
+
+	switch (type) {
+	case IRQF_TRIGGER_NONE:
+	case IRQF_TRIGGER_RISING:
+	case IRQF_TRIGGER_FALLING:
+	case IRQF_TRIGGER_HIGH:
+	case IRQF_TRIGGER_LOW:
+		data->trig_type &= (0xf << (d->hwirq * 4));
+		data->trig_type |= (type << (d->hwirq * 4));
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static void max77779_chg_bus_lock(struct irq_data *d)
+{
+	struct max77779_chgr_data *data = irq_data_get_irq_chip_data(d);
+
+	mutex_lock(&data->irq_lock);
+}
+
+static void max77779_chg_bus_sync_unlock(struct irq_data *d)
+{
+	struct max77779_chgr_data *data = irq_data_get_irq_chip_data(d);
+	uint16_t intb_mask, offset, value;
+	int err;
+
+	if (!data->mask_u)
+		goto unlock_out;
+
+	err = max77779_readn(data->regmap, MAX77779_CHG_INT_MASK, (uint8_t*)&intb_mask, 2);
+	if (err < 0) {
+		dev_err(data->dev, "Unable to read interrupt mask (%d)\n", err);
+		goto unlock_out;
+	}
+
+	while (data->mask_u) {
+		offset = __ffs(data->mask_u);
+		value = !!(data->mask & (1 << offset));
+
+		intb_mask &= ~(1 << offset);
+		intb_mask |= value << offset;
+
+		/* clear pending updates */
+		data->mask_u &= ~(1 << offset);
+	}
+
+	err = max77779_writen(data->regmap, MAX77779_CHG_INT_MASK, /* NOTYPO */
+			      (uint8_t*)&intb_mask, 2);
+	if (err < 0) {
+		dev_err(data->dev, "Unable to write interrupt mask (%d)\n", err);
+		goto unlock_out;
+	}
+
+ unlock_out:
+	mutex_unlock(&data->irq_lock);
+}
+
+static struct irq_chip max77779_chg_irq_chip = {
+	.name = "max77779_chg_irq",
+	.irq_enable = max77779_chg_irq_enable,
+	.irq_disable = max77779_chg_irq_disable,
+	.irq_mask = max77779_chg_irq_mask,
+	.irq_unmask = max77779_chg_irq_unmask,
+	.irq_set_type = max77779_chg_set_irq_type,
+	.irq_bus_lock = max77779_chg_bus_lock,
+	.irq_bus_sync_unlock = max77779_chg_bus_sync_unlock,
+};
+
+static int max77779_chg_irq_setup(struct max77779_chgr_data* data)
+{
+	struct device *dev = data->dev;
+	int i, irq;
+
+	mutex_init(&data->irq_lock);
+
+	data->disable_internal_irq_handler =
+		of_property_read_bool(dev->of_node, "max77779,disable-internal-irq-handler");
+
+	data->domain = irq_domain_add_linear(dev->of_node, MAX77779_CHG_NUM_IRQS,
+					     &irq_domain_simple_ops, data);
+	if (!data->domain) {
+		dev_err(data->dev, "Unable to get irq domain\n");
+		return -ENODEV;
+	}
+
+	for (i = 0; i < MAX77779_CHG_NUM_IRQS; i++) {
+		irq = irq_create_mapping(data->domain, i);
+
+		if (!irq) {
+			dev_err(dev, "failed irq create map\n");
+			return -EINVAL;
+		}
+		irq_set_chip_data(irq, data);
+		irq_set_chip_and_handler(irq, &max77779_chg_irq_chip,
+				handle_simple_irq);
+	}
+
+	return 0;
+}
+
 static int max77779_charger_probe(struct i2c_client *client,
 				  const struct i2c_device_id *id)
 {
@@ -3062,19 +3272,31 @@ static int max77779_charger_probe(struct i2c_client *client,
 		return -ENOMEM;
 
 	data->dev = dev;
+	data->client = client;
 	data->regmap = regmap;
 	data->fship_dtls = -1;
 	data->wden = false; /* TODO: read from DT */
+	data->mask = 0xFFFFFFFF;
 	mutex_init(&data->io_lock);
 	atomic_set(&data->insel_cnt, 0);
 	atomic_set(&data->early_topoff_cnt, 0);
 	i2c_set_clientdata(client, data);
+
+	INIT_DELAYED_WORK(&data->cop_enable_work, max77779_cop_enable_work);
 
 	data->usecase_wake_lock = wakeup_source_register(NULL, "max77779-usecase");
 	if (!data->usecase_wake_lock) {
 		pr_err("Failed to register wakeup source\n");
 		return -ENODEV;
 	}
+
+	ret = max77779_cop_config(data);
+	if (ret < 0)
+		dev_err(data->dev, "Error configuring COP\n");
+
+	ret = max77779_chg_irq_setup(data);
+	if (ret < 0)
+		dev_err(data->dev, "Error configuring CHG SUB-IRQ Handler\n");
 
 	/* NOTE: only one instance */
 	ret = of_property_read_string(dev->of_node, "max77779,psy-name", &tmp);
@@ -3100,7 +3322,7 @@ static int max77779_charger_probe(struct i2c_client *client,
 
 	if (client->irq ) {
 		ret = devm_request_threaded_irq(data->dev, client->irq, NULL,
-						max77779_chgr_irq,
+						max77779_chg_irq_handler,
 						IRQF_TRIGGER_LOW |
 						IRQF_SHARED |
 						IRQF_ONESHOT,
@@ -3110,7 +3332,7 @@ static int max77779_charger_probe(struct i2c_client *client,
 			enable_irq_wake(client->irq);
 
 			/* might cause the isr to be called */
-			max77779_chgr_irq(-1, data);
+			max77779_chg_irq_handler(-1, data);
 			ret = max77779_writen(regmap, MAX77779_CHG_INT_MASK, /* NOTYPO */
 					      max77779_int_mask,
 					      sizeof(max77779_int_mask));
@@ -3121,11 +3343,6 @@ static int max77779_charger_probe(struct i2c_client *client,
 			data->irq_int = client->irq;
 		}
 	}
-
-	ret = max77779_cop_config(data);
-	if (ret < 0)
-		dev_err(data->dev, "Error configuring COP\n");
-
 
 	ret = dbg_init_fs(data);
 	if (ret < 0)
