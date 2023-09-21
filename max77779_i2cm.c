@@ -211,18 +211,15 @@ static int max77779_i2cm_xfer(struct i2c_adapter *adap,
 		goto xfer_done;
 	}
 
-	if (rxdata_cnt > 0) {
-		err = regmap_write(regmap, MAX77779_I2CM_RXDATA_CNT,
-				rxdata_cnt - 1);
-		if (err) {
-			dev_err(info->dev, "regmap_write returned %d\n", err);
-			goto xfer_done;
-		}
-	}
+	set_regval(info, MAX77779_I2CM_RXDATA_CNT,
+			rxdata_cnt > 0 ? rxdata_cnt - 1 : 0);
+	set_regval(info, MAX77779_I2CM_CMD, cmd);
 
-	err = regmap_write(regmap, MAX77779_I2CM_CMD, cmd);
+	err = regmap_raw_write(regmap, MAX77779_I2CM_RXDATA_CNT,
+			&info->reg_vals[MAX77779_I2CM_RXDATA_CNT],
+			2);
 	if (err) {
-		dev_err(info->dev, "regmap_write returned %d\n", err);
+		dev_err(info->dev, "regmap_raw_write returned %d\n", err);
 		goto xfer_done;
 	}
 
