@@ -787,10 +787,10 @@ static int chg_set_charger(struct chg_drv *chg_drv, int fv_uv, int cc_max, int t
 	int rc;
 
 	/*
-	 *   when cc_max < chg_drv->cc_max, set current, voltage
-	 *   when cc_max > chg_drv->cc_max, set voltage, current
+	 *   when cc_max <= chg_drv->cc_max, set current, voltage (if needed)
+	 *   when cc_max > chg_drv->cc_max, set voltage (if needed), current
 	 */
-	if (cc_max < chg_drv->cc_max) {
+	if (cc_max <= chg_drv->cc_max) {
 		pval.intval = cc_max;
 
 		rc = power_supply_set_property(chg_psy, POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
@@ -803,14 +803,15 @@ static int chg_set_charger(struct chg_drv *chg_drv, int fv_uv, int cc_max, int t
 		}
 	}
 
-	pval.intval = fv_uv;
-	rc = power_supply_set_property(chg_psy, POWER_SUPPLY_PROP_VOLTAGE_MAX,
-				       &pval);
-	if (rc == -EAGAIN)
-		return rc;
-	if (rc != 0) {
-		pr_err("MSC_CHG cannot set float voltage rc=%d\n", rc);
-		return -EIO;
+	if (fv_uv != chg_drv->fv_uv) {
+		pval.intval = fv_uv;
+		rc = power_supply_set_property(chg_psy, POWER_SUPPLY_PROP_VOLTAGE_MAX, &pval);
+		if (rc == -EAGAIN)
+			return rc;
+		if (rc != 0) {
+			pr_err("MSC_CHG cannot set float voltage rc=%d\n", rc);
+			return -EIO;
+		}
 	}
 
 	if (cc_max > chg_drv->cc_max) {
@@ -844,46 +845,46 @@ static int chg_set_charger(struct chg_drv *chg_drv, int fv_uv, int cc_max, int t
 
 static int chg_update_charger(struct chg_drv *chg_drv, int fv_uv, int cc_max, int topoff)
 {
+	const int chg_cc_tolerance = chg_drv->chg_cc_tolerance;
+	const bool fv_changed = chg_drv->fv_uv != fv_uv;
+	const bool cc_max_changed = chg_drv->cc_max != cc_max;
+	const bool topoff_changed = chg_drv->topoff != topoff;
 	struct power_supply *chg_psy = chg_drv->chg_psy;
+	int fcc = cc_max;
 	int rc = 0;
 
 	if (!chg_psy)
 		return 0;
 
-	if (chg_drv->fv_uv != fv_uv || chg_drv->cc_max != cc_max || chg_drv->topoff != topoff) {
-		const int chg_cc_tolerance = chg_drv->chg_cc_tolerance;
-		int fcc = cc_max;
+	if (fv_changed && !chg_drv->taper_last_tier) {
+		const int taper_limit = chg_drv->batt_profile_fv_uv >= 0 ?
+				chg_drv->batt_profile_fv_uv : -1;
+		int taper_ctl = GBMS_TAPER_CONTROL_OFF;
 
-		if (!chg_drv->taper_last_tier) {
-			const int taper_limit = chg_drv->batt_profile_fv_uv >= 0 ?
-					chg_drv->batt_profile_fv_uv : -1;
-			int taper_ctl = GBMS_TAPER_CONTROL_OFF;
+		if (taper_limit > 0 && fv_uv >= taper_limit)
+			taper_ctl = GBMS_TAPER_CONTROL_ON;
 
-			if (taper_limit > 0 && fv_uv >= taper_limit)
-				taper_ctl = GBMS_TAPER_CONTROL_ON;
+		/* GBMS_PROP_TAPER_CONTROL is optional */
+		rc = GPSY_SET_PROP(chg_psy, GBMS_PROP_TAPER_CONTROL, taper_ctl);
+		if (rc < 0)
+			pr_debug("MSC_CHG cannot set taper control rc=%d\n", rc);
+	}
 
-			/* GBMS_PROP_TAPER_CONTROL is optional */
-			rc = GPSY_SET_PROP(chg_psy, GBMS_PROP_TAPER_CONTROL, taper_ctl);
-			if (rc < 0)
-				pr_debug("MSC_CHG cannot set taper control rc=%d\n", rc);
-		}
+	/* when set cc_tolerance needs to be applied to everything */
+	if (chg_drv->chg_cc_tolerance)
+		fcc = (cc_max / 1000) * (1000 - chg_cc_tolerance);
 
-		/* when set cc_tolerance needs to be applied to everything */
-		if (chg_drv->chg_cc_tolerance)
-			fcc = (cc_max / 1000) * (1000 - chg_cc_tolerance);
+	rc = chg_set_charger(chg_drv, fv_uv, fcc, topoff);
+	if (rc == 0 && (fv_changed || cc_max_changed || topoff_changed)) {
+		pr_info("MSC_CHG fv_uv=%d->%d cc_max=%d->%d topoff=%d->%d rc=%d\n",
+			chg_drv->fv_uv, fv_uv,
+			chg_drv->cc_max, cc_max,
+			chg_drv->topoff, topoff,
+			rc);
 
-		rc = chg_set_charger(chg_drv, fv_uv, fcc, topoff);
-		if (rc == 0) {
-			pr_info("MSC_CHG fv_uv=%d->%d cc_max=%d->%d topoff=%d->%d rc=%d\n",
-				chg_drv->fv_uv, fv_uv,
-				chg_drv->cc_max, cc_max,
-				chg_drv->topoff, topoff,
-				rc);
-
-			chg_drv->cc_max = cc_max;
-			chg_drv->fv_uv = fv_uv;
-			chg_drv->topoff = topoff;
-		}
+		chg_drv->cc_max = cc_max;
+		chg_drv->fv_uv = fv_uv;
+		chg_drv->topoff = topoff;
 	}
 
 	return rc;
