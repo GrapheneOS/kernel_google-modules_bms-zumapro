@@ -38,7 +38,8 @@ GBMS_MODULES =	GOOGLE_BMS \
 		FG_MAX77779_I2C \
 		VIMON_MAX77779 \
 		VIMON_MAX77779_I2C \
-		FWUPDATE_MAX77779
+		FWUPDATE_MAX77779 \
+		CHARGER_RT9471
 
 obj-$(CONFIG_GOOGLE_BMS)	+= google-bms.o
 google-bms-objs += google_bms.o
@@ -175,6 +176,9 @@ ln8411-objs += google_dc_pps.o
 # MAX77779 Firmware Update
 obj-$(CONFIG_FWUPDATE_MAX77779) += max77779-fwupdate.o
 max77779-fwupdate-objs += max77779_fwupdate.o
+
+# RT9471 Charger
+obj-$(CONFIG_CHARGER_RT9471) += rt9471_charger.o
 
 # prevent warnings
 WENUMS=-Wno-enum-conversion -Wno-switch

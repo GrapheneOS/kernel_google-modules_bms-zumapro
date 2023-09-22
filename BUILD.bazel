@@ -55,6 +55,7 @@ kernel_module(
         "max77779-fg-i2c.ko",
         "max77779-fg.ko",
         "max77779-fwupdate.ko",
+        "rt9471_charger.ko",
         # "max77729.ko",
         # "max77759.ko",
         # "pca9468-google.ko",
