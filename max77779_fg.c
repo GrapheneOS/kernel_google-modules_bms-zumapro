@@ -2884,104 +2884,6 @@ static int max77779_fg_init_chip(struct max77779_fg_chip *chip)
 }
 
 /* ------------------------------------------------------------------------- */
-
-/* TODO b/284191528 - Add to common code file */
-#define REG_HALF_HIGH(reg)     ((reg >> 8) & 0x00FF)
-#define REG_HALF_LOW(reg)      (reg & 0x00FF)
-static int max77779_fg_collect_history_data(void *buff, size_t size,
-					    struct max77779_fg_chip *chip)
-{
-	struct maxfg_eeprom_history hist = { 0 };
-	u16 data, designcap;
-	int ret;
-
-	if (chip->por)
-		return -EINVAL;
-
-	ret = REGMAP_READ(&chip->regmap_debug, MAX77779_FG_NVM_nTempCo, &data);
-	if (ret)
-		return ret;
-
-	hist.tempco = data;
-
-	ret = REGMAP_READ(&chip->regmap_debug, MAX77779_FG_NVM_nRComp0, &data);
-	if (ret)
-		return ret;
-
-	hist.rcomp0 = data;
-
-	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_TimerH, &data);
-	if (ret)
-		return ret;
-
-	/* Convert LSB from 3.2hours(192min) to 5days(7200min) */
-	hist.timerh = data * 192 / 7200;
-
-	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_DesignCap, &designcap);
-	if (ret)
-		return ret;
-
-	/* multiply by 100 to convert from mAh to %, LSB 0.125% */
-	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_FullCapNom, &data);
-	if (ret)
-		return ret;
-
-	data = data * 800 / designcap;
-	hist.fullcapnom = data > MAX_HIST_FULLCAP ? MAX_HIST_FULLCAP : data;
-
-	/* multiply by 100 to convert from mAh to %, LSB 0.125% */
-	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_FullCapRep, &data);
-	if (ret)
-		return ret;
-
-	data = data * 800 / designcap;
-	hist.fullcaprep = data > MAX_HIST_FULLCAP ? MAX_HIST_FULLCAP : data;
-
-	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_MixSOC, &data);
-	if (ret)
-		return ret;
-
-	/* Convert LSB from 1% to 2% */
-	hist.mixsoc = REG_HALF_HIGH(data) / 2;
-
-	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_VFSOC, &data);
-	if (ret)
-		return ret;
-
-	/* Convert LSB from 1% to 2% */
-	hist.vfsoc = REG_HALF_HIGH(data) / 2;
-
-
-	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_MaxMinVolt, &data);
-	if (ret)
-		return ret;
-
-	/* LSB is 20mV, store values from 4.2V min */
-	hist.maxvolt = (REG_HALF_HIGH(data) * 20 - 4200) / 20;
-	/* Convert LSB from 20mV to 10mV, store values from 2.5V min */
-	hist.minvolt = (REG_HALF_LOW(data) * 20 - 2500) / 10;
-
-	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_MaxMinTemp, &data);
-	if (ret)
-		return ret;
-
-	/* Convert LSB from 1degC to 3degC, store values from 25degC min */
-	hist.maxtemp = (REG_HALF_HIGH(data) - 25) / 3;
-	/* Convert LSB from 1degC to 3degC, store values from -20degC min */
-	hist.mintemp = (REG_HALF_LOW(data) + 20) / 3;
-
-	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_MaxMinCurr, &data);
-	if (ret)
-		return ret;
-
-	/* Convert LSB from 0.08A to 0.5A */
-	hist.maxchgcurr = REG_HALF_HIGH(data) * 8 / 50;
-	hist.maxdischgcurr = REG_HALF_LOW(data) * 8 / 50;
-
-	memcpy(buff, &hist, sizeof(hist));
-	return (size_t)sizeof(hist);
-}
-
 static int max77779_fg_prop_iter(int index, gbms_tag_t *tag, void *ptr)
 {
 	static gbms_tag_t keys[] = {GBMS_TAG_CLHI};
@@ -3003,7 +2905,8 @@ static int max77779_fg_prop_read(gbms_tag_t tag, void *buff, size_t size,
 
 	switch (tag) {
 	case GBMS_TAG_CLHI:
-		ret = max77779_fg_collect_history_data(buff, size, chip);
+		ret = maxfg_collect_history_data(buff, size, chip->por,
+						 &chip->regmap, &chip->regmap_debug);
 		break;
 
 	default:
@@ -3206,14 +3109,28 @@ const struct regmap_config max77779_fg_regmap_cfg = {
 };
 
 const struct maxfg_reg max77779_fg[] = {
-	[MAX17X0X_TAG_avgc] = { ATOM_INIT_REG16(MAX77779_FG_AvgCurrent)},
-	[MAX17X0X_TAG_cnfg] = { ATOM_INIT_REG16(MAX77779_FG_Config)},
-	[MAX17X0X_TAG_mmdv] = { ATOM_INIT_REG16(MAX77779_FG_MaxMinVolt)},
-	[MAX17X0X_TAG_vcel] = { ATOM_INIT_REG16(MAX77779_FG_VCell)},
-	[MAX17X0X_TAG_temp] = { ATOM_INIT_REG16(MAX77779_FG_Temp)},
-	[MAX17X0X_TAG_curr] = { ATOM_INIT_REG16(MAX77779_FG_Current)},
-	[MAX17X0X_TAG_mcap] = { ATOM_INIT_REG16(MAX77779_FG_MixCap)},
-	[MAX17X0X_TAG_vfsoc] = { ATOM_INIT_REG16(MAX77779_FG_VFSOC)},
+	[MAXFG_TAG_avgc] = { ATOM_INIT_REG16(MAX77779_FG_AvgCurrent)},
+	[MAXFG_TAG_cnfg] = { ATOM_INIT_REG16(MAX77779_FG_Config)},
+	[MAXFG_TAG_mmdv] = { ATOM_INIT_REG16(MAX77779_FG_MaxMinVolt)},
+	[MAXFG_TAG_vcel] = { ATOM_INIT_REG16(MAX77779_FG_VCell)},
+	[MAXFG_TAG_temp] = { ATOM_INIT_REG16(MAX77779_FG_Temp)},
+	[MAXFG_TAG_curr] = { ATOM_INIT_REG16(MAX77779_FG_Current)},
+	[MAXFG_TAG_mcap] = { ATOM_INIT_REG16(MAX77779_FG_MixCap)},
+	[MAXFG_TAG_vfsoc] = { ATOM_INIT_REG16(MAX77779_FG_VFSOC)},
+	[MAXFG_TAG_tempco] = { ATOM_INIT_REG16(MAX77779_FG_NVM_nTempCo)},
+	[MAXFG_TAG_rcomp0] = { ATOM_INIT_REG16(MAX77779_FG_NVM_nRComp0)},
+	[MAXFG_TAG_timerh] = { ATOM_INIT_REG16(MAX77779_FG_TimerH)},
+	[MAXFG_TAG_descap] = { ATOM_INIT_REG16(MAX77779_FG_DesignCap)},
+	[MAXFG_TAG_fcnom] = { ATOM_INIT_REG16(MAX77779_FG_FullCapNom)},
+	[MAXFG_TAG_fcrep] = { ATOM_INIT_REG16(MAX77779_FG_FullCapRep)},
+	[MAXFG_TAG_msoc] = { ATOM_INIT_REG16(MAX77779_FG_MixSOC)},
+	[MAXFG_TAG_mmdt] = { ATOM_INIT_REG16(MAX77779_FG_MaxMinTemp)},
+	[MAXFG_TAG_mmdc] = { ATOM_INIT_REG16(MAX77779_FG_MaxMinCurr)},
+};
+
+const struct maxfg_reg max77779_debug_fg[] = {
+	[MAXFG_TAG_tempco] = { ATOM_INIT_REG16(MAX77779_FG_NVM_nTempCo)},
+	[MAXFG_TAG_rcomp0] = { ATOM_INIT_REG16(MAX77779_FG_NVM_nRComp0)},
 };
 
 int max77779_max17x0x_regmap_init(struct maxfg_regmap *regmap, struct i2c_client *clnt,
@@ -3229,8 +3146,8 @@ int max77779_max17x0x_regmap_init(struct maxfg_regmap *regmap, struct i2c_client
 		regmap->regtags.max = ARRAY_SIZE(max77779_fg);
 		regmap->regtags.map = max77779_fg;
 	} else {
-		regmap->regtags.max = 0;
-		regmap->regtags.map = NULL;
+		regmap->regtags.max = ARRAY_SIZE(max77779_debug_fg);
+		regmap->regtags.map = max77779_debug_fg;
 	}
 
 	regmap->regmap = map;

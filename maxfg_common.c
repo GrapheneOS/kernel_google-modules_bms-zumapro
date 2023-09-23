@@ -84,3 +84,134 @@ int maxfg_get_fade_rate(struct device *dev, int bhi_fcn_count, int *fade_rate)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(maxfg_get_fade_rate);
+
+static const struct maxfg_reg * maxfg_find_by_index(struct maxfg_regtags *tags, int index)
+{
+	if (index < 0 || !tags || index >= tags->max)
+		return NULL;
+
+	return &tags->map[index];
+}
+
+const struct maxfg_reg * maxfg_find_by_tag(struct maxfg_regmap *map, enum maxfg_reg_tags tag)
+{
+	return maxfg_find_by_index(&map->regtags, tag);
+}
+EXPORT_SYMBOL_GPL(maxfg_find_by_tag);
+
+int maxfg_reg_read(struct maxfg_regmap *map, enum maxfg_reg_tags tag, u16 *val)
+{
+	const struct maxfg_reg *reg;
+	unsigned int tmp;
+	int rtn;
+
+	reg = maxfg_find_by_tag(map, tag);
+	if (!reg)
+		return -EINVAL;
+
+	rtn = regmap_read(map->regmap, reg->reg, &tmp);
+	if (rtn)
+		pr_err("Failed to read %x\n", reg->reg);
+	else
+		*val = tmp;
+
+	return rtn;
+}
+EXPORT_SYMBOL_GPL(maxfg_reg_read);
+
+#define REG_HALF_HIGH(reg)     ((reg >> 8) & 0x00FF)
+#define REG_HALF_LOW(reg)      (reg & 0x00FF)
+int maxfg_collect_history_data(void *buff, size_t size, bool is_por,
+			       struct maxfg_regmap *regmap, struct maxfg_regmap *regmap_debug)
+{
+	struct maxfg_eeprom_history hist = { 0 };
+	u16 data, designcap;
+	int ret;
+
+	if (is_por)
+		return -EINVAL;
+
+	ret = maxfg_reg_read(regmap_debug, MAXFG_TAG_tempco, &data);
+	if (ret)
+		return ret;
+
+	hist.tempco = data;
+
+	ret = maxfg_reg_read(regmap_debug, MAXFG_TAG_rcomp0, &data);
+	if (ret)
+		return ret;
+
+	hist.rcomp0 = data;
+
+	ret = maxfg_reg_read(regmap, MAXFG_TAG_timerh, &data);
+	if (ret)
+		return ret;
+
+	/* Convert LSB from 3.2hours(192min) to 5days(7200min) */
+	hist.timerh = data * 192 / 7200;
+
+	ret = maxfg_reg_read(regmap, MAXFG_TAG_descap, &designcap);
+	if (ret)
+		return ret;
+
+	/* multiply by 100 to convert from mAh to %, LSB 0.125% */
+	ret = maxfg_reg_read(regmap, MAXFG_TAG_fcnom, &data);
+	if (ret)
+		return ret;
+
+	data = data * 800 / designcap;
+	hist.fullcapnom = data > MAX_HIST_FULLCAP ? MAX_HIST_FULLCAP : data;
+
+	/* multiply by 100 to convert from mAh to %, LSB 0.125% */
+	ret = maxfg_reg_read(regmap, MAXFG_TAG_fcrep, &data);
+	if (ret)
+		return ret;
+
+	data = data * 800 / designcap;
+	hist.fullcaprep = data > MAX_HIST_FULLCAP ? MAX_HIST_FULLCAP : data;
+
+	ret = maxfg_reg_read(regmap, MAXFG_TAG_msoc, &data);
+	if (ret)
+		return ret;
+
+	/* Convert LSB from 1% to 2% */
+	hist.mixsoc = REG_HALF_HIGH(data) / 2;
+
+	ret = maxfg_reg_read(regmap, MAXFG_TAG_vfsoc, &data);
+	if (ret)
+		return ret;
+
+	/* Convert LSB from 1% to 2% */
+	hist.vfsoc = REG_HALF_HIGH(data) / 2;
+
+
+	ret = maxfg_reg_read(regmap, MAXFG_TAG_mmdv, &data);
+	if (ret)
+		return ret;
+
+	/* LSB is 20mV, store values from 4.2V min */
+	hist.maxvolt = (REG_HALF_HIGH(data) * 20 - 4200) / 20;
+	/* Convert LSB from 20mV to 10mV, store values from 2.5V min */
+	hist.minvolt = (REG_HALF_LOW(data) * 20 - 2500) / 10;
+
+	ret = maxfg_reg_read(regmap, MAXFG_TAG_mmdt, &data);
+	if (ret)
+		return ret;
+
+	/* Convert LSB from 1degC to 3degC, store values from 25degC min */
+	hist.maxtemp = (REG_HALF_HIGH(data) - 25) / 3;
+	/* Convert LSB from 1degC to 3degC, store values from -20degC min */
+	hist.mintemp = (REG_HALF_LOW(data) + 20) / 3;
+
+	ret = maxfg_reg_read(regmap, MAXFG_TAG_mmdc, &data);
+	if (ret)
+		return ret;
+
+	/* Convert LSB from 0.08A to 0.5A */
+	hist.maxchgcurr = REG_HALF_HIGH(data) * 8 / 50;
+	hist.maxdischgcurr = REG_HALF_LOW(data) * 8 / 50;
+
+	memcpy(buff, &hist, sizeof(hist));
+	return (size_t)sizeof(hist);
+}
+EXPORT_SYMBOL_GPL(maxfg_collect_history_data);

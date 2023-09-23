@@ -40,6 +40,7 @@
 #define MAX_M5_MODEL_ACCESS_LOCK_OK	0xFFFF
 
 #define MAX_M5_TCURVE	0xB9
+#define MAX_M5_VFOCV	0xFB
 #define MAX_M5_VFSOC	0xFF
 
 #define MAX_M5_COMMAND	0x60

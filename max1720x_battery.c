@@ -274,48 +274,6 @@ static bool max17x0x_reglog_init(struct max1720x_chip *chip)
 
 /* ------------------------------------------------------------------------- */
 
-
-/* TODO: split between NV and Volatile? */
-
-
-static const struct maxfg_reg * max17x0x_find_by_index(struct maxfg_regtags *tags,
-							  int index)
-{
-	if (index < 0 || !tags || index >= tags->max)
-		return NULL;
-
-	return &tags->map[index];
-}
-
-static const struct maxfg_reg * max17x0x_find_by_tag(struct maxfg_regmap *map,
-							enum max17x0x_reg_tags tag)
-{
-	return max17x0x_find_by_index(&map->regtags, tag);
-}
-
-static inline int max17x0x_reg_read(struct maxfg_regmap *map,
-				    enum max17x0x_reg_tags tag,
-				    u16 *val)
-{
-	const struct maxfg_reg *reg;
-	unsigned int tmp;
-	int rtn;
-
-	reg = max17x0x_find_by_tag(map, tag);
-	if (!reg)
-		return -EINVAL;
-
-	rtn = regmap_read(map->regmap, reg->reg, &tmp);
-	if (rtn)
-		pr_err("Failed to read %x\n", reg->reg);
-	else
-		*val = tmp;
-
-	return rtn;
-}
-
-/* ------------------------------------------------------------------------- */
-
 /*
  * offset of the register in this atom.
  * NOTE: this is the byte offset regardless of the size of the register
@@ -597,7 +555,7 @@ static void max1730x_read_log_write_status(struct max1720x_chip *chip,
 	u16 data = 0;
 	const struct maxfg_reg *hsty;
 
-	hsty = max17x0x_find_by_tag(&chip->regmap_nvram, MAX17X0X_TAG_HSTY);
+	hsty = maxfg_find_by_tag(&chip->regmap_nvram, MAXFG_TAG_HSTY);
 	if (!hsty)
 		return;
 
@@ -617,7 +575,7 @@ static void max1730x_read_log_valid_status(struct max1720x_chip *chip,
 	u16 data = 0;
 	const struct maxfg_reg *hsty;
 
-	hsty = max17x0x_find_by_tag(&chip->regmap_nvram, MAX17X0X_TAG_HSTY);
+	hsty = maxfg_find_by_tag(&chip->regmap_nvram, MAXFG_TAG_HSTY);
 
 	if (!hsty)
 		return;
@@ -750,7 +708,7 @@ static void get_battery_history(struct max1720x_chip *chip,
 		? MAX1730X_READ_HISTORY_CMD_BASE
 		: MAX1720X_READ_HISTORY_CMD_BASE;
 
-	hsty = max17x0x_find_by_tag(&chip->regmap_nvram, MAX17X0X_TAG_HSTY);
+	hsty = maxfg_find_by_tag(&chip->regmap_nvram, MAXFG_TAG_HSTY);
 	if (!hsty)
 		return;
 
@@ -1151,7 +1109,7 @@ int max1720x_get_voltage_now(struct i2c_client *client, int *volt)
 	if (!chip)
 		return -ENODEV;
 
-	ret = max17x0x_reg_read(&chip->regmap, MAX17X0X_TAG_vcel, &temp);
+	ret = maxfg_reg_read(&chip->regmap, MAXFG_TAG_vcel, &temp);
 	if (ret == 0)
 		*volt = reg_to_micro_volt(temp);
 
@@ -1184,7 +1142,7 @@ static int max1720x_get_battery_vfsoc(struct max1720x_chip *chip)
 	int capacity, err;
 
 
-	err = max17x0x_reg_read(&chip->regmap, MAX17X0X_TAG_vfsoc, &data);
+	err = maxfg_reg_read(&chip->regmap, MAXFG_TAG_vfsoc, &data);
 	if (err)
 		return err;
 	capacity = reg_to_percentage(data);
@@ -1202,7 +1160,7 @@ static void max1720x_prime_battery_qh_capacity(struct max1720x_chip *chip,
 {
 	u16  mcap = 0, data = 0;
 
-	(void)max17x0x_reg_read(&chip->regmap, MAX17X0X_TAG_mcap, &mcap);
+	(void)maxfg_reg_read(&chip->regmap, MAXFG_TAG_mcap, &mcap);
 	chip->current_capacity = mcap;
 
 	(void)REGMAP_READ(&chip->regmap, MAX1720X_QH, &data);
@@ -1226,12 +1184,12 @@ static int max1720x_get_battery_status(struct max1720x_chip *chip)
 	int current_now, current_avg, ichgterm, vfsoc, soc, fullsocthr;
 	int status = POWER_SUPPLY_STATUS_UNKNOWN, err;
 
-	err = max17x0x_reg_read(&chip->regmap, MAX17X0X_TAG_curr, &data);
+	err = maxfg_reg_read(&chip->regmap, MAXFG_TAG_curr, &data);
 	if (err)
 		return -EIO;
 	current_now = -reg_to_micro_amp(data, chip->RSense);
 
-	err = max17x0x_reg_read(&chip->regmap, MAX17X0X_TAG_avgc, &data);
+	err = maxfg_reg_read(&chip->regmap, MAXFG_TAG_avgc, &data);
 	if (err)
 		return -EIO;
 	current_avg = -reg_to_micro_amp(data, chip->RSense);
@@ -1943,7 +1901,7 @@ static int batt_res_registers(struct max1720x_chip *chip, bool bread,
 	const struct maxfg_reg *bres;
 	u16 res_filtered, res_filt_count, val;
 
-	bres = max17x0x_find_by_tag(&chip->regmap_nvram, MAX17X0X_TAG_BRES);
+	bres = maxfg_find_by_tag(&chip->regmap_nvram, MAXFG_TAG_BRES);
 	if (!bres)
 		return err;
 
@@ -2013,7 +1971,7 @@ static int max1720x_check_impedance(struct max1720x_chip *chip, u16 *th)
 	if (soc < BHI_IMPEDANCE_SOC_LO || soc > BHI_IMPEDANCE_SOC_HI)
 		return -EAGAIN;
 
-	ret = max17x0x_reg_read(map, MAX17X0X_TAG_temp, &data);
+	ret = maxfg_reg_read(map, MAXFG_TAG_temp, &data);
 	if (ret < 0)
 		return -EIO;
 
@@ -2189,13 +2147,13 @@ static int max1720x_get_property(struct power_supply *psy,
 		break;
 	/* current is positive value when flowing to device */
 	case POWER_SUPPLY_PROP_CURRENT_AVG:
-		err = max17x0x_reg_read(map, MAX17X0X_TAG_avgc, &data);
+		err = maxfg_reg_read(map, MAXFG_TAG_avgc, &data);
 		if (err == 0)
 			val->intval = -reg_to_micro_amp(data, chip->RSense);
 		break;
 	/* current is positive value when flowing to device */
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
-		err = max17x0x_reg_read(map, MAX17X0X_TAG_curr, &data);
+		err = maxfg_reg_read(map, MAXFG_TAG_curr, &data);
 		if (err == 0)
 			val->intval = -reg_to_micro_amp(data, chip->RSense);
 		break;
@@ -2238,7 +2196,7 @@ static int max1720x_get_property(struct power_supply *psy,
 		}
 		break;
 	case POWER_SUPPLY_PROP_TEMP:
-		err = max17x0x_reg_read(map, MAX17X0X_TAG_temp, &data);
+		err = maxfg_reg_read(map, MAXFG_TAG_temp, &data);
 		if (err < 0)
 			break;
 
@@ -2267,23 +2225,23 @@ static int max1720x_get_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN:
 		/* LSB: 20mV */
-		err = max17x0x_reg_read(map, MAX17X0X_TAG_mmdv, &data);
+		err = maxfg_reg_read(map, MAXFG_TAG_mmdv, &data);
 		if (err == 0)
 			val->intval = ((data >> 8) & 0xFF) * 20000;
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN:
 		/* LSB: 20mV */
-		err = max17x0x_reg_read(map, MAX17X0X_TAG_mmdv, &data);
+		err = maxfg_reg_read(map, MAXFG_TAG_mmdv, &data);
 		if (err == 0)
 			val->intval = (data & 0xFF) * 20000;
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
-		err = max17x0x_reg_read(map, MAX17X0X_TAG_vcel, &data);
+		err = maxfg_reg_read(map, MAXFG_TAG_vcel, &data);
 		if (err == 0)
 			val->intval = reg_to_micro_volt(data);
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_OCV:
-		rc = max17x0x_reg_read(map, MAX17X0X_TAG_vfocv, &data);
+		rc = maxfg_reg_read(map, MAXFG_TAG_vfocv, &data);
 		if (rc == -EINVAL) {
 			val->intval = -1;
 			break;
@@ -2653,7 +2611,7 @@ static int max17x0x_fg_reset(struct max1720x_chip *chip)
 	bool done = false;
 	int err;
 
-	rset = max17x0x_find_by_tag(&chip->regmap_nvram, MAX17X0X_TAG_rset);
+	rset = maxfg_find_by_tag(&chip->regmap_nvram, MAXFG_TAG_rset);
 	if (!rset)
 		return -EINVAL;
 
@@ -4201,7 +4159,7 @@ static int max17x0x_dump_param(struct max1720x_chip *chip)
 	int ret;
 	u16 data;
 
-	ret = max17x0x_reg_read(&chip->regmap, MAX17X0X_TAG_cnfg,
+	ret = maxfg_reg_read(&chip->regmap, MAXFG_TAG_cnfg,
 				&chip->RConfig);
 	if (ret < 0)
 		return ret;
@@ -4456,7 +4414,7 @@ static void max1720x_rc_work(struct work_struct *work)
 	soc = (data >> 8) & 0x00FF;
 
 	/* Read Temperature */
-	ret = max17x0x_reg_read(&chip->regmap, MAX17X0X_TAG_temp, &data);
+	ret = maxfg_reg_read(&chip->regmap, MAXFG_TAG_temp, &data);
 	if (ret < 0)
 		goto reschedule;
 
@@ -5245,102 +5203,6 @@ static int max17x0x_storage_info(gbms_tag_t tag, size_t *addr, size_t *count,
 	return 0;
 }
 
-#define REG_HALF_HIGH(reg)     ((reg >> 8) & 0x00FF)
-#define REG_HALF_LOW(reg)      (reg & 0x00FF)
-static int max17x0x_collect_history_data(void *buff, size_t size,
-					 struct max1720x_chip *chip)
-{
-	struct maxfg_eeprom_history hist = { 0 };
-	u16 data, designcap;
-	int ret;
-
-	if (chip->por)
-		return -EINVAL;
-
-	ret = REGMAP_READ(&chip->regmap, MAX1720X_TEMPCO, &data);
-	if (ret)
-		return ret;
-
-	hist.tempco = data;
-
-	ret = REGMAP_READ(&chip->regmap, MAX1720X_RCOMP0, &data);
-	if (ret)
-		return ret;
-
-	hist.rcomp0 = data;
-
-	ret = REGMAP_READ(&chip->regmap, MAX1720X_TIMERH, &data);
-	if (ret)
-		return ret;
-
-	/* Convert LSB from 3.2hours(192min) to 5days(7200min) */
-	hist.timerh = data * 192 / 7200;
-
-	ret = REGMAP_READ(&chip->regmap, MAX1720X_DESIGNCAP, &designcap);
-	if (ret)
-		return ret;
-
-	/* multiply by 100 to convert from mAh to %, LSB 0.125% */
-	ret = REGMAP_READ(&chip->regmap, MAX1720X_FULLCAPNOM, &data);
-	if (ret)
-		return ret;
-
-	data = data * 800 / designcap;
-	hist.fullcapnom = data > MAX_HIST_FULLCAP ? MAX_HIST_FULLCAP : data;
-
-	/* multiply by 100 to convert from mAh to %, LSB 0.125% */
-	ret = REGMAP_READ(&chip->regmap, MAX1720X_FULLCAPREP, &data);
-	if (ret)
-		return ret;
-
-	data = data * 800 / designcap;
-	hist.fullcaprep = data > MAX_HIST_FULLCAP ? MAX_HIST_FULLCAP : data;
-
-	ret = REGMAP_READ(&chip->regmap, MAX1720X_MIXSOC, &data);
-	if (ret)
-		return ret;
-
-	/* Convert LSB from 1% to 2% */
-	hist.mixsoc = REG_HALF_HIGH(data) / 2;
-
-	ret = REGMAP_READ(&chip->regmap, MAX1720X_VFSOC, &data);
-	if (ret)
-		return ret;
-
-	/* Convert LSB from 1% to 2% */
-	hist.vfsoc = REG_HALF_HIGH(data) / 2;
-
-
-	ret = REGMAP_READ(&chip->regmap, MAX1720X_MAXMINVOLT, &data);
-	if (ret)
-		return ret;
-
-	/* LSB is 20mV, store values from 4.2V min */
-	hist.maxvolt = (REG_HALF_HIGH(data) * 20 - 4200) / 20;
-	/* Convert LSB from 20mV to 10mV, store values from 2.5V min */
-	hist.minvolt = (REG_HALF_LOW(data) * 20 - 2500) / 10;
-
-	ret = REGMAP_READ(&chip->regmap, MAX1720X_MAXMINTEMP, &data);
-	if (ret)
-		return ret;
-
-	/* Convert LSB from 1degC to 3degC, store values from 25degC min */
-	hist.maxtemp = (REG_HALF_HIGH(data) - 25) / 3;
-	/* Convert LSB from 1degC to 3degC, store values from -20degC min */
-	hist.mintemp = (REG_HALF_LOW(data) + 20) / 3;
-
-	ret = REGMAP_READ(&chip->regmap, MAX1720X_MAXMINCURR, &data);
-	if (ret)
-		return ret;
-
-	/* Convert LSB from 0.08A to 0.5A */
-	hist.maxchgcurr = REG_HALF_HIGH(data) * 8 / 50;
-	hist.maxdischgcurr = REG_HALF_LOW(data) * 8 / 50;
-
-	memcpy(buff, &hist, sizeof(hist));
-	return (size_t)sizeof(hist);
-}
-
 /*
  * The standard device call this with !data && !size && index=0 on start and
  * !data && !size && index<0 on stop. The call on start free and reload the
@@ -5447,8 +5309,8 @@ static int max17x0x_storage_read(gbms_tag_t tag, void *buff, size_t size,
 	switch (tag) {
 	case GBMS_TAG_SNUM:
 	case GBMS_TAG_MXSN:
-		reg = max17x0x_find_by_tag(&chip->regmap_nvram,
-					   MAX17X0X_TAG_SNUM);
+		reg = maxfg_find_by_tag(&chip->regmap_nvram,
+					   MAXFG_TAG_SNUM);
 		if (reg && reg->size > size)
 			return -ERANGE;
 
@@ -5464,8 +5326,8 @@ static int max17x0x_storage_read(gbms_tag_t tag, void *buff, size_t size,
 
 	case GBMS_TAG_BCNT:
 	case GBMS_TAG_MXCN:
-		reg = max17x0x_find_by_tag(&chip->regmap_nvram,
-					   MAX17X0X_TAG_BCNT);
+		reg = maxfg_find_by_tag(&chip->regmap_nvram,
+					   MAXFG_TAG_BCNT);
 		if (reg && reg->size != size)
 			return -ERANGE;
 		ret = max17x0x_reg_load(&chip->regmap_nvram, reg, buff);
@@ -5523,8 +5385,8 @@ static int max17x0x_storage_write(gbms_tag_t tag, const void *buff, size_t size,
 
 	switch (tag) {
 	case GBMS_TAG_MXCN:
-		reg = max17x0x_find_by_tag(&chip->regmap_nvram,
-					   MAX17X0X_TAG_BCNT);
+		reg = maxfg_find_by_tag(&chip->regmap_nvram,
+					   MAXFG_TAG_BCNT);
 		if (reg && reg->size != size)
 			return -ERANGE;
 	break;
@@ -5596,7 +5458,8 @@ static int max17x0x_prop_read(gbms_tag_t tag, void *buff, size_t size,
 
 	switch (tag) {
 	case GBMS_TAG_CLHI:
-		ret = max17x0x_collect_history_data(buff, size, chip);
+		ret = maxfg_collect_history_data(buff, size, chip->por,
+						 &chip->regmap, &chip->regmap);
 		break;
 
 	default:
@@ -6072,7 +5935,7 @@ static int max1720x_probe(struct i2c_client *client,
 		chip->bhi_fcn_count = BHI_CAP_FCN_COUNT;
 
 	/* use VFSOC until it can confirm that FG Model is running */
-	reg = max17x0x_find_by_tag(&chip->regmap, MAX17X0X_TAG_vfsoc);
+	reg = maxfg_find_by_tag(&chip->regmap, MAXFG_TAG_vfsoc);
 	chip->reg_prop_capacity_raw = (reg) ? reg->reg : MAX1720X_REPSOC;
 
 	max17x0x_init_sysfs(chip);

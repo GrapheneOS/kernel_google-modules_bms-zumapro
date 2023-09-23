@@ -17,24 +17,33 @@
 #define MAX1730X_GAUGE_TYPE	1
 #define MAX_M5_GAUGE_TYPE	2
 
-enum max17x0x_reg_tags {
-	MAX17X0X_TAG_avgc,
-	MAX17X0X_TAG_cnfg,
-	MAX17X0X_TAG_mmdv,
-	MAX17X0X_TAG_vcel,
-	MAX17X0X_TAG_temp,
-	MAX17X0X_TAG_curr,
-	MAX17X0X_TAG_mcap,
-	MAX17X0X_TAG_avgr,
-	MAX17X0X_TAG_vfsoc,
-	MAX17X0X_TAG_vfocv,
+enum maxfg_reg_tags {
+	MAXFG_TAG_avgc,
+	MAXFG_TAG_cnfg,
+	MAXFG_TAG_mmdv,
+	MAXFG_TAG_vcel,
+	MAXFG_TAG_temp,
+	MAXFG_TAG_curr,
+	MAXFG_TAG_mcap,
+	MAXFG_TAG_avgr,
+	MAXFG_TAG_vfsoc,
+	MAXFG_TAG_vfocv,
+	MAXFG_TAG_tempco,
+	MAXFG_TAG_rcomp0,
+	MAXFG_TAG_timerh,
+	MAXFG_TAG_descap,
+	MAXFG_TAG_fcnom,
+	MAXFG_TAG_fcrep,
+	MAXFG_TAG_msoc,
+	MAXFG_TAG_mmdt,
+	MAXFG_TAG_mmdc,
 
-	MAX17X0X_TAG_BCNT,
-	MAX17X0X_TAG_SNUM,
-	MAX17X0X_TAG_HSTY,
-	MAX17X0X_TAG_BCEA,
-	MAX17X0X_TAG_rset,
-	MAX17X0X_TAG_BRES,
+	MAXFG_TAG_BCNT,
+	MAXFG_TAG_SNUM,
+	MAXFG_TAG_HSTY,
+	MAXFG_TAG_BCEA,
+	MAXFG_TAG_rset,
+	MAXFG_TAG_BRES,
 };
 
 enum max17x0x_reg_types {
@@ -229,5 +238,9 @@ static inline int maxfg_regmap_writeverify(const struct maxfg_regmap *map,
 /* dump FG model data */
 void dump_model(struct device *dev, u16 model_start, u16 *data, int count);
 int maxfg_get_fade_rate(struct device *dev, int bhi_fcn_count, int *fade_rate);
+const struct maxfg_reg * maxfg_find_by_tag(struct maxfg_regmap *map, enum maxfg_reg_tags tag);
+int maxfg_reg_read(struct maxfg_regmap *map, enum maxfg_reg_tags tag, u16 *val);
+int maxfg_collect_history_data(void *buff, size_t size, bool is_por,
+			       struct maxfg_regmap *regmap, struct maxfg_regmap *regmap_debug);
 
 #endif  // MAXFG_COMMON_H_
