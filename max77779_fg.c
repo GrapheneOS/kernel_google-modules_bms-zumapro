@@ -604,8 +604,7 @@ static int max77779_fg_get_battery_vfsoc(struct max77779_fg_chip *chip)
 	return capacity;
 }
 
-static void max77779_fg_prime_battery_qh_capacity(struct max77779_fg_chip *chip,
-						  int status)
+static void max77779_fg_prime_battery_qh_capacity(struct max77779_fg_chip *chip)
 {
 	u16  mcap = 0, data = 0;
 
@@ -663,8 +662,7 @@ static int max77779_fg_get_battery_status(struct max77779_fg_chip *chip)
 
 			status = POWER_SUPPLY_STATUS_FULL;
 			if (needs_prime)
-				max77779_fg_prime_battery_qh_capacity(chip,
-								   status);
+				max77779_fg_prime_battery_qh_capacity(chip);
 		} else {
 			status = POWER_SUPPLY_STATUS_NOT_CHARGING;
 		}
@@ -675,7 +673,7 @@ static int max77779_fg_get_battery_status(struct max77779_fg_chip *chip)
 		status = POWER_SUPPLY_STATUS_CHARGING;
 		if (chip->prev_charge_status == POWER_SUPPLY_STATUS_DISCHARGING
 		    && current_avg  < -ichgterm)
-			max77779_fg_prime_battery_qh_capacity(chip, status);
+			max77779_fg_prime_battery_qh_capacity(chip);
 	}
 
 	if (status != chip->prev_charge_status)
@@ -693,6 +691,9 @@ static int max77779_fg_update_battery_qh_based_capacity(struct max77779_fg_chip 
 {
 	u16 data;
 	int current_qh, err = 0;
+
+	if (chip->por)
+		return -EINVAL;
 
 	err = REGMAP_READ(&chip->regmap, MAX77779_FG_QH, &data);
 	if (err)
@@ -2694,6 +2695,7 @@ static void max77779_fg_model_work(struct work_struct *work)
 		dev_info(chip->dev, "FG Model OK, ver=%d next_update=%d\n",
 			 max77779_fg_model_version(chip->model_data),
 			 chip->model_next_update);
+		max77779_fg_prime_battery_qh_capacity(chip);
 		power_supply_changed(chip->psy);
 	}
 
@@ -2873,6 +2875,9 @@ static int max77779_fg_init_chip(struct max77779_fg_chip *chip)
 		ret = max77779_fg_init_model_data(chip);
 		if (ret < 0)
 			return ret;
+
+		if (chip->model_ok)
+			max77779_fg_prime_battery_qh_capacity(chip);
 	}
 
 	return 0;
