@@ -12,6 +12,7 @@
 
 #define MAX77779_COP_SENSE_RESISTOR_VAL 2 /* 2mOhm */
 #define MAX77779_COP_WARN_THRESHOLD 105 /* Percentage */
+#define MAX77779_COP_MIN_DEBOUNCE_TIME_MS 16
 #define MAX77779_CHG_NUM_IRQS 16
 
 struct max77779_chgr_data {
@@ -41,7 +42,7 @@ struct max77779_chgr_data {
 	struct gvotable_election *dc_suspend_votable;
 
 	struct delayed_work cop_enable_work;
-
+	uint32_t cop_warn;
 
 	bool charge_done;
 	bool chgin_input_suspend;

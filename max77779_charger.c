@@ -1284,6 +1284,7 @@ static bool max77779_is_cop_enabled(struct max77779_chgr_data *data)
 static int max77779_set_cop_warn(struct max77779_chgr_data *data, uint32_t max_value)
 {
 	int ret;
+	const uint32_t cc_max = max_value;
 
 	max_value *= MAX77779_COP_SENSE_RESISTOR_VAL;
 	max_value /= 1000; /* Convert to uV */
@@ -1299,6 +1300,8 @@ static int max77779_set_cop_warn(struct max77779_chgr_data *data, uint32_t max_v
 		dev_err(data->dev, "Error writing MAX77779_CHG_COP_WARN_L ret:%d", ret);
 		return ret;
 	}
+
+	data->cop_warn = cc_max;
 
 	return ret;
 }
@@ -1370,6 +1373,10 @@ static int max77779_cop_config(struct max77779_chgr_data * data)
 {
 	int ret = 0;
 
+	ret = max77779_get_cop_warn(data, &data->cop_warn);
+	if (ret < 0)
+		dev_err(data->dev, "Error getting COP warn\n");
+
 	/* TODO: b/293487608 Support COP limit */
 	/* Setting limit to MAX to not trip */
 	ret = max77779_set_cop_limit(data, 0xffff * 1000 / MAX77779_COP_SENSE_RESISTOR_VAL);
@@ -1387,6 +1394,7 @@ static int max77779_set_charger_current_max_ua(struct max77779_chgr_data *data,
 	u8 value, reg;
 	int ret;
 	bool cp_enabled;
+	uint32_t new_cop_warn;
 
 	if (current_ua < 0)
 		return 0;
@@ -1407,10 +1415,15 @@ static int max77779_set_charger_current_max_ua(struct max77779_chgr_data *data,
 		return ret;
 	}
 
-	/* TODO: b/296588527 handle charge tier transitions */
-	ret = max77779_set_cop_warn(data, current_ua * MAX77779_COP_WARN_THRESHOLD / 100);
-	if (ret < 0)
-		dev_err(data->dev, "cannot set cop warn (%d)\n", ret);
+	new_cop_warn = current_ua * MAX77779_COP_WARN_THRESHOLD / 100;
+
+	if (data->cop_warn <= new_cop_warn) {
+		ret = max77779_set_cop_warn(data, new_cop_warn);
+		if (ret < 0)
+			dev_err(data->dev, "cannot set cop warn (%d)\n", ret);
+
+		msleep(MAX77779_COP_MIN_DEBOUNCE_TIME_MS);
+	}
 
 	cp_enabled = _max77779_chg_cnfg_00_cp_en_get(reg);
 	if (cp_enabled)
@@ -1432,6 +1445,14 @@ update_reg:
 				   value);
 	if (ret == 0 && !cp_enabled)
 		ret = max77779_set_charge_enabled(data, !disabled, "CC_MAX");
+
+	if (data->cop_warn > new_cop_warn) {
+		msleep(MAX77779_COP_MIN_DEBOUNCE_TIME_MS);
+
+		ret = max77779_set_cop_warn(data, new_cop_warn);
+		if (ret < 0)
+			dev_err(data->dev, "cannot set cop warn (%d)\n", ret);
+	}
 
 	return ret;
 }
