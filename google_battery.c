@@ -87,6 +87,7 @@
 #define BHI_ALGO_ROUND_INDEX		50
 #define BHI_CC_MARGINAL_THRESHOLD_DEFAULT	800
 #define BHI_CC_NEED_REP_THRESHOLD_DEFAULT	1000
+#define BHI_CYCLE_GRACE_DEFAULT		200
 
 #define BHI_ROUND_INDEX(index) 		\
 	(((index) + BHI_ALGO_ROUND_INDEX) / 100)
@@ -345,6 +346,7 @@ struct bhi_data
 	/* set trend points and low boundary */
 	u16 trend[BHI_TREND_POINTS_SIZE];
 	u16 l_bound[BHI_TREND_POINTS_SIZE];
+	int bhi_l_bound_size;
 };
 
 struct health_data
@@ -3618,17 +3620,14 @@ static u32 aacr_get_reference_capacity(const struct batt_drv *batt_drv, int cycl
 }
 
 /* 80% of design_capacity min, design_capacity in grace, aacr or negative */
-static int aacr_get_capacity_at_cycle(const struct batt_drv *batt_drv, int cycle_count)
+static int aacr_get_capacity_for_algo(const struct batt_drv *batt_drv, int cycle_count,
+				      int aacr_algo)
 {
 	const int design_capacity = batt_drv->battery_capacity; /* mAh */
 	const int min_capacity = (batt_drv->battery_capacity * 80) / 100;
 	int reference_capacity, full_cap_nom, full_capacity;
 	struct power_supply *fg_psy = batt_drv->fg_psy;
 	int aacr_capacity;
-
-	/* batt_drv->cycle_count might be negative */
-	if (cycle_count <= batt_drv->aacr_cycle_grace)
-		return design_capacity;
 
 	/* peg at 80% of design when over limit (if set) */
 	if (batt_drv->aacr_cycle_max && (cycle_count >= batt_drv->aacr_cycle_max))
@@ -3642,10 +3641,9 @@ static int aacr_get_capacity_at_cycle(const struct batt_drv *batt_drv, int cycle
 	full_cap_nom = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_CHARGE_FULL);
 	if (full_cap_nom < 0)
 		return full_cap_nom;
-
 	full_cap_nom /= 1000;
 
-	if (batt_drv->aacr_algo == BATT_AACR_ALGO_LOW_B)
+	if (aacr_algo == BATT_AACR_ALGO_LOW_B)
 		full_capacity = min(min(full_cap_nom, design_capacity), reference_capacity);
 	else
 		full_capacity = max(min(full_cap_nom, design_capacity), reference_capacity);
@@ -3655,9 +3653,20 @@ static int aacr_get_capacity_at_cycle(const struct batt_drv *batt_drv, int cycle
 
 	pr_debug("%s: design=%d reference=%d full_cap_nom=%d full=%d aacr=%d algo=%d\n",
 		 __func__, design_capacity, reference_capacity, full_cap_nom,
-		 full_capacity, aacr_capacity, batt_drv->aacr_algo);
+		 full_capacity, aacr_capacity, aacr_algo);
 
 	return aacr_capacity;
+}
+
+static int aacr_get_capacity_at_cycle(const struct batt_drv *batt_drv, int cycle_count)
+{
+	const int design_capacity = batt_drv->battery_capacity; /* mAh */
+
+	/* batt_drv->cycle_count might be negative */
+	if (cycle_count <= batt_drv->aacr_cycle_grace)
+		return design_capacity;
+
+	return aacr_get_capacity_for_algo(batt_drv, cycle_count, batt_drv->aacr_algo);
 }
 
 /* design_capacity when not enabled, never a negative value */
@@ -3809,16 +3818,12 @@ static int bhi_cap_data_update(struct bhi_data *bhi_data, struct batt_drv *batt_
 	int cap_fade;
 
 	/* GBMS_PROP_CAPACITY_FADE_RATE is in percent */
-	if (fade_rate < 0 || designcap < 0)
+	if (designcap < 0)
 		return -ENODATA;
 	if (bhi_data->pack_capacity <= 0)
 		return -EINVAL;
 
 	cap_fade = fade_rate * designcap / (bhi_data->pack_capacity * 1000);
-	if (cap_fade < 0)
-		return -ENODATA;
-	if (cap_fade > 100)
-		cap_fade = 100;
 
 	bhi_data->capacity_fade = cap_fade;
 
@@ -3838,12 +3843,58 @@ static int bhi_health_get_capacity(int algo, const struct bhi_data *bhi_data)
 	return bhi_data->pack_capacity * (100 - bhi_data->capacity_fade) / 100;
 }
 
+static void bhi_l_bound_validity_check(struct batt_drv *batt_drv)
+{
+	struct bhi_data *bhi_data = &batt_drv->health_data.bhi_data;
+	int cnt;
+
+	for (cnt = 0; cnt < BHI_TREND_POINTS_SIZE; cnt ++)
+		if (bhi_data->l_bound[cnt] == 0)
+			break;
+
+	bhi_data->bhi_l_bound_size = cnt;
+
+	/* data validity */
+	for (cnt = 0; cnt < bhi_data->bhi_l_bound_size; cnt++) {
+		if (batt_drv->battery_capacity &&
+		    bhi_data->l_bound[cnt] > batt_drv->battery_capacity) {
+			bhi_data->bhi_l_bound_size = 0;
+			break;
+		}
+	}
+}
+
+static int bhi_get_l_bound(int cc, const struct batt_drv *batt_drv)
+{
+	const struct bhi_data *bhi_data = &batt_drv->health_data.bhi_data;
+	const u16 *l_bound = bhi_data->l_bound;
+	const int max_size = bhi_data->bhi_l_bound_size - 1;
+	int index, ca_upper, ca_under;
+
+	/* no available data */
+	if (max_size <= 0)
+		return 0;
+
+	if (cc <= 100)
+		return l_bound[0];
+
+	index = cc / 100;
+
+	if (index >= max_size)
+		index = max_size;
+
+	ca_upper = l_bound[index];
+	ca_under = l_bound[index - 1];
+
+	return ca_under + (cc - (index * 100)) * (ca_upper - ca_under) / 100;
+}
+
 /* The limit for capacity is 80% of design */
 static int bhi_calc_cap_index(int algo, struct batt_drv *batt_drv)
 {
 	const struct health_data *health_data = &batt_drv->health_data;
 	const struct bhi_data *bhi_data = &health_data->bhi_data;
-	int capacity_health, index, capacity_aacr = 0;
+	int capacity_health, index, capacity_bound = 0;
 
 	if (algo == BHI_ALGO_DISABLED)
 		return BHI_ALGO_FULL_HEALTH;
@@ -3858,10 +3909,24 @@ static int bhi_calc_cap_index(int algo, struct batt_drv *batt_drv)
 
 	/* for BHI_ALGO_ACHI_B compare to aacr capacity */
 	if (algo == BHI_ALGO_ACHI_B || algo == BHI_ALGO_ACHI_RAVG_B) {
-		capacity_aacr = aacr_get_capacity(batt_drv);
+		const int cycle_count = batt_drv->fake_aacr_cc ?
+					batt_drv->fake_aacr_cc : batt_drv->cycle_count;
 
-		if (capacity_health < capacity_aacr)
-			capacity_health = capacity_aacr;
+		capacity_bound = bhi_get_l_bound(cycle_count, batt_drv);
+		if (capacity_bound) {
+			if (capacity_health < capacity_bound)
+				capacity_health = capacity_bound;
+		} else if (algo == BHI_ALGO_ACHI_RAVG_B) {
+			capacity_bound = aacr_get_capacity_for_algo(batt_drv, cycle_count,
+								    BATT_AACR_ALGO_LOW_B);
+			if (capacity_health > capacity_bound)
+				capacity_health = capacity_bound;
+		} else {
+			capacity_bound = aacr_get_capacity_for_algo(batt_drv, cycle_count,
+								    BATT_AACR_ALGO_DEFAULT);
+			if (capacity_health < capacity_bound)
+				capacity_health = capacity_bound;
+		}
 	}
 
 	/*
@@ -3870,12 +3935,21 @@ static int bhi_calc_cap_index(int algo, struct batt_drv *batt_drv)
 	 */
 
 	index = (capacity_health * BHI_ALGO_FULL_HEALTH) / bhi_data->pack_capacity;
-	if (index > BHI_ALGO_FULL_HEALTH)
-		index = BHI_ALGO_FULL_HEALTH;
 
-	pr_debug("%s: algo=%d index=%d ch=%d, ca=%d, pc=%d, fr=%d\n", __func__,
-		algo, index, capacity_health, capacity_aacr, bhi_data->pack_capacity,
+	pr_debug("%s: algo=%d index=%d ch=%d, cb=%d, pc=%d, fr=%d\n", __func__,
+		algo, index, capacity_health, capacity_bound, bhi_data->pack_capacity,
 		bhi_data->capacity_fade);
+
+	return index;
+}
+
+static int bhi_cap_index_bound(int bhi_algo, int index)
+{
+	if (index < 0)
+		return BHI_ALGO_FULL_HEALTH;
+
+	if (index > BHI_ALGO_FULL_HEALTH && bhi_algo > BHI_ALGO_ACHI)
+		return BHI_ALGO_FULL_HEALTH;
 
 	return index;
 }
@@ -3991,8 +4065,6 @@ static int bhi_calc_imp_index(int algo, const struct health_data *health_data)
 	/* The limit is 2x of activation. */
 	imp_index = (2 * bhi_data->act_impedance - cur_impedance) * BHI_ALGO_FULL_HEALTH /
 		    bhi_data->act_impedance;
-	if (imp_index < 0)
-		imp_index = 0;
 
 	pr_debug("%s: algo=%d index=%d current=%d, activation=%d\n", __func__,
 		 algo, imp_index, cur_impedance, bhi_data->act_impedance);
@@ -4030,15 +4102,21 @@ static int bhi_calc_sd_index(int algo, const struct health_data *health_data)
 static int bhi_cycle_count_index(const struct health_data *health_data)
 {
 	const int cc = health_data->bhi_data.cycle_count;
-	const int cc_mt = health_data->cycle_count_marginal_threshold;
+	int cc_mt = health_data->cycle_count_marginal_threshold;
 	const int cc_nrt = health_data->cycle_count_need_rep_threshold;
-	const int h_mt = health_data->marginal_threshold;
+	int h_mt = health_data->marginal_threshold;
 	const int h_nrt = health_data->need_rep_threshold;
 	int cc_index;
 
 	/* threshold should be reasonable */
 	if (h_mt < h_nrt || cc_nrt <= cc_mt)
 		return BHI_ALGO_FULL_HEALTH;
+
+	/* remove marginal_threshold */
+	if (h_mt == h_nrt) {
+		h_mt = 100;
+		cc_mt = 0;
+	}
 
 	/* use interpolation to get index via cycle count/health threshold */
 	cc_index = (h_mt - h_nrt) * (cc - cc_nrt) / (cc_mt - cc_nrt) + h_nrt;
@@ -4179,14 +4257,13 @@ static int batt_bhi_stats_update(struct batt_drv *batt_drv)
 		health_data->bhi_data.cycle_count = batt_drv->cycle_count;
 
 	index = bhi_calc_cap_index(bhi_algo, batt_drv);
-	if (index < 0)
-		index = BHI_ALGO_FULL_HEALTH;
+	index = bhi_cap_index_bound(bhi_algo, index);
 	changed |= health_data->bhi_cap_index != index;
 	health_data->bhi_cap_index = index;
 
 	index = bhi_calc_imp_index(bhi_algo, health_data);
 	if (index < 0)
-		index = BHI_ALGO_FULL_HEALTH;
+		index = 0;
 	changed |= health_data->bhi_imp_index != index;
 	health_data->bhi_imp_index = index;
 
@@ -7547,6 +7624,8 @@ static ssize_t health_set_low_boundary_store(struct device *dev,
 
 		if ((int)batt_id == batt_drv->batt_id) {
 			memcpy(&bhi_data->l_bound, l_bound, sizeof(l_bound));
+			bhi_l_bound_validity_check(batt_drv);
+
 			break;
 		}
 
@@ -9652,6 +9731,7 @@ static int batt_init_sd(struct swelling_data *sd)
 static int batt_bhi_init(struct batt_drv *batt_drv)
 {
 	struct health_data *health_data = &batt_drv->health_data;
+	struct bhi_data *bhi_data = &health_data->bhi_data;
 	int ret;
 
 	/* see enum bhi_algo */
@@ -9703,13 +9783,24 @@ static int batt_bhi_init(struct batt_drv *batt_drv)
 	ret = of_property_read_u32(batt_drv->device->of_node, "google,bhi-cycle-grace",
 				   &health_data->bhi_cycle_grace);
 	if (ret < 0)
-		health_data->bhi_cycle_grace = 0;
+		health_data->bhi_cycle_grace = BHI_CYCLE_GRACE_DEFAULT;
 
 	/* design is the value used to build the charge table */
 	health_data->bhi_data.pack_capacity = batt_drv->battery_capacity;
 
 	/* need battery id to get right trend points */
 	batt_drv->batt_id = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_BATT_ID);
+
+	ret = of_property_read_u16_array(batt_id_node(batt_drv),
+					 "google,bhi-l-bound", &bhi_data->l_bound[0],
+					 BHI_TREND_POINTS_SIZE);
+	if (ret == 0) {
+		bhi_l_bound_validity_check(batt_drv);
+		pr_info("bhi_l_bound [%d, %d, %d, %d, %d, %d, %d, %d], size:%d\n",
+			bhi_data->l_bound[0], bhi_data->l_bound[1], bhi_data->l_bound[2],
+			bhi_data->l_bound[3], bhi_data->l_bound[4], bhi_data->l_bound[5],
+			bhi_data->l_bound[6], bhi_data->l_bound[7], bhi_data->bhi_l_bound_size);
+	}
 
 	/* debug data initialization */
 	health_data->bhi_debug_cycle_count = 0;
