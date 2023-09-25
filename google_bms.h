@@ -312,6 +312,10 @@ enum gbms_stats_tier_idx_t {
 	GBMS_STATS_TH_LVL8 = 58,
 	GBMS_STATS_TH_LVL9 = 59,
 
+	/* Dual batteries */
+	GBMS_STATS_BASE_BATT = 90,
+	GBMS_STATS_SEC_BATT = 91,
+
 	/* TODO: rename, these are not really related to AC */
 	GBMS_STATS_AC_TI_FULL_CHARGE = 100,
 	GBMS_STATS_AC_TI_HIGH_SOC = 101,
