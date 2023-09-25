@@ -28,6 +28,7 @@
 
 struct device_node;
 
+#define get_boot_sec() div_u64(ktime_to_ns(ktime_get_boottime()), NSEC_PER_SEC)
 #define GBMS_CHG_TEMP_NB_LIMITS_MAX 10
 #define GBMS_CHG_VOLT_NB_LIMITS_MAX 10
 #define GBMS_CHG_ALG_BUF_SZ 500

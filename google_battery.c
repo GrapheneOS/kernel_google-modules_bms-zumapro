@@ -108,8 +108,6 @@ enum batt_health_ui {
 #error "GBMS_CCBIN_BUCKET_COUNT needs to be a value from 1-100"
 #endif
 
-#define get_boot_sec() div_u64(ktime_to_ns(ktime_get_boottime()), NSEC_PER_SEC)
-
 struct ssoc_uicurve {
 	qnum_t real;
 	qnum_t ui;
