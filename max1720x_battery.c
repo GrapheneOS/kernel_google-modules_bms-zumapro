@@ -203,7 +203,7 @@ struct max1720x_chip {
 	struct logbuffer *monitor_log;
 	u16 pre_repsoc;
 
-	struct power_supply_desc max1720x_psy_desc;
+	struct gbms_desc max1720x_psy_desc;
 
 	int bhi_fcn_count;
 	int bhi_acim;
@@ -1853,11 +1853,6 @@ static int max1720x_get_property(struct power_supply *psy,
 		/* return data ok */
 		err = 0;
 		break;
-	case GBMS_PROP_CAPACITY_RAW:
-		err = max1720x_get_capacity_raw(chip, &data);
-		if (err == 0)
-			val->intval = (int)data;
-		break;
 	case POWER_SUPPLY_PROP_CAPACITY:
 		idata = max1720x_get_battery_soc(chip);
 		if (idata < 0) {
@@ -2007,38 +2002,6 @@ static int max1720x_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_SERIAL_NUMBER:
 		val->strval = chip->serial_number;
 		break;
-	case GBMS_PROP_HEALTH_ACT_IMPEDANCE:
-		val->intval = maxfg_health_get_ai(chip->dev, chip->bhi_acim, chip->RSense);
-		break;
-	case GBMS_PROP_HEALTH_IMPEDANCE:
-		val->intval = max1720x_health_read_impedance(chip);
-		break;
-	case GBMS_PROP_RESISTANCE:
-		val->intval = maxfg_read_resistance(map, chip->RSense);
-		break;
-	case GBMS_PROP_RESISTANCE_RAW:
-		val->intval = maxfg_read_resistance_raw(map);
-		break;
-	case GBMS_PROP_RESISTANCE_AVG:
-		val->intval = maxfg_read_resistance_avg(chip->RSense);
-		break;
-	case GBMS_PROP_BATTERY_AGE:
-		val->intval = max1720x_get_age(chip);
-		break;
-	case GBMS_PROP_CHARGE_FULL_ESTIMATE:
-		val->intval = batt_ce_full_estimate(&chip->cap_estimate);
-		break;
-	case GBMS_PROP_CAPACITY_FADE_RATE:
-	case GBMS_PROP_CAPACITY_FADE_RATE_FCR:
-		err = maxfg_get_fade_rate(chip->dev, chip->bhi_fcn_count, &val->intval, psp);
-		break;
-	case GBMS_PROP_BATT_ID:
-		val->intval = chip->batt_id;
-		break;
-	case GBMS_PROP_RECAL_FG:
-		if (chip->gauge_type == MAX_M5_GAUGE_TYPE)
-			val->intval = max_m5_recal_state(chip->model_data);
-		break;
 	default:
 		err = -EINVAL;
 		break;
@@ -2179,6 +2142,96 @@ static int max1720x_set_property(struct power_supply *psy,
 				 enum power_supply_property psp,
 				 const union power_supply_propval *val)
 {
+	/* move gbms psp to max1720x_gbms_set_property */
+	return 0;
+}
+
+static int max1720x_property_is_writeable(struct power_supply *psy,
+					  enum power_supply_property psp)
+{
+	/* move gbms psp to max1720x_gbms_property_is_writeable */
+	return 0;
+}
+
+static int max1720x_gbms_get_property(struct power_supply *psy,
+				      enum gbms_property psp,
+				      union gbms_propval *val)
+{
+	struct max1720x_chip *chip = (struct max1720x_chip *)
+					power_supply_get_drvdata(psy);
+	struct maxfg_regmap *map = &chip->regmap;
+	int err = 0;
+	u16 data = 0;
+
+	__pm_stay_awake(chip->get_prop_ws);
+	mutex_lock(&chip->model_lock);
+
+	pm_runtime_get_sync(chip->dev);
+	if (!chip->init_complete || !chip->resume_complete) {
+		pm_runtime_put_sync(chip->dev);
+		mutex_unlock(&chip->model_lock);
+		__pm_relax(chip->get_prop_ws);
+		return -EAGAIN;
+	}
+	pm_runtime_put_sync(chip->dev);
+
+	switch (psp) {
+	case GBMS_PROP_CAPACITY_RAW:
+		err = max1720x_get_capacity_raw(chip, &data);
+		if (err == 0)
+			val->prop.intval = (int)data;
+		break;
+	case GBMS_PROP_HEALTH_ACT_IMPEDANCE:
+		val->prop.intval = maxfg_health_get_ai(chip->dev, chip->bhi_acim, chip->RSense);
+		break;
+	case GBMS_PROP_HEALTH_IMPEDANCE:
+		val->prop.intval = max1720x_health_read_impedance(chip);
+		break;
+	case GBMS_PROP_RESISTANCE:
+		val->prop.intval = maxfg_read_resistance(map, chip->RSense);
+		break;
+	case GBMS_PROP_RESISTANCE_RAW:
+		val->prop.intval = maxfg_read_resistance_raw(map);
+		break;
+	case GBMS_PROP_RESISTANCE_AVG:
+		val->prop.intval = maxfg_read_resistance_avg(chip->RSense);
+		break;
+	case GBMS_PROP_BATTERY_AGE:
+		val->prop.intval = max1720x_get_age(chip);
+		break;
+	case GBMS_PROP_CHARGE_FULL_ESTIMATE:
+		val->prop.intval = batt_ce_full_estimate(&chip->cap_estimate);
+		break;
+	case GBMS_PROP_CAPACITY_FADE_RATE:
+	case GBMS_PROP_CAPACITY_FADE_RATE_FCR:
+		err = maxfg_get_fade_rate(chip->dev, chip->bhi_fcn_count, &val->prop.intval, psp);
+		break;
+	case GBMS_PROP_BATT_ID:
+		val->prop.intval = chip->batt_id;
+		break;
+	case GBMS_PROP_RECAL_FG:
+		if (chip->gauge_type == MAX_M5_GAUGE_TYPE)
+			val->prop.intval = max_m5_recal_state(chip->model_data);
+		break;
+	default:
+		pr_debug("%s: route to max1720x_get_property, psp:%d\n", __func__, psp);
+		err = -ENODATA;
+		break;
+	}
+
+	if (err < 0)
+		pr_debug("error %d reading prop %d\n", err, psp);
+
+	mutex_unlock(&chip->model_lock);
+	__pm_relax(chip->get_prop_ws);
+
+	return err;
+}
+
+static int max1720x_gbms_set_property(struct power_supply *psy,
+				      enum gbms_property psp,
+				      const union gbms_propval *val)
+{
 	struct max1720x_chip *chip = (struct max1720x_chip *)
 					power_supply_get_drvdata(psy);
 	struct gbatt_capacity_estimation *ce = &chip->cap_estimate;
@@ -2206,7 +2259,7 @@ static int max1720x_set_property(struct power_supply *psy,
 			return -EAGAIN;
 		}
 
-		if (val->intval) {
+		if (val->prop.intval) {
 
 			if (!ce->cable_in) {
 				rc = batt_ce_init(ce, chip);
@@ -2233,17 +2286,18 @@ static int max1720x_set_property(struct power_supply *psy,
 		break;
 	case GBMS_PROP_HEALTH_ACT_IMPEDANCE:
 		mutex_lock(&chip->model_lock);
-		rc = max1720x_health_update_ai(chip, val->intval);
+		rc = max1720x_health_update_ai(chip, val->prop.intval);
 		mutex_unlock(&chip->model_lock);
 		break;
 	case GBMS_PROP_FG_REG_LOGGING:
-		max1720x_monitor_log_data(chip, !!val->intval);
+		max1720x_monitor_log_data(chip, !!val->prop.intval);
 		break;
 	case GBMS_PROP_RECAL_FG:
-		max1720x_set_recalibration(chip, val->intval);
+		max1720x_set_recalibration(chip, val->prop.intval);
 		break;
 	default:
-		return -EINVAL;
+		pr_debug("%s: route to max1720x_set_property, psp:%d\n", __func__, psp);
+		return -ENODATA;
 	}
 
 	if (rc < 0)
@@ -2252,8 +2306,8 @@ static int max1720x_set_property(struct power_supply *psy,
 	return 0;
 }
 
-static int max1720x_property_is_writeable(struct power_supply *psy,
-					  enum power_supply_property psp)
+static int max1720x_gbms_property_is_writeable(struct power_supply *psy,
+					       enum gbms_property psp)
 {
 	switch (psp) {
 	case GBMS_PROP_BATT_CE_CTRL:
@@ -3684,7 +3738,7 @@ static int max17x0x_init_sysfs(struct max1720x_chip *chip)
 			dev_err(dev, "Failed to create rc_switch_enable attribute\n");
 	}
 
-	de = debugfs_create_dir(chip->max1720x_psy_desc.name, 0);
+	de = debugfs_create_dir(chip->max1720x_psy_desc.psy_dsc.name, 0);
 	if (IS_ERR_OR_NULL(de))
 		return -ENOENT;
 
@@ -5397,11 +5451,11 @@ static int max1720x_probe(struct i2c_client *client,
 	ret = of_property_read_string(dev->of_node,
 				      "maxim,dual-battery", &psy_name);
 	if (ret == 0)
-		chip->max1720x_psy_desc.name = devm_kstrdup(dev, psy_name, GFP_KERNEL);
+		chip->max1720x_psy_desc.psy_dsc.name = devm_kstrdup(dev, psy_name, GFP_KERNEL);
 	else
-		chip->max1720x_psy_desc.name = "maxfg";
+		chip->max1720x_psy_desc.psy_dsc.name = "maxfg";
 
-	dev_info(dev, "max1720x_psy_desc.name=%s\n", chip->max1720x_psy_desc.name);
+	dev_info(dev, "max1720x_psy_desc.name=%s\n", chip->max1720x_psy_desc.psy_dsc.name);
 
 	/* fuel gauge model needs to know the batt_id */
 	mutex_init(&chip->model_lock);
@@ -5410,17 +5464,21 @@ static int max1720x_probe(struct i2c_client *client,
 	if (!chip->get_prop_ws)
 		dev_info(chip->dev, "failed to register wakeup sources\n");
 
-	chip->max1720x_psy_desc.type = POWER_SUPPLY_TYPE_BATTERY;
-	chip->max1720x_psy_desc.get_property = max1720x_get_property;
-	chip->max1720x_psy_desc.set_property = max1720x_set_property;
-	chip->max1720x_psy_desc.property_is_writeable = max1720x_property_is_writeable;
-	chip->max1720x_psy_desc.properties = max1720x_battery_props;
-	chip->max1720x_psy_desc.num_properties = ARRAY_SIZE(max1720x_battery_props);
+	chip->max1720x_psy_desc.psy_dsc.type = POWER_SUPPLY_TYPE_BATTERY;
+	chip->max1720x_psy_desc.psy_dsc.get_property = max1720x_get_property;
+	chip->max1720x_psy_desc.psy_dsc.set_property = max1720x_set_property;
+	chip->max1720x_psy_desc.psy_dsc.property_is_writeable = max1720x_property_is_writeable;
+	chip->max1720x_psy_desc.get_property = max1720x_gbms_get_property;
+	chip->max1720x_psy_desc.set_property = max1720x_gbms_set_property;
+	chip->max1720x_psy_desc.property_is_writeable = max1720x_gbms_property_is_writeable;
+	chip->max1720x_psy_desc.psy_dsc.properties = max1720x_battery_props;
+	chip->max1720x_psy_desc.psy_dsc.num_properties = ARRAY_SIZE(max1720x_battery_props);
+	chip->max1720x_psy_desc.forward = true;
 
 	if (of_property_read_bool(dev->of_node, "maxim,psy-type-unknown"))
-		chip->max1720x_psy_desc.type = POWER_SUPPLY_TYPE_UNKNOWN;
+		chip->max1720x_psy_desc.psy_dsc.type = POWER_SUPPLY_TYPE_UNKNOWN;
 
-	chip->psy = devm_power_supply_register(dev, &chip->max1720x_psy_desc,
+	chip->psy = devm_power_supply_register(dev, &chip->max1720x_psy_desc.psy_dsc,
 					       &psy_cfg);
 	if (IS_ERR(chip->psy)) {
 		dev_err(dev, "Couldn't register as power supply\n");
@@ -5437,7 +5495,7 @@ static int max1720x_probe(struct i2c_client *client,
 	/* M5 battery model needs batt_id and is setup during init() */
 	chip->model_reload = MAX_M5_LOAD_MODEL_DISABLED;
 
-	chip->ce_log = logbuffer_register(chip->max1720x_psy_desc.name);
+	chip->ce_log = logbuffer_register(chip->max1720x_psy_desc.psy_dsc.name);
 	if (IS_ERR(chip->ce_log)) {
 		ret = PTR_ERR(chip->ce_log);
 		dev_err(dev, "failed to obtain logbuffer, ret=%d\n", ret);
@@ -5445,7 +5503,7 @@ static int max1720x_probe(struct i2c_client *client,
 	}
 
 	scnprintf(monitor_name, sizeof(monitor_name), "%s_%s",
-		  chip->max1720x_psy_desc.name, "monitor");
+		  chip->max1720x_psy_desc.psy_dsc.name, "monitor");
 	chip->monitor_log = logbuffer_register(monitor_name);
 	if (IS_ERR(chip->monitor_log)) {
 		ret = PTR_ERR(chip->monitor_log);

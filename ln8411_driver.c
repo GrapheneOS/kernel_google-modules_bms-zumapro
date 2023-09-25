@@ -4809,11 +4809,6 @@ static int ln8411_mains_set_property(struct power_supply *psy,
 
 		break;
 
-	/* TODO: locking is wrong */
-	case GBMS_PROP_CHARGING_ENABLED:
-		ret = ln8411_set_charging_enabled(ln8411, val->intval);
-		break;
-
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
 		ret = ln8411_set_new_vfloat(ln8411, val->intval);
@@ -4841,16 +4836,6 @@ static int ln8411_mains_set_property(struct power_supply *psy,
 		mutex_unlock(&ln8411->lock);
 		break;
 
-	case GBMS_PROP_CHARGE_DISABLE:
-		dev_dbg(ln8411->dev, "%s: ChargeDisable %d, chg_state:%d\n", __func__,
-			val->intval, ln8411->charging_state);
-		if (val->intval) {
-			if (ln8411->charging_state == DC_STATE_ERROR)
-				ln8411->charging_state = DC_STATE_NO_CHARGING;
-			ln8411_vote_dc_avail(ln8411, 1, 1);
-		}
-		break;
-
 	default:
 		ret = -EINVAL;
 		break;
@@ -4865,7 +4850,6 @@ static int ln8411_mains_get_property(struct power_supply *psy,
 				     union power_supply_propval *val)
 {
 	struct ln8411_charger *ln8411 = power_supply_get_drvdata(psy);
-	union gbms_charger_state chg_state;
 	int intval, rc, ret = 0;
 
 	if (!ln8411->init_done)
@@ -4879,20 +4863,6 @@ static int ln8411_mains_get_property(struct power_supply *psy,
 		val->intval = ln8411_is_present(ln8411);
 		if (val->intval < 0)
 			val->intval = 0;
-		break;
-
-	case GBMS_PROP_CHARGE_DISABLE:
-		ret = ln8411_get_charging_enabled(ln8411);
-		if (ret < 0)
-			return ret;
-		val->intval = !ret;
-		break;
-
-	case GBMS_PROP_CHARGING_ENABLED:
-		ret = ln8411_get_charging_enabled(ln8411);
-		if (ret < 0)
-			return ret;
-		val->intval = ret;
 		break;
 
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
@@ -4925,13 +4895,6 @@ static int ln8411_mains_get_property(struct power_supply *psy,
 		if (rc < 0)
 			dev_err(ln8411->dev, "Invalid IIN ADC (%d)\n", rc);
 		mutex_unlock(&ln8411->lock);
-		break;
-
-	case GBMS_PROP_CHARGE_CHARGER_STATE:
-		ret = ln8411_get_chg_chgr_state(ln8411, &chg_state);
-		if (ret < 0)
-			return ret;
-		gbms_propval_int64val(val) = chg_state.v;
 		break;
 
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
@@ -5013,6 +4976,102 @@ static int ln8411_mains_is_writeable(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
+		return 1;
+	default:
+		break;
+	}
+
+	return 0;
+}
+
+static int ln8411_gbms_mains_set_property(struct power_supply *psy,
+					  enum gbms_property prop,
+					  const union gbms_propval *val)
+{
+	struct ln8411_charger *ln8411 = power_supply_get_drvdata(psy);
+	int ret = 0;
+
+	dev_dbg(ln8411->dev, "%s: =========START=========\n", __func__);
+	dev_dbg(ln8411->dev, "%s: prop=%d, val=%d\n", __func__, prop, val->prop.intval);
+	if (!ln8411->init_done)
+		return -EAGAIN;
+
+	switch (prop) {
+
+	case GBMS_PROP_CHARGING_ENABLED:
+		ret = ln8411_set_charging_enabled(ln8411, val->prop.intval);
+		break;
+
+	case GBMS_PROP_CHARGE_DISABLE:
+		dev_dbg(ln8411->dev, "%s: ChargeDisable %d, chg_state:%d\n", __func__,
+			val->prop.intval, ln8411->charging_state);
+		if (val->prop.intval) {
+			if (ln8411->charging_state == DC_STATE_ERROR)
+				ln8411->charging_state = DC_STATE_NO_CHARGING;
+			ln8411_vote_dc_avail(ln8411, 1, 1);
+		}
+		break;
+
+	default:
+		pr_debug("%s: route to ln8411_mains_set_property, psp:%d\n", __func__, prop);
+		return -ENODATA;
+	}
+
+	dev_dbg(ln8411->dev, "%s: End, ret=%d\n", __func__, ret);
+	return ret;
+}
+
+static int ln8411_gbms_mains_get_property(struct power_supply *psy,
+					  enum gbms_property prop,
+					  union gbms_propval *val)
+{
+	struct ln8411_charger *ln8411 = power_supply_get_drvdata(psy);
+	union gbms_charger_state chg_state;
+	int ret = 0;
+
+	if (!ln8411->init_done)
+		return -EAGAIN;
+
+	switch (prop) {
+	case GBMS_PROP_CHARGE_DISABLE:
+		ret = ln8411_get_charging_enabled(ln8411);
+		if (ret < 0)
+			return ret;
+		val->prop.intval = !ret;
+		break;
+
+	case GBMS_PROP_CHARGING_ENABLED:
+		ret = ln8411_get_charging_enabled(ln8411);
+		if (ret < 0)
+			return ret;
+		val->prop.intval = ret;
+		break;
+
+	case GBMS_PROP_CHARGE_CHARGER_STATE:
+		ret = ln8411_get_chg_chgr_state(ln8411, &chg_state);
+		if (ret < 0)
+			return ret;
+		val->int64val = chg_state.v;
+		break;
+
+	default:
+		pr_debug("%s: route to ln8411_mains_get_property, psp:%d\n", __func__, prop);
+		return -ENODATA;
+	}
+
+	return 0;
+}
+
+static int ln8411_gbms_mains_is_writeable(struct power_supply *psy,
+					  enum gbms_property psp)
+{
+	switch (psp) {
+	case POWER_SUPPLY_PROP_ONLINE:
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
+	case POWER_SUPPLY_PROP_CURRENT_MAX:
+	case GBMS_PROP_CHARGING_ENABLED:
 	case GBMS_PROP_CHARGE_DISABLE:
 		return 1;
 	default:
@@ -5022,15 +5081,19 @@ static int ln8411_mains_is_writeable(struct power_supply *psy,
 	return 0;
 }
 
-static const struct power_supply_desc ln8411_mains_desc = {
-	.name		= "dc-mains",
+static const struct gbms_desc ln8411_mains_desc = {
+	.psy_dsc.name		= "dc-mains",
 	/* b/179246019 will not look online to Android */
-	.type		= POWER_SUPPLY_TYPE_UNKNOWN,
-	.get_property	= ln8411_mains_get_property,
-	.set_property 	= ln8411_mains_set_property,
-	.properties	= ln8411_mains_properties,
-	.property_is_writeable = ln8411_mains_is_writeable,
-	.num_properties	= ARRAY_SIZE(ln8411_mains_properties),
+	.psy_dsc.type		= POWER_SUPPLY_TYPE_UNKNOWN,
+	.psy_dsc.properties	= ln8411_mains_properties,
+	.psy_dsc.get_property	= ln8411_mains_get_property,
+	.psy_dsc.set_property 	= ln8411_mains_set_property,
+	.psy_dsc.property_is_writeable = ln8411_mains_is_writeable,
+	.get_property		= ln8411_gbms_mains_get_property,
+	.set_property 		= ln8411_gbms_mains_set_property,
+	.property_is_writeable	= ln8411_gbms_mains_is_writeable,
+	.psy_dsc.num_properties	= ARRAY_SIZE(ln8411_mains_properties),
+	.forward		= true,
 };
 
 #if IS_ENABLED(CONFIG_OF)
@@ -5473,7 +5536,7 @@ static int ln8411_probe(struct i2c_client *client,
 	mains_cfg.num_supplicants = ARRAY_SIZE(battery);
 	mains_cfg.drv_data = ln8411_charger;
 	ln8411_charger->mains = devm_power_supply_register(dev,
-							&ln8411_mains_desc,
+							&ln8411_mains_desc.psy_dsc,
 							&mains_cfg);
 	if (IS_ERR(ln8411_charger->mains)) {
 		ret = -ENODEV;

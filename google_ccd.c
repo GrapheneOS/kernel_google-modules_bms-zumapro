@@ -147,7 +147,7 @@ static int gccd_has_chg_in(struct gccd_drv *gccd)
 	if (!gccd_get_chg_psy(gccd))
 		return -EINVAL;
 
-	ret = GPSY_GET_PROP(gccd->main_chg_psy, POWER_SUPPLY_PROP_PRESENT);
+	ret = PSY_GET_PROP(gccd->main_chg_psy, POWER_SUPPLY_PROP_PRESENT);
 	if (ret < 0) {
 		dev_err(gccd->device, "Error getting charging status: %d\n", ret);
 		return -EINVAL;
@@ -245,7 +245,7 @@ set_current_max:
 		__func__, chg_current, main_chg_current, buck_chg_current,
 		gccd->voltage_max, gccd->current_max);
 
-	ret = GPSY_SET_PROP(gccd->main_chg_psy,
+	ret = PSY_SET_PROP(gccd->main_chg_psy,
 			    POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
 			    main_chg_current);
 
@@ -258,7 +258,7 @@ set_current_max:
 
 		pr_info("%s: buck_charger enable=%d\n", __func__, en);
 
-		ret = GPSY_SET_PROP(gccd->buck_chg_psy,
+		ret = PSY_SET_PROP(gccd->buck_chg_psy,
 				    POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
 				    buck_chg_current);
 		if (ret == 0)
@@ -317,7 +317,6 @@ static int gccd_psy_get_property(struct power_supply *psy,
 				 union power_supply_propval *pval)
 {
 	struct gccd_drv *gccd = (struct gccd_drv *)power_supply_get_drvdata(psy);
-	union gbms_charger_state chg_state;
 	int ret = 0;
 
 	if (!gccd->init_complete)
@@ -334,24 +333,16 @@ static int gccd_psy_get_property(struct power_supply *psy,
 		if (pval->intval < 0)
 			pval->intval = 0;
 		break;
-	case GBMS_PROP_CHARGE_CHARGER_STATE:
-		chg_state.v = gccd_get_charger_state(gccd, gccd->main_chg_psy);
-		gbms_propval_int64val(pval) = chg_state.v;
-		break;
-	case GBMS_PROP_CHARGE_DISABLE:
 	case POWER_SUPPLY_PROP_CHARGE_TYPE:
-	case GBMS_PROP_CHARGING_ENABLED:
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
 	case POWER_SUPPLY_PROP_ONLINE:
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
-	case GBMS_PROP_INPUT_CURRENT_LIMITED:
 	case POWER_SUPPLY_PROP_STATUS:
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
-	case GBMS_PROP_TAPER_CONTROL:
-		pval->intval = GPSY_GET_INT_PROP(gccd->main_chg_psy, psp, &ret);
+		pval->intval = PSY_GET_INT_PROP(gccd->main_chg_psy, psp, &ret);
 		break;
 	default:
 		pr_debug("%s: property (%d) unsupported.\n", __func__, psp);
@@ -385,9 +376,9 @@ static int gccd_psy_set_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
 		/* set CHGIN_ILIM (CHG_CNFG_09) to 2200mA for 9V/3A adapter */
 		if (gccd->voltage_max == PD_VOLTAGE_MAX_MV && pval->intval == PD_CURRENT_MAX_UA)
-			ret = GPSY_SET_PROP(gccd->main_chg_psy, psp, GCCD_MAIN_CHGIN_ILIM);
+			ret = PSY_SET_PROP(gccd->main_chg_psy, psp, GCCD_MAIN_CHGIN_ILIM);
 		else
-			ret = GPSY_SET_PROP(gccd->main_chg_psy, psp, pval->intval);
+			ret = PSY_SET_PROP(gccd->main_chg_psy, psp, pval->intval);
 		if (ret)
 			break;
 
@@ -400,7 +391,7 @@ static int gccd_psy_set_property(struct power_supply *psy,
 		}
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
-		ret = GPSY_SET_PROP(gccd->main_chg_psy, psp, pval->intval);
+		ret = PSY_SET_PROP(gccd->main_chg_psy, psp, pval->intval);
 		if (ret)
 			break;
 
@@ -418,19 +409,13 @@ static int gccd_psy_set_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
 		pr_debug("%s: charge_voltage=%d \n", __func__, pval->intval);
-		ret = GPSY_SET_PROP(gccd->main_chg_psy, psp, pval->intval);
+		ret = PSY_SET_PROP(gccd->main_chg_psy, psp, pval->intval);
 		if (!ret)
-			ret = GPSY_SET_PROP(gccd->buck_chg_psy, psp, pval->intval);
+			ret = PSY_SET_PROP(gccd->buck_chg_psy, psp, pval->intval);
 		break;
-	case GBMS_PROP_CHARGING_ENABLED:
-	case GBMS_PROP_CHARGE_DISABLE:
 	case POWER_SUPPLY_PROP_ONLINE:
 	case POWER_SUPPLY_PROP_CHARGE_TERM_CURRENT:
-		ret = GPSY_SET_PROP(gccd->main_chg_psy, psp, pval->intval);
-		break;
-	case GBMS_PROP_TAPER_CONTROL:
-		if (pval->intval == GBMS_TAPER_CONTROL_ON)
-			gpio_direction_output(gccd->buck_chg_en, 0);
+		ret = PSY_SET_PROP(gccd->main_chg_psy, psp, pval->intval);
 		break;
 	default:
 		ret = -EINVAL;
@@ -459,6 +444,98 @@ static int gccd_psy_is_writeable(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
+	case POWER_SUPPLY_PROP_CHARGE_TERM_CURRENT:
+		return 1;
+	default:
+		break;
+	}
+
+	return 0;
+}
+
+static int gccd_gbms_psy_get_property(struct power_supply *psy,
+				      enum gbms_property psp,
+				      union gbms_propval *pval)
+{
+	struct gccd_drv *gccd = (struct gccd_drv *)power_supply_get_drvdata(psy);
+	union gbms_charger_state chg_state;
+	int ret = 0;
+
+	if (!gccd->init_complete)
+		return -EAGAIN;
+
+	if (!gccd_get_chg_psy(gccd))
+		return -EAGAIN;
+
+	mutex_lock(&gccd->gccd_lock);
+
+	switch (psp) {
+	case GBMS_PROP_CHARGE_CHARGER_STATE:
+		chg_state.v = gccd_get_charger_state(gccd, gccd->main_chg_psy);
+		pval->int64val = chg_state.v;
+		break;
+	case GBMS_PROP_CHARGE_DISABLE:
+	case GBMS_PROP_CHARGING_ENABLED:
+	case GBMS_PROP_INPUT_CURRENT_LIMITED:
+	case GBMS_PROP_TAPER_CONTROL:
+		pval->prop.intval = GPSY_GET_INT_PROP(gccd->main_chg_psy, psp, &ret);
+		break;
+	default:
+		pr_debug("%s: route to gccd_psy_get_property, psp:%d\n", __func__, psp);
+		ret = -ENODATA;
+		break;
+	}
+
+	mutex_unlock(&gccd->gccd_lock);
+
+	return ret;
+}
+
+static int gccd_gbms_psy_set_property(struct power_supply *psy,
+				      enum gbms_property psp,
+				      const union gbms_propval *pval)
+{
+	struct gccd_drv *gccd = (struct gccd_drv *)power_supply_get_drvdata(psy);
+	int ret = 0;
+
+	if (!gccd->init_complete)
+		return -EAGAIN;
+
+	if (!gccd_get_chg_psy(gccd))
+		return -EAGAIN;
+
+	mutex_lock(&gccd->gccd_lock);
+
+	switch (psp) {
+	case GBMS_PROP_CHARGING_ENABLED:
+	case GBMS_PROP_CHARGE_DISABLE:
+		ret = GPSY_SET_PROP(gccd->main_chg_psy, psp, pval->prop.intval);
+		break;
+	case GBMS_PROP_TAPER_CONTROL:
+		if (pval->prop.intval == GBMS_TAPER_CONTROL_ON)
+			gpio_direction_output(gccd->buck_chg_en, 0);
+		break;
+	default:
+		pr_debug("%s: route to gccd_psy_set_property, psp:%d\n", __func__, psp);
+		ret = -ENODATA;
+		break;
+	}
+
+	mutex_unlock(&gccd->gccd_lock);
+
+	return ret;
+}
+
+static int gccd_gbms_psy_is_writeable(struct power_supply *psy,
+				      enum gbms_property psp)
+{
+	switch (psp) {
+	case POWER_SUPPLY_PROP_ONLINE:
+	case POWER_SUPPLY_PROP_VOLTAGE_MAX: /* compat, same the next */
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
+	case POWER_SUPPLY_PROP_CURRENT_MAX:
+	case GBMS_PROP_CHARGING_ENABLED:
 	case GBMS_PROP_CHARGE_DISABLE:
 	case POWER_SUPPLY_PROP_CHARGE_TERM_CURRENT:
 	case GBMS_PROP_TAPER_CONTROL:
@@ -470,14 +547,18 @@ static int gccd_psy_is_writeable(struct power_supply *psy,
 	return 0;
 }
 
-static struct power_supply_desc gccd_psy_desc = {
-	.name = "gccd",
-	.type = POWER_SUPPLY_TYPE_UNKNOWN,
-	.get_property = gccd_psy_get_property,
-	.set_property = gccd_psy_set_property,
-	.property_is_writeable = gccd_psy_is_writeable,
-	.properties = gccd_psy_properties,
-	.num_properties = ARRAY_SIZE(gccd_psy_properties),
+static struct gbms_desc gccd_psy_desc = {
+	.psy_dsc.name = "gccd",
+	.psy_dsc.type = POWER_SUPPLY_TYPE_UNKNOWN,
+	.psy_dsc.get_property = gccd_psy_get_property,
+	.psy_dsc.set_property = gccd_psy_set_property,
+	.psy_dsc.property_is_writeable = gccd_psy_is_writeable,
+	.psy_dsc.properties = gccd_psy_properties,
+	.psy_dsc.num_properties = ARRAY_SIZE(gccd_psy_properties),
+	.get_property = gccd_gbms_psy_get_property,
+	.set_property = gccd_gbms_psy_set_property,
+	.property_is_writeable = gccd_gbms_psy_is_writeable,
+	.forward = true,
 };
 
 /* ------------------------------------------------------------------------ */
@@ -560,7 +641,7 @@ static int google_ccd_probe(struct platform_device *pdev)
 	psy_cfg.of_node = pdev->dev.of_node;
 
 	gccd->psy = devm_power_supply_register(gccd->device,
-					       &gccd_psy_desc, &psy_cfg);
+					       &gccd_psy_desc.psy_dsc, &psy_cfg);
 	if (IS_ERR(gccd->psy)) {
 		ret = PTR_ERR(gccd->psy);
 		dev_err(gccd->device, "Couldn't register as power supply, ret=%d\n", ret);

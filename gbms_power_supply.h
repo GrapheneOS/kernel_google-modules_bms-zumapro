@@ -105,62 +105,6 @@ union gbms_propval {
 #define gbms_propval_int64val(psp) \
 	container_of(psp, union gbms_propval, prop)->int64val
 
-static inline int gpsy_set_int64_prop(struct power_supply *psy,
-				      enum gbms_property psp,
-				      union gbms_propval val,
-				      const char *prop_name)
-{
-	int ret = 0;
-
-	if (!psy)
-		return -EINVAL;
-
-	pr_debug("set %s for '%s' to %lld\n", prop_name,
-		 psy->desc->name, (long long)val.int64val);
-
-	ret = power_supply_set_property(psy, (enum power_supply_property)psp,
-				        &val.prop);
-	if (ret < 0)
-		pr_err("failed to set %s for '%s', ret=%d\n",
-		       prop_name, psy->desc->name, ret);
-
-	return ret;
-}
-
-#define GPSY_SET_INT64_PROP(psy, psp, val) \
-	gpsy_set_int64_prop(psy, psp, (union gbms_propval) \
-			   { .int64val = (int64_t)(val) }, #psp)
-
-static inline int64_t gpsy_get_int64_prop(struct power_supply *psy,
-					  enum gbms_property psp,
-					  const char *prop_name,
-					  int *err)
-{
-	union gbms_propval val;
-
-	if (!psy) {
-		*err = -EINVAL;
-		return *err;
-	}
-
-	*err = power_supply_get_property(psy, (enum power_supply_property)psp,
-					 &val.prop);
-	if (*err < 0) {
-		pr_err("failed to get %s from '%s', ret=%d\n",
-		       prop_name, psy->desc->name, *err);
-		return *err;
-	}
-
-	pr_debug("get %s for '%s' => %lld\n", prop_name,
-		 psy->desc->name, (long long)val.int64val);
-
-	return val.int64val;
-}
-
-#define GPSY_GET_INT64_PROP(psy, psp, err) \
-	gpsy_get_int64_prop(psy, psp, #psp, err)
-
-
 /* GBMS properties -------------------------------------------------------- */
 
 struct gbms_desc {

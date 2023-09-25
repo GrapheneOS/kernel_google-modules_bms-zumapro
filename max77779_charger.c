@@ -1987,13 +1987,6 @@ static int max77779_wcin_set_prop(struct power_supply *psy,
 		rc = max77779_wcin_set_ilim_max_ua(chgr, val->intval);
 		pr_debug("%s: DC_ICL=%d (%d)\n", __func__, val->intval, rc);
 		break;
-	/* called from google_cpm when switching chargers */
-	case GBMS_PROP_CHARGING_ENABLED:
-		rc = max77779_set_charge_enabled(chgr, val->intval > 0,
-						 "DC_PSP_ENABLED");
-		pr_debug("%s: charging_enabled=%d (%d)\n",
-			__func__, val->intval > 0, rc);
-		break;
 	default:
 		return -EINVAL;
 	}
@@ -2006,6 +1999,58 @@ static int max77779_wcin_prop_is_writeable(struct power_supply *psy,
 {
 	switch (psp) {
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
+		return 1;
+	default:
+		break;
+	}
+
+	return 0;
+}
+
+static int max77779_gbms_wcin_get_prop(struct power_supply *psy,
+				       enum gbms_property psp,
+				       union gbms_propval *val)
+{
+	struct max77779_chgr_data *chgr = power_supply_get_drvdata(psy);
+
+	if (max77779_resume_check(chgr))
+		return -EAGAIN;
+
+	pr_debug("%s: route to max77779_wcin_get_prop, psp:%d\n", __func__, psp);
+	return -ENODATA;
+}
+
+static int max77779_gbms_wcin_set_prop(struct power_supply *psy,
+				       enum gbms_property psp,
+				       const union gbms_propval *val)
+{
+	struct max77779_chgr_data *chgr = power_supply_get_drvdata(psy);
+	int rc = 0;
+
+	if (max77779_resume_check(chgr))
+		return -EAGAIN;
+
+	switch (psp) {
+	/* called from google_cpm when switching chargers */
+	case GBMS_PROP_CHARGING_ENABLED:
+		rc = max77779_set_charge_enabled(chgr, val->prop.intval > 0,
+						 "DC_PSP_ENABLED");
+		pr_debug("%s: charging_enabled=%d (%d)\n",
+			__func__, val->prop.intval > 0, rc);
+		break;
+	default:
+		pr_debug("%s: route to max77779_wcin_set_prop, psp:%d\n", __func__, psp);
+		return -ENODATA;
+	}
+
+	return rc;
+}
+
+static int max77779_gbms_wcin_prop_is_writeable(struct power_supply *psy,
+						enum gbms_property psp)
+{
+	switch (psp) {
+	case POWER_SUPPLY_PROP_CURRENT_MAX:
 	case GBMS_PROP_CHARGING_ENABLED:
 		return 1;
 	default:
@@ -2015,14 +2060,18 @@ static int max77779_wcin_prop_is_writeable(struct power_supply *psy,
 	return 0;
 }
 
-static struct power_supply_desc max77779_wcin_psy_desc = {
-	.name = "dc",
-	.type = POWER_SUPPLY_TYPE_UNKNOWN,
-	.properties = max77779_wcin_props,
-	.num_properties = ARRAY_SIZE(max77779_wcin_props),
-	.get_property = max77779_wcin_get_prop,
-	.set_property = max77779_wcin_set_prop,
-	.property_is_writeable = max77779_wcin_prop_is_writeable,
+static struct gbms_desc max77779_wcin_psy_desc = {
+	.psy_dsc.name = "dc",
+	.psy_dsc.type = POWER_SUPPLY_TYPE_UNKNOWN,
+	.psy_dsc.properties = max77779_wcin_props,
+	.psy_dsc.num_properties = ARRAY_SIZE(max77779_wcin_props),
+	.psy_dsc.get_property = max77779_wcin_get_prop,
+	.psy_dsc.set_property = max77779_wcin_set_prop,
+	.psy_dsc.property_is_writeable = max77779_wcin_prop_is_writeable,
+	.get_property = max77779_gbms_wcin_get_prop,
+	.set_property = max77779_gbms_wcin_set_prop,
+	.property_is_writeable = max77779_gbms_wcin_prop_is_writeable,
+	.forward = true,
 };
 
 static int max77779_init_wcin_psy(struct max77779_chgr_data *data)
@@ -2036,17 +2085,17 @@ static int max77779_init_wcin_psy(struct max77779_chgr_data *data)
 	wcin_cfg.of_node = dev->of_node;
 
 	if (of_property_read_bool(dev->of_node, "max77779,dc-psy-type-wireless"))
-		max77779_wcin_psy_desc.type = POWER_SUPPLY_TYPE_WIRELESS;
+		max77779_wcin_psy_desc.psy_dsc.type = POWER_SUPPLY_TYPE_WIRELESS;
 
 	ret = of_property_read_string(dev->of_node, "max77779,dc-psy-name", &name);
 	if (ret == 0) {
-		max77779_wcin_psy_desc.name = devm_kstrdup(dev, name, GFP_KERNEL);
-		if (!max77779_wcin_psy_desc.name)
+		max77779_wcin_psy_desc.psy_dsc.name = devm_kstrdup(dev, name, GFP_KERNEL);
+		if (!max77779_wcin_psy_desc.psy_dsc.name)
 			return -ENOMEM;
 	}
 
 	data->wcin_psy = devm_power_supply_register(data->dev,
-					&max77779_wcin_psy_desc, &wcin_cfg);
+					&max77779_wcin_psy_desc.psy_dsc, &wcin_cfg);
 	if (IS_ERR(data->wcin_psy))
 		return PTR_ERR(data->wcin_psy);
 
@@ -2189,26 +2238,26 @@ static int max77779_get_status(struct max77779_chgr_data *data)
 		return POWER_SUPPLY_STATUS_UNKNOWN;
 
 	switch (_max77779_chg_details_01_chg_dtls_get(val)) {
-		case CHGR_DTLS_DEAD_BATTERY_MODE:
-		case CHGR_DTLS_FAST_CHARGE_CONST_CURRENT_MODE:
-		case CHGR_DTLS_FAST_CHARGE_CONST_VOLTAGE_MODE:
-		case CHGR_DTLS_TOP_OFF_MODE:
-			return POWER_SUPPLY_STATUS_CHARGING;
-		case CHGR_DTLS_DONE_MODE:
-			/* same as POWER_SUPPLY_PROP_CHARGE_DONE */
-			if (!max77779_is_full(data))
-				data->charge_done = false;
-			if (data->charge_done)
-				return POWER_SUPPLY_STATUS_FULL;
-			return POWER_SUPPLY_STATUS_NOT_CHARGING;
-		case CHGR_DTLS_TIMER_FAULT_MODE:
-		case CHGR_DTLS_DETBAT_HIGH_SUSPEND_MODE:
-		case CHGR_DTLS_OFF_MODE:
-		case CHGR_DTLS_OFF_HIGH_TEMP_MODE:
-		case CHGR_DTLS_OFF_WATCHDOG_MODE:
-			return POWER_SUPPLY_STATUS_NOT_CHARGING;
-		default:
-			break;
+	case CHGR_DTLS_DEAD_BATTERY_MODE:
+	case CHGR_DTLS_FAST_CHARGE_CONST_CURRENT_MODE:
+	case CHGR_DTLS_FAST_CHARGE_CONST_VOLTAGE_MODE:
+	case CHGR_DTLS_TOP_OFF_MODE:
+		return POWER_SUPPLY_STATUS_CHARGING;
+	case CHGR_DTLS_DONE_MODE:
+		/* same as POWER_SUPPLY_PROP_CHARGE_DONE */
+		if (!max77779_is_full(data))
+			data->charge_done = false;
+		if (data->charge_done)
+			return POWER_SUPPLY_STATUS_FULL;
+		return POWER_SUPPLY_STATUS_NOT_CHARGING;
+	case CHGR_DTLS_TIMER_FAULT_MODE:
+	case CHGR_DTLS_DETBAT_HIGH_SUSPEND_MODE:
+	case CHGR_DTLS_OFF_MODE:
+	case CHGR_DTLS_OFF_HIGH_TEMP_MODE:
+	case CHGR_DTLS_OFF_WATCHDOG_MODE:
+		return POWER_SUPPLY_STATUS_NOT_CHARGING;
+	default:
+		break;
 	}
 
 	return POWER_SUPPLY_STATUS_UNKNOWN;
@@ -2411,20 +2460,6 @@ static int max77779_psy_set_property(struct power_supply *psy,
 		if (max77779_is_online(data) && pval->intval >= data->chg_term_voltage * 1000)
 			ret = max77779_higher_headroom_enable(data, true);
 		break;
-	/* called from google_cpm when switching chargers */
-	case GBMS_PROP_CHARGING_ENABLED:
-		ret = max77779_set_charge_enabled(data, pval->intval,
-						  "PSP_ENABLED");
-		pr_debug("%s: charging_enabled=%d (%d)\n",
-			__func__, pval->intval, ret);
-		break;
-	/* called from google_charger on disconnect */
-	case GBMS_PROP_CHARGE_DISABLE:
-		ret = max77779_set_charge_disable(data, pval->intval,
-						  "PSP_DISABLE");
-		pr_debug("%s: charge_disable=%d (%d)\n",
-			__func__, pval->intval, ret);
-		break;
 	case POWER_SUPPLY_PROP_ONLINE:
 		ret = max77779_set_online(data, pval->intval != 0);
 		break;
@@ -2432,8 +2467,6 @@ static int max77779_psy_set_property(struct power_supply *psy,
 		ret = max77779_set_topoff_current_max_ma(data, pval->intval);
 		pr_debug("%s: topoff_current=%d (%d)\n",
 			__func__, pval->intval, ret);
-		break;
-	case GBMS_PROP_TAPER_CONTROL:
 		break;
 	default:
 		ret = -EINVAL;
@@ -2466,30 +2499,14 @@ static int max77779_psy_get_property(struct power_supply *psy,
 				     union power_supply_propval *pval)
 {
 	struct max77779_chgr_data *data = power_supply_get_drvdata(psy);
-	union gbms_charger_state chg_state;
 	int rc, ret = 0;
 
 	if (max77779_resume_check(data))
 		return -EAGAIN;
 
 	switch (psp) {
-	case GBMS_PROP_CHARGE_DISABLE:
-		rc = max77779_get_charge_enabled(data, &pval->intval);
-		if (rc == 0)
-			pval->intval = !pval->intval;
-		else
-			pval->intval = rc;
-		break;
 	case POWER_SUPPLY_PROP_CHARGE_TYPE:
 		pval->intval = max77779_get_charge_type(data);
-		break;
-	case GBMS_PROP_CHARGING_ENABLED:
-		ret = max77779_get_charge_enabled(data, &pval->intval);
-		break;
-	case GBMS_PROP_CHARGE_CHARGER_STATE:
-		rc = max77779_get_chg_chgr_state(data, &chg_state);
-		if (rc == 0)
-			gbms_propval_int64val(pval) = chg_state.v;
 		break;
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
 		ret = max77779_get_charger_current_max_ua(data, &pval->intval);
@@ -2509,9 +2526,6 @@ static int max77779_psy_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
 		ret = max77779_chgin_get_ilim_max_ua(data, &pval->intval);
 		break;
-	case GBMS_PROP_INPUT_CURRENT_LIMITED:
-		pval->intval = max77779_is_limited(data);
-		break;
 	case POWER_SUPPLY_PROP_STATUS:
 		pval->intval = max77779_get_status(data);
 		break;
@@ -2524,9 +2538,6 @@ static int max77779_psy_get_property(struct power_supply *psy,
 		rc = max77779_read_current_now(data, &pval->intval);
 		if (rc < 0)
 			pval->intval = rc;
-		break;
-	case GBMS_PROP_TAPER_CONTROL:
-		ret = 0;
 		break;
 	default:
 		pr_debug("property (%d) unsupported.\n", psp);
@@ -2546,6 +2557,107 @@ static int max77779_psy_is_writeable(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
+	case POWER_SUPPLY_PROP_CHARGE_TERM_CURRENT:
+		return 1;
+	default:
+		break;
+	}
+
+	return 0;
+}
+
+static int max77779_gbms_psy_set_property(struct power_supply *psy,
+					  enum gbms_property psp,
+					  const union gbms_propval *pval)
+{
+	struct max77779_chgr_data *data = power_supply_get_drvdata(psy);
+	int ret = 0;
+
+	if (max77779_resume_check(data))
+		return -EAGAIN;
+
+	switch (psp) {
+	/* called from google_cpm when switching chargers */
+	case GBMS_PROP_CHARGING_ENABLED:
+		ret = max77779_set_charge_enabled(data, pval->prop.intval,
+						  "PSP_ENABLED");
+		pr_debug("%s: charging_enabled=%d (%d)\n",
+			__func__, pval->prop.intval, ret);
+		break;
+	/* called from google_charger on disconnect */
+	case GBMS_PROP_CHARGE_DISABLE:
+		ret = max77779_set_charge_disable(data, pval->prop.intval,
+						  "PSP_DISABLE");
+		pr_debug("%s: charge_disable=%d (%d)\n",
+			__func__, pval->prop.intval, ret);
+		break;
+	case GBMS_PROP_TAPER_CONTROL:
+		break;
+	default:
+		pr_debug("%s: route to max77779_psy_set_property, psp:%d\n", __func__, psp);
+		ret = -ENODATA;
+		break;
+	}
+
+	if (ret == 0 && data->wden)
+		max77779_wd_tickle(data);
+
+
+	return ret;
+}
+
+static int max77779_gbms_psy_get_property(struct power_supply *psy,
+					  enum gbms_property psp,
+					  union gbms_propval *pval)
+{
+	struct max77779_chgr_data *data = power_supply_get_drvdata(psy);
+	union gbms_charger_state chg_state;
+	int rc, ret = 0;
+
+	if (max77779_resume_check(data))
+		return -EAGAIN;
+
+	switch (psp) {
+	case GBMS_PROP_CHARGE_DISABLE:
+		rc = max77779_get_charge_enabled(data, &pval->prop.intval);
+		if (rc == 0)
+			pval->prop.intval = !pval->prop.intval;
+		else
+			pval->prop.intval = rc;
+		break;
+	case GBMS_PROP_CHARGING_ENABLED:
+		ret = max77779_get_charge_enabled(data, &pval->prop.intval);
+		break;
+	case GBMS_PROP_CHARGE_CHARGER_STATE:
+		rc = max77779_get_chg_chgr_state(data, &chg_state);
+		if (rc == 0)
+			pval->int64val = chg_state.v;
+		break;
+	case GBMS_PROP_INPUT_CURRENT_LIMITED:
+		pval->prop.intval = max77779_is_limited(data);
+		break;
+	case GBMS_PROP_TAPER_CONTROL:
+		ret = 0;
+		break;
+	default:
+		pr_debug("%s: route to max77779_psy_get_property, psp:%d\n", __func__, psp);
+		ret = -ENODATA;
+		break;
+	}
+
+	return ret;
+}
+
+static int max77779_gbms_psy_is_writeable(struct power_supply *psy,
+					  enum gbms_property psp)
+{
+	switch (psp) {
+	case POWER_SUPPLY_PROP_ONLINE:
+	case POWER_SUPPLY_PROP_VOLTAGE_MAX: /* input voltage limit */
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
+	case POWER_SUPPLY_PROP_CURRENT_MAX:
+	case GBMS_PROP_CHARGING_ENABLED:
 	case GBMS_PROP_CHARGE_DISABLE:
 	case POWER_SUPPLY_PROP_CHARGE_TERM_CURRENT:
 	case GBMS_PROP_TAPER_CONTROL:
@@ -2573,14 +2685,18 @@ static enum power_supply_property max77779_psy_props[] = {
 	POWER_SUPPLY_PROP_STATUS,
 };
 
-static struct power_supply_desc max77779_psy_desc = {
-	.name = "max77779-charger",
-	.type = POWER_SUPPLY_TYPE_UNKNOWN,
-	.properties = max77779_psy_props,
-	.num_properties = ARRAY_SIZE(max77779_psy_props),
-	.get_property = max77779_psy_get_property,
-	.set_property = max77779_psy_set_property,
-	.property_is_writeable = max77779_psy_is_writeable,
+static struct gbms_desc max77779_psy_desc = {
+	.psy_dsc.name = "max77779-charger",
+	.psy_dsc.type = POWER_SUPPLY_TYPE_UNKNOWN,
+	.psy_dsc.properties = max77779_psy_props,
+	.psy_dsc.num_properties = ARRAY_SIZE(max77779_psy_props),
+	.psy_dsc.get_property = max77779_psy_get_property,
+	.psy_dsc.set_property = max77779_psy_set_property,
+	.psy_dsc.property_is_writeable = max77779_psy_is_writeable,
+	.get_property = max77779_gbms_psy_get_property,
+	.set_property = max77779_gbms_psy_set_property,
+	.property_is_writeable = max77779_gbms_psy_is_writeable,
+	.forward = true,
 };
 
 static ssize_t show_fship_dtls(struct device *dev,
@@ -3476,12 +3592,12 @@ int max77779_charger_init(struct max77779_chgr_data *data)
 	/* NOTE: only one instance */
 	ret = of_property_read_string(dev->of_node, "max77779,psy-name", &tmp);
 	if (ret == 0)
-		max77779_psy_desc.name = devm_kstrdup(dev, tmp, GFP_KERNEL);
+		max77779_psy_desc.psy_dsc.name = devm_kstrdup(dev, tmp, GFP_KERNEL);
 
 	chgr_psy_cfg.drv_data = data;
 	chgr_psy_cfg.supplied_to = NULL;
 	chgr_psy_cfg.num_supplicants = 0;
-	data->psy = devm_power_supply_register(dev, &max77779_psy_desc,
+	data->psy = devm_power_supply_register(dev, &max77779_psy_desc.psy_dsc,
 		&chgr_psy_cfg);
 	if (IS_ERR(data->psy)) {
 		dev_err(dev, "Failed to register psy rc = %ld\n",
@@ -3618,7 +3734,7 @@ int max77779_charger_init(struct max77779_chgr_data *data)
 		}
 	}
 
-	dev_info(dev, "registered as %s\n", max77779_psy_desc.name);
+	dev_info(dev, "registered as %s\n", max77779_psy_desc.psy_dsc.name);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(max77779_charger_init);

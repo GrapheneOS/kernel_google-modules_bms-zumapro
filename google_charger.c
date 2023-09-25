@@ -672,19 +672,19 @@ static int info_usb_state(union gbms_ce_adapter_details *ad,
 		int voltage_now, current_now;
 
 		/* TODO: handle POWER_SUPPLY_PROP_REAL_TYPE in qc-compat */
-		usb_type = GPSY_GET_PROP(usb_psy, POWER_SUPPLY_PROP_USB_TYPE);
+		usb_type = PSY_GET_PROP(usb_psy, POWER_SUPPLY_PROP_USB_TYPE);
 		if (tcpm_psy)
-			usbc_type = GPSY_GET_PROP(tcpm_psy,
-						  POWER_SUPPLY_PROP_USB_TYPE);
+			usbc_type = PSY_GET_PROP(tcpm_psy,
+						 POWER_SUPPLY_PROP_USB_TYPE);
 
-		voltage_max = GPSY_GET_PROP(usb_psy,
-					    POWER_SUPPLY_PROP_VOLTAGE_MAX);
-		amperage_max = GPSY_GET_PROP(usb_psy,
-					     POWER_SUPPLY_PROP_CURRENT_MAX);
-		voltage_now = GPSY_GET_PROP(usb_psy,
-					    POWER_SUPPLY_PROP_VOLTAGE_NOW);
-		current_now = GPSY_GET_PROP(usb_psy,
-					    POWER_SUPPLY_PROP_CURRENT_NOW);
+		voltage_max = PSY_GET_PROP(usb_psy,
+					   POWER_SUPPLY_PROP_VOLTAGE_MAX);
+		amperage_max = PSY_GET_PROP(usb_psy,
+					    POWER_SUPPLY_PROP_CURRENT_MAX);
+		voltage_now = PSY_GET_PROP(usb_psy,
+					   POWER_SUPPLY_PROP_VOLTAGE_NOW);
+		current_now = PSY_GET_PROP(usb_psy,
+					   POWER_SUPPLY_PROP_CURRENT_NOW);
 
 		if (usb_type < ARRAY_SIZE(psy_usb_type_str))
 			usb_type_str = psy_usb_type_str[usb_type];
@@ -768,12 +768,12 @@ static int info_ext_state(union gbms_ce_adapter_details *ad,
 {
 	int voltage_max, amperage_max;
 
-	voltage_max = GPSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_VOLTAGE_MAX);
-	amperage_max = GPSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_CURRENT_MAX);
+	voltage_max = PSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_VOLTAGE_MAX);
+	amperage_max = PSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_CURRENT_MAX);
 
 	pr_info("extv=%d extcc=%d extMv=%d extMc=%d\n",
-		GPSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW) / 1000,
-		GPSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_CURRENT_NOW) / 1000,
+		PSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW) / 1000,
+		PSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_CURRENT_NOW) / 1000,
 		voltage_max < 0 ? voltage_max : voltage_max / 1000,
 		amperage_max < 0 ? amperage_max : amperage_max / 1000);
 
@@ -919,7 +919,7 @@ static int chg_usb_online(struct power_supply *usb_psy)
 		return 1;
 
 #ifdef CONFIG_USB_ONLINE_IS_TYPEC_MODE
-	online = GPSY_GET_INT_PROP(usb_psy, POWER_SUPPLY_PROP_TYPEC_MODE, &rc);
+	online = PSY_GET_INT_PROP(usb_psy, POWER_SUPPLY_PROP_TYPEC_MODE, &rc);
 	if (rc < 0)
 		return rc;
 
@@ -935,7 +935,7 @@ static int chg_usb_online(struct power_supply *usb_psy)
 		break;
 	}
 #else
-	online = GPSY_GET_INT_PROP(usb_psy, POWER_SUPPLY_PROP_ONLINE, &rc);
+	online = PSY_GET_INT_PROP(usb_psy, POWER_SUPPLY_PROP_ONLINE, &rc);
 	if (rc < 0)
 		return rc;
 #endif
@@ -1208,7 +1208,7 @@ static bool chg_work_check_usb_state(struct chg_drv *chg_drv)
 	usb_online = chg_usb_online(usb_psy);
 
 	if (chg_drv->usb_psy)
-		usb_present = GPSY_GET_PROP(chg_drv->usb_psy, POWER_SUPPLY_PROP_PRESENT);
+		usb_present = PSY_GET_PROP(chg_drv->usb_psy, POWER_SUPPLY_PROP_PRESENT);
 
 	return usb_online > 0 || usb_present == 1;
 }
@@ -1220,8 +1220,8 @@ static bool chg_work_check_ext_state(struct power_supply *ext_psy)
 	if (!ext_psy)
 		return false;
 
-	ext_online = GPSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_ONLINE);
-	ext_present = GPSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_PRESENT);
+	ext_online = PSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_ONLINE);
+	ext_present = PSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_PRESENT);
 
 	return ext_online == 1 || ext_present == 1;
 }
@@ -2444,20 +2444,19 @@ static void chg_work(struct work_struct *work)
 	usb_online = chg_usb_online(usb_psy);
 	/* NOTE: ask usb for present (when/if defined) */
 	if (chg_drv->usb_psy)
-		usb_present = GPSY_GET_PROP(chg_drv->usb_psy,
-					    POWER_SUPPLY_PROP_PRESENT);
+		usb_present = PSY_GET_PROP(chg_drv->usb_psy, POWER_SUPPLY_PROP_PRESENT);
 	else
 		usb_present = usb_online;
 
 	if (wlc_psy) {
-		wlc_online = GPSY_GET_PROP(wlc_psy, POWER_SUPPLY_PROP_ONLINE);
-		wlc_present = GPSY_GET_PROP(wlc_psy, POWER_SUPPLY_PROP_PRESENT);
+		wlc_online = PSY_GET_PROP(wlc_psy, POWER_SUPPLY_PROP_ONLINE);
+		wlc_present = PSY_GET_PROP(wlc_psy, POWER_SUPPLY_PROP_PRESENT);
 	}
 
 	/* TODO: b/186905611 validate Defender with EXT */
 	if (ext_psy) {
-		ext_online = GPSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_ONLINE);
-		ext_present = GPSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_PRESENT);
+		ext_online = PSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_ONLINE);
+		ext_present = PSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_PRESENT);
 
 		/* set dd_enabled for dock_defend */
 		bd_dd_set_enabled(chg_drv, ext_present, ext_online);

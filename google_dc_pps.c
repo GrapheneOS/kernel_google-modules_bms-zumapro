@@ -130,11 +130,11 @@ static enum pd_pps_stage pps_is_avail(struct pd_pps_data *pps,
 				      struct power_supply *tcpm_psy)
 {
 	/* TODO: make silent, check return value and value */
-	pps->max_uv = GPSY_GET_PROP(tcpm_psy, POWER_SUPPLY_PROP_VOLTAGE_MAX);
-	pps->min_uv = GPSY_GET_PROP(tcpm_psy, POWER_SUPPLY_PROP_VOLTAGE_MIN);
-	pps->max_ua = GPSY_GET_PROP(tcpm_psy, POWER_SUPPLY_PROP_CURRENT_MAX);
-	pps->out_uv = GPSY_GET_PROP(tcpm_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
-	pps->op_ua = GPSY_GET_PROP(tcpm_psy, POWER_SUPPLY_PROP_CURRENT_NOW);
+	pps->max_uv = PSY_GET_PROP(tcpm_psy, POWER_SUPPLY_PROP_VOLTAGE_MAX);
+	pps->min_uv = PSY_GET_PROP(tcpm_psy, POWER_SUPPLY_PROP_VOLTAGE_MIN);
+	pps->max_ua = PSY_GET_PROP(tcpm_psy, POWER_SUPPLY_PROP_CURRENT_MAX);
+	pps->out_uv = PSY_GET_PROP(tcpm_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
+	pps->op_ua = PSY_GET_PROP(tcpm_psy, POWER_SUPPLY_PROP_CURRENT_NOW);
 	if (pps->max_uv < 0 || pps->min_uv < 0 || pps->max_ua < 0 ||
 		pps->out_uv < 0 || pps->op_ua < 0)
 		return PPS_NONE;
@@ -157,8 +157,7 @@ int pps_ping(struct pd_pps_data *pps, struct power_supply *tcpm_psy)
 		return -ENODEV;
 
 	/* NOTE: the adapter should already be in PROG_ONLINE */
-	rc = GPSY_SET_PROP(tcpm_psy, POWER_SUPPLY_PROP_ONLINE,
-			   PPS_PSY_PROG_ONLINE);
+	rc = PSY_SET_PROP(tcpm_psy, POWER_SUPPLY_PROP_ONLINE, PPS_PSY_PROG_ONLINE);
 	if (rc == 0)
 		pps->pd_online = PPS_PSY_PROG_ONLINE;
 	else if (rc != -EAGAIN && rc != -EOPNOTSUPP)
@@ -208,7 +207,7 @@ bool pps_check_prog_online(struct pd_pps_data *pps_data)
 	if (!pps_data || !pps_data->pps_psy)
 		return false;
 
-	return GPSY_GET_PROP(pps_data->pps_psy, POWER_SUPPLY_PROP_ONLINE) ==
+	return PSY_GET_PROP(pps_data->pps_psy, POWER_SUPPLY_PROP_ONLINE) ==
 	       PPS_PSY_PROG_ONLINE;
 }
 
@@ -224,7 +223,7 @@ bool pps_prog_check_online(struct pd_pps_data *pps_data,
 	if (!pps_data || !tcpm_psy)
 		return -ENODEV;
 
-	pd_online = GPSY_GET_PROP(tcpm_psy, POWER_SUPPLY_PROP_ONLINE);
+	pd_online = PSY_GET_PROP(tcpm_psy, POWER_SUPPLY_PROP_ONLINE);
 	if (pd_online == 0) {
 		pps_init_state(pps_data);
 		return false;
@@ -623,7 +622,7 @@ int pps_work(struct pd_pps_data *pps, struct power_supply *pps_psy)
 	 * The prop is set to PPS_PSY_PROG_ONLINE (from PPS_PSY_FIXED_ONLINE)
 	 * when usbc_type is POWER_SUPPLY_USB_TYPE_PD_PPS.
 	 */
-	pd_online = GPSY_GET_PROP(pps_psy, POWER_SUPPLY_PROP_ONLINE);
+	pd_online = PSY_GET_PROP(pps_psy, POWER_SUPPLY_PROP_ONLINE);
 	if (pd_online < 0)
 		return 0;
 
@@ -719,8 +718,8 @@ int pps_check_adapter(struct pd_pps_data *pps,
 	if (!pps || !tcpm_psy)
 		return -EINVAL;
 
-	out_uv = GPSY_GET_PROP(tcpm_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
-	op_ua = GPSY_GET_PROP(tcpm_psy, POWER_SUPPLY_PROP_CURRENT_NOW);
+	out_uv = PSY_GET_PROP(tcpm_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
+	op_ua = PSY_GET_PROP(tcpm_psy, POWER_SUPPLY_PROP_CURRENT_NOW);
 
 	pr_debug("%s: mv=%d->%d ua=%d,%d\n", __func__,
 		out_uv, pending_uv, op_ua, pending_ua);
@@ -738,7 +737,7 @@ static int pps_set_prop(struct pd_pps_data *pps,
 {
 	int ret;
 
-	ret = GPSY_SET_PROP(tcpm_psy, prop, val);
+	ret = PSY_SET_PROP(tcpm_psy, prop, val);
 	if (ret == 0) {
 		pps->keep_alive_cnt = 0;
 	} else if (ret == -EOPNOTSUPP) {
@@ -774,8 +773,8 @@ int pps_update_adapter(struct pd_pps_data *pps,
 	if (!tcpm_psy)
 		return -EINVAL;
 
-	pps->out_uv = GPSY_GET_PROP(tcpm_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
-	pps->op_ua = GPSY_GET_PROP(tcpm_psy, POWER_SUPPLY_PROP_CURRENT_NOW);
+	pps->out_uv = PSY_GET_PROP(tcpm_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
+	pps->op_ua = PSY_GET_PROP(tcpm_psy, POWER_SUPPLY_PROP_CURRENT_NOW);
 	if (pps->out_uv < 0 || pps->op_ua < 0) {
 		pr_debug("%s: %s error out_uv=%d op_ua=%d\n", __func__,
 			 pps_name(tcpm_psy), pps->out_uv, pps->op_ua);

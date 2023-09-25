@@ -140,7 +140,7 @@ struct max77779_fg_chip {
 	struct logbuffer *monitor_log;
 	u16 pre_repsoc;
 
-	struct power_supply_desc max77779_fg_psy_desc;
+	struct gbms_desc max77779_fg_psy_desc;
 
 	int bhi_fcn_count;
 	int bhi_acim;

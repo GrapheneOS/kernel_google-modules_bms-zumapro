@@ -632,10 +632,6 @@ static int gdbatt_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_VOLTAGE_OCV:
 		val->intval = (fg_1.intval + fg_2.intval)/2;
 		break;
-	case GBMS_PROP_CAPACITY_RAW:
-		val->intval = gdbatt_get_capacity(dual_fg_drv, fg_1.intval, fg_2.intval);
-		gdbatt_fg_logging(dual_fg_drv, fg_1.intval, fg_2.intval);
-		break;
 	case POWER_SUPPLY_PROP_CAPACITY:
 		val->intval = gdbatt_get_capacity(dual_fg_drv, fg_1.intval, fg_2.intval);
 		break;
@@ -659,18 +655,6 @@ static int gdbatt_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_SERIAL_NUMBER:
 		/* TODO: need hash SN */
 		val->strval = fg_1.strval;
-		break;
-	/* support bhi */
-	case GBMS_PROP_HEALTH_ACT_IMPEDANCE:
-	case GBMS_PROP_HEALTH_IMPEDANCE:
-	case GBMS_PROP_RESISTANCE:
-	case GBMS_PROP_RESISTANCE_RAW:
-	case GBMS_PROP_RESISTANCE_AVG:
-	case GBMS_PROP_BATTERY_AGE:
-	case GBMS_PROP_CHARGE_FULL_ESTIMATE:
-	case GBMS_PROP_CAPACITY_FADE_RATE:
-	case GBMS_PROP_BATT_ID:
-		val->intval = fg_1.intval;
 		break;
 	default:
 		pr_debug("getting unsupported property: %d\n", psp);
@@ -699,6 +683,101 @@ static int gdbatt_set_property(struct power_supply *psy,
 				 enum power_supply_property psp,
 				 const union power_supply_propval *val)
 {
+	/* move gbms psp to gdbatt_gbms_set_property */
+	return 0;
+}
+
+static int gdbatt_property_is_writeable(struct power_supply *psy,
+					  enum power_supply_property psp)
+{
+	/* move gbms psp to gdbatt_gbms_property_is_writeable */
+	return 0;
+}
+
+static int gdbatt_gbms_get_property(struct power_supply *psy,
+				    enum gbms_property psp,
+				    union gbms_propval *val)
+{
+	struct dual_fg_drv *dual_fg_drv = (struct dual_fg_drv *)
+					power_supply_get_drvdata(psy);
+	int err = 0;
+	union gbms_propval fg_1;
+	union gbms_propval fg_2;
+
+	err = gdbatt_resume_check(dual_fg_drv);
+	if (err != 0)
+		return err;
+
+	if (!dual_fg_drv->first_fg_psy && !dual_fg_drv->second_fg_psy)
+		return -EAGAIN;
+
+	if (!dual_fg_drv->first_fg_psy || !dual_fg_drv->second_fg_psy)
+		goto single_fg;
+
+	mutex_lock(&dual_fg_drv->fg_lock);
+
+	fg_1.prop.intval = GPSY_GET_INT_PROP(dual_fg_drv->first_fg_psy, psp, &err);
+	if (err != 0) {
+		pr_debug("error %d reading first fg prop %d\n", err, psp);
+		mutex_unlock(&dual_fg_drv->fg_lock);
+		return err;
+	}
+
+	fg_2.prop.intval = GPSY_GET_INT_PROP(dual_fg_drv->second_fg_psy, psp, &err);
+	if (err != 0) {
+		pr_debug("error %d reading second fg prop %d\n", err, psp);
+		mutex_unlock(&dual_fg_drv->fg_lock);
+		return err;
+	}
+
+	switch (psp) {
+	case GBMS_PROP_CAPACITY_RAW:
+		val->prop.intval = gdbatt_get_capacity(dual_fg_drv, fg_1.prop.intval, fg_2.prop.intval);
+		gdbatt_fg_logging(dual_fg_drv, fg_1.prop.intval, fg_2.prop.intval);
+		break;
+	/* support bhi */
+	case GBMS_PROP_HEALTH_ACT_IMPEDANCE:
+	case GBMS_PROP_HEALTH_IMPEDANCE:
+	case GBMS_PROP_RESISTANCE:
+	case GBMS_PROP_RESISTANCE_RAW:
+	case GBMS_PROP_RESISTANCE_AVG:
+	case GBMS_PROP_BATTERY_AGE:
+	case GBMS_PROP_CHARGE_FULL_ESTIMATE:
+	case GBMS_PROP_CAPACITY_FADE_RATE:
+	case GBMS_PROP_BATT_ID:
+		val->prop.intval = fg_1.prop.intval;
+		break;
+	case GBMS_PROP_RECAL_FG:
+		/* TODO: under porting */
+		break;
+	default:
+		pr_debug("%s: route to gdbatt_get_property, psp:%d\n", __func__, psp);
+		mutex_unlock(&dual_fg_drv->fg_lock);
+		return -ENODATA;
+	}
+
+	mutex_unlock(&dual_fg_drv->fg_lock);
+
+	return 0;
+
+single_fg:
+	mutex_lock(&dual_fg_drv->fg_lock);
+	if (dual_fg_drv->first_fg_psy)
+		val->prop.intval = GPSY_GET_INT_PROP(dual_fg_drv->first_fg_psy, psp, &err);
+	else if (dual_fg_drv->second_fg_psy)
+		val->prop.intval = GPSY_GET_INT_PROP(dual_fg_drv->second_fg_psy, psp, &err);
+	mutex_unlock(&dual_fg_drv->fg_lock);
+
+	if (err < 0)
+		pr_debug("error %d reading single prop %d\n", err, psp);
+
+	return 0;
+}
+
+static int gdbatt_gbms_set_property(struct power_supply *psy,
+				    enum gbms_property psp,
+				    const union gbms_propval *val)
+{
 	struct dual_fg_drv *dual_fg_drv = (struct dual_fg_drv *)
 					power_supply_get_drvdata(psy);
 	int ret = 0;
@@ -710,16 +789,16 @@ static int gdbatt_set_property(struct power_supply *psy,
 	switch (psp) {
 	case GBMS_PROP_BATT_CE_CTRL:
 		if (dual_fg_drv->first_fg_psy) {
-			ret = GPSY_SET_PROP(dual_fg_drv->first_fg_psy, psp, val->intval);
+			ret = GPSY_SET_PROP(dual_fg_drv->first_fg_psy, psp, val->prop.intval);
 			if (ret < 0)
 				pr_err("Cannot set the first BATT_CE_CTRL, ret=%d\n", ret);
 		}
 		if (dual_fg_drv->second_fg_psy) {
-			ret = GPSY_SET_PROP(dual_fg_drv->second_fg_psy, psp, val->intval);
+			ret = GPSY_SET_PROP(dual_fg_drv->second_fg_psy, psp, val->prop.intval);
 			if (ret < 0)
 				pr_err("Cannot set the second BATT_CE_CTRL, ret=%d\n", ret);
 		}
-		dual_fg_drv->cable_in = !!val->intval;
+		dual_fg_drv->cable_in = !!val->prop.intval;
 		if (dual_fg_drv->cable_in)
 			dual_fg_drv->last_update = get_boot_sec();
 		mod_delayed_work(system_wq, &dual_fg_drv->gdbatt_work, 0);
@@ -727,13 +806,17 @@ static int gdbatt_set_property(struct power_supply *psy,
 	case GBMS_PROP_HEALTH_ACT_IMPEDANCE:
 		/* TODO: discuss with BattEng to decide save data */
 		/* if (dual_fg_drv->first_fg_psy) {
-			ret = GPSY_SET_PROP(dual_fg_drv->first_fg_psy, psp, val->intval);
+			ret = GPSY_SET_PROP(dual_fg_drv->first_fg_psy, psp, val->prop.intval);
 			if (ret < 0)
 				pr_err("Cannot set the first HEALTH_ACT_IMPEDANCE, ret=%d\n", ret);
 		} */
 		break;
+	case GBMS_PROP_RECAL_FG:
+		/* TODO: under porting */
+		break;
 	default:
-		return -EINVAL;
+		pr_debug("%s: route to gdbatt_set_property, psp:%d\n", __func__, psp);
+		return -ENODATA;
 	}
 
 	if (ret < 0) {
@@ -744,8 +827,8 @@ static int gdbatt_set_property(struct power_supply *psy,
 	return 0;
 }
 
-static int gdbatt_property_is_writeable(struct power_supply *psy,
-					  enum power_supply_property psp)
+static int gdbatt_gbms_property_is_writeable(struct power_supply *psy,
+					     enum gbms_property psp)
 {
 	switch (psp) {
 	case GBMS_PROP_BATT_CE_CTRL:
@@ -757,14 +840,18 @@ static int gdbatt_property_is_writeable(struct power_supply *psy,
 	return 0;
 }
 
-static struct power_supply_desc gdbatt_psy_desc = {
-	.name = "dualbatt",
-	.type = POWER_SUPPLY_TYPE_BATTERY,
-	.get_property = gdbatt_get_property,
-	.set_property = gdbatt_set_property,
-	.property_is_writeable = gdbatt_property_is_writeable,
-	.properties = gdbatt_fg_props,
-	.num_properties = ARRAY_SIZE(gdbatt_fg_props),
+static struct gbms_desc gdbatt_psy_desc = {
+	.psy_dsc.name = "dualbatt",
+	.psy_dsc.type = POWER_SUPPLY_TYPE_BATTERY,
+	.psy_dsc.get_property = gdbatt_get_property,
+	.psy_dsc.set_property = gdbatt_set_property,
+	.psy_dsc.property_is_writeable = gdbatt_property_is_writeable,
+	.get_property = gdbatt_gbms_get_property,
+	.set_property = gdbatt_gbms_set_property,
+	.property_is_writeable = gdbatt_gbms_property_is_writeable,
+	.psy_dsc.properties = gdbatt_fg_props,
+	.psy_dsc.num_properties = ARRAY_SIZE(gdbatt_fg_props),
+	.forward = true,
 };
 
 /* ------------------------------------------------------------------------ */
@@ -1073,10 +1160,10 @@ static int google_dual_batt_gauge_probe(struct platform_device *pdev)
 	psy_cfg.of_node = pdev->dev.of_node;
 
 	if (of_property_read_bool(pdev->dev.of_node, "google,psy-type-unknown"))
-		gdbatt_psy_desc.type = POWER_SUPPLY_TYPE_UNKNOWN;
+		gdbatt_psy_desc.psy_dsc.type = POWER_SUPPLY_TYPE_UNKNOWN;
 
 	dual_fg_drv->psy = devm_power_supply_register(dual_fg_drv->device,
-						   &gdbatt_psy_desc, &psy_cfg);
+						   &gdbatt_psy_desc.psy_dsc, &psy_cfg);
 	if (IS_ERR(dual_fg_drv->psy)) {
 		ret = PTR_ERR(dual_fg_drv->psy);
 		if (ret == -EPROBE_DEFER)

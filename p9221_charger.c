@@ -24,6 +24,7 @@
 #include "p9221-dt-bindings.h"
 #include "google_dc_pps.h"
 #include "google_bms.h"
+#include "google_psy.h"
 #include <linux/debugfs.h>
 
 #define P9221R5_OVER_CHECK_NUM		3
@@ -1167,12 +1168,11 @@ static int feature_update_session(struct p9221_charger_data *charger, u64 ft)
 
 static int p9221_capacity_raw(struct p9221_charger_data *charger)
 {
-	union power_supply_propval prop;
-	int ret;
+	int val, ret;
 
-	ret = power_supply_get_property(charger->batt_psy, GBMS_PROP_CAPACITY_RAW, &prop);
+	val = GPSY_GET_INT_PROP(charger->batt_psy, GBMS_PROP_CAPACITY_RAW, &ret);
 	if (ret == 0)
-		ret = qnum_toint(qnum_from_q8_8(prop.intval));
+		ret = qnum_toint(qnum_from_q8_8(val));
 
 	return ret;
 }
@@ -2369,36 +2369,6 @@ static int p9221_get_property(struct power_supply *psy,
 		if (rc)
 			val->intval = rc;
 		break;
-	case GBMS_PROP_WLC_OP_FREQ:
-		rc = p9221_ready_to_read(charger);
-		if (!rc) {
-			rc = charger->chip_get_op_freq(charger, &temp);
-			if (!rc)
-				val->intval = P9221_KHZ_TO_HZ(temp);
-		}
-		if (rc)
-			val->intval = 0;
-		break;
-	case GBMS_PROP_WLC_VRECT:
-		rc = p9221_ready_to_read(charger);
-		if (!rc) {
-			rc = charger->chip_get_vrect(charger, &temp);
-			if (!rc)
-				val->intval = P9221_MV_TO_UV(temp);
-		}
-		if (rc)
-			val->intval = 0;
-		break;
-	case GBMS_PROP_WLC_VCPOUT:
-		rc = p9221_ready_to_read(charger);
-		if (!rc) {
-			rc = charger->chip_get_vcpout(charger, &temp);
-			if (!rc)
-				val->intval = P9221_MV_TO_UV(temp);
-		}
-		if (rc)
-			val->intval = 0;
-		break;
 
 	default:
 		ret = -EINVAL;
@@ -3053,6 +3023,84 @@ static int p9221_set_property(struct power_supply *psy,
 
 static int p9221_prop_is_writeable(struct power_supply *psy,
 				   enum power_supply_property prop)
+{
+	int writeable = 0;
+
+	switch (prop) {
+	case POWER_SUPPLY_PROP_CURRENT_MAX:
+	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
+	case POWER_SUPPLY_PROP_CAPACITY:
+	case POWER_SUPPLY_PROP_ONLINE:
+	case POWER_SUPPLY_PROP_CURRENT_NOW:
+	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
+		writeable = 1;
+		break;
+	default:
+		break;
+	}
+
+	return writeable;
+}
+
+static int p9221_gbms_get_property(struct power_supply *psy,
+				   enum gbms_property prop,
+				   union gbms_propval *val)
+{
+	struct p9221_charger_data *charger = power_supply_get_drvdata(psy);
+	int rc, ret = 0;
+	u32 temp;
+
+	switch (prop) {
+	case GBMS_PROP_WLC_OP_FREQ:
+		rc = p9221_ready_to_read(charger);
+		if (!rc) {
+			rc = charger->chip_get_op_freq(charger, &temp);
+			if (!rc)
+				val->prop.intval = P9221_KHZ_TO_HZ(temp);
+		}
+		if (rc)
+			val->prop.intval = 0;
+		break;
+	case GBMS_PROP_WLC_VRECT:
+		rc = p9221_ready_to_read(charger);
+		if (!rc) {
+			rc = charger->chip_get_vrect(charger, &temp);
+			if (!rc)
+				val->prop.intval = P9221_MV_TO_UV(temp);
+		}
+		if (rc)
+			val->prop.intval = 0;
+		break;
+	case GBMS_PROP_WLC_VCPOUT:
+		rc = p9221_ready_to_read(charger);
+		if (!rc) {
+			rc = charger->chip_get_vcpout(charger, &temp);
+			if (!rc)
+				val->prop.intval = P9221_MV_TO_UV(temp);
+		}
+		if (rc)
+			val->prop.intval = 0;
+		break;
+
+	default:
+		pr_debug("%s: route to p9221_get_property, psp:%d\n", __func__, prop);
+		ret = -ENODATA;
+		break;
+	}
+
+	return ret;
+}
+
+static int p9221_gbms_set_property(struct power_supply *psy,
+				   enum gbms_property prop,
+				   const union gbms_propval *val)
+{
+	pr_debug("%s: route to p9221_set_property, psp:%d\n", __func__, prop);
+	return -ENODATA;
+}
+
+static int p9221_gbms_prop_is_writeable(struct power_supply *psy,
+					enum gbms_property prop)
 {
 	int writeable = 0;
 
@@ -7539,15 +7587,19 @@ static enum power_supply_property p9221_props[] = {
 	POWER_SUPPLY_PROP_CAPACITY,
 };
 
-static const struct power_supply_desc p9221_psy_desc = {
-	.name = "wireless",
-	.type = POWER_SUPPLY_TYPE_WIRELESS,
-	.properties = p9221_props,
-	.num_properties = ARRAY_SIZE(p9221_props),
-	.get_property = p9221_get_property,
-	.set_property = p9221_set_property,
-	.property_is_writeable = p9221_prop_is_writeable,
-	.no_thermal = true,
+static const struct gbms_desc p9221_psy_desc = {
+	.psy_dsc.name = "wireless",
+	.psy_dsc.type = POWER_SUPPLY_TYPE_WIRELESS,
+	.psy_dsc.properties = p9221_props,
+	.psy_dsc.num_properties = ARRAY_SIZE(p9221_props),
+	.psy_dsc.get_property = p9221_get_property,
+	.psy_dsc.set_property = p9221_set_property,
+	.psy_dsc.property_is_writeable = p9221_prop_is_writeable,
+	.get_property = p9221_gbms_get_property,
+	.set_property = p9221_gbms_set_property,
+	.property_is_writeable = p9221_gbms_prop_is_writeable,
+	.psy_dsc.no_thermal = true,
+	.forward = true,
 };
 
 static int p9382a_tx_icl_vote_callback(struct gvotable_election *el,
@@ -7911,7 +7963,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	psy_cfg.drv_data = charger;
 	psy_cfg.of_node = charger->dev->of_node;
 	charger->wc_psy = devm_power_supply_register(charger->dev,
-						     &p9221_psy_desc,
+						     &p9221_psy_desc.psy_dsc,
 						     &psy_cfg);
 	if (IS_ERR(charger->wc_psy)) {
 		dev_err(&client->dev, "Fail to register supply: %d\n", ret);

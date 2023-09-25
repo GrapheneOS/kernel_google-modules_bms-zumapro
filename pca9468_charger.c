@@ -4515,11 +4515,6 @@ static int pca9468_mains_set_property(struct power_supply *psy,
 
 		break;
 
-	/* TODO: locking is wrong */
-	case GBMS_PROP_CHARGING_ENABLED:
-		ret = pca9468_set_charging_enabled(pca9468, val->intval);
-		break;
-
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
 		ret = pca9468_set_new_vfloat(pca9468, val->intval);
@@ -4547,16 +4542,6 @@ static int pca9468_mains_set_property(struct power_supply *psy,
 		mutex_unlock(&pca9468->lock);
 		break;
 
-	case GBMS_PROP_CHARGE_DISABLE:
-		dev_dbg(pca9468->dev, "%s: ChargeDisable %d, chg_state:%d\n", __func__,
-			val->intval, pca9468->charging_state);
-		if (val->intval) {
-			if (pca9468->charging_state == DC_STATE_ERROR)
-				pca9468->charging_state = DC_STATE_NO_CHARGING;
-			pca9468_vote_dc_avail(pca9468, 1, 1);
-		}
-		break;
-
 	default:
 		ret = -EINVAL;
 		break;
@@ -4571,7 +4556,6 @@ static int pca9468_mains_get_property(struct power_supply *psy,
 				     union power_supply_propval *val)
 {
 	struct pca9468_charger *pca9468 = power_supply_get_drvdata(psy);
-	union gbms_charger_state chg_state;
 	int intval, rc, ret = 0;
 
 	if (!pca9468->init_done)
@@ -4585,20 +4569,6 @@ static int pca9468_mains_get_property(struct power_supply *psy,
 		val->intval = pca9468_is_present(pca9468);
 		if (val->intval < 0)
 			val->intval = 0;
-		break;
-
-	case GBMS_PROP_CHARGE_DISABLE:
-		ret = pca9468_get_charging_enabled(pca9468);
-		if (ret < 0)
-			return ret;
-		val->intval = !ret;
-		break;
-
-	case GBMS_PROP_CHARGING_ENABLED:
-		ret = pca9468_get_charging_enabled(pca9468);
-		if (ret < 0)
-			return ret;
-		val->intval = ret;
 		break;
 
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
@@ -4629,13 +4599,6 @@ static int pca9468_mains_get_property(struct power_supply *psy,
 		rc = pca9468_get_iin(pca9468, &val->intval);
 		if (rc < 0)
 			dev_err(pca9468->dev, "Invalid IIN ADC (%d)\n", rc);
-		break;
-
-	case GBMS_PROP_CHARGE_CHARGER_STATE:
-		ret = pca9468_get_chg_chgr_state(pca9468, &chg_state);
-		if (ret < 0)
-			return ret;
-		gbms_propval_int64val(val) = chg_state.v;
 		break;
 
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
@@ -4713,6 +4676,102 @@ static int pca9468_mains_is_writeable(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
+		return 1;
+	default:
+		break;
+	}
+
+	return 0;
+}
+
+static int pca9468_gbms_mains_set_property(struct power_supply *psy,
+					   enum gbms_property prop,
+					   const union gbms_propval *val)
+{
+	struct pca9468_charger *pca9468 = power_supply_get_drvdata(psy);
+	int ret = 0;
+
+	pr_debug("%s: =========START=========\n", __func__);
+	pr_debug("%s: prop=%d, val=%d\n", __func__, prop, val->prop.intval);
+	if (!pca9468->init_done)
+		return -EAGAIN;
+
+	switch (prop) {
+
+	case GBMS_PROP_CHARGING_ENABLED:
+		ret = pca9468_set_charging_enabled(pca9468, val->prop.intval);
+		break;
+
+	case GBMS_PROP_CHARGE_DISABLE:
+		dev_dbg(pca9468->dev, "%s: ChargeDisable %d, chg_state:%d\n", __func__,
+			val->prop.intval, pca9468->charging_state);
+		if (val->prop.intval) {
+			if (pca9468->charging_state == DC_STATE_ERROR)
+				pca9468->charging_state = DC_STATE_NO_CHARGING;
+			pca9468_vote_dc_avail(pca9468, 1, 1);
+		}
+		break;
+
+	default:
+		pr_debug("%s: route to pca9468_mains_set_property, psp:%d\n", __func__, prop);
+		return -ENODATA;
+	}
+
+	pr_debug("%s: End, ret=%d\n", __func__, ret);
+	return ret;
+}
+
+static int pca9468_gbms_mains_get_property(struct power_supply *psy,
+					   enum gbms_property prop,
+					   union gbms_propval *val)
+{
+	struct pca9468_charger *pca9468 = power_supply_get_drvdata(psy);
+	union gbms_charger_state chg_state;
+	int ret = 0;
+
+	if (!pca9468->init_done)
+		return -EAGAIN;
+
+	switch (prop) {
+	case GBMS_PROP_CHARGE_DISABLE:
+		ret = pca9468_get_charging_enabled(pca9468);
+		if (ret < 0)
+			return ret;
+		val->prop.intval = !ret;
+		break;
+
+	case GBMS_PROP_CHARGING_ENABLED:
+		ret = pca9468_get_charging_enabled(pca9468);
+		if (ret < 0)
+			return ret;
+		val->prop.intval = ret;
+		break;
+
+	case GBMS_PROP_CHARGE_CHARGER_STATE:
+		ret = pca9468_get_chg_chgr_state(pca9468, &chg_state);
+		if (ret < 0)
+			return ret;
+		val->int64val = chg_state.v;
+		break;
+
+	default:
+		pr_debug("%s: route to pca9468_mains_get_property, psp:%d\n", __func__, prop);
+		return -ENODATA;
+	}
+
+	return 0;
+}
+
+static int pca9468_gbms_mains_is_writeable(struct power_supply *psy,
+					   enum gbms_property psp)
+{
+	switch (psp) {
+	case POWER_SUPPLY_PROP_ONLINE:
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
+	case POWER_SUPPLY_PROP_CURRENT_MAX:
+	case GBMS_PROP_CHARGING_ENABLED:
 	case GBMS_PROP_CHARGE_DISABLE:
 		return 1;
 	default:
@@ -4749,15 +4808,19 @@ static struct regmap_config pca9468_regmap = {
 	.volatile_reg = pca9468_is_reg,
 };
 
-static struct power_supply_desc pca9468_mains_desc = {
-	.name		= "pca9468-mains",
+static struct gbms_desc pca9468_mains_desc = {
+	.psy_dsc.name		= "pca9468-mains",
 	/* b/179246019 will not look online to Android */
-	.type		= POWER_SUPPLY_TYPE_UNKNOWN,
-	.get_property	= pca9468_mains_get_property,
-	.set_property 	= pca9468_mains_set_property,
-	.properties	= pca9468_mains_properties,
-	.property_is_writeable = pca9468_mains_is_writeable,
-	.num_properties	= ARRAY_SIZE(pca9468_mains_properties),
+	.psy_dsc.type		= POWER_SUPPLY_TYPE_UNKNOWN,
+	.psy_dsc.get_property	= pca9468_mains_get_property,
+	.psy_dsc.set_property 	= pca9468_mains_set_property,
+	.psy_dsc.property_is_writeable = pca9468_mains_is_writeable,
+	.get_property		= pca9468_gbms_mains_get_property,
+	.set_property 		= pca9468_gbms_mains_set_property,
+	.property_is_writeable = pca9468_gbms_mains_is_writeable,
+	.psy_dsc.properties	= pca9468_mains_properties,
+	.psy_dsc.num_properties	= ARRAY_SIZE(pca9468_mains_properties),
+	.forward		= true,
 };
 
 #if defined(CONFIG_OF)
@@ -5291,7 +5354,7 @@ static int pca9468_probe(struct i2c_client *client,
 	ret = of_property_read_string(dev->of_node,
 				      "pca9468,psy_name", &psy_name);
 	if ((ret == 0) && (strlen(psy_name) > 0))
-		pca9468_regmap.name = pca9468_mains_desc.name =
+		pca9468_regmap.name = pca9468_mains_desc.psy_dsc.name =
 		    devm_kstrdup(dev, psy_name, GFP_KERNEL);
 
 	pca9468_chg->regmap = devm_regmap_init_i2c(client, &pca9468_regmap);
@@ -5327,7 +5390,7 @@ static int pca9468_probe(struct i2c_client *client,
 	mains_cfg.num_supplicants = ARRAY_SIZE(battery);
 	mains_cfg.drv_data = pca9468_chg;
 	pca9468_chg->mains = devm_power_supply_register(dev,
-							&pca9468_mains_desc,
+							&pca9468_mains_desc.psy_dsc,
 							&mains_cfg);
 	if (IS_ERR(pca9468_chg->mains)) {
 		ret = -ENODEV;

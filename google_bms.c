@@ -759,6 +759,9 @@ int gbms_set_property(struct power_supply *psy, enum gbms_property psp,
 			ret = dsc->set_property(psy, psp, val);
 			if (ret == 0)
 				return 0;
+		} else {
+			pr_debug("psp=%d for '%s' is not writeable\n",
+				 psp, psy->desc->name);
 		}
 	}
 

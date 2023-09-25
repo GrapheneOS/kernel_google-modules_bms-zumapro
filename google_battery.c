@@ -2989,31 +2989,31 @@ static bool batt_csi_check_ad_power(const union gbms_ce_adapter_details *ad)
 	unsigned int limit_mw = 9000 * 2000;	/* 18 Watts: it changes with the device */
 
 	switch (ad->ad_type) {
-		case CHG_EV_ADAPTER_TYPE_USB:
-		case CHG_EV_ADAPTER_TYPE_USB_SDP:
-		case CHG_EV_ADAPTER_TYPE_USB_CDP:
-		case CHG_EV_ADAPTER_TYPE_USB_ACA:
-		case CHG_EV_ADAPTER_TYPE_USB_C:
-		case CHG_EV_ADAPTER_TYPE_USB_PD:
-		case CHG_EV_ADAPTER_TYPE_USB_PD_DRP:
-		case CHG_EV_ADAPTER_TYPE_USB_PD_PPS:
-		case CHG_EV_ADAPTER_TYPE_USB_BRICKID:
-		case CHG_EV_ADAPTER_TYPE_USB_HVDCP:
-		case CHG_EV_ADAPTER_TYPE_USB_HVDCP3:
-			break;
-		case CHG_EV_ADAPTER_TYPE_WLC:
-		case CHG_EV_ADAPTER_TYPE_WLC_EPP:
-		case CHG_EV_ADAPTER_TYPE_WLC_SPP:
-			limit_mw = 7500000;
-			break;
-		case CHG_EV_ADAPTER_TYPE_EXT:
-		case CHG_EV_ADAPTER_TYPE_EXT1:
-		case CHG_EV_ADAPTER_TYPE_EXT2:
-		case CHG_EV_ADAPTER_TYPE_EXT_UNKNOWN:
-			limit_mw = 10500 * 1250;
-			break;
-		default:
-			break;
+	case CHG_EV_ADAPTER_TYPE_USB:
+	case CHG_EV_ADAPTER_TYPE_USB_SDP:
+	case CHG_EV_ADAPTER_TYPE_USB_CDP:
+	case CHG_EV_ADAPTER_TYPE_USB_ACA:
+	case CHG_EV_ADAPTER_TYPE_USB_C:
+	case CHG_EV_ADAPTER_TYPE_USB_PD:
+	case CHG_EV_ADAPTER_TYPE_USB_PD_DRP:
+	case CHG_EV_ADAPTER_TYPE_USB_PD_PPS:
+	case CHG_EV_ADAPTER_TYPE_USB_BRICKID:
+	case CHG_EV_ADAPTER_TYPE_USB_HVDCP:
+	case CHG_EV_ADAPTER_TYPE_USB_HVDCP3:
+		break;
+	case CHG_EV_ADAPTER_TYPE_WLC:
+	case CHG_EV_ADAPTER_TYPE_WLC_EPP:
+	case CHG_EV_ADAPTER_TYPE_WLC_SPP:
+		limit_mw = 7500000;
+		break;
+	case CHG_EV_ADAPTER_TYPE_EXT:
+	case CHG_EV_ADAPTER_TYPE_EXT1:
+	case CHG_EV_ADAPTER_TYPE_EXT2:
+	case CHG_EV_ADAPTER_TYPE_EXT_UNKNOWN:
+		limit_mw = 10500 * 1250;
+		break;
+	default:
+		break;
 	}
 
 	return ad_mw < limit_mw;
@@ -10076,23 +10076,6 @@ static int gbatt_get_property(struct power_supply *psy,
 	pm_runtime_put_sync(batt_drv->device);
 
 	switch (psp) {
-	case GBMS_PROP_ADAPTER_DETAILS:
-		val->intval = batt_drv->ce_data.adapter_details.v;
-		break;
-
-	case GBMS_PROP_DEAD_BATTERY:
-		val->intval = batt_drv->dead_battery;
-		break;
-	/*
-	 * ng charging:
-	 * 1) write to GBMS_PROP_CHARGE_CHARGER_STATE,
-	 * 2) read POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT and
-	 *    POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE
-	 */
-	case GBMS_PROP_CHARGE_CHARGER_STATE:
-		container_of(val, union gbms_propval, prop)->int64val = batt_drv->chg_state.v;
-		break;
-
 	case POWER_SUPPLY_PROP_CYCLE_COUNT:
 		if (batt_drv->cycle_count < 0)
 			err = batt_drv->cycle_count;
@@ -10263,21 +10246,8 @@ static int gbatt_set_property(struct power_supply *psy,
 	}
 	pm_runtime_put_sync(batt_drv->device);
 
+
 	switch (psp) {
-	case GBMS_PROP_ADAPTER_DETAILS:
-		mutex_lock(&batt_drv->stats_lock);
-		batt_drv->ce_data.adapter_details.v = val->intval;
-		mutex_unlock(&batt_drv->stats_lock);
-	break;
-
-	/* NG Charging, where it all begins */
-	case GBMS_PROP_CHARGE_CHARGER_STATE:
-		mutex_lock(&batt_drv->chg_lock);
-		batt_drv->chg_state.v = gbms_propval_int64val(val);
-		ret = batt_chg_logic(batt_drv);
-		mutex_unlock(&batt_drv->chg_lock);
-		break;
-
 	case POWER_SUPPLY_PROP_CAPACITY:
 		mutex_lock(&batt_drv->chg_lock);
 		if (val->intval != batt_drv->fake_capacity) {
@@ -10324,6 +10294,117 @@ static int gbatt_property_is_writeable(struct power_supply *psy,
 					  enum power_supply_property psp)
 {
 	switch (psp) {
+	case POWER_SUPPLY_PROP_CAPACITY:
+	case POWER_SUPPLY_PROP_TIME_TO_FULL_NOW:
+	case POWER_SUPPLY_PROP_HEALTH:
+		return 1;
+	default:
+		break;
+	}
+
+	return 0;
+}
+
+static int gbatt_gbms_get_property(struct power_supply *psy,
+				   enum gbms_property psp,
+				   union gbms_propval *val)
+{
+	struct batt_drv *batt_drv = (struct batt_drv *)
+					power_supply_get_drvdata(psy);
+	int err = 0;
+
+	pm_runtime_get_sync(batt_drv->device);
+	if (!batt_drv->init_complete || !batt_drv->resume_complete) {
+		pm_runtime_put_sync(batt_drv->device);
+		return -EAGAIN;
+	}
+	pm_runtime_put_sync(batt_drv->device);
+
+	switch (psp) {
+	case GBMS_PROP_ADAPTER_DETAILS:
+		val->prop.intval = batt_drv->ce_data.adapter_details.v;
+		break;
+
+	case GBMS_PROP_DEAD_BATTERY:
+		val->prop.intval = batt_drv->dead_battery;
+		break;
+	/*
+	 * ng charging:
+	 * 1) write to GBMS_PROP_CHARGE_CHARGER_STATE,
+	 * 2) read POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT and
+	 *    POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE
+	 */
+	case GBMS_PROP_CHARGE_CHARGER_STATE:
+		val->int64val = batt_drv->chg_state.v;
+		break;
+
+	default:
+		if (!batt_drv->fg_psy)
+			return -EINVAL;
+		if (psp >= GBMS_PROP_LOCAL_EXTENSIONS) {
+			val->prop.intval = GPSY_GET_INT_PROP(batt_drv->fg_psy, psp, &err);
+		} else {
+			pr_debug("%s: route to gbatt_get_property, psp:%d\n", __func__, psp);
+			return -ENODATA;
+		}
+		break;
+	}
+
+	if (err < 0) {
+		pr_debug("gbatt: get_prop cannot read psp=%d\n", psp);
+		return err;
+	}
+
+	return 0;
+}
+
+static int gbatt_gbms_set_property(struct power_supply *psy,
+				   enum gbms_property psp,
+				   const union gbms_propval *val)
+{
+	struct batt_drv *batt_drv = (struct batt_drv *)
+					power_supply_get_drvdata(psy);
+	int ret = 0;
+
+	pm_runtime_get_sync(batt_drv->device);
+	if (!batt_drv->init_complete || !batt_drv->resume_complete) {
+		pm_runtime_put_sync(batt_drv->device);
+		return -EAGAIN;
+	}
+	pm_runtime_put_sync(batt_drv->device);
+
+	switch (psp) {
+	case GBMS_PROP_ADAPTER_DETAILS:
+		mutex_lock(&batt_drv->stats_lock);
+		batt_drv->ce_data.adapter_details.v = val->prop.intval;
+		mutex_unlock(&batt_drv->stats_lock);
+	break;
+
+	/* NG Charging, where it all begins */
+	case GBMS_PROP_CHARGE_CHARGER_STATE:
+		mutex_lock(&batt_drv->chg_lock);
+		batt_drv->chg_state.v = val->int64val;
+		ret = batt_chg_logic(batt_drv);
+		mutex_unlock(&batt_drv->chg_lock);
+		break;
+
+	default:
+		pr_debug("%s: route to gbatt_set_property, psp:%d\n", __func__, psp);
+		return -ENODATA;
+	}
+
+	if (ret < 0) {
+		pr_debug("gbatt: get_prop cannot write psp=%d\n", psp);
+		return ret;
+	}
+
+	return 0;
+}
+
+static int gbatt_gbms_property_is_writeable(struct power_supply *psy,
+					    enum gbms_property psp)
+{
+	switch (psp) {
 	case GBMS_PROP_CHARGE_CHARGER_STATE:
 	case POWER_SUPPLY_PROP_CAPACITY:
 	case GBMS_PROP_ADAPTER_DETAILS:
@@ -10337,14 +10418,18 @@ static int gbatt_property_is_writeable(struct power_supply *psy,
 	return 0;
 }
 
-static struct power_supply_desc gbatt_psy_desc = {
-	.name = "battery",
-	.type = POWER_SUPPLY_TYPE_BATTERY,
-	.get_property = gbatt_get_property,
-	.set_property = gbatt_set_property,
-	.property_is_writeable = gbatt_property_is_writeable,
-	.properties = gbatt_battery_props,
-	.num_properties = ARRAY_SIZE(gbatt_battery_props),
+static struct gbms_desc gbatt_psy_desc = {
+	.psy_dsc.name = "battery",
+	.psy_dsc.type = POWER_SUPPLY_TYPE_BATTERY,
+	.psy_dsc.get_property = gbatt_get_property,
+	.psy_dsc.set_property = gbatt_set_property,
+	.psy_dsc.property_is_writeable = gbatt_property_is_writeable,
+	.get_property = gbatt_gbms_get_property,
+	.set_property = gbatt_gbms_set_property,
+	.property_is_writeable = gbatt_gbms_property_is_writeable,
+	.psy_dsc.properties = gbatt_battery_props,
+	.psy_dsc.num_properties = ARRAY_SIZE(gbatt_battery_props),
+	.forward = true,
 };
 
 /* ------------------------------------------------------------------------ */
@@ -11062,12 +11147,12 @@ static int google_battery_probe(struct platform_device *pdev)
 
 	/* change name and type for debug/test */
 	if (of_property_read_bool(pdev->dev.of_node, "google,psy-type-unknown"))
-		gbatt_psy_desc.type = POWER_SUPPLY_TYPE_UNKNOWN;
+		gbatt_psy_desc.psy_dsc.type = POWER_SUPPLY_TYPE_UNKNOWN;
 
 	ret = of_property_read_string(pdev->dev.of_node,
 				      "google,psy-name", &psy_name);
 	if (ret == 0) {
-		gbatt_psy_desc.name =
+		gbatt_psy_desc.psy_dsc.name =
 		    devm_kstrdup(&pdev->dev, psy_name, GFP_KERNEL);
 	}
 
@@ -11081,7 +11166,7 @@ static int google_battery_probe(struct platform_device *pdev)
 	psy_cfg.of_node = pdev->dev.of_node;
 
 	batt_drv->psy = devm_power_supply_register(batt_drv->device,
-						   &gbatt_psy_desc, &psy_cfg);
+						   &gbatt_psy_desc.psy_dsc, &psy_cfg);
 	if (IS_ERR(batt_drv->psy)) {
 		ret = PTR_ERR(batt_drv->psy);
 		if (ret == -EPROBE_DEFER)
