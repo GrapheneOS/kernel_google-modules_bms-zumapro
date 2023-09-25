@@ -9457,7 +9457,7 @@ static int gbatt_get_property(struct power_supply *psy,
 	 *    POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE
 	 */
 	case GBMS_PROP_CHARGE_CHARGER_STATE:
-		val->intval = batt_drv->chg_state.v;
+		container_of(val, union gbms_propval, prop)->int64val = batt_drv->chg_state.v;
 		break;
 
 	case POWER_SUPPLY_PROP_CYCLE_COUNT:
