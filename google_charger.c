@@ -1620,6 +1620,7 @@ static int bd_update_stats(struct chg_drv *chg_drv)
 	const ktime_t now = get_boot_sec();
 	int ret, vbatt, temp;
 	long long temp_avg;
+	unsigned long long elap;
 
 	if (!bd_state->enabled)
 		return 0;
@@ -1641,9 +1642,19 @@ static int bd_update_stats(struct chg_drv *chg_drv)
 	if (bd_state->last_update == 0)
 		bd_state->last_update = now;
 
+	/*
+	 * b/294978951 time_sum is abnormally large and triggered the TEMP-DEFEND
+	 * add log here if elapse exceed 2 times of schedule time
+	 */
+	elap = now - bd_state->last_update;
 	if (temp >= bd_state->bd_trigger_temp) {
-		bd_state->time_sum += now - bd_state->last_update;
-		bd_state->temp_sum += temp * (now - bd_state->last_update);
+		if (elap > (CHG_WORK_BD_TRIGGERED_MS / 1000 * 2))
+			gbms_logbuffer_prlog(bd_state->bd_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+				"MSC_BD: longer elap %llu (%llu - %llu), temp=%d, time_sum=%llu, temp_sum=%llu",
+				elap, now, bd_state->last_update, temp, bd_state->time_sum,
+				bd_state->temp_sum);
+		bd_state->time_sum += elap;
+		bd_state->temp_sum += temp * elap;
 	}
 
 	bd_state->last_voltage = vbatt;
@@ -2448,7 +2459,9 @@ static void chg_work(struct work_struct *work)
 						MSC_CHG_VOTER, true);
 
 			if (!chg_drv->bd_state.triggered) {
+				mutex_lock(&chg_drv->bd_lock);
 				bd_reset(&chg_drv->bd_state);
+				mutex_unlock(&chg_drv->bd_lock);
 				bd_fan_vote(chg_drv, false, FAN_LVL_NOT_CARE);
 			}
 
@@ -2838,9 +2851,13 @@ static ssize_t set_bd_temp_enable(struct device *dev,
 	if (chg_drv->bd_state.bd_temp_enable == val)
 		return count;
 
+	mutex_lock(&chg_drv->bd_lock);
+
 	chg_drv->bd_state.bd_temp_enable = val;
 
 	bd_reset(&chg_drv->bd_state);
+
+	mutex_unlock(&chg_drv->bd_lock);
 
 	if (chg_drv->bat_psy)
 		power_supply_changed(chg_drv->bat_psy);
@@ -3187,8 +3204,11 @@ static ssize_t set_bd_temp_dry_run(struct device *dev, struct device_attribute *
 		if (ret < 0)
 			dev_err(chg_drv->device, "Couldn't disable "
 				"bd_temp_dry_run ret=%d\n", ret);
-		if (chg_drv->bd_state.triggered)
+		if (chg_drv->bd_state.triggered) {
+			mutex_lock(&chg_drv->bd_lock);
 			bd_reset(&chg_drv->bd_state);
+			mutex_unlock(&chg_drv->bd_lock);
+		}
 	}
 
 	return count;
