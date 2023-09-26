@@ -104,7 +104,6 @@ static int gdbatt_resume_check(struct dual_fg_drv *dual_fg_drv) {
 
 static enum power_supply_property gdbatt_fg_props[] = {
 	POWER_SUPPLY_PROP_STATUS,
-	POWER_SUPPLY_PROP_HEALTH,
 	POWER_SUPPLY_PROP_CAPACITY,		/* replace with _RAW */
 	POWER_SUPPLY_PROP_CHARGE_COUNTER,
 	POWER_SUPPLY_PROP_CHARGE_FULL,
