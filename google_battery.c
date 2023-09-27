@@ -4019,7 +4019,7 @@ static int bhi_individual_conditions_index(const struct health_data *health_data
 static int hist_get_index(int cycle_count, const struct batt_drv *batt_drv)
 {
 	/* wait for history to be initialized */
-	if (batt_drv->hist_data_max_cnt <= 0 || cycle_count <= 0)
+	if (batt_drv->hist_data_max_cnt <= 0 || cycle_count < 0)
 		return -ENODATA;
 
 	return cycle_count / batt_drv->hist_delta_cycle_cnt;
