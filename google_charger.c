@@ -342,6 +342,7 @@ struct chg_drv {
 	struct gbms_ce_tier_stats thermal_stats[STATS_THERMAL_LEVELS_MAX];
 	ktime_t dd_stats_last_update;
 	ktime_t thermal_stats_last_update;
+	int thermal_stats_last_level;
 	int *thermal_stats_mdis_levels;
 	int thermal_levels_count;
 
@@ -476,6 +477,7 @@ static void thermal_stats_init(struct chg_drv *chg_drv)
 	}
 
 	chg_drv->thermal_stats_last_update = get_boot_sec();
+	chg_drv->thermal_stats_last_level = 0;
 	mutex_unlock(&chg_drv->stats_lock);
 }
 
@@ -1559,9 +1561,10 @@ static int bd_fan_calculate_level(struct bd_data *bd_state)
 	return bd_fan_level;
 }
 
-static void thermal_stats_update(struct chg_drv *chg_drv) {
+static void thermal_stats_update(struct chg_drv *chg_drv)
+{
 	int i;
-	int thermal_level = -1;
+	int thermal_level;
 
 	if (chg_drv->thermal_levels_count <= 0 &&
 	    chg_drv->thermal_devices[CHG_TERMAL_DEVICE_FCC].thermal_levels <= 0)
@@ -1574,23 +1577,13 @@ static void thermal_stats_update(struct chg_drv *chg_drv) {
 	else
 		thermal_level = chg_drv->thermal_devices[CHG_TERMAL_DEVICE_FCC].current_level;
 
-	/* The value from the votable may be uninitialized (negative). */
-	if (thermal_level <= 0) {
-		gvotable_cast_int_vote(chg_drv->thermal_level_votable, "THERMAL_UPDATE", 0, false);
-		/* Do not log any stats in level 0, so store updated time. */
-		mutex_lock(&chg_drv->stats_lock);
-		chg_drv->thermal_stats_last_update = get_boot_sec();
-		mutex_unlock(&chg_drv->stats_lock);
-		return;
-	}
-
 	if (chg_drv->thermal_levels_count) {
 		/* Translate the thermal tier to a stats tier */
 		for (i = 0; i < chg_drv->thermal_levels_count; i++)
 			if (thermal_level <= chg_drv->thermal_stats_mdis_levels[i])
 				break;
 	} else {
-		/* Traditinal thermal setting */
+		/* Traditional thermal setting */
 		i = thermal_level;
 	}
 
@@ -1598,13 +1591,34 @@ static void thermal_stats_update(struct chg_drv *chg_drv) {
 	if (i >= STATS_THERMAL_LEVELS_MAX)
 		return;
 
-	/* better to use i - 1 ? */
-	gvotable_cast_int_vote(chg_drv->thermal_level_votable,
-			       "THERMAL_UPDATE", i, true);
+	/* If current level and last level are both 0, skip vote */
+	if (i == 0 && chg_drv->thermal_stats_last_level == 0) {
+		mutex_lock(&chg_drv->stats_lock);
+		chg_drv->thermal_stats_last_update = get_boot_sec();
+		mutex_unlock(&chg_drv->stats_lock);
+		return;
+	}
 
-	chg_stats_update(chg_drv,
-			 &chg_drv->thermal_stats[i],
+	gvotable_cast_int_vote(chg_drv->thermal_level_votable, "THERMAL_UPDATE",
+			       i, i > 0 ? true : false);
+}
+
+static int thermal_tier_stats_update(struct gvotable_election *el,
+				     const char *reason, void *vote)
+{
+	struct chg_drv *chg_drv = gvotable_get_data(el);
+	int thermal_level = GVOTABLE_PTR_TO_INT(vote);
+	int thermal_tier_idx;
+
+	mutex_lock(&chg_drv->stats_lock);
+	thermal_tier_idx = thermal_level ? thermal_level : chg_drv->thermal_stats_last_level;
+	chg_drv->thermal_stats_last_level = thermal_level;
+	mutex_unlock(&chg_drv->stats_lock);
+
+	chg_stats_update(chg_drv, &chg_drv->thermal_stats[thermal_tier_idx],
 			 &chg_drv->thermal_stats_last_update);
+
+	return 0;
 }
 
 static int msc_temp_defend_dryrun_cb(struct gvotable_election *el,
@@ -4574,7 +4588,7 @@ static int chg_create_votables(struct chg_drv *chg_drv)
 
 	chg_drv->thermal_level_votable =
 		gvotable_create_int_election(NULL, gvotable_comparator_least_recent,
-					     NULL, chg_drv);
+					     thermal_tier_stats_update, chg_drv);
 	if (IS_ERR_OR_NULL(chg_drv->thermal_level_votable)) {
 		ret = PTR_ERR(chg_drv->thermal_level_votable);
 		chg_drv->thermal_level_votable = NULL;
