@@ -2569,6 +2569,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->ra9530_tx_plim = RA9530_PLIM_900MA;
 		chgr->wlc_ocp = RA9530_ILIM_MAX_UA;
 		chgr->low_neg_pwr_icl = RA9530_ILIM_500UA;
+		chgr->det_off_debounce = 1000;
 		break;
 	case P9382A_CHIP_ID:
 		chgr->reg_tx_id_addr = P9382_PROP_TX_ID_REG;
@@ -2893,13 +2894,32 @@ static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 		ret = p9xxx_gpio_set_value(charger, charger->pdata->dc_switch_gpio, value);
 		break;
 	case P9XXX_GPIO_ONLINE_SPOOF:
-		charger->det_status = gpio_get_value_cansleep(charger->pdata->irq_det_gpio);
-		if (charger->pdata->irq_det_gpio >= 0 && charger->det_status == 0 && charger->online) {
-			logbuffer_prlog(charger->log, "pxxx_gpio online_spoof=1");
+		if (charger->pdata->irq_det_gpio >= 0 &&
+		    value && charger->online && !charger->online_spoof) {
+			if (charger->pdata->ldo_en_gpio > 0) {
+				gpio_set_value_cansleep(charger->pdata->ldo_en_gpio, 1);
+				logbuffer_prlog(charger->log,
+					"online_spoof=1 ldo_en=1 online=%d", charger->online);
+			} else {
+				logbuffer_prlog(charger->log, "online_spoof=1");
+			}
 			enable_irq(charger->pdata->irq_det_int);
 			charger->online_spoof = true;
 			cancel_delayed_work(&charger->stop_online_spoof_work);
+			charger->det_status = gpio_get_value_cansleep(charger->pdata->irq_det_gpio);
+			/* Prevent device removal while spoofing is enabled */
+			if (charger->det_status == 1) {
+				__pm_stay_awake(charger->det_status_ws);
+				mod_delayed_work(system_wq, &charger->change_det_status_work,
+						 msecs_to_jiffies(DET_READY_DEBOUNCE_MS));
+			}
 		}
+		if (!value && charger->pdata->ldo_en_gpio > 0) {
+			gpio_set_value_cansleep(charger->pdata->ldo_en_gpio, 0);
+			logbuffer_prlog(charger->log, "pxxx_gpio online_spoof=0 ldo_en_gpio=0");
+		}
+		pr_debug("%s: GPIO offset=%d value=%d charger->det_status:%d online=%d",
+			 __func__, offset, value, charger->det_status, charger->online);
 		break;
 	case P9XXX_GPIO_RTX_STATE:
 		mutex_lock(&charger->rtx_gpio_lock);

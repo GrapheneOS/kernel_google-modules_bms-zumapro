@@ -102,6 +102,7 @@
 #define WLCDC_AUTH_CHECK_INTERVAL_MS	(2 * 1000)
 #define WLCDC_AUTH_CHECK_INIT_DELAY_MS	(6 * 1000)
 #define P9XXX_DC_ICL_GPP_UA		1500000
+#define DET_READY_DEBOUNCE_MS		(3 * 1000)
 
 #define I2C_LOG_NUM			128
 
@@ -816,6 +817,7 @@ struct p9221_charger_data {
 	struct gvotable_election	*dc_avail_votable;
 	struct gvotable_election	*hda_tz_votable;
 	struct gvotable_election	*bcl_wlc_votable;
+	struct gvotable_election	*wlc_spoof_votable;
 	struct notifier_block		nb;
 	struct mutex			io_lock;
 	struct mutex			cmd_lock;

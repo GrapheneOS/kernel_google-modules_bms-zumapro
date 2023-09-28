@@ -41,6 +41,7 @@ struct max77779_chgr_data {
 
 	struct gvotable_election *dc_icl_votable;
 	struct gvotable_election *dc_suspend_votable;
+	struct gvotable_election *wlc_spoof_votable;
 
 	struct delayed_work cop_enable_work;
 	uint32_t cop_warn;

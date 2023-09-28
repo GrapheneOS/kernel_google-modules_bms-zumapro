@@ -2243,8 +2243,7 @@ static int p9221_get_property(struct power_supply *psy,
 		/* thermal throttled + PDET detected + not in RTX mode */
 		if (val->intval)
 			break;
-		val->intval = charger->online_spoof && charger->det_status == 0 &&
-				charger->ben_state == 0;
+		val->intval = charger->online_spoof && charger->ben_state == 0;
 		break;
 	case POWER_SUPPLY_PROP_SERIAL_NUMBER:
 		/* val->strval == NULL means NODATA */
@@ -3765,17 +3764,15 @@ static void p9221_notifier_check_dc(struct p9221_charger_data *charger)
 
 	if (charger->online_spoof && dc_in == 1) {
 		/* stop spoofing is queued */
-		if (cancel_delayed_work(&charger->stop_online_spoof_work)) {
+		if (cancel_delayed_work(&charger->stop_online_spoof_work))
 			logbuffer_prlog(charger->log, "dc=1: online_spoof=0");
-			if (charger->online_spoof)
-				disable_irq(charger->pdata->irq_det_int);
-			charger->online_spoof = false;
-		} else {
-			dev_err(&charger->client->dev, "Error: no spoof work even though spoof=1 && dc=1\n");
-			if (charger->online_spoof)
-				disable_irq(charger->pdata->irq_det_int);
-			charger->online_spoof = false;
-		}
+		else
+			dev_err(&charger->client->dev,
+				"Error: no spoof work even though spoof=1 && dc=1\n");
+		if (charger->online_spoof)
+			disable_irq(charger->pdata->irq_det_int);
+		charger->online_spoof = false;
+		gvotable_cast_bool_vote(charger->wlc_spoof_votable, "WLC", false);
 	}
 
 	if (charger->log) {
@@ -6724,6 +6721,8 @@ static void p9xxx_stop_online_spoof_work(struct work_struct *work)
 		logbuffer_prlog(charger->log, "timeout: online_spoof=0");
 		disable_irq(charger->pdata->irq_det_int);
 		charger->online_spoof = false;
+		gvotable_cast_bool_vote(charger->wlc_spoof_votable, "WLC", false);
+		power_supply_changed(charger->wc_psy);
 	}
 }
 
@@ -6740,9 +6739,13 @@ static void p9xxx_change_det_status_work(struct work_struct *work)
 			logbuffer_prlog(charger->log, "det=0: online_spoof=0");
 			disable_irq(charger->pdata->irq_det_int);
 			charger->online_spoof = false;
+                        gvotable_cast_bool_vote(charger->wlc_spoof_votable, "WLC", false);
 		}
 		charger->det_status = det_gpio;
 		power_supply_changed(charger->wc_psy);
+	} else if (det_gpio == 1) {
+		logbuffer_prlog(charger->log, "det=1->1: online_spoof=1");
+		schedule_delayed_work(&charger->stop_online_spoof_work, 0);
 	}
 	__pm_relax(charger->det_status_ws);
 }
@@ -7712,6 +7715,10 @@ static bool p9xxx_find_votable(struct p9221_charger_data *charger)
 	if (!charger->dc_icl_votable)
 		dev_warn(&charger->client->dev, "Could not find DC_ICL votable\n");
 
+        if (!charger->wlc_spoof_votable)
+                charger->wlc_spoof_votable = gvotable_election_get_handle("WLC_SPOOF");
+        if (!charger->wlc_spoof_votable)
+                dev_warn(&charger->client->dev, "Could not find WLC SPOOF votable\n");
 	/*
 	 * Find the DC_SUSPEND, we use this to disable DCIN before
 	 * enter RTx mode
@@ -7728,7 +7735,8 @@ static bool p9xxx_find_votable(struct p9221_charger_data *charger)
 
 	return charger->dc_icl_votable != NULL &&
 	       charger->dc_suspend_votable != NULL &&
-	       charger->chg_mode_votable != NULL;
+	       charger->chg_mode_votable != NULL &&
+	       charger->wlc_spoof_votable != NULL;
 }
 
 static int p9221_charger_probe(struct i2c_client *client,

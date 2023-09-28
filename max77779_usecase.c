@@ -94,12 +94,20 @@ static int max77779_chgr_insel_write(struct i2c_client *client, u8 mask, u8 valu
 int gs201_wlc_en(struct max77779_usecase_data *uc_data, enum wlc_state_t state)
 {
 	const int wlc_on = state == WLC_ENABLED;
+	int ret;
 
 	pr_debug("%s: wlc_en=%d wlc_on=%d wlc_state=%d\n", __func__,
 		 uc_data->wlc_en, wlc_on, state);
 
 	if (uc_data->wlc_en < 0)
 		return 0;
+
+	if (state == WLC_SPOOFED && uc_data->wlc_spoof_vbyp > 0) {
+		ret = max77779_external_chg_reg_write(uc_data->client, MAX77779_CHG_CNFG_11,
+					     uc_data->wlc_spoof_vbyp);
+		pr_debug("%s: MAX77779_CHG_CNFG_11 write to %02x (ret = %d)\n",
+			 __func__, uc_data->wlc_spoof_vbyp, ret);
+	}
 
 	gpio_set_value_cansleep(uc_data->wlc_spoof_gpio,
 				state == WLC_SPOOFED && uc_data->wlc_spoof_gpio);
@@ -682,7 +690,7 @@ static bool gs201_setup_usecases_done(struct max77779_usecase_data *uc_data)
 	       (uc_data->rtx_ready != -EPROBE_DEFER) &&
 	       (uc_data->wlc_spoof_gpio != -EPROBE_DEFER);
 
-	/* TODO: handle platform specific differences..	*/
+	/* TODO: handle platform specific differences.. */
 }
 
 static void gs201_setup_default_usecase(struct max77779_usecase_data *uc_data)
@@ -700,6 +708,8 @@ static void gs201_setup_default_usecase(struct max77779_usecase_data *uc_data)
 	uc_data->rtx_ready = -EPROBE_DEFER;
 
 	uc_data->wlc_spoof_gpio = -EPROBE_DEFER;
+
+	uc_data->wlc_spoof_vbyp = 0;
 
 	uc_data->init_done = false;
 
@@ -725,6 +735,9 @@ static void gs201_setup_default_usecase(struct max77779_usecase_data *uc_data)
 bool gs201_setup_usecases(struct max77779_usecase_data *uc_data,
 			  struct device_node *node)
 {
+	u32 data;
+	int ret;
+
 	if (!node) {
 		gs201_setup_default_usecase(uc_data);
 		return false;
@@ -747,7 +760,14 @@ bool gs201_setup_usecases(struct max77779_usecase_data *uc_data,
 
 	/*  wlc_rx thermal throttle -> spoof online */
 	if (uc_data->wlc_spoof_gpio == -EPROBE_DEFER)
-	    uc_data->wlc_spoof_gpio = of_get_named_gpio(node, "max77759,wlc-spoof-gpio", 0);
+		uc_data->wlc_spoof_gpio = of_get_named_gpio(node, "max77779,wlc-spoof-gpio", 0);
+
+	/* OPTIONAL: wlc-spoof-vol */
+	ret = of_property_read_u32(node, "max77779,wlc-spoof-vbyp", &data);
+	if (ret < 0)
+		uc_data->wlc_spoof_vbyp = 0;
+	else
+		uc_data->wlc_spoof_vbyp = data;
 
 	/* OPTIONAL: support wlc_rx -> wlc_rx+otg */
 	uc_data->rx_otg_en = of_property_read_bool(node, "max77779,rx-to-rx-otg-en");

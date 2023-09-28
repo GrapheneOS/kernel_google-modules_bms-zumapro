@@ -25,6 +25,7 @@ struct max77779_usecase_data {
 	int wlc_vbus_en;	/* b/202526678 */
 	bool reverse12_en;	/* reverse 1:2 mode */
 	int wlc_spoof_gpio;	/* wlcrx thermal throttle */
+	u32 wlc_spoof_vbyp;	/* wlc spoof VBYP */
 
 	u8 otg_ilim;		/* TODO: TCPM to control this? */
 	u8 otg_vbyp;		/* TODO: TCPM to control this? */

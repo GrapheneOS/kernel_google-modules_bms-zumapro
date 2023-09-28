@@ -634,6 +634,7 @@ static int max77779_get_otg_usecase(struct max77779_foreach_cb_data *cb_data,
 static int max77779_get_usecase(struct max77779_foreach_cb_data *cb_data,
 				struct max77779_usecase_data *uc_data)
 {
+	struct max77779_chgr_data *data = i2c_get_clientdata(uc_data->client);
 	const int buck_on = cb_data->chgin_off ? 0 : cb_data->buck_on;
 	const int chgr_on = cb_data_is_chgr_on(cb_data);
 	bool wlc_tx = cb_data->wlc_tx != 0;
@@ -724,6 +725,10 @@ static int max77779_get_usecase(struct max77779_foreach_cb_data *cb_data,
 		if (uc_data->dcin_is_dock)
 			usecase = GSU_MODE_DOCK;
 
+		if (data->wlc_spoof && uc_data->wlc_spoof_vbyp) {
+			mode = MAX77779_CHGR_MODE_BOOST_ON;
+			usecase = GSU_MODE_WLC_RX;
+		}
 	} else {
 
 		/* MODE_BUCK_ON is inflow */
@@ -849,9 +854,6 @@ static int max77779_set_insel(struct max77779_chgr_data *data,
 		if (ret < 0)
 			pr_err("%s: error wlc_en=%d ret:%d\n", __func__,
 			       wlc_on, ret);
-
-		/* reset wlc_spoof */
-		data->wlc_spoof = false;
 	} else {
 		u8 value = 0;
 
@@ -975,12 +977,12 @@ static int max77779_mode_callback(struct gvotable_election *el,
 	cb_data.el = el;	/* election */
 
 	/* read directly instead of using the vote */
-	cb_data.wlc_rx = max77779_wcin_is_online(data) &&
-			 !data->wcin_input_suspend;
+	cb_data.wlc_rx = (max77779_wcin_is_online(data) &&
+			 !data->wcin_input_suspend) || data->wlc_spoof;
 	cb_data.wlcin_off = !!data->wcin_input_suspend;
 
-	pr_debug("%s: wcin_is_online=%d data->wcin_input_suspend=%d\n", __func__,
-		  max77779_wcin_is_online(data), data->wcin_input_suspend);
+	pr_debug("%s: wcin_is_online=%d data->wcin_input_suspend=%d data->wlc_spoof=%d\n", __func__,
+		  max77779_wcin_is_online(data), data->wcin_input_suspend, data->wlc_spoof);
 
 	/* now scan all the reasons, accumulate in cb_data */
 	gvotable_election_for_each(el, max77779_foreach_callback, &cb_data);
@@ -1662,13 +1664,29 @@ static int max77779_dcicl_callback(struct gvotable_election *el,
 			data->dc_icl, ret);
 
 	/* will trigger a CHARGER_MODE callback */
-	if (suspend && (strcmp(reason, REASON_MDIS) == 0 || strcmp(reason, REASON_THERM) == 0))
-		data->wlc_spoof = true;
+	gvotable_cast_bool_vote(data->wlc_spoof_votable, "WLC",
+				suspend && (strcmp(reason, REASON_MDIS) == 0));
 
 	ret = max77779_wcin_input_suspend(data, suspend, "DC_ICL");
 	if (ret < 0)
 		dev_err(data->dev, "cannot set suspend=%d (%d)\n",
 			suspend, ret);
+
+	return 0;
+}
+
+static int max77779_wlc_spoof_callback(struct gvotable_election *el,
+				       const char *reason, void *value)
+{
+	struct max77779_chgr_data *data = gvotable_get_data(el);
+	int spoof = (long)value > 0;
+	bool wlc_rx;
+
+	wlc_rx = (max77779_wcin_is_online(data) && !data->wcin_input_suspend);
+
+	data->wlc_spoof = spoof && wlc_rx;
+
+	pr_info("%s:wlc_spoof=%d\n", __func__, data->wlc_spoof);
 
 	return 0;
 }
@@ -3258,6 +3276,19 @@ static int max77779_setup_votables(struct max77779_chgr_data *data)
 	gvotable_set_default(data->dc_icl_votable, (void *)700000);
 	gvotable_election_set_name(data->dc_icl_votable, "DC_ICL");
 	gvotable_use_default(data->dc_icl_votable, true);
+
+	data->wlc_spoof_votable =
+		gvotable_create_bool_election(NULL,
+					      max77779_wlc_spoof_callback,
+					      data);
+	if (IS_ERR_OR_NULL(data->wlc_spoof_votable)) {
+		ret = PTR_ERR(data->wlc_spoof_votable);
+		dev_err(data->dev, "no wlc_spoof votable (%d)\n", ret);
+		return ret;
+	}
+
+	gvotable_set_vote2str(data->wlc_spoof_votable, gvotable_v2s_int);
+	gvotable_election_set_name(data->wlc_spoof_votable, "WLC_SPOOF");
 
 	return 0;
 }
