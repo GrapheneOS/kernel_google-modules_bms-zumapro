@@ -1775,7 +1775,7 @@ static bool max77779_current_check_wcin_mode(struct max77779_chgr_data *data)
 
 	reg = max77779_current_check_mode(data);
 
-	return reg == 0xe || reg == 0xf;
+	return reg == 0x4 || reg == 0x5 || reg == 0xe || reg == 0xf;
 }
 
 /* only valid in mode e, f */
