@@ -41,6 +41,24 @@ int max77779_chg_insel_write(struct i2c_client *client, u8 mask, u8 value);
 /* read the insel register */
 int max77779_chg_insel_read(struct i2c_client *client, u8 *value);
 
+int max77779_external_pmic_reg_read(struct i2c_client *client,
+				    unsigned int reg, unsigned int *val);
+int max77779_external_pmic_reg_write(struct i2c_client *client,
+				     unsigned int reg, unsigned int val);
+
+int max77779_external_fg_reg_read(struct i2c_client *client,
+				  unsigned int reg, unsigned int *val);
+int max77779_external_fg_reg_write(struct i2c_client *client,
+				   unsigned int reg, unsigned int val);
+
+int max77779_external_vimon_reg_read(struct i2c_client *client,
+				     unsigned int reg, void *val, int len);
+int max77779_external_vimon_reg_write(struct i2c_client *client,
+				      unsigned int reg, const void *val, int len);
+
+
+int max77779_fg_enable_firmware_update(struct i2c_client *client, bool enable);
+
 static inline int max77779_read_batt_conn(struct i2c_client *client, int *temp)
 {
 	return -ENODEV;

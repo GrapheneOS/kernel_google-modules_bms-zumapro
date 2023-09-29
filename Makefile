@@ -31,7 +31,8 @@ GBMS_MODULES =	GOOGLE_BMS \
 		STWC68 \
 		LN8411 \
 		FG_MAX77779 \
-		VIMON_MAX77779
+		VIMON_MAX77779 \
+		FWUPDATE_MAX77779
 
 obj-$(CONFIG_GOOGLE_BMS)	+= google-bms.o
 google-bms-objs += google_bms.o
@@ -149,6 +150,10 @@ obj-$(CONFIG_LN8411)	+= ln8411.o
 ln8411-objs += ln8411_driver.o
 ln8411-objs += ln8411_gbms_pps.o
 ln8411-objs += google_dc_pps.o
+
+# MAX77779 Firmware Update
+obj-$(CONFIG_FWUPDATE_MAX77779) += max77779-fwupdate.o
+max77779-fwupdate-objs += max77779_fwupdate.o
 
 # prevent warnings
 WENUMS=-Wno-enum-conversion -Wno-switch

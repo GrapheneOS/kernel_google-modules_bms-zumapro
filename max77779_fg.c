@@ -51,6 +51,9 @@
 #define BHI_IMPEDANCE_CYCLE_CNT		5
 #define BHI_IMPEDANCE_TIMERH		50 /* 7*24 / 3.2hr */
 
+#define MAX77779_FG_FWUPDATE_SOC       95
+#define MAX77779_FG_FWUPDATE_SOC_RAW   0x5F00 /* soc 95% */
+
 enum max77779_fg_command_bits {
 	MAX77779_FG_COMMAND_HARDWARE_RESET = 0x000F,
 };
@@ -171,6 +174,8 @@ struct max77779_fg_chip {
 	int fake_temperature;
 
 	bool current_offset_check_done;
+
+	bool fw_update_mode;
 };
 
 static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj);
@@ -429,6 +434,38 @@ int max77779_fg_nregister_write(const struct maxfg_regmap *map,
 }
 
 /*
+ * special reg_read for firmware update
+ * - it will not change the lock status
+ */
+int max77779_external_fg_reg_read(struct i2c_client *client,
+				  unsigned int reg, unsigned int *val)
+{
+	struct max77779_fg_chip *chip = i2c_get_clientdata(client);
+
+	if (!chip || !chip->regmap.regmap)
+		return -EAGAIN;
+
+	return regmap_read(chip->regmap.regmap, reg, val);
+}
+EXPORT_SYMBOL_GPL(max77779_external_fg_reg_read);
+
+/*
+ * special reg_write for firmware update
+ * - it will not change the lock status
+ */
+int max77779_external_fg_reg_write(struct i2c_client *client,
+				   unsigned int reg, unsigned int val)
+{
+	struct max77779_fg_chip *chip = i2c_get_clientdata(client);
+
+	if (!chip || !chip->regmap.regmap)
+		return -EAGAIN;
+
+	return regmap_write(chip->regmap.regmap, reg, val);
+}
+EXPORT_SYMBOL_GPL(max77779_external_fg_reg_write);
+
+/*
  * force is true when changing the model via debug props.
  * NOTE: call holding model_lock
  */
@@ -571,6 +608,11 @@ static DEVICE_ATTR_RO(resistance);
 /* lsb 1/256, race with max77779_fg_model_work()  */
 static int max77779_fg_get_capacity_raw(struct max77779_fg_chip *chip, u16 *data)
 {
+	if (chip->fw_update_mode) {
+		*data = MAX77779_FG_FWUPDATE_SOC_RAW;
+		return 0;
+	}
+
 	return REGMAP_READ(&chip->regmap, chip->reg_prop_capacity_raw, data);
 }
 
@@ -582,9 +624,13 @@ static int max77779_fg_get_battery_soc(struct max77779_fg_chip *chip)
 	if (chip->fake_capacity >= 0 && chip->fake_capacity <= 100)
 		return chip->fake_capacity;
 
+	if (chip->fw_update_mode)
+		return MAX77779_FG_FWUPDATE_SOC;
+
 	err = REGMAP_READ(&chip->regmap, MAX77779_FG_RepSOC, &data);
 	if (err)
 		return err;
+
 	capacity = reg_to_percentage(data);
 
 	if (capacity == 100 && chip->offmode_charger)
@@ -598,6 +644,8 @@ static int max77779_fg_get_battery_vfsoc(struct max77779_fg_chip *chip)
 	u16 data;
 	int capacity, err;
 
+	if (chip->fw_update_mode)
+		return MAX77779_FG_FWUPDATE_SOC;
 
 	err = REGMAP_READ(&chip->regmap, MAX77779_FG_VFSOC, &data);
 	if (err)
@@ -2072,6 +2120,33 @@ static int debug_fg_reset(void *data, u64 val)
 
 DEFINE_SIMPLE_ATTRIBUTE(debug_fg_reset_fops, NULL, debug_fg_reset, "%llu\n");
 
+
+int max77779_fg_enable_firmware_update(struct i2c_client *client, bool enable) {
+	struct max77779_fg_chip *chip = i2c_get_clientdata(client);
+	if (!chip)
+		return -EAGAIN;
+
+	chip->fw_update_mode = enable;
+
+	pm_runtime_get_sync(chip->dev);
+	if (!chip->init_complete || !chip->resume_complete)
+		return -EAGAIN;
+
+	/* enable/disable irq for firmware update */
+	if (enable && !chip->irq_disabled) {
+		chip->irq_disabled = true;
+		disable_irq(chip->primary->irq);
+	} else if (!enable && chip->irq_disabled) {
+		chip->irq_disabled = false;
+		enable_irq(chip->primary->irq);
+	}
+
+	return 0;
+};
+
+EXPORT_SYMBOL_GPL(max77779_fg_enable_firmware_update);
+
+
 static int debug_ce_start(void *data, u64 val)
 {
 	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)data;
@@ -3174,6 +3249,7 @@ static bool max77779_fg_is_reg(struct device *dev, unsigned int reg)
 		return true;
 	case 0x39 ... 0x3A:
 	case 0x3D ... 0x3F:
+	case 0x40: /* Can be used for boot completion check (0x82) */
 	case 0x42:
 	case 0x45 ... 0x48:
 	case 0x4C ... 0x4E:

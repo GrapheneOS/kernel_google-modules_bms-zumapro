@@ -174,3 +174,10 @@ config MAX77779_PMIC_SGPIO
 	help
 	  Handle GPIOS for Sequoia
 
+config FWUPDATE_MAX77779
+	tristate "Maxim 77779 Firmware Update"
+	depends on I2C && OF
+	select FW_LOADER
+	help
+	  Handle firmware update for Sequoia
+

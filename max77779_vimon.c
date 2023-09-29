@@ -15,6 +15,7 @@
 
 #include <linux/device.h>
 #include "max77779_regs.h"
+#include "max77779.h"
 #include <linux/debugfs.h>
 
 #define MAX77779_VIMON_SIZE 0xFF
@@ -85,6 +86,28 @@ static int max77779_vimon_reg_update(struct device *dev, unsigned int reg,
 				reg, err);
 	return err;
 }
+
+int max77779_external_vimon_reg_read(struct i2c_client *client,
+				     unsigned int reg, void *val, int len)
+{
+	struct max77779_vimon_data *data = i2c_get_clientdata(client);
+	if (!data || !data->regmap)
+		return -EAGAIN;
+
+	return regmap_raw_read(data->regmap, reg, val, len);
+}
+EXPORT_SYMBOL_GPL(max77779_external_vimon_reg_read);
+
+int max77779_external_vimon_reg_write(struct i2c_client *client,
+				      unsigned int reg, const void *val, int len)
+{
+	struct max77779_vimon_data *data = i2c_get_clientdata(client);
+	if (!data || !data->regmap)
+		return -EAGAIN;
+
+	return regmap_raw_write(data->regmap, reg, val, len);
+}
+EXPORT_SYMBOL_GPL(max77779_external_vimon_reg_write);
 
 static int max77779_vimon_start(struct device *dev)
 {
