@@ -67,7 +67,7 @@
 #define RSBM_ADDR				0
 #define RSBR_ADDR				4
 #define SUFG_ADDR				8
-#define RSOC_ADDR				9
+#define RSOC_ADDR				10
 #define RS_TAG_LENGTH				4
 #define SU_TAG_LENGTH				1
 #define RSOC_TAG_LENGTH				2
