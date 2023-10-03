@@ -60,6 +60,7 @@
 
 #define P9XXX_VOUT_5480MV	5480
 #define P9XXX_VOUT_5000MV	5000
+#define P9XXX_VOUT_10000MV	10000
 #define P9XXX_FOD_CHK_DELAY_MS	2000
 
 #define P9XXX_SET_RF_DELAY_MS	330
@@ -75,6 +76,7 @@ enum wlc_chg_mode {
 	WLC_BPP = 0,
 	WLC_EPP,
 	WLC_EPP_COMP,
+	WLC_EPP_IOP,
 	WLC_HPP,
 	WLC_HPP_HV,
 };
@@ -340,6 +342,20 @@ bool p9xxx_is_capdiv_en(struct p9221_charger_data *charger)
 
 	return false;
 }
+static int p9xxx_check_iop_fod_by_mfg(struct p9221_charger_data *charger)
+{
+	int i;
+
+	for (i = 0; i < charger->pdata->fod_iop_mfg_num; i++) {
+		if (charger->mfg == charger->pdata->fod_iop_mfg[i]) {
+			dev_info(&charger->client->dev, "mfg is 0x%04x == 0x%04x\n",
+				charger->mfg, charger->pdata->fod_iop_mfg[i]);
+			return WLC_EPP_IOP;
+		}
+	}
+
+	return WLC_EPP;
+}
 
 static int p9221_check_fod_by_fsw(struct p9221_charger_data *charger)
 {
@@ -372,7 +388,8 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 	int fod_count = charger->pdata->fod_num;
 	int ret;
 	int retries = 3;
-	static char *wlc_mode[] = { "BPP", "EPP", "EPP_COMP",
+	int vout_mv;
+	static char *wlc_mode[] = { "BPP", "EPP", "EPP_COMP", "EPP_IOP",
 				    "HPP_0", "HPP_1", "HPP_2", "HPP_3",
 				    "HPP_4", "HPP_5", "HPP_6", "HPP_7" };
 
@@ -393,16 +410,22 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 	if (charger->pdata->fod_num)
 		fod = charger->pdata->fod;
 
-	if (p9221_is_epp(charger) && charger->pdata->fod_epp_num) {
+	ret = charger->chip_get_vout_max(charger, &vout_mv);
+	if (p9221_is_epp(charger) && charger->pdata->fod_epp_num && vout_mv > 5500) {
 		mode = WLC_EPP;
 		if (charger->pdata->fod_fsw)
 			mode = p9221_check_fod_by_fsw(charger);
+		if (charger->pdata->fod_iop_mfg_num > 0)
+			mode = p9xxx_check_iop_fod_by_mfg(charger);
 		if (mode == WLC_EPP) {
 			fod = charger->pdata->fod_epp;
 			fod_count = charger->pdata->fod_epp_num;
 		} else if (mode == WLC_EPP_COMP) {
 			fod = charger->pdata->fod_epp_comp;
 			fod_count = charger->pdata->fod_epp_comp_num;
+		} else if (mode == WLC_EPP_IOP) {
+			fod = charger->pdata->fod_epp_iop;
+			fod_count = charger->pdata->fod_epp_iop_num;
 		}
 	}
 
@@ -3637,6 +3660,26 @@ done:
 	return 0;
 }
 
+static int p9xxx_set_vout_iop(struct p9221_charger_data *charger)
+{
+	int ret = 0;
+	u32 vout_mv;
+
+	ret = charger->chip_get_vout_max(charger, &vout_mv);
+	if (ret < 0)
+		goto exit;
+
+	if (charger->pdata->set_iop_vout_bpp > 0 && vout_mv == P9XXX_VOUT_5000MV)
+		ret = charger->chip_set_vout_max(charger, charger->pdata->set_iop_vout_bpp);
+	else if (charger->pdata->set_iop_vout_epp > 0 && vout_mv == P9XXX_VOUT_10000MV)
+		ret = charger->chip_set_vout_max(charger, charger->pdata->set_iop_vout_epp);
+exit:
+	if (ret < 0)
+		dev_dbg(&charger->client->dev, "Fail to change VOUT\n");
+
+	return ret;
+}
+
 /* 2 P9221_NOTIFIER_DELAY_MS from VRECTON */
 static void p9221_notifier_check_dc(struct p9221_charger_data *charger)
 {
@@ -3668,7 +3711,7 @@ static void p9221_notifier_check_dc(struct p9221_charger_data *charger)
 	}
 
 	dev_info(&charger->client->dev, "dc status is %d\n", dc_in);
-  	charger->check_dc = false;
+	charger->check_dc = false;
 	/*
 	 * We now have confirmation from DC_IN, kill the timer, charger->online
 	 * will be set by this function.
@@ -3680,9 +3723,13 @@ static void p9221_notifier_check_dc(struct p9221_charger_data *charger)
 		/* stop spoofing is queued */
 		if (cancel_delayed_work(&charger->stop_online_spoof_work)) {
 			logbuffer_prlog(charger->log, "dc=1: online_spoof=0");
+			if (charger->online_spoof)
+				disable_irq(charger->pdata->irq_det_int);
 			charger->online_spoof = false;
 		} else {
 			dev_err(&charger->client->dev, "Error: no spoof work even though spoof=1 && dc=1\n");
+			if (charger->online_spoof)
+				disable_irq(charger->pdata->irq_det_int);
 			charger->online_spoof = false;
 		}
 	}
@@ -3724,6 +3771,7 @@ static void p9221_notifier_check_dc(struct p9221_charger_data *charger)
 			charger->sw_ramp_done = true;
 		}
 		p9221_set_dc_icl(charger);
+		p9xxx_set_vout_iop(charger);
 		p9221_write_fod(charger);
 		if (!charger->dc_icl_bpp)
 			p9221_icl_ramp_start(charger);
@@ -3834,6 +3882,14 @@ static void p9xxx_update_q_factor(struct p9221_charger_data *charger)
 				 "update Q factor=%d(mfg=%x)\n",
 				 charger->pdata->tx_4191q, charger->mfg);
 	};
+
+	if (charger->mfg == P9221_PTMC_EPP_TX_1801) {
+		ret = p9xxx_chip_set_q_factor_reg(charger, charger->pdata->tx_1801q);
+		dev_info(&charger->client->dev, "update Q factor=%d(mfg=%x) ret=%d\n",
+			 charger->pdata->tx_1801q, charger->mfg, ret);
+	} else if (charger->pdata->tx_1801q > 0) {
+		p9xxx_write_q_factor(charger);
+	}
 }
 
 static void p9221_notifier_work(struct work_struct *work)
@@ -4465,6 +4521,7 @@ static ssize_t p9221_store_txlen(struct device *dev,
 	ret = p9221_send_data(charger);
 	if (ret) {
 		charger->tx_done = true;
+		set_renego_state(charger, P9XXX_AVAILABLE);
 		return ret;
 	}
 
@@ -6457,6 +6514,7 @@ static void p9221_irq_handler(struct p9221_charger_data *charger, u16 irq_src)
 			schedule_delayed_work(&charger->chk_rp_work,
 					      msecs_to_jiffies(P9XXX_CHK_RP_DELAY_MS));
 		}
+		schedule_delayed_work(&charger->chk_fod_work, 0);
 	}
 }
 
@@ -6545,6 +6603,7 @@ static void p9xxx_stop_online_spoof_work(struct work_struct *work)
 	if (charger->online_spoof) {
 		/* timeout after WLC re-enabled */
 		logbuffer_prlog(charger->log, "timeout: online_spoof=0");
+		disable_irq(charger->pdata->irq_det_int);
 		charger->online_spoof = false;
 	}
 }
@@ -6560,6 +6619,7 @@ static void p9xxx_change_det_status_work(struct work_struct *work)
 	if (charger->det_status != det_gpio) {
 		if (det_gpio == 1 && charger->det_status == 0 && charger->online_spoof) {
 			logbuffer_prlog(charger->log, "det=0: online_spoof=0");
+			disable_irq(charger->pdata->irq_det_int);
 			charger->online_spoof = false;
 		}
 		charger->det_status = det_gpio;
@@ -6634,6 +6694,8 @@ static void p9xxx_set_rf_work(struct work_struct *work)
 		return;
 
 	p9xxx_write_resonance_freq(charger);
+
+	p9xxx_update_q_factor(charger);
 }
 
 static void p9xxx_chk_fod_work(struct work_struct *work)
@@ -7007,6 +7069,7 @@ static int p9xxx_parse_dt(struct device *dev,
 	p9221_parse_fod(dev, &pdata->fod_num, pdata->fod, "fod");
 	p9221_parse_fod(dev, &pdata->fod_epp_num, pdata->fod_epp, "fod_epp");
 	p9221_parse_fod(dev, &pdata->fod_epp_comp_num, pdata->fod_epp_comp, "fod_epp_comp");
+	p9221_parse_fod(dev, &pdata->fod_epp_iop_num, pdata->fod_epp_iop, "fod_epp_iop");
 
 	nb_hpp_fod_vol = of_property_count_elems_of_size(node, "google,hpp_fod_vol", sizeof(u32));
 	if (nb_hpp_fod_vol > 0) {
@@ -7071,6 +7134,20 @@ static int p9xxx_parse_dt(struct device *dev,
 		dev_info(dev, "dt fod_fsw_low_thres:%d\n", pdata->fod_fsw_low);
 	}
 
+	pdata->fod_iop_mfg_num = of_property_count_elems_of_size(node, "google,iop_fod_mfg", sizeof(u16));
+	if (pdata->fod_iop_mfg_num > 0) {
+		if (pdata->fod_iop_mfg_num > P9XXX_IOP_MFG_NUM)
+			pdata->fod_iop_mfg_num = P9XXX_IOP_MFG_NUM;
+		ret = of_property_read_u16_array(node, "google,iop_fod_mfg",
+						 pdata->fod_iop_mfg, pdata->fod_iop_mfg_num);
+		if (ret == 0) {
+			int i;
+
+			for (i = 0; i < pdata->fod_iop_mfg_num; i++)
+				dev_info(dev, "dt google,iop_fod_mfg: 0x%03x \n", pdata->fod_iop_mfg[i]);
+		}
+	}
+
 	ret = of_property_read_u32(node, "google,q_value", &data);
 	if (ret < 0) {
 		pdata->q_value = -1;
@@ -7093,6 +7170,13 @@ static int p9xxx_parse_dt(struct device *dev,
 	} else {
 		pdata->tx_4191q = data;
 		dev_info(dev, "dt tx4191_q:%d\n", pdata->tx_4191q);
+	}
+	ret = of_property_read_u32(node, "google,tx1801_q", &data);
+	if (ret < 0) {
+		pdata->tx_1801q = -1;
+	} else {
+		pdata->tx_1801q = data;
+		dev_info(dev, "dt tx1801_q:%d\n", pdata->tx_1801q);
 	}
 
 	ret = of_property_read_u32(node, "google,epp_rp_value", &data);
@@ -7266,6 +7350,19 @@ static int p9xxx_parse_dt(struct device *dev,
 		pdata->align_delta = 0;
 	else
 		pdata->align_delta = data;
+
+	ret = of_property_read_u32(node, "google,bpp_iop_vout_mv", &data);
+	if (ret < 0)
+		pdata->set_iop_vout_bpp = 0;
+	else
+		pdata->set_iop_vout_bpp = data;
+
+	ret = of_property_read_u32(node, "google,epp_iop_vout_mv", &data);
+	if (ret < 0)
+		pdata->set_iop_vout_epp = 0;
+	else
+		pdata->set_iop_vout_epp = data;
+
 
 	/* Calibrate light load */
 	pdata->light_load = of_property_read_bool(node, "google,light_load");

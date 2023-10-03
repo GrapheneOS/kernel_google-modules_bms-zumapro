@@ -51,6 +51,7 @@
 
 #define MAX_M5_RECAL_MAX_ROUNDS	3
 
+#define MAX_M5_RETRY_TIMES 	3
 
 /** ------------------------------------------------------------------------ */
 
@@ -131,6 +132,7 @@ struct max_m5_data {
 	u16 *custom_model;
 	u32 model_version;
 	bool force_reset_model_data;
+	int load_retry;
 
 	/* to/from GMSR */
 	struct model_state_save model_save;

@@ -3955,6 +3955,19 @@ static int batt_get_manufacture_date(struct bhi_data *bhi_data)
 	return 0;
 }
 
+static int batt_mdate_to_epoch(struct bhi_data *bhi_data)
+{
+
+	struct bm_date *date = &bhi_data->bm_date;
+	struct rtc_time tm;
+
+	tm.tm_year = date->bm_y + 100;	// base is 1900
+	tm.tm_mon = date->bm_m - 1;	// 0 is Jan ... 11 is Dec
+	tm.tm_mday = date->bm_d;	// 1st ... 31th
+
+	return rtc_tm_to_time64(&tm);
+}
+
 static int batt_get_activation_date(struct bhi_data *bhi_data)
 {
 	int ret;
@@ -7610,6 +7623,7 @@ static const DEVICE_ATTR_RO(manufacturing_date);
 
 #define FIRST_USAGE_DATE_DEFAULT	1606780800 //2020-12-01
 #define FIRST_USAGE_DATE_MAX		2147483647 //2038-01-19
+#define YEAR_IN_SECOND			31536000
 
 static ssize_t first_usage_date_store(struct device *dev,
 				      struct device_attribute *attr,
@@ -7650,11 +7664,28 @@ static ssize_t first_usage_date_store(struct device *dev,
 
 			/* set by local time */
 			ktime_get_real_ts64(&ts);
-			rtc_time64_to_tm(ts.tv_sec - (sys_tz.tz_minuteswest * 60), &tm);
-		} else {
-			/* set by system call */
-			rtc_time64_to_tm(date_in_epoch, &tm);
+			date_in_epoch = ts.tv_sec - (sys_tz.tz_minuteswest * 60);
 		}
+
+		/* read manufacturing date when data is not loaded yet */
+		if (bhi_data->bm_date.bm_y == 0) {
+			ret = batt_get_manufacture_date(bhi_data);
+			if (ret < 0)
+				pr_warn("cannot get battery manufacture date, ret=%d\n", ret);
+		}
+
+		if (bhi_data->bm_date.bm_y) {
+			unsigned long long mdate_in_epoch = batt_mdate_to_epoch(bhi_data);
+
+			/* not sooner then manufacture date */
+			if (date_in_epoch < mdate_in_epoch)
+				date_in_epoch = mdate_in_epoch;
+
+			/* not later than manufacture date plus two years */
+			if (date_in_epoch > (mdate_in_epoch + YEAR_IN_SECOND * 2))
+				date_in_epoch = (mdate_in_epoch + YEAR_IN_SECOND * 2);
+		}
+		rtc_time64_to_tm(date_in_epoch, &tm);
 
 		/* convert epoch to date
 		 * for example:

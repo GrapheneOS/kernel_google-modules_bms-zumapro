@@ -1740,6 +1740,19 @@ static int p9412_chip_renegotiate_pwr(struct p9221_charger_data *chgr)
 out:
 	return ret;
 }
+static void p9222_check_neg_power(struct p9221_charger_data *chgr)
+{
+	u32 vout_mv;
+	int ret;
+
+	chgr->dc_icl_epp_neg = chgr->pdata->epp_icl > 0 ? chgr->pdata->epp_icl : P9221_DC_ICL_EPP_UA;
+
+	ret = chgr->chip_get_vout_max(chgr, &vout_mv);
+	if (ret == 0 && vout_mv > 0 && vout_mv < 9000) {
+		chgr->dc_icl_epp_neg = P9221_DC_ICL_BPP_UA;
+		dev_info(&chgr->client->dev, "EPP less than 10W,use dc_icl=%dmA\n", chgr->dc_icl_epp_neg);
+	}
+}
 /* Read EPP_CUR_NEGOTIATED_POWER_REG to configure DC_ICL for EPP */
 static void p9xxx_check_neg_power(struct p9221_charger_data *chgr)
 {
@@ -1777,11 +1790,6 @@ static void p9xxx_check_neg_power(struct p9221_charger_data *chgr)
 			 "Use dc_icl=%dmA,np=%02x\n",
 			 chgr->dc_icl_epp_neg/1000, np8);
 	}
-}
-
-static void p9222_check_neg_power(struct p9221_charger_data *chgr)
-{
-
 }
 
 static int p9221_capdiv_en(struct p9221_charger_data *chgr, u8 mode)
@@ -2883,8 +2891,10 @@ static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 		ret = p9xxx_gpio_set_value(charger, charger->pdata->dc_switch_gpio, value);
 		break;
 	case P9XXX_GPIO_ONLINE_SPOOF:
+		charger->det_status = gpio_get_value(charger->pdata->irq_det_gpio);
 		if (charger->pdata->irq_det_gpio >= 0 && charger->det_status == 0 && charger->online) {
 			logbuffer_prlog(charger->log, "pxxx_gpio online_spoof=1");
+			enable_irq(charger->pdata->irq_det_int);
 			charger->online_spoof = true;
 			cancel_delayed_work(&charger->stop_online_spoof_work);
 		}
