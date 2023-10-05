@@ -197,17 +197,17 @@ int maxfg_collect_history_data(void *buff, size_t size, bool is_por, u16 designc
 		return ret;
 
 	/* Convert LSB from 1degC to 3degC, store values from 25degC min */
-	hist.maxtemp = (REG_HALF_HIGH(data) - 25) / 3;
+	hist.maxtemp = ((s8)REG_HALF_HIGH(data) - 25) / 3;
 	/* Convert LSB from 1degC to 3degC, store values from -20degC min */
-	hist.mintemp = (REG_HALF_LOW(data) + 20) / 3;
+	hist.mintemp = ((s8)REG_HALF_LOW(data) + 20) / 3;
 
 	ret = maxfg_reg_read(regmap, MAXFG_TAG_mmdc, &data);
 	if (ret)
 		return ret;
 
 	/* Convert LSB from 0.08A to 0.5A */
-	hist.maxchgcurr = REG_HALF_HIGH(data) * 8 / 50;
-	hist.maxdischgcurr = REG_HALF_LOW(data) * 8 / 50;
+	hist.maxchgcurr = (s8)REG_HALF_HIGH(data) * 8 / 50;
+	hist.maxdischgcurr = (s8)REG_HALF_LOW(data) * 8 / 50;
 
 	memcpy(buff, &hist, sizeof(hist));
 	return (size_t)sizeof(hist);
