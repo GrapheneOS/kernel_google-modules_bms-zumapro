@@ -330,6 +330,8 @@ int gs201_force_standby(struct max77779_usecase_data *uc_data)
 		pr_err("%s: cannot reset insel (%d)\n",
 			__func__, ret);
 
+	gs201_otg_enable(uc_data, false);
+
 	return 0;
 }
 
@@ -376,7 +378,27 @@ static int gs201_otg_enable_frs(struct max77779_usecase_data *uc_data)
 
 static int gs201_otg_enable(struct max77779_usecase_data *uc_data, bool enable)
 {
-	gpio_set_value_cansleep(uc_data->ext_bst_ctl, enable);
+	pr_debug("%s: enable:%d\n", __func__, enable);
+
+	if (enable) {
+		if (uc_data->bst_on >= 0)
+			gpio_set_value_cansleep(uc_data->bst_on, 1);
+
+		usleep_range(5 * USEC_PER_MSEC, 5 * USEC_PER_MSEC + 100);
+
+		if (uc_data->ext_bst_ctl >= 0)
+			gpio_set_value_cansleep(uc_data->ext_bst_ctl, 1);
+
+	} else {
+		if (uc_data->ext_bst_ctl >= 0)
+			gpio_set_value_cansleep(uc_data->ext_bst_ctl, 0);
+
+		usleep_range(5 * USEC_PER_MSEC, 5 * USEC_PER_MSEC + 100);
+
+		if (uc_data->bst_on >= 0)
+			gpio_set_value_cansleep(uc_data->bst_on, 0);
+	}
+
 	return 0;
 }
 
@@ -581,7 +603,9 @@ int max77779_otg_vbyp_mv_to_code(u8 *code, int vbyp)
 static bool gs201_setup_usecases_done(struct max77779_usecase_data *uc_data)
 {
 	return (uc_data->wlc_en != -EPROBE_DEFER) &&
-		(uc_data->ext_bst_ctl != -EPROBE_DEFER);
+	       (uc_data->bst_on != -EPROBE_DEFER) &&
+	       (uc_data->ext_bst_mode != -EPROBE_DEFER) &&
+	       (uc_data->ext_bst_ctl != -EPROBE_DEFER);
 
 	/* TODO: handle platform specific differences..	*/
 }
@@ -590,11 +614,14 @@ static void gs201_setup_default_usecase(struct max77779_usecase_data *uc_data)
 {
 	int ret;
 
+	/* external boost */
+	uc_data->bst_on = -EPROBE_DEFER;
+	uc_data->ext_bst_ctl = -EPROBE_DEFER;
+	uc_data->ext_bst_mode = -EPROBE_DEFER;
+
 	uc_data->otg_enable = -EPROBE_DEFER;
 
 	uc_data->wlc_en = -EPROBE_DEFER;
-
-	uc_data->ext_bst_ctl = -EPROBE_DEFER;
 
 	uc_data->init_done = false;
 
@@ -625,15 +652,23 @@ bool gs201_setup_usecases(struct max77779_usecase_data *uc_data,
 		return false;
 	}
 
+	/* control external boost if present */
+	if (uc_data->bst_on == -EPROBE_DEFER)
+		uc_data->bst_on = of_get_named_gpio(node, "max77779,bst-on", 0);
+	if (uc_data->ext_bst_ctl == -EPROBE_DEFER)
+		uc_data->ext_bst_ctl = of_get_named_gpio(node, "max77779,extbst-ctl", 0);
+	if (uc_data->ext_bst_mode == -EPROBE_DEFER) {
+		uc_data->ext_bst_mode = of_get_named_gpio(node, "max77779,extbst-mode", 0);
+		if (uc_data->ext_bst_mode >= 0)
+			gpio_set_value_cansleep(uc_data->ext_bst_mode, 0);
+	}
+
 	/*  wlc_rx: disable when chgin, CPOUT is safe */
 	if (uc_data->wlc_en == -EPROBE_DEFER)
 		uc_data->wlc_en = of_get_named_gpio(node, "max77779,wlc-en", 0);
 
 	/* OPTIONAL: support wlc_rx -> wlc_rx+otg */
 	uc_data->rx_otg_en = of_property_read_bool(node, "max77779,rx-to-rx-otg-en");
-
-	if (uc_data->ext_bst_ctl == -EPROBE_DEFER)
-		uc_data->ext_bst_ctl = of_get_named_gpio(node, "max77779,extbst-ctl", 0);
 
 	/* OPTIONAL: support reverse 1:2 mode for RTx */
 	uc_data->reverse12_en = of_property_read_bool(node, "max77779,reverse_12-en");
@@ -643,7 +678,9 @@ bool gs201_setup_usecases(struct max77779_usecase_data *uc_data,
 
 void gs201_dump_usecasase_config(struct max77779_usecase_data *uc_data)
 {
-	pr_info("wlc_en:%d, rx_to_rx_otg:%d, reverse12_en:%d, ext_bst_ctl: %d\n",
-		uc_data->wlc_en, uc_data->rx_otg_en, uc_data->reverse12_en, uc_data->ext_bst_ctl);
+	pr_info("bst_on:%d, ext_bst_ctl: %d, ext_bst_mode:%d\n",
+		 uc_data->bst_on, uc_data->ext_bst_ctl, uc_data->ext_bst_mode);
+	pr_info("wlc_en:%d, rx_to_rx_otg:%d, reverse12_en:%d\n",
+		uc_data->wlc_en, uc_data->rx_otg_en, uc_data->reverse12_en);
 }
 

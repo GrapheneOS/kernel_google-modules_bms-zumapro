@@ -10,6 +10,8 @@
 #define MAX77779_CHG_CNFG_05_WCSM_ILIM_1400_MA 0xA
 
 struct max77779_usecase_data {
+	int bst_on;		/* ext boost */
+	int ext_bst_mode;	/* ext boost mode */
 	int otg_enable;		/* enter/exit from OTG cases */
 	int ext_bst_ctl;	/* SEQ VENDOR_EXTBST.EXT_BST_EN */
 	bool rx_otg_en;		/* enable WLC_RX -> WLC_RX + OTG case */
