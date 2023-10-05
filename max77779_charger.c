@@ -58,6 +58,17 @@
 #define CHGR_CHG_CNFG_12_VREG_4P6V			0x1
 #define CHGR_CHG_CNFG_12_VREG_4P7V			0x2
 
+#define WCIN_INLIM_T					(5000)
+#define WCIN_INLIM_HEADROOM_MA				(200000)
+#define WCIN_INLIM_STEP_MV				(50000)
+#define MAX77779_GPIO_WCIN_INLIM_EN			0
+#define MAX77779_NUM_GPIOS				1
+
+#define WCIN_INLIM_VOTER				"WCIN_INLIM"
+
+static int max77779_is_limited(struct max77779_chgr_data *data);
+static int max77779_wcin_current_now(struct max77779_chgr_data *data, int *iic);
+
 static inline int max77779_reg_read(struct regmap *regmap, uint8_t reg,
 				    uint8_t *val)
 {
@@ -1638,18 +1649,18 @@ static int max77779_dcicl_callback(struct gvotable_election *el,
 				   void *value)
 {
 	struct max77779_chgr_data *data = gvotable_get_data(el);
-	int dc_icl = (long)value;
-	const bool suspend = dc_icl == 0;
+	const bool suspend = (long)value == 0;
 	int ret;
 
 	pr_debug("%s: DC_ICL reason=%s, value=%ld suspend=%d\n",
 		 __func__, reason ? reason : "", (long)value, suspend);
 
+	data->dc_icl = (long)value;
 	/* doesn't trigger a CHARGER_MODE */
-	ret = max77779_wcin_set_ilim_max_ua(data, dc_icl);
+	ret = max77779_wcin_set_ilim_max_ua(data, data->dc_icl);
 	if (ret < 0)
 		dev_err(data->dev, "cannot set dc_icl=%d (%d)\n",
-			dc_icl, ret);
+			data->dc_icl, ret);
 
 	/* will trigger a CHARGER_MODE callback */
 	ret = max77779_wcin_input_suspend(data, suspend, "DC_ICL");
@@ -1659,6 +1670,107 @@ static int max77779_dcicl_callback(struct gvotable_election *el,
 
 	return 0;
 }
+
+static void max77779_wcin_inlim_work(struct work_struct *work)
+{
+	struct max77779_chgr_data *data = container_of(work, struct max77779_chgr_data,
+						       wcin_inlim_work.work);
+	int iwcin, wcin_soft_icl, dc_icl_prev;
+	char reason[GVOTABLE_MAX_REASON_LEN];
+
+	mutex_lock(&data->wcin_inlim_lock);
+	if (max77779_wcin_current_now(data, &iwcin))
+		goto done;
+
+	if (!data->dc_icl_votable) {
+		dev_err(&data->client->dev, "Could not get votable: DC_ICL\n");
+		return;
+	}
+
+	 dc_icl_prev = data->dc_icl;
+	 gvotable_get_current_reason(data->dc_icl_votable, reason, GVOTABLE_MAX_REASON_LEN);
+
+	if (!data->wcin_soft_icl)
+		wcin_soft_icl = iwcin + data->wcin_inlim_headroom;
+		/* soft icl < hard icl */
+	else if (data->wcin_inlim_flag && !strcmp(reason, WCIN_INLIM_VOTER))
+		wcin_soft_icl = data->wcin_soft_icl + data->wcin_inlim_step;
+	else if (data->wcin_soft_icl > iwcin + data->wcin_inlim_headroom)
+		wcin_soft_icl = iwcin + data->wcin_inlim_headroom;
+	else
+		wcin_soft_icl = data->wcin_soft_icl;
+
+	gvotable_cast_int_vote(data->dc_icl_votable, WCIN_INLIM_VOTER, wcin_soft_icl, true);
+	dev_dbg(data->dev, "%s: iwcin: %d, soft_icl: %d->%d, prev_dc_icl: %d, limited: %d\n",
+		__func__, iwcin, data->wcin_soft_icl, wcin_soft_icl, dc_icl_prev,
+		data->wcin_inlim_flag);
+	data->wcin_soft_icl = wcin_soft_icl;
+
+done:
+	mutex_unlock(&data->wcin_inlim_lock);
+	schedule_delayed_work(&data->wcin_inlim_work, msecs_to_jiffies(data->wcin_inlim_t));
+}
+
+static void max77779_wcin_inlim_work_en(struct max77779_chgr_data *data, bool en)
+{
+	mutex_lock(&data->wcin_inlim_lock);
+	if (en) {
+		schedule_delayed_work(&data->wcin_inlim_work, 0);
+	} else {
+		cancel_delayed_work(&data->wcin_inlim_work);
+		data->wcin_soft_icl = 0;
+		if (data->dc_icl_votable)
+			gvotable_cast_int_vote(data->dc_icl_votable, WCIN_INLIM_VOTER,
+						data->wcin_soft_icl, false);
+	}
+	mutex_unlock(&data->wcin_inlim_lock);
+}
+
+#if IS_ENABLED(CONFIG_GPIOLIB)
+static int max77779_gpio_get_direction(struct gpio_chip *chip, unsigned int offset)
+{
+	return GPIOF_DIR_OUT;
+}
+
+static int max77779_gpio_get(struct gpio_chip *chip, unsigned int offset)
+{
+	return 0;
+}
+
+static void max77779_gpio_set(struct gpio_chip *chip, unsigned int offset, int value)
+{
+	struct max77779_chgr_data *data = gpiochip_get_data(chip);
+	int ret = 0;
+
+	switch (offset) {
+	case MAX77779_GPIO_WCIN_INLIM_EN:
+		data->wcin_inlim_en = !!value;
+		max77779_wcin_inlim_work_en(data, data->wcin_inlim_en);
+		break;
+
+	default:
+		ret = -EINVAL;
+		break;
+	}
+
+	pr_debug("%s: GPIO offset=%d value=%d ret:%d\n", __func__, offset, value, ret);
+
+	if (ret < 0)
+		dev_err(&data->client->dev, "GPIO%d: value=%d ret:%d\n", offset, value, ret);
+}
+
+static void max77779_gpio_init(struct max77779_chgr_data *data)
+{
+	data->gpio.owner = THIS_MODULE;
+	data->gpio.label = "max77779_gpio";
+	data->gpio.get_direction = max77779_gpio_get_direction;
+	data->gpio.get = max77779_gpio_get;
+	data->gpio.set = max77779_gpio_set;
+	data->gpio.base = -1;
+	data->gpio.ngpio = MAX77779_NUM_GPIOS;
+	data->gpio.can_sleep = true;
+}
+#endif
 
 /*************************
  * WCIN PSY REGISTRATION   *
@@ -2847,6 +2959,7 @@ static u8 max77779_int_mask[MAX77779_CHG_INT_COUNT] = {
 	~(MAX77779_CHG_INT_CHGIN_I_MASK |
 	  MAX77779_CHG_INT_WCIN_I_MASK |
 	  MAX77779_CHG_INT_BAT_I_MASK |
+	  MAX77779_CHG_INT_INLIM_I_MASK |
 	  MAX77779_CHG_INT_THM2_I_MASK),
 	(u8)~(MAX77779_CHG_INT2_INSEL_I_MASK |
 	  MAX77779_CHG_INT2_CHG_STA_TO_I_MASK |
@@ -2890,6 +3003,14 @@ static irqreturn_t max77779_chgr_irq(int irq, void *client)
 
 	pr_debug("max77779_chgr_irq INT : %02x %02x\n", chg_int[0], chg_int[1]);
 
+	/* No need to monitor wcin_inlim when on USB */
+	if (chg_int[0] & MAX77779_CHG_INT_CHGIN_I_MASK) {
+		if (max77779_chgin_is_online(data))
+			max77779_wcin_inlim_work_en(data, false);
+		else if (data->wcin_inlim_en)
+			max77779_wcin_inlim_work_en(data, true);
+	}
+
 	/* always broadcast battery events */
 	broadcast = chg_int[0] & MAX77779_CHG_INT_BAT_I_MASK;
 
@@ -2915,6 +3036,13 @@ static irqreturn_t max77779_chgr_irq(int irq, void *client)
 			atomic_inc(&data->early_topoff_cnt);
 		}
 
+	}
+
+	if (chg_int[0] & MAX77779_CHG_INT_INLIM_I_MASK) {
+		int inlim = max77779_is_limited(data);
+
+		pr_debug("%s: INLIM limited: %d\n", __func__, inlim);
+		data->wcin_inlim_flag = inlim;
 	}
 
 	if (chg_int[1] & MAX77779_CHG_INT2_CHG_STA_CC_I_MASK)
@@ -3299,11 +3427,13 @@ static int max77779_charger_probe(struct i2c_client *client,
 	data->wden = false; /* TODO: read from DT */
 	data->mask = 0xFFFFFFFF;
 	mutex_init(&data->io_lock);
+	mutex_init(&data->wcin_inlim_lock);
 	atomic_set(&data->insel_cnt, 0);
 	atomic_set(&data->early_topoff_cnt, 0);
 	i2c_set_clientdata(client, data);
 
 	INIT_DELAYED_WORK(&data->cop_enable_work, max77779_cop_enable_work);
+	INIT_DELAYED_WORK(&data->wcin_inlim_work, max77779_wcin_inlim_work);
 
 	data->usecase_wake_lock = wakeup_source_register(NULL, "max77779-usecase");
 	if (!data->usecase_wake_lock) {
@@ -3422,8 +3552,33 @@ static int max77779_charger_probe(struct i2c_client *client,
 
 	data->uc_data.dcin_is_dock = of_property_read_bool(dev->of_node, "max77779,dcin-is-dock");
 
+	ret = of_property_read_u32(dev->of_node, "max77779,wcin-inlim-period", &data->wcin_inlim_t);
+	if (ret < 0)
+		data->wcin_inlim_t = WCIN_INLIM_T;
+
+	ret = of_property_read_u32(dev->of_node, "max77779,wcin-inlim-headroom",
+				   &data->wcin_inlim_headroom);
+	if (ret < 0)
+		data->wcin_inlim_headroom = WCIN_INLIM_HEADROOM_MA;
+
+	ret = of_property_read_u32(dev->of_node, "max77779,wcin_inlim_step", &data->wcin_inlim_step);
+	if (ret < 0)
+		data->wcin_inlim_step = WCIN_INLIM_STEP_MV;
+
 	data->init_complete = 1;
 	data->resume_complete = 1;
+
+#if IS_ENABLED(CONFIG_GPIOLIB)
+	max77779_gpio_init(data);
+	data->gpio.parent = &client->dev;
+	data->gpio.of_node = of_find_node_by_name(client->dev.of_node,
+							    data->gpio.label);
+	if (!data->gpio.of_node)
+		dev_err(&client->dev, "Failed to find %s DT node\n", data->gpio.label);
+
+	ret = devm_gpiochip_add_data(&client->dev, &data->gpio, data);
+	dev_info(&client->dev, "%d GPIOs registered ret: %d\n", data->gpio.ngpio, ret);
+#endif
 
 	/* other drivers (ex tcpci) need this. */
 	ret = max77779_setup_votables(data);

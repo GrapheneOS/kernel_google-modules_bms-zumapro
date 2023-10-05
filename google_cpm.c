@@ -3726,7 +3726,7 @@ static void gcpm_fcc_retry_work(struct work_struct *work)
 			gcpm->fcc_retry_limit, ret);
 
 		if (ret == -EAGAIN)
-			schedule_delayed_work(&gcpm->fcc_retry_work, GCPM_FCC_RETRY_INTERVAL);
+			schedule_delayed_work(&gcpm->fcc_retry_work, msecs_to_jiffies(GCPM_FCC_RETRY_INTERVAL));
 	}
 
 exit:
