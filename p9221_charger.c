@@ -1156,10 +1156,13 @@ static void p9221_set_offline(struct p9221_charger_data *charger)
 	charger->online_at = 0;
 	charger->check_rp = RP_NOTSET;
 	charger->cc_vout_ready = false;
-	charger->set_auth_icl = false;
 	cancel_delayed_work(&charger->charge_stats_hda_work);
 	p9221_dump_charge_stats(charger);
 	mutex_unlock(&charger->stats_lock);
+
+	mutex_lock(&charger->auth_lock);
+	charger->set_auth_icl = false;
+	mutex_unlock(&charger->auth_lock);
 
 	charger->sw_ramp_done = false;
 	charger->force_bpp = false;
@@ -5764,22 +5767,21 @@ static ssize_t authstart_store(struct device *dev,
 	const bool need_auth = charger->is_mfg_google ||
 			       charger->mfg == WLC_MFG_108_FOR_GOOGLE;
 	const ktime_t timeout = ms_to_ktime(WLCDC_DEBOUNCE_TIME_S * 1000);
-	int ret;
+	int ret = 0;
 
 	if (buf[0] != '1' || !charger->chip_is_calibrated(charger))
 		return -EINVAL;
 
-	if (charger->set_auth_icl)
-		return 0;
-
-	if (!need_auth || !is_enhanced) {
-		charger->set_auth_icl = true;
-		return 0;
-	}
-
 	mutex_lock(&charger->auth_lock);
 
+	if (charger->set_auth_icl)
+		goto unlock;
+
 	charger->set_auth_icl = true;
+
+	if (!need_auth || !is_enhanced)
+		goto unlock;
+
 	ret = p9221_set_auth_dc_icl(charger, true);
 	if (ret < 0)
 		dev_err(&charger->client->dev, "cannot set Auth ICL: %d\n", ret);
@@ -5789,6 +5791,7 @@ static ssize_t authstart_store(struct device *dev,
 	schedule_delayed_work(&charger->auth_dc_icl_work,
 			      msecs_to_jiffies(WLCDC_AUTH_CHECK_INIT_DELAY_MS));
 
+unlock:
 	mutex_unlock(&charger->auth_lock);
 
 	return ret;
