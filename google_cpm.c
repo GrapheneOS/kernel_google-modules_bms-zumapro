@@ -1972,6 +1972,19 @@ static void gcpm_route_cc_max_to_main_charger(struct gcpm_drv *gcpm,
 		       "to default:%s (%d)\n", gcpm_psy_name(main_chg_psy), ret);
 }
 
+static int gcpm_reset_dc(struct gcpm_drv *gcpm)
+{
+	int i;
+
+	/* send reset event to other dc chargers on disconnect */
+	for (i = 0; i < gcpm->chg_psy_count; i++) {
+		if (!gcpm->chg_psy_avail[i] || !gcpm_is_dc(gcpm, i))
+			continue;
+		GPSY_SET_PROP(gcpm->chg_psy_avail[i], GBMS_PROP_CHARGE_DISABLE, 1);
+	}
+
+	return 0;
+}
 /* --------------------------------------------------------------------- */
 
 
@@ -2036,6 +2049,8 @@ static int gcpm_psy_set_property(struct power_supply *psy,
 			if (ret < 0)
 				pr_debug("%s: fail 2 offline pps, dc_state=%d (%d)\n",
 					__func__, gcpm->dc_state, ret);
+
+			gcpm_reset_dc(gcpm);
 
 			/* reset to the default charger, and clear taper */
 			gcpm->dc_index = GCPM_DEFAULT_CHARGER;
