@@ -1760,7 +1760,7 @@ static int max77779_fg_property_is_writeable(struct power_supply *psy,
 static int max77779_fg_monitor_log_data(struct max77779_fg_chip *chip, bool force_log)
 {
 	u16 data, repsoc, vfsoc, avcap, repcap, fullcap, fullcaprep;
-	u16 fullcapnom, qh0, qh, dqacc, dpacc, qresidual, fstat;
+	u16 fullcapnom, qh0, qh, dqacc, dpacc, qresidual, fstat, rcomp0, cycles;
 	u16 learncfg, tempco, mixcap, vfremcap, vcell, ibat;
 	int ret = 0, charge_counter = -1;
 
@@ -1844,6 +1844,14 @@ static int max77779_fg_monitor_log_data(struct max77779_fg_chip *chip, bool forc
 	if (ret < 0)
 		return ret;
 
+	ret = REGMAP_READ(&chip->regmap_debug, MAX77779_FG_NVM_nRComp0, &rcomp0);
+	if (ret < 0)
+		return ret;
+
+	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_Cycles, &cycles);
+	if (ret < 0)
+		return ret;
+
 	ret = max77779_fg_update_battery_qh_based_capacity(chip);
 	if (ret == 0)
 		charge_counter = reg_to_capacity_uah(chip->current_capacity, chip);
@@ -1852,7 +1860,8 @@ static int max77779_fg_monitor_log_data(struct max77779_fg_chip *chip, bool forc
 			     "%s %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
 			     " %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
 			     " %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
-			     " %02X:%04X %02X:%04X CC:%d", chip->max77779_fg_psy_desc.name,
+			     " %02X:%04X %02X:%04X %02X:%04X %02X:%04X CC:%d",
+			     chip->max77779_fg_psy_desc.name,
 			     MAX77779_FG_RepSOC, data, MAX77779_FG_VFSOC, vfsoc,
 			     MAX77779_FG_AvCap, avcap, MAX77779_FG_RepCap, repcap,
 			     MAX77779_FG_FullCap, fullcap, MAX77779_FG_FullCapRep, fullcaprep,
@@ -1861,7 +1870,9 @@ static int max77779_fg_monitor_log_data(struct max77779_fg_chip *chip, bool forc
 			     MAX77779_FG_QResidual, qresidual, MAX77779_FG_FStat, fstat,
 			     MAX77779_FG_LearnCfg, learncfg, MAX77779_FG_NVM_nTempCo, tempco,
 			     MAX77779_FG_MixCap, mixcap, MAX77779_FG_VFRemCap, vfremcap,
-			     MAX77779_FG_VCell, vcell, MAX77779_FG_Current, ibat, charge_counter);
+			     MAX77779_FG_VCell, vcell, MAX77779_FG_Current, ibat,
+			     MAX77779_FG_NVM_nRComp0, rcomp0, MAX77779_FG_Cycles, cycles,
+			     charge_counter);
 
 	chip->pre_repsoc = repsoc;
 
