@@ -683,6 +683,7 @@ struct p9221_charger_platform_data {
 	int				switch_gpio;
 	int				boost_gpio;
 	int				dc_switch_gpio;
+	int				wcin_inlim_en_gpio;
 	int				qi_vbus_en;
 	int				qi_vbus_en_act_low;
 	int				wlc_en;

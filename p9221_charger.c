@@ -6878,6 +6878,10 @@ static bool p9xxx_setup_rx(struct device_node *node,
 	if (pdata->ldo_en_gpio > 0)
 		pr_info("%s: QI_EXT_LDO_EN gpio:%d\n", __func__, pdata->ldo_en_gpio);
 
+	pdata->wcin_inlim_en_gpio = of_get_named_gpio(node, "google,wcin_inlim_en", 0);
+	if (pdata->wcin_inlim_en_gpio > 0)
+		pr_info("%s: WCIN_INLIM_EN gpio: %d\n", __func__, pdata->wcin_inlim_en_gpio);
+
 	if (pdata->qien_gpio > 0)
 		gpio_direction_output(pdata->qien_gpio, 0);
 
@@ -6892,11 +6896,16 @@ static bool p9xxx_setup_rx(struct device_node *node,
 		gpio_direction_output(pdata->slct_gpio,
 				      pdata->slct_value);
 
+	if (pdata->wcin_inlim_en_gpio > 0)
+		gpio_direction_output(pdata->wcin_inlim_en_gpio, 0);
+
+
 	return pdata->qien_gpio != -EPROBE_DEFER &&
 	       pdata->qi_vbus_en != -EPROBE_DEFER &&
 	       pdata->wlc_en != -EPROBE_DEFER &&
 	       pdata->slct_gpio != -EPROBE_DEFER &&
-	       pdata->ldo_en_gpio != -EPROBE_DEFER;
+	       pdata->ldo_en_gpio != -EPROBE_DEFER &&
+	       pdata->wcin_inlim_en_gpio != -EPROBE_DEFER;
 }
 
 static bool p9xxx_setup_tx(struct device_node *node,
