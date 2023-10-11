@@ -1327,7 +1327,7 @@ static ssize_t debugfs_enable_vote(struct file *filp,
 	char reason[GVOTABLE_MAX_REASON_LEN] = { 0 };
 	int ret;
 
-	ret = simple_write_to_buffer(reason, sizeof(reason), ppos, user_buf,
+	ret = simple_write_to_buffer(reason, (sizeof(reason)-1), ppos, user_buf,
 				     count);
 	if (ret < 0)
 		return -EFAULT;
@@ -1351,7 +1351,7 @@ static ssize_t debugfs_disable_vote(struct file *filp,
 	char reason[GVOTABLE_MAX_REASON_LEN] = { 0 };
 	int ret;
 
-	ret = simple_write_to_buffer(reason, sizeof(reason), ppos, user_buf,
+	ret = simple_write_to_buffer(reason, (sizeof(reason)-1), ppos, user_buf,
 				     count);
 	if (ret < 0)
 		return -EFAULT;
