@@ -9,6 +9,7 @@ GBMS_MODULES =	GOOGLE_BMS \
 		GOOGLE_BEE \
 		GOOGLE_DUAL_BATT_GAUGE \
 		GOOGLE_DOCK \
+		GOOGLE_CCD \
 		USB_OVERHEAT_MITIGATION \
 		PMIC_MAX77729 \
 		UIC_MAX77729 \
@@ -73,6 +74,9 @@ google-cpm-objs += google_dc_pps.o
 
 # google_dock
 obj-$(CONFIG_GOOGLE_DOCK)	+= google_dock.o
+
+# google_ccd
+obj-$(CONFIG_GOOGLE_CCD)	+= google_ccd.o
 
 # max7729f drivers for the single SSID
 obj-$(CONFIG_PMIC_MAX77729)	+= max77729-pmic.o
@@ -199,6 +203,7 @@ CFLAGS_google_bms.o += -Wno-enum-conversion
 CFLAGS_google_cpm.o += $(WENUMS)
 CFLAGS_google_dual_batt_gauge.o += $(WENUMS)
 CFLAGS_google_dock.o += $(WENUMS)
+CFLAGS_google_ccd.o += $(WENUMS)
 CFLAGS_p9221_charger.o += $(WENUMS)
 CFLAGS_max77779_sp.o += -Wno-unused-function $(WENUMS)
 CFLAGS_ln8411_driver.o += $(WENUMS)

@@ -50,6 +50,12 @@ config GOOGLE_DOCK
           Say Y here to choose the Google Dock.
           The driver handles dock driver and called by google charger.
 
+config GOOGLE_CCD
+        tristate "Google Charger Combine Driver"
+        help
+          Say Y here to choose the Charger Combine Driver.
+          The driver handles multiple chargers and called by google charger.
+
 config USB_OVERHEAT_MITIGATION
 	tristate "Google USB Overheat Mitigation"
 	help
