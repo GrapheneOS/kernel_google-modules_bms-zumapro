@@ -49,6 +49,7 @@ struct pca9468_platform_data {
 	unsigned int	sc_clk_dither_rate;
 	unsigned int	sc_clk_dither_limit;
 	bool		sc_clk_dither_en;
+	int		ta_max_cur_mult;
 
 #ifdef CONFIG_THERMAL
 	const char *usb_tz_name;

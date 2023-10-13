@@ -486,7 +486,7 @@ int pca9468_get_rx_max_power(struct pca9468_charger *pca9468)
 		return ret;
 	}
 
-	pca9468->ta_max_cur = pro_val.intval;
+	pca9468->ta_max_cur = pro_val.intval * pca9468->pdata->ta_max_cur_mult;
 	pca9468->ta_max_pwr = (pca9468->ta_max_vol / 1000) *
 			      (pca9468->ta_max_cur / 1000);
 

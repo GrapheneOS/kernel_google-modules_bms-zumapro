@@ -666,9 +666,7 @@ static int gbatt_get_capacity(struct batt_drv *batt_drv);
 static int ssoc_get_capacity(const struct batt_ssoc_state *ssoc);
 static int batt_ttf_estimate(ktime_t *res, struct batt_drv *batt_drv);
 
-
 static int gbatt_restore_capacity(struct batt_drv *batt_drv);
-static int batt_ttf_estimate(ktime_t *res, struct batt_drv *batt_drv);
 
 static int batt_get_filter_temp(struct batt_temp_filter *temp_filter)
 {
@@ -7487,6 +7485,10 @@ static ssize_t health_index_stats_show(struct device *dev,
 	struct health_data *health_data = &batt_drv->health_data;
 	int len = 0, i;
 
+	/* might be POR and FG not ready */
+	if (bhi_data->battery_age <= 0 && bhi_data->cycle_count <= 0)
+		return len;
+
 	mutex_lock(&batt_drv->chg_lock);
 
 	for (i = 0; i < BHI_ALGO_MAX; i++) {
@@ -7623,7 +7625,6 @@ static const DEVICE_ATTR_RO(manufacturing_date);
 
 #define FIRST_USAGE_DATE_DEFAULT	1606780800 //2020-12-01
 #define FIRST_USAGE_DATE_MAX		2147483647 //2038-01-19
-#define YEAR_IN_SECOND			31536000
 
 static ssize_t first_usage_date_store(struct device *dev,
 				      struct device_attribute *attr,
@@ -7680,10 +7681,6 @@ static ssize_t first_usage_date_store(struct device *dev,
 			/* not sooner then manufacture date */
 			if (date_in_epoch < mdate_in_epoch)
 				date_in_epoch = mdate_in_epoch;
-
-			/* not later than manufacture date plus two years */
-			if (date_in_epoch > (mdate_in_epoch + YEAR_IN_SECOND * 2))
-				date_in_epoch = (mdate_in_epoch + YEAR_IN_SECOND * 2);
 		}
 		rtc_time64_to_tm(date_in_epoch, &tm);
 
