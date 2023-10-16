@@ -2537,13 +2537,11 @@ static ssize_t show_fship_dtls(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	ret = max777x9_pmic_reg_read(data->pmic_i2c_client,
-				     MAX77779_FSHIP_EXIT_DTLS,
-				     &pmic_rd, 1);
+	ret = max777x9_pmic_reg_read(data->pmic_i2c_client, MAX77779_PMIC_INT_MASK, &pmic_rd, 1);
 	if (ret < 0)
 		return -EIO;
 
-	if (pmic_rd & MAX77779_PMIC_INT_MASK_FSHIP_NOT_RD_MASK) {
+	if (_max77779_pmic_int_mask_fship_not_rd_get(pmic_rd)) {
 		u8 fship_dtls;
 
 		ret = max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_04,
@@ -2554,9 +2552,8 @@ static ssize_t show_fship_dtls(struct device *dev,
 		data->fship_dtls =
 			_max77779_chg_details_04_fship_exit_dtls_get(fship_dtls);
 
-		pmic_rd &= MAX77779_CHG_DETAILS_04_FSHIP_EXIT_DTLS_CLEAR;
-		ret = max777x9_pmic_reg_write(data->pmic_i2c_client,
-					      MAX77779_FSHIP_EXIT_DTLS,
+		pmic_rd = _max77779_pmic_int_mask_fship_not_rd_set(pmic_rd, 1);
+		ret = max777x9_pmic_reg_write(data->pmic_i2c_client, MAX77779_PMIC_INT_MASK,
 					      &pmic_rd, 1);
 		if (ret < 0)
 			pr_err("FSHIP: cannot update RD (%d)\n", ret);

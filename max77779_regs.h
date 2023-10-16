@@ -10,9 +10,6 @@
 
 #include "max77779_v0719_prelim_regs.h"
 
-/* b/257314583 FSHIP_EXIT_DTLS is still read only */
-#define MAX77779_FSHIP_EXIT_DTLS	  MAX77779_PMIC_INT_MASK
-
 /* TODO: b/257309885 do we still need this? */
 #define MAX77779_CHG_CNFG_11_OTG_VBYP_5000MV	0x0
 #define MAX77779_CHG_CNFG_11_OTG_VBYP_5100MV	0x2
