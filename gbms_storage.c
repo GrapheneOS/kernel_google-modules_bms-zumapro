@@ -818,7 +818,7 @@ static ssize_t debug_export_tag(struct file *filp,
 	gbms_tag_cstr_t name = { 0 };
 	struct dentry *de;
 	gbms_tag_t tag;
-	char temp[32];
+	char temp[32] = {0};
 	int ret;
 
 	if (!rootdir)

@@ -5817,7 +5817,7 @@ static ssize_t debug_set_ssoc_uicurve(struct file *filp,
 {
 	struct batt_drv *batt_drv = (struct batt_drv *)filp->private_data;
 	int ret, curve_type;
-	char buf[8];
+	char buf[8] = {0};
 
 	ret = simple_write_to_buffer(buf, sizeof(buf), ppos, user_buf, count);
 	if (!ret)
