@@ -2412,7 +2412,8 @@ static int pca9468_apply_new_vfloat(struct pca9468_charger *pca9468)
 		goto error_done;
 
 	/* Restart the process if tier switch happened (either direction) */
-	if (abs(fv_uv - pca9468->fv_uv) > PCA9468_TIER_SWITCH_DELTA) {
+	if (pca9468->charging_state == DC_STATE_CV_MODE &&
+	    abs(fv_uv - pca9468->fv_uv) > PCA9468_TIER_SWITCH_DELTA) {
 		ret = pca9468_reset_dcmode(pca9468);
 		if (ret < 0) {
 			pr_err("%s: cannot reset dcmode (%d)\n", __func__, ret);
