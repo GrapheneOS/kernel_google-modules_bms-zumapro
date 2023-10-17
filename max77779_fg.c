@@ -169,6 +169,8 @@ struct max77779_fg_chip {
 	bool fw_check_done;
 	bool is_fake_temp;
 	int fake_temperature;
+
+	bool current_offset_check_done;
 };
 
 static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj);
@@ -1285,6 +1287,92 @@ static int max77779_fg_get_temp(struct max77779_fg_chip *chip)
 		return chip->fake_temperature;
 
 	return reg_to_deci_deg_cel(data);
+}
+
+static int max77779_adjust_cgain(struct max77779_fg_chip *chip, unsigned int otp_revision)
+{
+	u16 i_gtrim, i_otrim, ro_cgain, v_cgain;
+	int i_otrim_real;
+	int err;
+
+	err = REGMAP_READ(&chip->regmap, MAX77779_FG_TrimIbattGain, &i_gtrim);
+	if (err < 0)
+		return err;
+
+	err = REGMAP_READ(&chip->regmap, MAX77779_FG_TrimBattOffset, &i_otrim);
+	if (err < 0)
+		return err;
+
+	/* i_gtrim_real = ((-1) * (i_gtrim & 0x0800)) | (i_gtrim & 0x07FF); */
+	i_otrim_real = ((-1) * (i_otrim & 0x0080)) | (i_otrim & 0x007F);
+
+	err = REGMAP_READ(&chip->regmap, MAX77779_FG_CGain, &ro_cgain);
+	if (err < 0)
+		return err;
+
+	v_cgain = ro_cgain & 0xFFC0;
+	if (i_otrim_real > 32)
+		v_cgain = v_cgain | 0x20; /* -32 & 0x3F */
+	else if (i_otrim_real < -31)
+		v_cgain = v_cgain | 0x1F; /* 31 & 0x3F */
+	else
+		v_cgain = v_cgain | (((-1) * i_otrim_real) & 0x3F);
+
+	gbms_logbuffer_devlog(chip->monitor_log, chip->dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+			      "OTP_VER:%d,%02X:%04X,%02X:%04X,%02X:%04X,trim:%d,new Cgain:%04X\n",
+			      otp_revision, MAX77779_FG_TrimIbattGain, i_gtrim,
+			      MAX77779_FG_TrimBattOffset, i_otrim, MAX77779_FG_CGain, ro_cgain,
+			      i_otrim_real, v_cgain);
+
+	if (v_cgain == ro_cgain)
+		return 0;
+
+	err = MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_CGain, v_cgain);
+	if (err < 0)
+		return err;
+
+	return 0;
+}
+
+#define CHECK_CURRENT_OFFSET_OTP_REVISION	2
+static void max77779_current_offset_check(struct max77779_fg_chip *chip)
+{
+	struct device_node *dn;
+	unsigned int otp_revision;
+	int ret;
+
+	if (chip->current_offset_check_done)
+		return;
+
+	if (!chip->pmic_i2c_client) {
+		dn = of_parse_phandle(chip->dev->of_node, "max77779,pmic", 0);
+		if (!dn) {
+			dev_err(chip->dev, "failed to get node max77779,pmic\n");
+			return;
+		}
+
+		chip->pmic_i2c_client = of_find_i2c_device_by_node(dn);
+		if (!chip->pmic_i2c_client) {
+			dev_err(chip->dev, "failed to get pmic_i2c_client\n");
+			return;
+		}
+	}
+
+	ret = max77779_external_pmic_reg_read(chip->pmic_i2c_client, MAX77779_PMIC_OTP_REVISION,
+					      &otp_revision);
+	if (ret < 0) {
+		dev_err(chip->dev, "failed to read PMIC_OTP_REVISION\n");
+		return;
+	}
+
+	if (otp_revision > CHECK_CURRENT_OFFSET_OTP_REVISION)
+		goto done;
+
+	ret = max77779_adjust_cgain(chip, otp_revision);
+	if (ret < 0)
+		return;
+done:
+	chip->current_offset_check_done = true;
 }
 
 static int max77779_fg_get_property(struct power_supply *psy,
@@ -2697,6 +2785,9 @@ static void max77779_fg_model_work(struct work_struct *work)
 		dev_info(chip->dev, "FG Model OK, ver=%d next_update=%d\n",
 			 max77779_fg_model_version(chip->model_data),
 			 chip->model_next_update);
+		/* force check again after model loading */
+		chip->current_offset_check_done = false;
+		max77779_current_offset_check(chip);
 		max77779_fg_prime_battery_qh_capacity(chip);
 		power_supply_changed(chip->psy);
 	}
@@ -2978,6 +3069,8 @@ static void max77779_fg_init_work(struct work_struct *work)
 	max77779_fg_irq_thread_fn(-1, chip);
 
 	max77779_fg_update_cycle_count(chip);
+
+	max77779_current_offset_check(chip);
 
 	dev_info(chip->dev, "init_work done\n");
 }
