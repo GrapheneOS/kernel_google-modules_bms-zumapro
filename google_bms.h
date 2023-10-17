@@ -614,6 +614,7 @@ enum bhi_algo {
 	BHI_ALGO_MIX_N_MATCH 	= 6,
 	BHI_ALGO_DEBUG		= 7,
 	BHI_ALGO_INDI		= 8, /* individual conditions check */
+	BHI_ALGO_DTOOL		= 9,
 	BHI_ALGO_MAX,
 };
 

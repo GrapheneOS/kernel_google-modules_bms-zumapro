@@ -4231,6 +4231,16 @@ static int batt_bhi_data_load(struct batt_drv *batt_drv)
 	return 0;
 }
 
+static int batt_bhi_map_algo(int algo, const struct health_data *health_data)
+{
+	if (algo != BHI_ALGO_DTOOL)
+		return algo;
+
+	/* diagnostic tool use BHI_ALGO_ACHI_B as default when bhi_algo is disabled */
+	return health_data->bhi_algo != BHI_ALGO_DISABLED ?
+	       health_data->bhi_algo : BHI_ALGO_ACHI_B;
+}
+
 /* call holding mutex_lock(&batt_drv->chg_lock)  */
 static int batt_bhi_stats_update(struct batt_drv *batt_drv)
 {
@@ -7137,22 +7147,25 @@ static ssize_t health_index_stats_show(struct device *dev,
 
 	mutex_lock(&batt_drv->chg_lock);
 
-	for (i = 0; i < BHI_ALGO_MAX; i++) {
+	for (i = BHI_ALGO_DISABLED; i < BHI_ALGO_MAX; i++) {
 		int health_index, health_status, cap_index, imp_index, sd_index;
+		const int use_algo = batt_bhi_map_algo(i, health_data);
 
-		cap_index = bhi_calc_cap_index(i, batt_drv);
-		imp_index = bhi_calc_imp_index(i, health_data);
-		sd_index = bhi_calc_sd_index(i, health_data);
-		health_index = bhi_calc_health_index(i, health_data, cap_index, imp_index, sd_index);
-		health_status = bhi_calc_health_status(i, BHI_ROUND_INDEX(health_index), health_data);
+		cap_index = bhi_calc_cap_index(use_algo, batt_drv);
+		imp_index = bhi_calc_imp_index(use_algo, health_data);
+		sd_index = bhi_calc_sd_index(use_algo, health_data);
+		health_index = bhi_calc_health_index(use_algo, health_data, cap_index,
+						     imp_index, sd_index);
+		health_status = bhi_calc_health_status(use_algo, BHI_ROUND_INDEX(health_index),
+						       health_data);
 		if (health_index < 0)
 			continue;
 
 		pr_debug("bhi: %d: %d, %d,%d,%d %d,%d,%d %d,%d\n", i,
 			 health_status, health_index, cap_index, imp_index,
 			 bhi_data->swell_cumulative,
-			 bhi_health_get_capacity(i, bhi_data),
-			 bhi_health_get_impedance(i, bhi_data),
+			 bhi_health_get_capacity(use_algo, bhi_data),
+			 bhi_health_get_impedance(use_algo, bhi_data),
 			 bhi_data->battery_age,
 			 bhi_data->cycle_count);
 
@@ -7164,8 +7177,8 @@ static ssize_t health_index_stats_show(struct device *dev,
 				 BHI_ROUND_INDEX(cap_index),
 				 BHI_ROUND_INDEX(imp_index),
 				 bhi_data->swell_cumulative,
-				 bhi_health_get_capacity(i, bhi_data),
-				 bhi_health_get_impedance(i, bhi_data),
+				 bhi_health_get_capacity(use_algo, bhi_data),
+				 bhi_health_get_impedance(use_algo, bhi_data),
 				 bhi_data->battery_age,
 				 bhi_data->cycle_count,
 				 batt_bpst_stats_update(batt_drv));
@@ -7189,6 +7202,9 @@ static ssize_t health_algo_store(struct device *dev,
 	ret = kstrtoint(buf, 0, &value);
 	if (ret < 0)
 		return ret;
+
+	if (value < BHI_ALGO_DISABLED || value >= BHI_ALGO_MAX || value == BHI_ALGO_DTOOL)
+		return -EINVAL;
 
 	mutex_lock(&batt_drv->chg_lock);
 	batt_drv->health_data.bhi_algo = value;
