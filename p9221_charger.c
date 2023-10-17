@@ -3599,20 +3599,17 @@ static void p9221_notifier_check_dc(struct p9221_charger_data *charger)
 	cancel_delayed_work(&charger->dcin_work);
 	del_timer(&charger->vrect_timer);
 
+	mutex_lock(&charger->irq_det_lock);
 	if (charger->online_spoof && dc_in == 1) {
 		/* stop spoofing is queued */
-		if (cancel_delayed_work(&charger->stop_online_spoof_work)) {
-			logbuffer_prlog(charger->log, "dc=1: online_spoof=0");
-			if (charger->online_spoof)
-				disable_irq(charger->pdata->irq_det_int);
-			charger->online_spoof = false;
-		} else {
+		if (!cancel_delayed_work(&charger->stop_online_spoof_work))
 			dev_err(&charger->client->dev, "Error: no spoof work even though spoof=1 && dc=1\n");
-			if (charger->online_spoof)
-				disable_irq(charger->pdata->irq_det_int);
-			charger->online_spoof = false;
-		}
+		logbuffer_prlog(charger->log, "dc=1: online_spoof=0");
+		disable_irq_wake(charger->pdata->irq_det_int);
+		disable_irq(charger->pdata->irq_det_int);
+		charger->online_spoof = false;
 	}
+	mutex_unlock(&charger->irq_det_lock);
 
 	if (charger->log) {
 		u32 vout_uv;
@@ -6337,17 +6334,25 @@ out:
 	return IRQ_HANDLED;
 }
 
+/*
+ * This is a timeout function to disable the online_spoof when WLC gets re-enabled. It will
+ * only be called in the event that DCIN doesn't come back for 2 seconds even though WLC is
+ * no longer disabled.
+ */
 static void p9xxx_stop_online_spoof_work(struct work_struct *work)
 {
 	struct p9221_charger_data *charger = container_of(work,
 			struct p9221_charger_data, stop_online_spoof_work.work);
 
+	mutex_lock(&charger->irq_det_lock);
 	if (charger->online_spoof) {
 		/* timeout after WLC re-enabled */
 		logbuffer_prlog(charger->log, "timeout: online_spoof=0");
+		disable_irq_wake(charger->pdata->irq_det_int);
 		disable_irq(charger->pdata->irq_det_int);
 		charger->online_spoof = false;
 	}
+	mutex_unlock(&charger->irq_det_lock);
 }
 
 static void p9xxx_change_det_status_work(struct work_struct *work)
@@ -6358,15 +6363,18 @@ static void p9xxx_change_det_status_work(struct work_struct *work)
 
 	/* Debounce det status */
 	logbuffer_log(charger->log, "irq_det debounce: val=%d", det_gpio);
+	mutex_lock(&charger->irq_det_lock);
 	if (charger->det_status != det_gpio) {
 		if (det_gpio == 1 && charger->det_status == 0 && charger->online_spoof) {
 			logbuffer_prlog(charger->log, "det=0: online_spoof=0");
+			disable_irq_wake(charger->pdata->irq_det_int);
 			disable_irq(charger->pdata->irq_det_int);
 			charger->online_spoof = false;
 		}
 		charger->det_status = det_gpio;
 		power_supply_changed(charger->wc_psy);
 	}
+	mutex_unlock(&charger->irq_det_lock);
 	__pm_relax(charger->det_status_ws);
 }
 
@@ -7291,6 +7299,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	mutex_init(&charger->auth_lock);
 	mutex_init(&charger->renego_lock);
 	mutex_init(&charger->fod_lock);
+	mutex_init(&charger->irq_det_lock);
 	timer_setup(&charger->vrect_timer, p9221_vrect_timer_handler, 0);
 	timer_setup(&charger->align_timer, p9221_align_timer_handler, 0);
 	INIT_DELAYED_WORK(&charger->dcin_work, p9221_dcin_work);
@@ -7503,9 +7512,10 @@ static int p9221_charger_probe(struct i2c_client *client,
 			dev_err(&client->dev, "Failed to request IRQ_DET\n");
 			return ret;
 		}
+		mutex_lock(&charger->irq_det_lock);
 		charger->det_status = gpio_get_value(charger->pdata->irq_det_gpio);
-		enable_irq_wake(charger->pdata->irq_det_int);
 		disable_irq(charger->pdata->irq_det_int);
+		mutex_unlock(&charger->irq_det_lock);
 	}
 
 	charger->last_capacity = -1;
