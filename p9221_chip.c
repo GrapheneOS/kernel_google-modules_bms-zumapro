@@ -2130,11 +2130,6 @@ static int ra9530_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 	max_wait_time = chgr->de_wait_prop_irq_ms > 0 ?
 			chgr->de_wait_prop_irq_ms : chgr->pdata->wait_prop_irq_ms;
 
-	if (val8 == P9XXX_SYS_OP_MODE_PROPRIETARY) {
-		chgr->prop_mode_en = true;
-		goto request_pwr;
-	}
-
 	ret = p9xxx_chip_get_tx_mfg_code(chgr, &chgr->mfg);
 	if (chgr->mfg != WLC_MFG_GOOGLE) {
 		dev_err(&chgr->client->dev,"PROP_MODE: mfg code =%02x\n", chgr->mfg);
@@ -2191,6 +2186,11 @@ static int ra9530_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 	/*
 	 * Enable Proprietary Mode: write 0x01 to 0x4F (0x4E bit8)
 	 */
+	if (val8 == P9XXX_SYS_OP_MODE_PROPRIETARY) {
+		chgr->prop_mode_en = true;
+		goto request_pwr;
+	}
+
 	ret = chgr->chip_set_cmd(chgr, PROP_MODE_EN_CMD);
 	if (ret) {
 		dev_err(&chgr->client->dev, "PROP_MODE: fail to send PROP_MODE_EN_CMD\n");
