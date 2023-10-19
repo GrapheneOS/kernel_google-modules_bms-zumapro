@@ -15,6 +15,7 @@ struct max77779_usecase_data {
 	int otg_enable;		/* enter/exit from OTG cases */
 	int ext_bst_ctl;	/* SEQ VENDOR_EXTBST.EXT_BST_EN */
 	bool rx_otg_en;		/* enable WLC_RX -> WLC_RX + OTG case */
+	bool ext_otg_only;	/* use external OTG only */
 	int dc_sw_gpio;		/* WLC-DC switch enable */
 
 	int vin_is_valid;	/* MAX20339 STATUS1.vinvalid */

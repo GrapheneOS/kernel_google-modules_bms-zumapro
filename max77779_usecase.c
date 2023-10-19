@@ -521,7 +521,10 @@ int gs201_to_usecase(struct max77779_usecase_data *uc_data, int use_case)
 	case GSU_MODE_WLC_RX:
 	case GSU_MODE_DOCK:
 		if (from_uc == GSU_MODE_USB_OTG_WLC_RX) {
-			ret = gs201_otg_mode(uc_data, GSU_MODE_USB_OTG);
+			if (uc_data->ext_otg_only)
+				ret = gs201_otg_enable(uc_data, false);
+			else
+				ret = gs201_otg_mode(uc_data, GSU_MODE_USB_OTG);
 		}
 		break;
 	case GSU_MODE_USB_CHG:
@@ -670,6 +673,9 @@ bool gs201_setup_usecases(struct max77779_usecase_data *uc_data,
 	/* OPTIONAL: support wlc_rx -> wlc_rx+otg */
 	uc_data->rx_otg_en = of_property_read_bool(node, "max77779,rx-to-rx-otg-en");
 
+	/* OPTIONAL: support external boost OTG only */
+	uc_data->ext_otg_only = of_property_read_bool(node, "max77779,ext-otg-only");
+
 	/* OPTIONAL: support reverse 1:2 mode for RTx */
 	uc_data->reverse12_en = of_property_read_bool(node, "max77779,reverse_12-en");
 
@@ -680,7 +686,9 @@ void gs201_dump_usecasase_config(struct max77779_usecase_data *uc_data)
 {
 	pr_info("bst_on:%d, ext_bst_ctl: %d, ext_bst_mode:%d\n",
 		 uc_data->bst_on, uc_data->ext_bst_ctl, uc_data->ext_bst_mode);
-	pr_info("wlc_en:%d, rx_to_rx_otg:%d, reverse12_en:%d\n",
-		uc_data->wlc_en, uc_data->rx_otg_en, uc_data->reverse12_en);
+	pr_info("wlc_en:%d, reverse12_en:%d\n",
+		uc_data->wlc_en, uc_data->reverse12_en);
+	pr_info("rx_to_rx_otg:%d ext_otg_only:%d\n",
+		uc_data->rx_otg_en, uc_data->ext_otg_only);
 }
 
