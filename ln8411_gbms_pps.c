@@ -574,6 +574,7 @@ int ln8411_get_status(struct ln8411_charger *ln8411)
 	/* Use SW state (for now) */
 	switch (ln8411->charging_state) {
 	case DC_STATE_NO_CHARGING:
+	case DC_STATE_ERROR:
 	case DC_STATE_CHECK_VBAT:
 	case DC_STATE_PRESET_DC:
 	case DC_STATE_CHECK_ACTIVE:

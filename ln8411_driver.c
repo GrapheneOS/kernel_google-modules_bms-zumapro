@@ -1222,7 +1222,8 @@ static int ln8411_stop_charging(struct ln8411_charger *ln8411)
 	ln8411->timer_period = 0;
 
 	/* Clear parameter */
-	ln8411->charging_state = DC_STATE_NO_CHARGING;
+	if (ln8411->charging_state != DC_STATE_ERROR)
+		ln8411->charging_state = DC_STATE_NO_CHARGING;
 	ln8411->ret_state = DC_STATE_NO_CHARGING;
 	ln8411->prev_iin = 0;
 	ln8411->prev_inc = INC_NONE;
@@ -2679,6 +2680,25 @@ static int ln8411_ajdust_ccmode_wired(struct ln8411_charger *ln8411, int iin)
 	return 0;
 }
 
+static int ln8411_vote_dc_avail(struct ln8411_charger *ln8411, int vote, int enable)
+{
+	int ret = 0;
+
+	if (!ln8411->dc_avail)
+		ln8411->dc_avail = gvotable_election_get_handle(VOTABLE_DC_CHG_AVAIL);
+
+	if (ln8411->dc_avail) {
+		ret = gvotable_cast_int_vote(ln8411->dc_avail, REASON_DC_DRV, vote, enable);
+		if (ret < 0)
+			dev_err(ln8411->dev, "Unable to cast vote for DC Chg avail (%d)\n", ret);
+	}
+
+	logbuffer_prlog(ln8411, ln8411->charging_state == DC_STATE_ERROR ?
+			LOGLEVEL_INFO : LOGLEVEL_DEBUG,
+			"%s: Voting dc_avail when in error state", __func__);
+
+	return ret;
+}
 
 /* Direct Charging Adjust CC MODE control
  * called at the beginnig of CC mode charging. Will be followed by
@@ -3455,19 +3475,8 @@ static int ln8411_preset_dcmode(struct ln8411_charger *ln8411)
 		if (!ln8411->ftm_mode)
 			ret = ln8411_set_chg_mode_by_apdo(ln8411);
 		if (ret < 0) {
-			int ret1;
-
-			if (!ln8411->dc_avail)
-				ln8411->dc_avail = gvotable_election_get_handle(VOTABLE_DC_CHG_AVAIL);
-
-			if (ln8411->dc_avail) {
-				ret1 = gvotable_cast_int_vote(ln8411->dc_avail, REASON_DC_DRV, 0, 1);
-				if (ret1 < 0)
-					dev_err(ln8411->dev,
-						"Unable to cast vote for DC Chg avail (%d)\n",
-						ret1);
-			}
-
+			ln8411->charging_state = DC_STATE_ERROR;
+			ln8411_vote_dc_avail(ln8411, 0, 1);
 			goto error;
 		}
 
@@ -3580,11 +3589,8 @@ static int ln8411_check_active_state(struct ln8411_charger *ln8411)
 		ln8411->retry_cnt = 0;
 		ln8411->timer_id = TIMER_ADJUST_CCMODE;
 		ln8411->timer_period = 0;
-	} else {
-			goto exit_done;
 	}
 
-exit_done:
 	if (ret) {
 		int ret1 = dump_all_regs(ln8411);
 
@@ -3597,8 +3603,12 @@ exit_done:
 		logbuffer_prlog(ln8411, LOGLEVEL_ERR,
 				"%s: charging_state=%d, not active or error (%d)",
 				__func__, ln8411->charging_state, ret);
-		if (ret != -EAGAIN)
+		if (ret != -EAGAIN) {
 			ln8411->timer_id = TIMER_ID_NONE;
+			dev_err(ln8411->dev, "%s: Error! disabling ln8411: ret(%d)\n", __func__, ret);
+			ln8411->charging_state = DC_STATE_ERROR;
+			ln8411_vote_dc_avail(ln8411, 0, 1);
+		}
 		ln8411->timer_period = 0;
 	}
 
@@ -4082,6 +4092,12 @@ error:
 					msecs_to_jiffies(LN8411_ENABLE_WLC_DELAY_T));
 	} else {
 		ln8411_stop_charging(ln8411);
+		if (ret == -EAGAIN && !ln8411->ibus_ucp_retry_cnt) {
+			pr_err("%s: retry failed\n", __func__);
+
+			ln8411->charging_state = DC_STATE_ERROR;
+			ln8411_vote_dc_avail(ln8411, 0, 1);
+		}
 	}
 }
 
@@ -4408,6 +4424,7 @@ static int ln8411_const_charge_voltage(struct ln8411_charger *ln8411)
 /* index is the PPS source to use */
 static int ln8411_set_charging_enabled(struct ln8411_charger *ln8411, int index)
 {
+	int ret = 0;
 	if (index < 0 || index >= PPS_INDEX_MAX)
 		return -EINVAL;
 
@@ -4460,11 +4477,18 @@ static int ln8411_set_charging_enabled(struct ln8411_charger *ln8411, int index)
 
 		/* Set the initial charging step */
 		power_supply_changed(ln8411->mains);
+	} else if (ln8411->charging_state == DC_STATE_ERROR) {
+		logbuffer_prlog(ln8411, LOGLEVEL_DEBUG,
+				"%s: error pps_idx=%d->%d charging_state=%d timer_id=%d",
+				__func__, ln8411->pps_index, index,
+		ln8411->charging_state,
+		ln8411->timer_id);
+		ret = -EINVAL;
 	}
 
 	mutex_unlock(&ln8411->lock);
 
-	return 0;
+	return ret;
 }
 
 /* call holding mutex_lock(&ln8411->lock); */
@@ -4715,20 +4739,6 @@ static int ln8411_mains_set_property(struct power_supply *psy,
 				       __func__, ret);
 
 			ln8411->mains_online = false;
-
-			/* Reset DC Chg un-avail on disconnect */
-			if (!ln8411->dc_avail)
-				ln8411->dc_avail = gvotable_election_get_handle(VOTABLE_DC_CHG_AVAIL);
-
-			if (ln8411->dc_avail) {
-				ret = gvotable_cast_int_vote(ln8411->dc_avail,
-							     REASON_DC_DRV, 1, 1);
-				if (ret < 0)
-					dev_err(ln8411->dev,
-						"Unable to cast vote for DC Chg avail (%d)\n",
-						ret);
-			}
-
 		} else if (ln8411->mains_online == false) {
 			ln8411->mains_online = true;
 		}
@@ -4768,6 +4778,13 @@ static int ln8411_mains_set_property(struct power_supply *psy,
 		break;
 
 	case GBMS_PROP_CHARGE_DISABLE:
+		dev_dbg(ln8411->dev, "%s: ChargeDisable %d, chg_state:%d\n", __func__,
+			val->intval, ln8411->charging_state);
+		if (val->intval) {
+			if (ln8411->charging_state == DC_STATE_ERROR)
+				ln8411->charging_state = DC_STATE_NO_CHARGING;
+			ln8411_vote_dc_avail(ln8411, 1, 1);
+		}
 		break;
 
 	default:

@@ -305,6 +305,7 @@ enum {
 	DC_STATE_CHARGING_DONE,	/* Charging Done */
 	DC_STATE_ADJUST_TAVOL,	/* Adjust TA voltage, new TA current < 1000mA */
 	DC_STATE_ADJUST_TACUR,	/* Adjust TA current, new TA current < 1000mA */
+	DC_STATE_ERROR,		/* Error encountered, no charging */
 	DC_STATE_MAX,
 };
 
