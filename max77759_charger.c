@@ -955,7 +955,7 @@ exit_done:
 	return ret;
 }
 
-static int max77759_wcin_is_online(struct max77759_chgr_data *data);
+static int max77759_wcin_is_valid(struct max77759_chgr_data *data);
 
 /*
  * I am using a the comparator_none, need scan all the votes to determine
@@ -999,12 +999,12 @@ static int max77759_mode_callback(struct gvotable_election *el,
 	cb_data.el = el;	/* election */
 
 	/* read directly instead of using the vote */
-	cb_data.wlc_rx = max77759_wcin_is_online(data) &&
+	cb_data.wlc_rx = max77759_wcin_is_valid(data) &&
 			 !data->wcin_input_suspend;
 	cb_data.wlcin_off = !!data->wcin_input_suspend;
 
-	pr_debug("%s: wcin_is_online=%d data->wcin_input_suspend=%d\n", __func__,
-		  max77759_wcin_is_online(data), data->wcin_input_suspend);
+	pr_debug("%s: wcin_is_valid=%d data->wcin_input_suspend=%d\n", __func__,
+		  max77759_wcin_is_valid(data), data->wcin_input_suspend);
 
 	/* now scan all the reasons, accumulate in cb_data */
 	gvotable_election_for_each(el, max77759_foreach_callback, &cb_data);
