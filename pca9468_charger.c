@@ -1188,7 +1188,8 @@ static int pca9468_stop_charging(struct pca9468_charger *pca9468)
 	pca9468->timer_period = 0;
 
 	/* Clear parameter */
-	pca9468->charging_state = DC_STATE_NO_CHARGING;
+	if (pca9468->charging_state != DC_STATE_ERROR)
+		pca9468->charging_state = DC_STATE_NO_CHARGING;
 	pca9468->ret_state = DC_STATE_NO_CHARGING;
 	pca9468->prev_iin = 0;
 	pca9468->prev_inc = INC_NONE;
@@ -2660,6 +2661,25 @@ static int pca9468_ajdust_ccmode_wired(struct pca9468_charger *pca9468, int iin)
 	return 0;
 }
 
+static int pca9468_vote_dc_avail(struct pca9468_charger *pca9468, int vote, int enable)
+{
+	int ret = 0;
+
+	if (!pca9468->dc_avail)
+		pca9468->dc_avail = gvotable_election_get_handle(VOTABLE_DC_CHG_AVAIL);
+
+	if (pca9468->dc_avail) {
+		ret = gvotable_cast_int_vote(pca9468->dc_avail, REASON_DC_DRV, vote, enable);
+		if (ret < 0)
+			dev_err(pca9468->dev, "Unable to cast vote for DC Chg avail (%d)\n", ret);
+	}
+
+	logbuffer_prlog(pca9468, pca9468->charging_state == DC_STATE_ERROR ?
+			LOGLEVEL_INFO : LOGLEVEL_DEBUG,
+			"%s: Voting dc_avail when in error state", __func__);
+
+	return ret;
+}
 
 /* 2:1 Direct Charging Adjust CC MODE control
  * called at the beginnig of CC mode charging. Will be followed by
@@ -3399,23 +3419,9 @@ static int pca9468_preset_dcmode(struct pca9468_charger *pca9468)
 		}
 
 		if (ret < 0) {
-			int ret1;
-
 			pr_err("%s: No APDO to support 2:1\n", __func__);
-			pca9468->chg_mode = CHG_NO_DC_MODE;
-
-			if (!pca9468->dc_avail)
-				pca9468->dc_avail =
-					gvotable_election_get_handle(VOTABLE_DC_CHG_AVAIL);
-
-			if (pca9468->dc_avail) {
-				ret1 = gvotable_cast_int_vote(pca9468->dc_avail,
-							      REASON_DC_DRV, 0, 1);
-				if (ret1 < 0)
-					dev_err(pca9468->dev,
-						"Unable to cast vote for DC Chg avail (%d)\n",
-						ret1);
-			}
+			pca9468->charging_state = DC_STATE_ERROR;
+			pca9468_vote_dc_avail(pca9468, 0, 1);
 			goto error;
 		}
 
@@ -3517,10 +3523,11 @@ static int pca9468_check_active_state(struct pca9468_charger *pca9468)
 		pca9468->timer_id = TIMER_ADJUST_CCMODE;
 		pca9468->timer_period = 0;
 	} else if (ret == -EAGAIN) {
-
 		/* try restarting only */
 		if (pca9468->retry_cnt >= PCA9468_MAX_RETRY_CNT) {
 			pr_err("%s: retry failed\n", __func__);
+			pca9468->charging_state = DC_STATE_ERROR;
+			pca9468_vote_dc_avail(pca9468, 0, 1);
 			ret = -EINVAL;
 			goto exit_done;
 		}
@@ -3538,6 +3545,10 @@ static int pca9468_check_active_state(struct pca9468_charger *pca9468)
 			pca9468->timer_period = 0;
 			pca9468->retry_cnt++;
 		}
+	} else {
+		pr_err("%s: Error! disabling pca9468: ret(%d)\n", __func__, ret);
+		pca9468->charging_state = DC_STATE_ERROR;
+		pca9468_vote_dc_avail(pca9468, 0, 1);
 	}
 
 exit_done:
@@ -4396,6 +4407,7 @@ static int pca9468_const_charge_voltage(struct pca9468_charger *pca9468)
 /* index is the PPS source to use */
 static int pca9468_set_charging_enabled(struct pca9468_charger *pca9468, int index)
 {
+	int ret = 0;
 	if (index < 0 || index >= PPS_INDEX_MAX)
 		return -EINVAL;
 
@@ -4448,11 +4460,18 @@ static int pca9468_set_charging_enabled(struct pca9468_charger *pca9468, int ind
 
 		/* Set the initial charging step */
 		power_supply_changed(pca9468->mains);
+	} else if (pca9468->charging_state == DC_STATE_ERROR) {
+		logbuffer_prlog(pca9468, LOGLEVEL_DEBUG,
+				"%s: error pps_idx=%d->%d charging_state=%d timer_id=%d",
+				__func__, pca9468->pps_index, index,
+				pca9468->charging_state,
+				pca9468->timer_id);
+		ret = -EINVAL;
 	}
 
 	mutex_unlock(&pca9468->lock);
 
-	return 0;
+	return ret;
 }
 
 static int pca9468_mains_set_property(struct power_supply *psy,
@@ -4477,20 +4496,6 @@ static int pca9468_mains_set_property(struct power_supply *psy,
 				       __func__, ret);
 
 			pca9468->mains_online = false;
-
-			/* Reset DC Chg un-avail on disconnect */
-			if (!pca9468->dc_avail)
-				pca9468->dc_avail =
-				gvotable_election_get_handle(VOTABLE_DC_CHG_AVAIL);
-
-			if (pca9468->dc_avail) {
-				ret = gvotable_cast_int_vote(pca9468->dc_avail,
-							     REASON_DC_DRV, 1, 1);
-				if (ret < 0)
-					dev_err(pca9468->dev,
-						"Unable to cast vote for DC Chg avail (%d)\n",
-						ret);
-			}
 		} else if (pca9468->mains_online == false) {
 			pca9468->mains_online = true;
 		}
@@ -4530,6 +4535,13 @@ static int pca9468_mains_set_property(struct power_supply *psy,
 		break;
 
 	case GBMS_PROP_CHARGE_DISABLE:
+		dev_dbg(pca9468->dev, "%s: ChargeDisable %d, chg_state:%d\n", __func__,
+			val->intval, pca9468->charging_state);
+		if (val->intval) {
+			if (pca9468->charging_state == DC_STATE_ERROR)
+				pca9468->charging_state = DC_STATE_NO_CHARGING;
+			pca9468_vote_dc_avail(pca9468, 1, 1);
+		}
 		break;
 
 	default:

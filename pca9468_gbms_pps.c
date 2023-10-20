@@ -603,6 +603,7 @@ int pca9468_get_status(struct pca9468_charger *pca9468)
 	/* Use SW state (for now) */
 	switch (pca9468->charging_state) {
 	case DC_STATE_NO_CHARGING:
+	case DC_STATE_ERROR:
 	case DC_STATE_CHECK_VBAT:
 	case DC_STATE_PRESET_DC:
 	case DC_STATE_CHECK_ACTIVE:
