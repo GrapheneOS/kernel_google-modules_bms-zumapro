@@ -4441,8 +4441,10 @@ static enum bhi_status bhi_calc_health_status(int algo, int health_index,
 
 	if (algo == BHI_ALGO_ACHI_B || algo == BHI_ALGO_ACHI_RAVG_B) {
 		const int cycle_count = data->bhi_data.cycle_count;
+		const int l_bound = bhi_get_capacity_bound(cycle_count,
+							   &data->bhi_data.lower_bound.limit[0]);
 
-		if (data->bhi_cycle_grace && cycle_count < data->bhi_cycle_grace)
+		if (l_bound == 0 && data->bhi_cycle_grace && cycle_count < data->bhi_cycle_grace)
 			return BH_NOT_AVAILABLE;
 	}
 
