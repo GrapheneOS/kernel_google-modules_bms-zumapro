@@ -2106,9 +2106,6 @@ static int gcpm_psy_set_property(struct power_supply *psy,
 		ta_check = true;
 		break;
 
-	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
-		psp = POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX;
-		fallthrough;
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
 		ta_check = gcpm->fv_uv != pval->intval;
 		gcpm->fv_uv = pval->intval;
@@ -2315,7 +2312,7 @@ static enum power_supply_property gcpm_psy_properties[] = {
 	POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX,	/* fv_uv */
 	POWER_SUPPLY_PROP_CHARGE_TYPE,
 	POWER_SUPPLY_PROP_CURRENT_MAX,	/* input current limit */
-	POWER_SUPPLY_PROP_VOLTAGE_MAX,	/* set float voltage, compat */
+	POWER_SUPPLY_PROP_VOLTAGE_MAX,	/* input voltage limit*/
 	POWER_SUPPLY_PROP_STATUS,
 };
 

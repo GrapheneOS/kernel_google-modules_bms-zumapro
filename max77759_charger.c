@@ -2149,7 +2149,8 @@ static int max77759_psy_set_property(struct power_supply *psy,
 				     const union power_supply_propval *pval)
 {
 	struct max77759_chgr_data *data = power_supply_get_drvdata(psy);
-	int ret = -EINVAL;
+	int ret = 0;
+	bool changed = false;
 
 	if (max77759_resume_check(data))
 		return -EAGAIN;
@@ -2166,6 +2167,13 @@ static int max77759_psy_set_property(struct power_supply *psy,
 			__func__, pval->intval, ret);
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
+		if (data->uc_data.input_uv != pval->intval)
+			changed = true;
+		data->uc_data.input_uv = pval->intval;
+		pr_debug("%s: input_voltage=%d\n", __func__, pval->intval);
+		if (changed)
+			power_supply_changed(data->psy);
+		break;
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
 		ret = max77759_set_regulation_voltage(data, pval->intval);
 		pr_debug("%s: charge_voltage=%d (%d)\n",
@@ -2198,9 +2206,9 @@ static int max77759_psy_set_property(struct power_supply *psy,
 			__func__, pval->intval, ret);
 		break;
 	case GBMS_PROP_TAPER_CONTROL:
-		ret = 0;
 		break;
 	default:
+		ret = -EINVAL;
 		break;
 	}
 
@@ -2245,6 +2253,8 @@ static int max77759_psy_get_property(struct power_supply *psy,
 		ret = max77759_get_charger_current_max_ua(data, &pval->intval);
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
+		pval->intval = data->uc_data.input_uv;
+		break;
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
 		ret = max77759_get_regulation_voltage_uv(data, &pval->intval);
 		break;
@@ -2301,7 +2311,7 @@ static int max77759_psy_is_writeable(struct power_supply *psy,
 {
 	switch (psp) {
 	case POWER_SUPPLY_PROP_ONLINE:
-	case POWER_SUPPLY_PROP_VOLTAGE_MAX: /* compat, same the next */
+	case POWER_SUPPLY_PROP_VOLTAGE_MAX: /* input voltage limit */
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
@@ -2327,7 +2337,7 @@ static enum power_supply_property max77759_psy_props[] = {
 	POWER_SUPPLY_PROP_PRESENT,
 	POWER_SUPPLY_PROP_CURRENT_MAX,
 	POWER_SUPPLY_PROP_CURRENT_NOW,
-	POWER_SUPPLY_PROP_VOLTAGE_MAX,		/* compat */
+	POWER_SUPPLY_PROP_VOLTAGE_MAX,		/* input voltage limit */
 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
 	POWER_SUPPLY_PROP_STATUS,
 };

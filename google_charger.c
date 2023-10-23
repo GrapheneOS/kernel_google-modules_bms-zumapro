@@ -811,7 +811,7 @@ static int chg_set_charger(struct chg_drv *chg_drv, int fv_uv, int cc_max, int t
 
 	if (fv_uv != chg_drv->fv_uv) {
 		pval.intval = fv_uv;
-		rc = power_supply_set_property(chg_psy, POWER_SUPPLY_PROP_VOLTAGE_MAX, &pval);
+		rc = power_supply_set_property(chg_psy, POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX, &pval);
 		if (rc == -EAGAIN)
 			return rc;
 		if (rc != 0) {

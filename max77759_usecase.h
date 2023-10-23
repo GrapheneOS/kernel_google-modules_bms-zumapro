@@ -42,6 +42,7 @@ struct max77759_usecase_data {
 	u8 otg_vbyp;		/* TODO: TCPM to control this? */
 	u8 otg_orig;		/* restore value */
 	u8 otg_value;		/* CHG_CNFG_11:VBYPSET for USB OTG Voltage */
+	int input_uv;		/* input max_voltage */
 
 	struct i2c_client *client;
 	bool init_done;
