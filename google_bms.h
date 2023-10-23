@@ -744,4 +744,11 @@ static const struct file_operations name ## _fops = {	\
 }
 
 
+/* trend point types */
+#define GBMS_TP_TRENDPOINTS   'T'
+#define GBMS_TP_LOWER_BOUND   'L'
+#define GBMS_TP_UPPER_BOUND   'U'
+#define GBMS_TP_LOWER_TRIGGER 'F'
+#define GBMS_TP_UPPER_TRIGGER 'C'
+
 #endif  /* __GOOGLE_BMS_H_ */
