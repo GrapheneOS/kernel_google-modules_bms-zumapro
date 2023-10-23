@@ -121,6 +121,17 @@
  */
 #define STATS_THERMAL_LEVELS_MAX (10)
 
+/* keep the highest power (V/I) rating, as it may drop near EOC  */
+#define UPDATE_ADAPTER_POWER(ad, voltage_max, amperage_max) \
+	do { \
+		voltage_max /= 100000; \
+		amperage_max /= 100000; \
+		if ((ad->ad_voltage * ad->ad_amperage) < (voltage_max * amperage_max)) { \
+			ad->ad_voltage = voltage_max; \
+			ad->ad_amperage = amperage_max; \
+		} \
+	} while (0)
+
 struct chg_drv;
 
 enum chg_thermal_devices {
@@ -691,8 +702,7 @@ static int info_usb_state(union gbms_ce_adapter_details *ad,
 		return 0;
 
 	ad->ad_type = ad_type;
-	ad->ad_voltage = voltage_max / 100000;
-	ad->ad_amperage = amperage_max / 100000;
+	UPDATE_ADAPTER_POWER(ad, voltage_max, amperage_max);
 
 	return 0;
 }
@@ -736,8 +746,7 @@ static int info_wlc_state(union gbms_ce_adapter_details *ad,
 		ad->ad_type = CHG_EV_ADAPTER_TYPE_WLC_SPP;
 	}
 
-	ad->ad_voltage = voltage_max / 100000;
-	ad->ad_amperage = amperage_max / 100000;
+	UPDATE_ADAPTER_POWER(ad, voltage_max, amperage_max);
 
 	return 0;
 }
@@ -773,8 +782,7 @@ static int info_ext_state(union gbms_ce_adapter_details *ad,
 	else
 		ad->ad_type = CHG_EV_ADAPTER_TYPE_EXT;
 
-	ad->ad_voltage = voltage_max / 100000;
-	ad->ad_amperage = amperage_max / 100000;
+	UPDATE_ADAPTER_POWER(ad, voltage_max, amperage_max);
 
 	return 0;
 }
