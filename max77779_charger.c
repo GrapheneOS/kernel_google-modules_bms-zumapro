@@ -1353,7 +1353,7 @@ static int max77779_cop_config(struct max77779_chgr_data * data)
 
 	/* TODO: b/293487608 Support COP limit */
 	/* Setting limit to MAX to not trip */
-	ret = max77779_set_cop_limit(data, 0xffff * 1000 / MAX77779_COP_SENSE_RESISTOR_VAL);
+	ret = max77779_set_cop_limit(data, MAX77779_COP_MAX_VALUE);
 	if (ret < 0)
 		dev_err(data->dev, "Error setting COP limit to max\n");
 
@@ -1390,6 +1390,10 @@ static int max77779_set_charger_current_max_ua(struct max77779_chgr_data *data,
 	}
 
 	new_cop_warn = current_ua * MAX77779_COP_WARN_THRESHOLD / 100;
+
+	/* Don't trigger COP in discharge */
+	if (new_cop_warn == 0)
+		new_cop_warn = MAX77779_COP_MAX_VALUE;
 
 	if (data->cop_warn <= new_cop_warn) {
 		ret = max77779_set_cop_warn(data, new_cop_warn);
