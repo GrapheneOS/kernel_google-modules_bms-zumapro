@@ -650,6 +650,7 @@ enum bhi_status {
 	BH_NEEDS_REPLACEMENT,
 	BH_FAILED,
 	BH_NOT_AVAILABLE,
+	BH_INCONSISTENT,
 };
 
 struct bhi_weight {

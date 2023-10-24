@@ -4405,6 +4405,9 @@ static enum bhi_status bhi_calc_health_status(int algo, int health_index,
 			return BH_NOT_AVAILABLE;
 	}
 
+	if (data->cal_state == REC_STATE_SCHEDULED)
+		return BH_INCONSISTENT;
+
 	if (health_index < 0)
 		health_status = BH_UNKNOWN;
 	else if (health_index <= data->need_rep_threshold)
