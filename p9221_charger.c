@@ -7852,6 +7852,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 		} else {
 			charger->det_status = gpio_get_value_cansleep(charger->pdata->irq_det_gpio);
 			enable_irq_wake(charger->pdata->irq_det_int);
+			disable_irq(charger->pdata->irq_det_int);
 		}
 	}
 
