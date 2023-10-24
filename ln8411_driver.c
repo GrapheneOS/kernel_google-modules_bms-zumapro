@@ -523,6 +523,22 @@ int ln8411_read_adc(struct ln8411_charger *ln8411,
 	return intval;
 }
 
+static int ln8411_read_sys_sts(struct ln8411_charger *ln8411, int *val)
+{
+	int ret, retries = 10;
+
+	for (; retries; retries--) {
+		ret = regmap_read(ln8411->regmap, LN8411_SYS_STS, val);
+		if (!ret && *val)
+			break;
+
+		dev_dbg(ln8411->dev, "%s: retries: %d\n", __func__, retries);
+		msleep(5);
+	}
+
+	return ret;
+}
+
 static int ln8411_set_vbat_ovp(struct ln8411_charger *ln8411, int val)
 {
 	unsigned int reg_code;
@@ -849,7 +865,7 @@ static int ln8411_set_charging(struct ln8411_charger *ln8411, bool enable)
 		}
 
 		/* Ensure we are in standby to start charging */
-		ret = regmap_read(ln8411->regmap, LN8411_SYS_STS, &val);
+		ret = ln8411_read_sys_sts(ln8411, &val);
 		if (ret || !(val & LN8411_STANDBY_STS)) {
 			dev_info(ln8411->dev, "%s: ret=%d Not in standby SYS_STS: %#02x\n",
 				  __func__, ret, val);
@@ -922,7 +938,7 @@ static int ln8411_check_not_active(struct ln8411_charger *ln8411, int loglevel)
 	if (ret < 0)
 		goto done;
 
-	ret = regmap_read(ln8411->regmap, LN8411_SYS_STS, &reg);
+	ret = ln8411_read_sys_sts(ln8411, &reg);
 	if (ret < 0)
 		goto done;
 
@@ -953,7 +969,7 @@ int ln8411_check_active(struct ln8411_charger *ln8411)
 	unsigned int reg, val;
 
 	/* Integration guide V1.0 Section 5.3.4 */
-	ret = regmap_read(ln8411->regmap, LN8411_SYS_STS, &reg);
+	ret = ln8411_read_sys_sts(ln8411, &reg);
 	if (ret < 0) {
 		dev_err(ln8411->dev, "Error reading LN8411_SYS_STS err: %d\n", ret);
 		return ret;
