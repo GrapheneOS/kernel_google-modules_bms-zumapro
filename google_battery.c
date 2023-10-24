@@ -374,6 +374,7 @@ struct health_data
 	int bhi_debug_imp_index;
 	int bhi_debug_sd_index;
 	int bhi_debug_health_index;
+	int bhi_debug_health_status;
 	/* algo BHI_ALGO_INDI capacity threshold */
 	int bhi_indi_cap;
 	/* algo BHI_ALGO_ACHI_B bounds check */
@@ -4390,6 +4391,9 @@ static enum bhi_status bhi_calc_health_status(int algo, int health_index,
 					      const struct health_data *data)
 {
 	enum bhi_status health_status;
+
+	if (data->bhi_debug_health_status)
+		return data->bhi_debug_health_status;
 
 	if (algo == BHI_ALGO_DISABLED)
 		return BH_UNKNOWN;
@@ -8662,6 +8666,8 @@ static int batt_init_debugfs(struct batt_drv *batt_drv)
 			   &batt_drv->health_data.bhi_debug_sd_index);
 	debugfs_create_u32("bhi_debug_health_idx", 0644, de,
 			   &batt_drv->health_data.bhi_debug_health_index);
+	debugfs_create_u32("bhi_debug_health_status", 0644, de,
+			   &batt_drv->health_data.bhi_debug_health_status);
 	debugfs_create_file("bhi_debug_status", 0644, de, batt_drv,
 			   &debug_bhi_status_fops);
 	debugfs_create_file("reset_first_usage_date", 0644, de, batt_drv,
@@ -10207,6 +10213,7 @@ static int batt_bhi_init(struct batt_drv *batt_drv)
 	health_data->bhi_debug_imp_index = 0;
 	health_data->bhi_debug_sd_index = 0;
 	health_data->bhi_debug_health_index = 0;
+	health_data->bhi_debug_health_status = 0;
 	/* TODO: restore cal_state/cal_mode if reboot */
 	health_data->cal_state = REC_STATE_OK;
 	health_data->cal_mode = REC_MODE_RESET;
