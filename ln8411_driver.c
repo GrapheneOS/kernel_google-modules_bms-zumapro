@@ -3327,8 +3327,7 @@ static int ln8411_set_chg_mode_by_apdo(struct ln8411_charger *ln8411)
 	 * Returns ->ta_max_vol, ->ta_max_cur, ->ta_max_pwr and
 	 * ->ta_objpos for the given ta_max_vol and ta_max_cur.
 	 */
-	ret = ln8411_get_apdo_max_power(ln8411, ln8411->pdata->ta_max_vol_4_1 * CHG_4TO1_DC_MODE,
-				      LN8411_TA_MAX_CUR_4_1);
+	ret = ln8411_get_apdo_max_power(ln8411, ln8411->pdata->ta_max_vol_4_1 * CHG_4TO1_DC_MODE, 0);
 	if (ret == 0) {
 		ln8411->chg_mode = CHG_4TO1_DC_MODE;
 		goto done;
