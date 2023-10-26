@@ -122,6 +122,7 @@ obj-$(CONFIG_MAX1720X_BATTERY)  += max1720x-battery.o
 max1720x-battery-objs += max1720x_battery.o
 max1720x-battery-objs += max1720x_outliers.o
 max1720x-battery-objs += max_m5.o
+max1720x-battery-objs += maxfg_common.o
 
 obj-$(CONFIG_FG_MAX77779)  += max77779-fg.o
 max77779-fg-objs += max77779_fg.o

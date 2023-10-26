@@ -32,7 +32,6 @@ void dump_model(struct device *dev, u16 model_start, u16 *data, int count)
 		dev_info(dev, "%x: %s\n", i + model_start, buff);
 	}
 }
-EXPORT_SYMBOL_GPL(dump_model);
 
 int maxfg_get_fade_rate(struct device *dev, int bhi_fcn_count, int *fade_rate)
 {
@@ -83,7 +82,6 @@ int maxfg_get_fade_rate(struct device *dev, int bhi_fcn_count, int *fade_rate)
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(maxfg_get_fade_rate);
 
 static const struct maxfg_reg * maxfg_find_by_index(struct maxfg_regtags *tags, int index)
 {
@@ -97,7 +95,6 @@ const struct maxfg_reg * maxfg_find_by_tag(struct maxfg_regmap *map, enum maxfg_
 {
 	return maxfg_find_by_index(&map->regtags, tag);
 }
-EXPORT_SYMBOL_GPL(maxfg_find_by_tag);
 
 int maxfg_reg_read(struct maxfg_regmap *map, enum maxfg_reg_tags tag, u16 *val)
 {
@@ -117,7 +114,6 @@ int maxfg_reg_read(struct maxfg_regmap *map, enum maxfg_reg_tags tag, u16 *val)
 
 	return rtn;
 }
-EXPORT_SYMBOL_GPL(maxfg_reg_read);
 
 #define REG_HALF_HIGH(reg)     ((reg >> 8) & 0x00FF)
 #define REG_HALF_LOW(reg)      (reg & 0x00FF)
@@ -216,4 +212,3 @@ int maxfg_collect_history_data(void *buff, size_t size, bool is_por, u16 designc
 	memcpy(buff, &hist, sizeof(hist));
 	return (size_t)sizeof(hist);
 }
-EXPORT_SYMBOL_GPL(maxfg_collect_history_data);
