@@ -4588,21 +4588,56 @@ static int bhi_cycle_count_residency(struct gbatt_ccbin_data *ccd , int soc_limi
 	return (under * BHI_ALGO_FULL_HEALTH) / (under + over);
 }
 
+static bool batt_bhi_need_recalibration(struct batt_drv *batt_drv)
+{
+	int ret, full_cap_nom, cycle_count, l_trigger, u_trigger;
+
+	/* already on-going */
+	if (batt_drv->health_data.cal_state != REC_STATE_OK ||
+	    batt_drv->health_data.cal_mode != REC_MODE_RESET)
+		return false;
+
+	/* recalibration enabled in algorithm 4 */
+	if (batt_drv->health_data.bhi_algo != BHI_ALGO_ACHI_RAVG)
+		return false;
+
+	/* read full capacity value */
+	ret = GPSY_GET_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_HEALTH);
+	if (ret == POWER_SUPPLY_HEALTH_CALIBRATION_REQUIRED)
+		return true;
+
+	/* read full capacity value */
+	ret = GPSY_GET_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_CHARGE_FULL);
+	if (ret < 0)
+		return false;
+
+	full_cap_nom = ret / 1000;
+
+	/*
+	 * compare with design value, allow to reset FG if conditions match
+	 * and wait for appropriate time to execute
+	 */
+	cycle_count = batt_drv->cycle_count;
+	l_trigger = bhi_get_capacity_bound(cycle_count,
+					   &batt_drv->health_data.bhi_data.lower_bound.trigger[0]);
+	u_trigger = bhi_get_capacity_bound(cycle_count,
+					   &batt_drv->health_data.bhi_data.upper_bound.trigger[0]);
+
+	return (full_cap_nom < l_trigger ||  full_cap_nom > u_trigger);
+}
+
 /*
  * initial or done   detect abnormal      FG reset/learning    FG learning done
  * STATE_OK    --->  STATE_SCHEDULED ---> STATE_SCHEDULED ---> STATE_OK
  * MODE_RESET  --->  MODE_BEST_TIME  ---> MODE_RESTART    ---> MODE_RESET
  *                  (MODE_IMMEDIATE)
  */
-#define MAX_CAPACITY_RATIO 115
 static int batt_bhi_update_recalibration_status(struct batt_drv *batt_drv)
 {
-	const int design_capacity = batt_drv->battery_capacity; /* mAh */
 	u8 cal_state = batt_drv->health_data.cal_state;
 	u8 cal_mode = batt_drv->health_data.cal_mode;
-	int full_cap_nom = 0, recal_state, ret = 0;
+	int recal_state, ret = 0;
 	bool is_best_time = false;
-	int cycle_count, l_trigger, u_trigger;
 
 	recal_state = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_RECAL_FG);
 	if (recal_state < 0)
@@ -4639,23 +4674,7 @@ static int batt_bhi_update_recalibration_status(struct batt_drv *batt_drv)
 		goto done;
 	}
 
-	/* read full capacity value */
-	ret = GPSY_GET_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_CHARGE_FULL);
-	if (ret < 0)
-		goto done;
-	full_cap_nom = ret / 1000;
-
-	/*
-	 * compare with design value, allow to reset FG if conditions match
-	 * and wait for appropriate time to execute
-	 */
-	cycle_count = batt_drv->cycle_count;
-	l_trigger = bhi_get_capacity_bound(cycle_count,
-					   &batt_drv->health_data.bhi_data.lower_bound.trigger[0]);
-	u_trigger = bhi_get_capacity_bound(cycle_count,
-					   &batt_drv->health_data.bhi_data.upper_bound.trigger[0]);
-
-	if (full_cap_nom < l_trigger ||  full_cap_nom > u_trigger) {
+	if (batt_bhi_need_recalibration(batt_drv)) {
 		cal_state = REC_STATE_SCHEDULED;
 		cal_mode = REC_MODE_BEST_TIME;
 	}
@@ -4669,11 +4688,6 @@ done:
 				     batt_drv->health_data.cal_mode, cal_mode);
 		batt_drv->health_data.cal_state = cal_state;
 		batt_drv->health_data.cal_mode = cal_mode;
-		if (full_cap_nom)
-			gbms_logbuffer_prlog(batt_drv->ttf_stats.ttf_log,
-					     LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG,
-					     "RE_CAL: full_cap_nom:%d, design_capacity:%d\n",
-					     full_cap_nom, design_capacity);
 	}
 
 	return ret;
@@ -9982,9 +9996,10 @@ static int gbatt_get_property(struct power_supply *psy,
 		if (batt_drv->batt_health == POWER_SUPPLY_HEALTH_OVERHEAT &&
 		    temp_defend_dry_run(batt_drv->temp_dryrun_votable)) {
 			val->intval = POWER_SUPPLY_HEALTH_GOOD;
-		} else if (batt_drv->batt_health !=
-			   POWER_SUPPLY_HEALTH_UNKNOWN) {
+		} else if (batt_drv->batt_health != POWER_SUPPLY_HEALTH_UNKNOWN) {
 			val->intval = batt_drv->batt_health;
+		} else if (batt_drv->health_data.cal_state == REC_STATE_SCHEDULED) {
+			val->intval = POWER_SUPPLY_HEALTH_CALIBRATION_REQUIRED;
 		} else if (!batt_drv->fg_psy) {
 			val->intval = POWER_SUPPLY_HEALTH_UNKNOWN;
 		} else {
@@ -9997,10 +10012,10 @@ static int gbatt_get_property(struct power_supply *psy,
 		if (batt_drv->report_health != val->intval) {
 			/* Log health change for debug */
 			logbuffer_log(batt_drv->ttf_stats.ttf_log,
-				      "h:%d->%d batt_health:%d dry_run:%d soh:%d",
+				      "h:%d->%d batt_health:%d dry_run:%d soh:%d cal_state:%d",
 				      batt_drv->report_health, val->intval, batt_drv->batt_health,
 				      temp_defend_dry_run(batt_drv->temp_dryrun_votable),
-				      batt_drv->soh);
+				      batt_drv->soh, batt_drv->health_data.cal_state);
 			batt_drv->report_health = val->intval;
 		}
 		break;
