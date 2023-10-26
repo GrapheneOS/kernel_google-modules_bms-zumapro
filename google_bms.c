@@ -531,7 +531,7 @@ int gbms_msc_voltage_idx_merge_tiers(const struct gbms_chg_profile *profile,
 		return vbatt_idx;
 
 	cc_max = GBMS_CCCM_LIMITS(profile, temp_idx, vbatt_idx);
-	while (vbatt_idx < profile->volt_nb_limits - 1 &&
+	while (vbatt_idx < profile->volt_nb_limits - 2 &&
 		cc_max == GBMS_CCCM_LIMITS(profile, temp_idx, vbatt_idx + 1))
 			vbatt_idx++;
 
