@@ -255,23 +255,35 @@ int gs201_to_standby(struct max77779_usecase_data *uc_data, int use_case)
 
 	switch (from_uc) {
 	case GSU_MODE_USB_CHG:
+		if (use_case == GSU_MODE_USB_OTG) {
+			need_stby = uc_data->ext_bst_ctl >= 0;
+			break;
+		}
+
 		need_stby = use_case != GSU_MODE_USB_CHG_WLC_TX &&
-			    use_case != GSU_MODE_WLC_RX &&
 			    use_case != GSU_MODE_DOCK &&
 			    use_case != GSU_MODE_USB_DC &&
 			    use_case != GSU_MODE_USB_OTG_FRS;
 		break;
 	case GSU_MODE_WLC_RX:
+		/* HPP supported by device handled by wlc driver */
 		need_stby = use_case != GSU_MODE_USB_OTG_WLC_RX &&
 			    use_case != GSU_MODE_WLC_DC;
 		break;
 	case GSU_MODE_WLC_TX:
-		need_stby = use_case != GSU_MODE_USB_CHG_WLC_TX;
+		need_stby = use_case != GSU_MODE_USB_CHG_WLC_TX || !uc_data->reverse12_en;
+		if (need_stby && uc_data->rtx_ready >= 0)
+			gpio_set_value_cansleep(uc_data->rtx_ready, 0);
 		break;
 	case GSU_MODE_USB_CHG_WLC_TX:
-		need_stby = use_case != GSU_MODE_USB_CHG && use_case != GSU_MODE_USB_DC;
+		if (use_case == GSU_MODE_WLC_TX) {
+			need_stby = !uc_data->reverse12_en;
+			break;
+		}
+		need_stby = use_case != GSU_MODE_USB_CHG;
+		if (need_stby && uc_data->rtx_ready >= 0)
+			gpio_set_value_cansleep(uc_data->rtx_ready, 0);
 		break;
-
 	case GSU_MODE_USB_OTG:
 		from_otg = true;
 		if (use_case == GSU_MODE_USB_OTG_WLC_RX)
@@ -281,25 +293,32 @@ int gs201_to_standby(struct max77779_usecase_data *uc_data, int use_case)
 
 		need_stby = true;
 		break;
-
 	case GSU_MODE_USB_OTG_FRS:
 		from_otg = true;
-		if (use_case == GSU_MODE_USB_CHG)
+		if (use_case == GSU_MODE_USB_OTG_WLC_RX) {
+			need_stby = uc_data->ext_bst_ctl >= 0;
 			break;
+		}
 
-		need_stby = true;
+		need_stby = use_case != GSU_MODE_USB_CHG;
 		break;
-
 	case GSU_MODE_USB_OTG_WLC_RX:
 		from_otg = true;
+		if (use_case == GSU_MODE_USB_OTG_FRS) {
+			need_stby = uc_data->ext_bst_ctl >= 0;
+			break;
+		}
+
 		need_stby = use_case != GSU_MODE_WLC_RX &&
 			    use_case != GSU_MODE_DOCK &&
 			    use_case != GSU_MODE_USB_OTG;
 		break;
 	case GSU_MODE_USB_DC:
-		need_stby = use_case != GSU_MODE_USB_DC;
+		need_stby = use_case != GSU_MODE_USB_CHG;
 		break;
 	case GSU_MODE_WLC_DC:
+		if (!uc_data->reverse12_en)
+			return -EINVAL;
 		need_stby = use_case != GSU_MODE_WLC_DC;
 		break;
 	case GSU_RAW_MODE:
@@ -311,8 +330,10 @@ int gs201_to_standby(struct max77779_usecase_data *uc_data, int use_case)
 		break;
 	}
 
-	if (use_case == GSU_MODE_USB_WLC_RX || use_case == GSU_RAW_MODE)
+	if (use_case == GSU_RAW_MODE)
 		need_stby = true;
+	else if (use_case == from_uc)
+		need_stby = false;
 
 	pr_info("%s: use_case=%d->%d from_otg=%d need_stby=%d\n", __func__,
 		from_uc, use_case, from_otg, need_stby);
@@ -369,6 +390,9 @@ int gs201_force_standby(struct max77779_usecase_data *uc_data)
 			__func__, ret);
 
 	gs201_otg_enable(uc_data, false);
+
+	if (uc_data->rtx_ready >= 0)
+		gpio_set_value_cansleep(uc_data->rtx_ready, 0);
 
 	return 0;
 }

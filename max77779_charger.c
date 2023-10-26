@@ -667,6 +667,7 @@ static int max77779_get_usecase(struct max77779_foreach_cb_data *cb_data,
 
 		/* Rtx using the internal battery */
 		usecase = GSU_MODE_STANDBY;
+		dc_on = false;
 		if (wlc_tx) {
 			usecase = GSU_MODE_WLC_TX;
 			if (!uc_data->reverse12_en)
