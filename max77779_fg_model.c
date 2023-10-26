@@ -52,18 +52,19 @@ int max77779_model_read_version(const struct max77779_model_data *model_data)
 
 static int max77779_model_write_version(const struct max77779_model_data *model_data, int version)
 {
+	struct maxfg_regmap *regmap = model_data->regmap;
 	u16 temp;
 	int ret;
 
 	if (version == MAX77779_FG_INVALID_VERSION)
 		return 0;
 
-	ret = REGMAP_READ(model_data->regmap, MAX77779_FG_MODEL_VERSION_REG, &temp);
+	ret = REGMAP_READ(regmap, MAX77779_FG_MODEL_VERSION_REG, &temp);
 	if (ret == 0) {
 		temp &= ~(MODEL_VERSION_MASK << MODEL_VERSION_SHIFT);
 		temp |= (version & MODEL_VERSION_MASK) << MODEL_VERSION_SHIFT;
 
-		ret =  REGMAP_WRITE(model_data->regmap, MAX77779_FG_MODEL_VERSION_REG, temp);
+		ret = MAX77779_FG_REGMAP_WRITE(regmap, MAX77779_FG_MODEL_VERSION_REG, temp);
 	}
 
 	return ret;
@@ -288,17 +289,6 @@ int max77779_load_gauge_model(struct max77779_model_data *model_data)
 		goto error_done;
 	}
 
-	/*
-	 * NOTE: Not a part of loading guide
-	 * version could be in the DT: this will overwrite it if set.
-	 * Invalid version is not written out.
-	 */
-	ret = max77779_model_write_version(model_data, model_data->model_version);
-	if (ret < 0) {
-		dev_err(model_data->dev, "cannot update version (%d)\n", ret);
-		goto error_done;
-	}
-
 	/* Step 3.4.3: Initiate Model Loading */
 	ret = REGMAP_READ(regmap, MAX77779_FG_Config2, &config2);
 	if (ret == 0)
@@ -361,6 +351,17 @@ int max77779_load_gauge_model(struct max77779_model_data *model_data)
 						      status & MAX77779_FG_Status_PONR_CLEAR);
 	if (ret < 0) {
 		dev_err(model_data->dev, "cannot clear PONR bit (%d)\n", ret);
+		return ret;
+	}
+
+	/*
+	 * NOTE: Not a part of loading guide
+	 * version could be in the DT: this will overwrite it if set.
+	 * Invalid version is not written out.
+	 */
+	ret = max77779_model_write_version(model_data, model_data->model_version);
+	if (ret < 0) {
+		dev_err(model_data->dev, "cannot update version (%d)\n", ret);
 		return ret;
 	}
 
