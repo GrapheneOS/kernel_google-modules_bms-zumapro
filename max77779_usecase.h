@@ -8,6 +8,7 @@
 #define MAX77779_USECASE_H_
 
 #define MAX77779_CHG_CNFG_05_WCSM_ILIM_1400_MA 0xA
+#define MAX77779_CHG_TX_RETRIES 10
 
 struct max77779_usecase_data {
 	int bst_on;		/* ext boost */
@@ -34,6 +35,11 @@ struct max77779_usecase_data {
 	bool init_done;
 	int use_case;
 
+	int rtx_ready; /* rtx ready gpio from wireless */
+	int rtx_retries;
+	int rtx_state;
+	struct power_supply *psy;
+
 	bool dcin_is_dock;
 };
 
@@ -57,6 +63,15 @@ enum gsu_usecases {
 	GSU_MODE_USB_WLC_RX	= 13,
 
 	GSU_MODE_DOCK		= 14,
+};
+
+enum gsu_rtx_state {
+	GSU_RTX_DEFAULT = 0,
+	GSU_RTX_STANDBY,
+	GSU_RTX_SETUP,
+	GSU_RTX_RETRY,
+	GSU_RTX_ENABLED,
+	GSU_RTX_DISABLED,
 };
 
 extern int gs201_wlc_en(struct max77779_usecase_data *uc_data, bool wlc_on);

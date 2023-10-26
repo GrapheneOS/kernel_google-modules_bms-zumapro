@@ -12,6 +12,7 @@
 #include <linux/of.h>
 #include <linux/of_gpio.h>
 #include <linux/regmap.h>
+#include "google_bms.h"
 #include "max77779.h"
 #include "max77779_charger.h"
 
@@ -104,29 +105,72 @@ int gs201_wlc_en(struct max77779_usecase_data *uc_data, bool wlc_on)
 }
 
 /* RTX reverse wireless charging */
-static int gs201_wlc_tx_enable(struct max77779_usecase_data *uc_data,
+static int gs201_wlc_tx_enable(struct max77779_usecase_data *uc_data, int use_case,
 			       bool enable)
 {
 	int ret = 0;
 
-	if (enable) {
-		msleep(100);
-		ret = gs201_wlc_en(uc_data, true);
-		if (ret < 0)
-			pr_err("%s: cannot enable WLC (%d)\n", __func__, ret);
-	} else {
-			if (!uc_data->reverse12_en) {
+	pr_debug("%s: use_case:%d enable:%d rtx_state:%d\n", __func__, use_case, enable,
+		 uc_data->rtx_state);
+
+	if (!enable) {
+		if (!uc_data->reverse12_en) {
 			ret = max77779_chg_reg_write(uc_data->client,
 						     MAX77779_CHG_CNFG_11, 0x0);
 			if (ret < 0)
 				pr_err("%s: fail to reset MAX77779_CHG_REVERSE_BOOST_VOUT\n",
-				        __func__);
+				       __func__);
 		}
 
 		ret = gs201_wlc_en(uc_data, false);
 		if (ret < 0)
-			pr_err("%s: cannot enable WLC (%d)\n", __func__, ret);
+			pr_err("%s: cannot disable WLC (%d)\n", __func__, ret);
+
+		return ret;
 	}
+
+	/*
+	 * If we were just in standby, return now and unblock other drivers (like usb)
+	 * who might be held behind the mode_callback lock. Next mode callback will try
+	 * to enable rtx.
+	 */
+	if (uc_data->rtx_state == GSU_RTX_STANDBY) {
+		uc_data->rtx_state = GSU_RTX_SETUP;
+		/* Notify CPM in case we just turned off the CP*/
+		if (uc_data->psy)
+			power_supply_changed(uc_data->psy);
+
+		/* No error, but don't notify WLC yet. Next mode callback will notify. */
+		pr_debug("%s: complete rtx but don't notify wlc yet\n", __func__);
+		return 0;
+	}
+
+	if (!uc_data->reverse12_en && (use_case == GSU_MODE_USB_CHG_WLC_TX) &&
+	   (uc_data->input_uv != 9000000)) {
+		if (uc_data->rtx_retries) {
+			pr_debug("%s: retries %d\n", __func__, uc_data->rtx_retries);
+			uc_data->rtx_state = GSU_RTX_RETRY;
+			uc_data->rtx_retries--;
+			return -EAGAIN;
+		}
+
+		pr_err("%s: disabling rtx, usb max_voltage not 9V max_usbv=%d",
+		__func__, uc_data->input_uv);
+
+		/* TODO: b/297428746 requires 2nd gpio to notify wlc of error */
+		if (uc_data->rtx_ready >= 0)
+			gpio_set_value_cansleep(uc_data->rtx_ready, 0);
+		uc_data->rtx_state = GSU_RTX_DISABLED;
+		return -EINVAL;
+	}
+
+	ret = gs201_wlc_en(uc_data, true);
+	if (ret < 0)
+		pr_err("%s: cannot enable WLC (%d)\n", __func__, ret);
+
+	uc_data->rtx_state = GSU_RTX_ENABLED;
+	if (uc_data->rtx_ready >= 0)
+		gpio_set_value_cansleep(uc_data->rtx_ready, 1);
 
 	return ret;
 }
@@ -271,7 +315,7 @@ int gs201_to_standby(struct max77779_usecase_data *uc_data, int use_case)
 		need_stby = true;
 
 	pr_info("%s: use_case=%d->%d from_otg=%d need_stby=%d\n", __func__,
-		 from_uc, use_case, from_otg, need_stby);
+		from_uc, use_case, from_otg, need_stby);
 
 	if (!need_stby)
 		return 0;
@@ -281,14 +325,8 @@ int gs201_to_standby(struct max77779_usecase_data *uc_data, int use_case)
 	if (ret < 0)
 		return -EIO;
 
-	if (from_uc == GSU_MODE_WLC_TX) {
-		gs201_wlc_tx_enable(uc_data, false);
-
-		/* re-enable wlc IC if disabled */
-		ret = gs201_wlc_en(uc_data, true);
-		if (ret < 0)
-			pr_err("%s: cannot enable WLC (%d)\n", __func__, ret);
-	}
+	if (!uc_data->reverse12_en && (use_case == GSU_MODE_USB_CHG_WLC_TX))
+		uc_data->rtx_state = GSU_RTX_STANDBY;
 
 	uc_data->use_case = GSU_MODE_STANDBY;
 	return ret;
@@ -552,23 +590,27 @@ int gs201_finish_usecase(struct max77779_usecase_data *uc_data, int use_case)
 	case GSU_MODE_WLC_TX:
 	case GSU_MODE_USB_CHG_WLC_TX:
 		/* p9412 will not be in RX when powered from EXT */
-		ret = gs201_wlc_tx_enable(uc_data, true);
+		ret = gs201_wlc_tx_enable(uc_data, use_case, true);
 		if (ret < 0)
 			return ret;
 		break;
-	case GSU_MODE_USB_CHG:
-	case GSU_MODE_USB_DC:
+	default:
 		if (from_uc == GSU_MODE_WLC_TX || from_uc == GSU_MODE_USB_CHG_WLC_TX) {
 			/* p9412 is already off from insel */
-			ret = gs201_wlc_tx_enable(uc_data, false);
+			ret = gs201_wlc_tx_enable(uc_data, use_case, false);
 			if (ret < 0)
 				return ret;
+
+			ret = gs201_wlc_en(uc_data, true); /* re-enable wlc in case of rx */
+			if (ret < 0)
+				return ret;
+
+			uc_data->rtx_state = GSU_RTX_DEFAULT;
 		}
-		/* STBY will re-enable WLC */
-		break;
-	default:
 		break;
 	}
+
+	uc_data->rtx_retries = MAX77779_CHG_TX_RETRIES;
 
 	return ret;
 }
@@ -608,7 +650,8 @@ static bool gs201_setup_usecases_done(struct max77779_usecase_data *uc_data)
 	return (uc_data->wlc_en != -EPROBE_DEFER) &&
 	       (uc_data->bst_on != -EPROBE_DEFER) &&
 	       (uc_data->ext_bst_mode != -EPROBE_DEFER) &&
-	       (uc_data->ext_bst_ctl != -EPROBE_DEFER);
+	       (uc_data->ext_bst_ctl != -EPROBE_DEFER) &&
+	       (uc_data->rtx_ready != -EPROBE_DEFER);
 
 	/* TODO: handle platform specific differences..	*/
 }
@@ -625,6 +668,7 @@ static void gs201_setup_default_usecase(struct max77779_usecase_data *uc_data)
 	uc_data->otg_enable = -EPROBE_DEFER;
 
 	uc_data->wlc_en = -EPROBE_DEFER;
+	uc_data->rtx_ready = -EPROBE_DEFER;
 
 	uc_data->init_done = false;
 
@@ -679,6 +723,11 @@ bool gs201_setup_usecases(struct max77779_usecase_data *uc_data,
 	/* OPTIONAL: support reverse 1:2 mode for RTx */
 	uc_data->reverse12_en = of_property_read_bool(node, "max77779,reverse_12-en");
 
+	if (uc_data->rtx_ready == -EPROBE_DEFER)
+		uc_data->rtx_ready = of_get_named_gpio(node, "max77779,rtx-ready", 0);
+
+	uc_data->rtx_retries = MAX77779_CHG_TX_RETRIES;
+
 	return gs201_setup_usecases_done(uc_data);
 }
 
@@ -686,8 +735,8 @@ void gs201_dump_usecasase_config(struct max77779_usecase_data *uc_data)
 {
 	pr_info("bst_on:%d, ext_bst_ctl: %d, ext_bst_mode:%d\n",
 		 uc_data->bst_on, uc_data->ext_bst_ctl, uc_data->ext_bst_mode);
-	pr_info("wlc_en:%d, reverse12_en:%d\n",
-		uc_data->wlc_en, uc_data->reverse12_en);
+	pr_info("wlc_en:%d, reverse12_en:%d rtx_ready:%d\n",
+		uc_data->wlc_en, uc_data->reverse12_en, uc_data->rtx_ready);
 	pr_info("rx_to_rx_otg:%d ext_otg_only:%d\n",
 		uc_data->rx_otg_en, uc_data->ext_otg_only);
 }

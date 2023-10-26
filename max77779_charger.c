@@ -671,34 +671,25 @@ static int max77779_get_usecase(struct max77779_foreach_cb_data *cb_data,
 			usecase = GSU_MODE_WLC_TX;
 			if (!uc_data->reverse12_en)
 				mode = MAX77779_CHGR_MODE_BOOST_UNO_ON;
-			else
-				dc_on = true;
 		}
 	} else if (wlc_tx) {
 		if (!buck_on) {
 			usecase = GSU_MODE_WLC_TX;
-			if (uc_data->reverse12_en) {
+			if (uc_data->reverse12_en)
 				mode = MAX77779_CHGR_MODE_ALL_OFF;
-				dc_on = true;
-			} else
+			else
 				mode = MAX77779_CHGR_MODE_BOOST_UNO_ON;
 		} else if (chgr_on) {
-			if (uc_data->reverse12_en) {
+			if (uc_data->reverse12_en)
 				mode = MAX77779_CHGR_MODE_CHGR_BUCK_ON;
-				dc_on = true;
-			} else {
+			else
 				mode = MAX77779_CHGR_MODE_CHGR_BUCK_BOOST_UNO_ON;
-				dc_on = false;
-			}
 			usecase = GSU_MODE_USB_CHG_WLC_TX;
 		} else {
-			if (uc_data->reverse12_en) {
+			if (uc_data->reverse12_en)
 				mode = MAX77779_CHGR_MODE_BUCK_ON;
-				dc_on = true;
-			} else {
+			else
 				mode = MAX77779_CHGR_MODE_BUCK_BOOST_UNO_ON;
-				dc_on =false;
-			}
 			usecase = GSU_MODE_USB_CHG_WLC_TX;
 		}
 	} else if (wlc_rx) {
@@ -753,12 +744,16 @@ static int max77779_get_usecase(struct max77779_foreach_cb_data *cb_data,
 
 	}
 
-	if (!uc_data->reverse12_en) {
-		if (!cb_data->dc_avail_votable)
-			cb_data->dc_avail_votable = gvotable_election_get_handle(VOTABLE_DC_CHG_AVAIL);
-		if (cb_data->dc_avail_votable)
-			gvotable_cast_int_vote(cb_data->dc_avail_votable,
-					       "WLC_TX", wlc_tx? 0 : 1, wlc_tx);
+	if (!cb_data->dc_avail_votable)
+		cb_data->dc_avail_votable = gvotable_election_get_handle(VOTABLE_DC_CHG_AVAIL);
+	if (cb_data->dc_avail_votable)
+		gvotable_cast_int_vote(cb_data->dc_avail_votable,
+				       "WLC_TX", wlc_tx? 0 : 1, wlc_tx);
+	if (wlc_tx) {
+		if (uc_data->reverse12_en)
+			dc_on = true;
+		else
+			dc_on = false;
 	}
 
 	/* reg might be ignored later */
@@ -862,34 +857,8 @@ static int max77779_set_usecase(struct max77779_chgr_data *data,
 
 	/* Need this only for usecases that control the switches */
 	if (!uc_data->init_done) {
+		uc_data->psy = data->psy;
 		uc_data->init_done = gs201_setup_usecases(uc_data, data->dev->of_node);
-	}
-
-	/*
-	* Usecase 2 -> 3, we need to transition to usecase 1 first 2 -> 1 -> 3
-	* The logic is the same as a mode_callback usecase transition
-	*/
-	if (!uc_data->reverse12_en && (from_uc == GSU_MODE_USB_DC) &&
-	   (use_case == GSU_MODE_USB_CHG_WLC_TX)) {
-		int mode;
-		u8 tmp_reg = cb_data->reg;
-		const int chgr_on = cb_data_is_chgr_on(cb_data);
-
-		/* Set cb_data->reg to transition 2 -> 1 */
-		if (chgr_on)
-			mode = MAX77779_CHGR_MODE_CHGR_BUCK_ON;
-		else
-			mode = MAX77779_CHGR_MODE_BUCK_ON;
-
-		cb_data->reg = _max77779_chg_cnfg_00_mode_set(cb_data->reg, mode);
-		ret = max77779_set_usecase(data, cb_data, GSU_MODE_USB_CHG);
-		if (ret)
-			dev_err(data->dev, "Error transitioning usecase to GSU_MODE_USB_CHG\n");
-
-		/* Set vars to transition 1 -> 3 */
-		uc_data->use_case = GSU_MODE_USB_CHG;
-		from_uc = GSU_MODE_USB_CHG;
-		cb_data->reg = tmp_reg;
 	}
 
 	/* always fix/adjust insel (solves multiple input_suspend) */
@@ -933,10 +902,8 @@ exit_done:
 	}
 
 	ret = gs201_finish_usecase(uc_data, use_case);
-	if (ret < 0) {
+	if (ret < 0 && ret != -EAGAIN)
 		dev_err(data->dev, "Error finishing usecase config ret:%d\n", ret);
-		return ret;
-	}
 
 	return ret;
 }
@@ -1051,6 +1018,11 @@ static int max77779_mode_callback(struct gvotable_election *el,
 	if (ret < 0) {
 		struct max77779_usecase_data *uc_data = &data->uc_data;
 
+		if (ret == -EAGAIN) {
+			schedule_delayed_work(&data->mode_rerun_work, msecs_to_jiffies(100));
+			goto unlock_done;
+		}
+
 		ret = gs201_force_standby(uc_data);
 		if (ret < 0) {
 			dev_err(data->dev, "use_case=%d->%d force_stby failed ret:%d\n",
@@ -1080,27 +1052,27 @@ static int max77779_mode_callback(struct gvotable_election *el,
 	data->uc_data.use_case = use_case;
 
 unlock_done:
-	if (!rerun)
-		dev_info(data->dev, "%s:%s use_case=%d->%d CHG_CNFG_00=%x->%x\n",
-			 __func__, trigger ? trigger : "<>",
-			 from_use_case, use_case,
-			 reg, cb_data.reg);
-	else
-		dev_info(data->dev, "%s:%s vote before resume complete\n",
-			 __func__, trigger ? trigger : "<>");
+	if (use_case >= 0) {
+		if (!rerun)
+			dev_info(data->dev, "%s:%s use_case=%d->%d CHG_CNFG_00=%x->%x\n",
+				 __func__, trigger ? trigger : "<>",
+				 from_use_case, use_case,
+				 reg, cb_data.reg);
+		else
+			dev_info(data->dev, "%s:%s vote before resume complete\n",
+				 __func__, trigger ? trigger : "<>");
+	}
 	mutex_unlock(&data->io_lock);
 	__pm_relax(data->usecase_wake_lock);
 	return 0;
 }
 
-#define MODE_RERUN	"RERUN"
 static void max77779_mode_rerun_work(struct work_struct *work)
 {
 	struct max77779_chgr_data *data = container_of(work, struct max77779_chgr_data,
 						       mode_rerun_work.work);
 
-	/* TODO: add rerun election API for this b/223089247 */
-	max77779_mode_callback(data->mode_votable, MODE_RERUN, NULL);
+	gvotable_run_election(data->mode_votable, true);
 
 	return;
 }
