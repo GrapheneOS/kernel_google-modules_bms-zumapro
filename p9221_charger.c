@@ -6500,7 +6500,7 @@ static void p9221_irq_handler(struct p9221_charger_data *charger, u16 irq_src)
 
 	p9221_check_dc_reset(charger, irq_src);
 
-	if (irq_src & charger->ints.vout_changed_bit)
+	if (irq_src & charger->ints.cc_vout_bit)
 		charger->cc_vout_ready = true;
 
 	if (irq_src & charger->ints.stat_limit_mask)
