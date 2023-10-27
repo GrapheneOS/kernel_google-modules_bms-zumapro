@@ -1004,7 +1004,9 @@ int ln8411_check_active(struct ln8411_charger *ln8411)
  * . ln8411_charge_ccmode
  * . ln8411_charge_start_cvmode
  * . ln8411_charge_cvmode
- *
+ * . ln8411_adjust_ta_voltage
+ * . ln8411_adjust_rx_voltage
+ * . ln8411_adjust_ta_current
  * call holding mutex_lock(&ln8411->lock)
  */
 static int ln8411_check_error(struct ln8411_charger *ln8411)
@@ -2031,6 +2033,10 @@ static int ln8411_adjust_ta_current(struct ln8411_charger *ln8411)
 	bool ovc_flag;
 	int ret = 0;
 
+	rc = ln8411_check_error(ln8411);
+	if (rc != 0)
+		return rc;
+
 	rc = ln8411_get_current_adcs(ln8411, &ibat, &icn, &iin);
 	if (rc)
 		return rc;
@@ -2129,6 +2135,10 @@ static int ln8411_adjust_ta_voltage(struct ln8411_charger *ln8411)
 
 	ln8411->charging_state = DC_STATE_ADJUST_TAVOL;
 
+	rc = ln8411_check_error(ln8411);
+	if (rc != 0)
+		return rc;
+
 	rc = ln8411_get_current_adcs(ln8411, &ibat, &icn, &iin);
 	if (rc)
 		return rc;
@@ -2223,9 +2233,14 @@ static int ln8411_adjust_rx_voltage(struct ln8411_charger *ln8411)
 
 	ln8411->charging_state = DC_STATE_ADJUST_TAVOL;
 
+	rc = ln8411_check_error(ln8411);
+	if (rc != 0)
+		return rc;
+
 	rc = ln8411_get_current_adcs(ln8411, &ibat, &icn, &iin);
 	if (rc)
 		return rc;
+
 
 	ovc_flag = ibat > ln8411->cc_max;
 	if (ovc_flag)

@@ -858,7 +858,9 @@ static int pca9468_check_standby(struct pca9468_charger *pca9468)
  * . pca9468_charge_ccmode
  * . pca9468_charge_start_cvmode
  * . pca9468_charge_cvmode
- *
+ * . pca9468_adjust_ta_voltage
+ * . pca9468_adjust_rx_voltage
+ * . pca9468_adjust_ta_current
  * call holding mutex_lock(&pca9468->lock)
  */
 static int pca9468_check_error(struct pca9468_charger *pca9468)
@@ -1983,6 +1985,10 @@ static int pca9468_adjust_ta_current(struct pca9468_charger *pca9468)
 	bool ovc_flag;
 	int ret = 0;
 
+	rc = pca9468_check_error(pca9468);
+	if (rc != 0)
+		return rc;
+
 	rc = pca9468_get_ibatt(pca9468, &ibat);
 	if (rc == 0)
 		rc = pca9468_get_iin(pca9468, &icn);
@@ -2083,6 +2089,10 @@ static int pca9468_adjust_ta_voltage(struct pca9468_charger *pca9468)
 
 	pca9468->charging_state = DC_STATE_ADJUST_TAVOL;
 
+	rc = pca9468_check_error(pca9468);
+	if (rc != 0)
+		return rc;
+
 	rc = pca9468_get_ibatt(pca9468, &ibat);
 	if (rc == 0)
 		rc = pca9468_get_iin(pca9468, &icn);
@@ -2178,6 +2188,10 @@ static int pca9468_adjust_rx_voltage(struct pca9468_charger *pca9468)
 			 pca9468->charging_state, DC_STATE_ADJUST_TAVOL);
 
 	pca9468->charging_state = DC_STATE_ADJUST_TAVOL;
+
+	rc = pca9468_check_error(pca9468);
+	if (rc != 0)
+		return rc;
 
 	rc = pca9468_get_ibatt(pca9468, &ibat);
 	if (rc == 0)
