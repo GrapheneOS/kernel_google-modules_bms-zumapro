@@ -5190,6 +5190,7 @@ static int p9382_rtx_enable(struct p9221_charger_data *charger, bool enable)
 {
 	const bool rtx_gpio_retry = p9xxx_rtx_gpio_get(charger) == RTX_RETRY;
 	int ret = 0;
+	int val, loops;
 
 	/*
 	 * TODO: deprecate the support for rTX on whitefin2 or use a DT entry
@@ -5205,8 +5206,19 @@ static int p9382_rtx_enable(struct p9221_charger_data *charger, bool enable)
 		ret = gvotable_cast_long_vote(charger->chg_mode_votable,
 					      P9221_WLC_VOTER,
 					      GBMS_CHGR_MODE_WLC_TX, enable);
-		if (charger->pdata->ben_gpio > 0)
+		if (charger->pdata->ben_gpio > 0) {
+			if (enable && charger->pdata->rtx_wait_ben) {
+				for (loops = 3 ; loops ; loops--) {
+					val = gpio_get_value_cansleep(charger->pdata->ben_gpio);
+					if (val != 0)
+						break;
+					dev_dbg(&charger->client->dev,
+						"enable RTx waiting ben_gpio: %d", val);
+					msleep(100);
+				}
+			}
 			gpio_set_value_cansleep(charger->pdata->ben_gpio, enable);
+		}
 		return ret;
 	}
 
@@ -7066,8 +7078,10 @@ static int p9xxx_parse_dt(struct device *dev,
 		     (pdata->chip_id == P9382A_CHIP_ID));
 
 	pdata->has_rtx_gpio = of_property_read_bool(node, "idt,has_rtx_gpio");
+	pdata->rtx_wait_ben = of_property_read_bool(node, "idt,rtx_wait_ben");
 
-	dev_info(dev, "has_rtx:%d, has_rtx_gpio:%d\n", pdata->has_rtx, pdata->has_rtx_gpio);
+	dev_info(dev, "has_rtx:%d, has_rtx_gpio:%d, rtx_wait_ben:%d\n",
+		 pdata->has_rtx, pdata->has_rtx_gpio, pdata->rtx_wait_ben);
 
 	/* configure boost to 7V through wlc chip */
 	pdata->apbst_en = of_property_read_bool(node, "idt,apbst_en");
