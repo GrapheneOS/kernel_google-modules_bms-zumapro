@@ -4703,7 +4703,27 @@ static int ln8411_gpio_get_direction(struct gpio_chip *chip, unsigned int offset
 
 static int ln8411_gpio_get(struct gpio_chip *chip, unsigned int offset)
 {
-	return 0;
+	struct ln8411_charger *ln8411 = gpiochip_get_data(chip);
+	int ret = 0;
+
+	switch (offset) {
+	/*
+	 * Get LN8411_GPIO_1_2_EN returns 1 when it's not in forward mode, allowing
+	 * reverse mode to be enabled. WLC will wait until this gpio is 1 before
+	 * attempting to enable reverse mode.
+	 */
+	case LN8411_GPIO_1_2_EN:
+		mutex_lock(&ln8411->lock);
+		ret = (ln8411->chg_mode == CHG_NO_DC_MODE) || (ln8411->chg_mode == CHG_1TO2_DC_MODE);
+		mutex_unlock(&ln8411->lock);
+		break;
+	default:
+		return -EINVAL;
+		break;
+	}
+
+	pr_debug("%s: GPIO offset=%d ret:%d\n", __func__, offset, ret);
+	return ret;
 }
 
 static void ln8411_gpio_set(struct gpio_chip *chip, unsigned int offset, int value)
