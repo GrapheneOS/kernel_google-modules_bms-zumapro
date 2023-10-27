@@ -2880,6 +2880,10 @@ static int dbg_init_fs(struct max77779_chgr_data *data)
 	debugfs_create_file("data", 0600, data->de, data, &debug_reg_rw_fops);
 	/* dump all registers */
 	debugfs_create_file("registers", 0444, data->de, data, &debug_all_reg_fops);
+
+	debugfs_create_u32("inlim_period", 0600, data->de, &data->wcin_inlim_t);
+	debugfs_create_u32("inlim_headroom", 0600, data->de, &data->wcin_inlim_headroom);
+	debugfs_create_u32("inlim_step", 0600, data->de, &data->wcin_inlim_step);
 	return 0;
 }
 
