@@ -822,6 +822,7 @@ static int max1720x_history_read(struct max1720x_chip *chip,
 	} else if (hi->history_count != 0) {
 		const int size = hi->history_count * chip->history_page_size;
 
+		hi->page_size = chip->history_page_size;
 		hi->history = batt_alloc_array(size, sizeof(u16));
 		if (!hi->history) {
 			hi->history_count = -ENOMEM;
