@@ -1138,16 +1138,10 @@ static int max77779_fg_find_pmic(struct max77779_fg_chip *chip)
 	return chip->pmic_dev == NULL ? -ENXIO : 0;
 }
 
-#define MAX77779_FG_CHECK_FW_VER	1
-#define MAX77779_FG_AVAILABLE_FW_VER	15
-#define MAX77779_FG_FW_VER_TEMP	220
-static int max77779_fg_check_fw_ver(struct max77779_fg_chip *chip)
+static int max77779_fg_get_fw_ver(struct max77779_fg_chip *chip)
 {
 	uint8_t fw_rev, fw_sub_rev;
 	int ret;
-
-	if (chip->fw_check_done)
-		return 0;
 
 	ret = max77779_fg_find_pmic(chip);
 	if (ret) {
@@ -1159,41 +1153,38 @@ static int max77779_fg_check_fw_ver(struct max77779_fg_chip *chip)
 	if (ret < 0)
 		return ret;
 
-	if (fw_rev != MAX77779_FG_CHECK_FW_VER) {
-		chip->fw_check_done = true;
-		goto exit_done;
-	}
-
 	ret = max77779_external_pmic_reg_read(chip->pmic_dev, MAX77779_FG_FW_SUB_REV, &fw_sub_rev);
 	if (ret < 0)
 		return ret;
 
-	if (fw_sub_rev < MAX77779_FG_AVAILABLE_FW_VER) {
-		chip->is_fake_temp = true;
-		chip->fake_temperature = MAX77779_FG_FW_VER_TEMP;
-	}
+	chip->fw_rev = fw_rev;
+	chip->fw_sub_rev = fw_sub_rev;
 
-	chip->fw_check_done = true;
-
-exit_done:
+	gbms_logbuffer_devlog(chip->monitor_log, chip->dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+			      "FW_REV=%d, FW_SUB_REV=%d", chip->fw_rev, chip->fw_sub_rev);
 
 	return 0;
 }
 
+/* Report fake temp 22 degree if firmware < 1.15 */
+#define MAX77779_FG_FAKE_TEMP_FW_REV     1
+#define MAX77779_FG_FAKE_TEMP_FW_SUBREV  15
+#define MAX77779_FG_FAKE_TEMP            220
 static int max77779_fg_get_temp(struct max77779_fg_chip *chip)
 {
 	u16 data = 0;
 	int err = 0;
 
-	if (!chip->fw_check_done)
-		max77779_fg_check_fw_ver(chip);
+	if (!chip->fw_rev && !chip->fw_sub_rev)
+		max77779_fg_get_fw_ver(chip);
 
-	if (chip->is_fake_temp)
-		return chip->fake_temperature;
+	if (chip->fw_rev == MAX77779_FG_FAKE_TEMP_FW_REV &&
+	    chip->fw_sub_rev < MAX77779_FG_FAKE_TEMP_FW_SUBREV)
+		return MAX77779_FG_FAKE_TEMP;
 
 	err = REGMAP_READ(&chip->regmap, MAX77779_FG_Temp, &data);
 	if (err < 0)
-		return chip->fake_temperature;
+		return MAX77779_FG_FAKE_TEMP;
 
 	return reg_to_deci_deg_cel(data);
 }
@@ -1228,7 +1219,7 @@ static int max77779_adjust_cgain(struct max77779_fg_chip *chip, unsigned int otp
 		v_cgain = v_cgain | (((-1) * i_otrim_real) & 0x3F);
 
 	gbms_logbuffer_devlog(chip->monitor_log, chip->dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-			      "OTP_VER:%d,%02X:%04X,%02X:%04X,%02X:%04X,trim:%d,new Cgain:%04X\n",
+			      "OTP_VER:%d,%02X:%04X,%02X:%04X,%02X:%04X,trim:%d,new Cgain:%04X",
 			      otp_revision, MAX77779_FG_TrimIbattGain, i_gtrim,
 			      MAX77779_FG_TrimBattOffset, i_otrim, MAX77779_FG_CGain, ro_cgain,
 			      i_otrim_real, v_cgain);
@@ -1387,17 +1378,24 @@ static int max77779_fg_get_property(struct power_supply *psy,
 			val->intval = 0;
 		} else {
 
-			err = REGMAP_READ(map, MAX77779_FG_Status, &data);
+			err = REGMAP_READ(map, MAX77779_FG_FG_INT_STS, &data);
 			if (err < 0)
 				break;
 
 			/* BST is 0 when the battery is present */
-			val->intval = !(data & MAX77779_FG_Status_Bst_MASK);
+			val->intval = !(data & MAX77779_FG_FG_INT_MASK_Bst_m_MASK);
 			if (!val->intval)
 				break;
 
 			/* chip->por prevent garbage in cycle count */
-			chip->por = (data & MAX77779_FG_Status_PONR_MASK) != 0;
+			chip->por = (data & MAX77779_FG_FG_INT_MASK_POR_m_MASK) != 0;
+			if (chip->por && chip->model_ok &&
+			    chip->model_reload == MAX77779_FG_LOAD_MODEL_IDLE) {
+				/* trigger reload model and clear of POR */
+				mutex_unlock(&chip->model_lock);
+				max77779_fg_irq_thread_fn(-1, chip);
+				return err;
+			}
 		}
 		break;
 	case POWER_SUPPLY_PROP_TEMP:
@@ -1955,20 +1953,16 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 	fg_int_sts_clr = fg_int_sts;
 
 	if (fg_status & MAX77779_FG_Status_PONR_MASK) {
-		/*
-		 * TODO: figure out the interaction between Status and INT_STS
-		 * fg_int_sts_clr &= ~MAX77779_FG_Status_PONR_MASK;
-		 */
 		mutex_lock(&chip->model_lock);
 		chip->por = true;
 
 		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
 				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-				      "POR is set (FG_INT_STS:%04x), model_reload:%d",
-				      fg_int_sts, chip->model_reload);
+				      "POR is set (FG_INT_STS:%04x), irq:%d, model_reload:%d",
+				      fg_int_sts, irq, chip->model_reload);
 
 		/* trigger model load if not on-going */
-		if (chip->model_reload != MAX77779_FG_LOAD_MODEL_REQUEST) {
+		if (chip->model_reload == MAX77779_FG_LOAD_MODEL_IDLE) {
 			err = max77779_fg_model_reload(chip, false);
 			if (err < 0)
 				dev_dbg(chip->dev, "unable to reload model, err=%d\n", err);
@@ -2209,6 +2203,44 @@ static int debug_fake_battery_set(void *data, u64 val)
 
 DEFINE_SIMPLE_ATTRIBUTE(debug_fake_battery_fops, NULL,
 			debug_fake_battery_set, "%llu\n");
+
+static int debug_fw_revision_get(void *data, u64 *val)
+{
+	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)data;
+
+	*val = chip->fw_rev;
+	return 0;
+}
+
+static int debug_fw_revision_set(void *data, u64 val)
+{
+	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)data;
+
+	chip->fw_rev = val;
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(debug_fw_revision_fops, debug_fw_revision_get,
+			debug_fw_revision_set, "%llu\n");
+
+static int debug_fw_sub_revision_get(void *data, u64 *val)
+{
+	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)data;
+
+	*val = chip->fw_sub_rev;
+	return 0;
+}
+
+static int debug_fw_sub_revision_set(void *data, u64 val)
+{
+	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)data;
+
+	chip->fw_sub_rev = val;
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(debug_fw_sub_revision_fops, debug_fw_sub_revision_get,
+			debug_fw_sub_revision_set, "%llu\n");
 
 static void max77779_fg_reglog_dump(struct maxfg_reglog *regs,
 				    size_t size, char *buff)
@@ -2687,6 +2719,9 @@ static int max77779_fg_init_sysfs(struct max77779_fg_chip *chip)
 	/* fuel gauge operation status */
 	debugfs_create_file("fw_update", 0600, de, chip, &debug_fw_update_fops);
 
+	debugfs_create_file("fw_revision", 0600, de, chip, &debug_fw_revision_fops);
+	debugfs_create_file("fw_sub_revision", 0600, de, chip, &debug_fw_sub_revision_fops);
+
 	return 0;
 }
 
@@ -2793,8 +2828,15 @@ static int max77779_fg_model_load(struct max77779_fg_chip *chip)
 		/* use the state from the DT when GMSR is invalid */
 	}
 
-	/* failure on the gauge: retry as long as model_reload > IDLE */
-	ret = max77779_load_gauge_model(chip->model_data);
+	/* get fw version from pmic if it's not ready during init */
+	if (!chip->fw_rev && !chip->fw_sub_rev)
+		max77779_fg_get_fw_ver(chip);
+
+	/*
+	 * failure on the gauge: retry as long as model_reload > IDLE
+	 * pass current firmware revision to model load procedure
+	 */
+	ret = max77779_load_gauge_model(chip->model_data, chip->fw_rev, chip->fw_sub_rev);
 	if (ret < 0) {
 		dev_err(chip->dev, "Load Model Failed ret=%d\n", ret);
 		return -EAGAIN;
@@ -2821,16 +2863,12 @@ static void max77779_fg_model_work(struct work_struct *work)
 
 	/* set model_reload to the #attempts, might change cycle count */
 	if (chip->model_reload > MAX77779_FG_LOAD_MODEL_IDLE) {
-
 		rc = max77779_fg_model_load(chip);
 		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
 				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-				      "Model loading complete, rc=%d", rc);
+				      "Model loading complete, rc=%d, reload=%d", rc,
+				      chip->model_reload);
 		if (rc == 0) {
-			rc = max77779_fg_mask_por(chip, false);
-			if (rc < 0)
-				dev_warn(chip->dev, "unable to unmask por bit, err=%d\n", rc);
-
 			max77779_fg_restore_battery_cycle(chip);
 			rc = REGMAP_READ(&chip->regmap, MAX77779_FG_Cycles, &reg_cycle);
 			if (rc == 0 && reg_cycle >= 0) {
@@ -2843,8 +2881,8 @@ static void max77779_fg_model_work(struct work_struct *work)
 		} else if (rc != -EAGAIN) {
 			chip->model_reload = MAX77779_FG_LOAD_MODEL_DISABLED;
 			chip->model_ok = false;
-		} else if (chip->model_reload > MAX77779_FG_LOAD_MODEL_IDLE) {
-			chip->model_reload -= 1;
+		} else {
+			chip->model_reload += 1;
 			mod_delayed_work(system_wq, &chip->model_work, msecs_to_jiffies(1000));
 		}
 	}
@@ -2940,10 +2978,6 @@ static int max77779_fg_init_model_data(struct max77779_fg_chip *chip)
 		return -EPROBE_DEFER;
 	}
 
-	ret = max77779_fg_mask_por(chip, false);
-	if (ret < 0)
-		dev_warn(chip->dev, "Unable to unmask por bit, ret=%d\n", ret);
-
 	ret = max77779_fg_set_next_update(chip);
 	if (ret < 0)
 		dev_warn(chip->dev, "Error on Next Update, Will retry\n");
@@ -3028,8 +3062,7 @@ static int max77779_fg_init_chip(struct max77779_fg_chip *chip)
 	}
 
 	MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_FG_INT_MASK,
-				 MAX77779_FG_FG_INT_MASK_Tmn_m_MASK |
-				 MAX77779_FG_FG_INT_MASK_Tmx_m_MASK);
+				 MAX77779_FG_FG_INT_MASK_dSOCi_m_CLEAR);
 
 	/* triggers loading of the model in the irq handler on POR */
 	if (!chip->por) {
@@ -3323,6 +3356,14 @@ int max77779_fg_init(struct max77779_fg_chip *chip)
 			 debug_reglog ? "" : "not ");
 	}
 
+	/*
+	 * mask all interrupts before request irq
+	 * unmask in init_work
+	 */
+	ret = MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_FG_INT_MASK, 0xFFFF);
+	if (ret < 0)
+		dev_warn(chip->dev, "Unable to mask all interrupts (%d)\n", ret);
+
 	if (chip->irq) {
 		ret = devm_request_threaded_irq(chip->dev, chip->irq, NULL,
 						max77779_fg_irq_thread_fn,
@@ -3351,6 +3392,27 @@ int max77779_fg_init(struct max77779_fg_chip *chip)
 		chip->max77779_fg_psy_desc.name = "max77779fg";
 
 	dev_info(dev, "max77779_fg_psy_desc.name=%s\n", chip->max77779_fg_psy_desc.name);
+
+	chip->ce_log = logbuffer_register(chip->max77779_fg_psy_desc.name);
+	if (IS_ERR(chip->ce_log)) {
+		ret = PTR_ERR(chip->ce_log);
+		dev_err(dev, "failed to obtain logbuffer, ret=%d\n", ret);
+		chip->ce_log = NULL;
+		goto power_supply_unregister;
+	}
+
+	scnprintf(monitor_name, sizeof(monitor_name), "%s_%s",
+		  chip->max77779_fg_psy_desc.name, "monitor");
+	chip->monitor_log = logbuffer_register(monitor_name);
+	if (IS_ERR(chip->monitor_log)) {
+		ret = PTR_ERR(chip->monitor_log);
+		dev_err(dev, "failed to obtain logbuffer, ret=%d\n", ret);
+		chip->monitor_log = NULL;
+		goto power_supply_unregister;
+	}
+
+	/* POWER_SUPPLY_PROP_TEMP and model load need the version info */
+	max77779_fg_get_fw_ver(chip);
 
 	/* fuel gauge model needs to know the batt_id */
 	mutex_init(&chip->model_lock);
@@ -3384,24 +3446,6 @@ int max77779_fg_init(struct max77779_fg_chip *chip)
 
 	/* M5 battery model needs batt_id and is setup during init() */
 	chip->model_reload = MAX77779_FG_LOAD_MODEL_DISABLED;
-
-	chip->ce_log = logbuffer_register(chip->max77779_fg_psy_desc.name);
-	if (IS_ERR(chip->ce_log)) {
-		ret = PTR_ERR(chip->ce_log);
-		dev_err(dev, "failed to obtain logbuffer, ret=%d\n", ret);
-		chip->ce_log = NULL;
-		goto power_supply_unregister;
-	}
-
-	scnprintf(monitor_name, sizeof(monitor_name), "%s_%s",
-		  chip->max77779_fg_psy_desc.name, "monitor");
-	chip->monitor_log = logbuffer_register(monitor_name);
-	if (IS_ERR(chip->monitor_log)) {
-		ret = PTR_ERR(chip->monitor_log);
-		dev_err(dev, "failed to obtain logbuffer, ret=%d\n", ret);
-		chip->monitor_log = NULL;
-		goto power_supply_unregister;
-	}
 
 	ret = of_property_read_u32(dev->of_node, "google,bhi-fcn-count",
 				   &chip->bhi_fcn_count);

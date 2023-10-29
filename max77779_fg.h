@@ -22,7 +22,7 @@
 /* change to 1 or 0 to load FG model with default parameters on startup */
 #define MAX77779_FG_LOAD_MODEL_DISABLED	-1
 #define MAX77779_FG_LOAD_MODEL_IDLE	0
-#define MAX77779_FG_LOAD_MODEL_REQUEST	5
+#define MAX77779_FG_LOAD_MODEL_REQUEST	1
 
 #define MAX77779_FG_MODEL_START		MAX77779_FG_OCV0
 #define MAX77779_FG_MODEL_SIZE		32
@@ -149,10 +149,6 @@ struct max77779_fg_chip {
 	/* battery current criteria for report status charge */
 	u32 status_charge_threshold_ma;
 
-	bool fw_check_done;
-	bool is_fake_temp;
-	int fake_temperature;
-
 	bool current_offset_check_done;
 
 	bool fw_update_mode;
@@ -160,6 +156,10 @@ struct max77779_fg_chip {
 	/* in-field logging */
 	int fg_logging_events;
 	u16 pre_fullcapnom;
+
+	/* firmware revision */
+	int fw_rev;
+	int fw_sub_rev;
 };
 
 /** ------------------------------------------------------------------------ */
@@ -304,7 +304,7 @@ int max77779_model_read_state(struct max77779_model_data *model_data);
 int max77779_model_check_state(struct max77779_model_data *model_data);
 
 /* load model to gauge */
-int max77779_load_gauge_model(struct max77779_model_data *model_data);
+int max77779_load_gauge_model(struct max77779_model_data *model_data, int fw_rev, int fw_sub_rev);
 
 ssize_t max77779_model_state_cstr(char *buf, int max, struct max77779_model_data *model_data);
 int max77779_fg_model_cstr(char *buf, int max, const struct max77779_model_data *model_data);

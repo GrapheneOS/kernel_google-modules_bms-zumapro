@@ -146,7 +146,8 @@ error_exit:
 	return ret;
 }
 
-static int max77779_update_custom_parameters(struct max77779_model_data *model_data)
+static int max77779_update_custom_parameters(struct max77779_model_data *model_data, int revision,
+					     int sub_rev)
 {
 	struct max77779_custom_parameters *cp = &model_data->parameters;
 	struct maxfg_regmap *debug_regmap = model_data->debug_regmap;
@@ -193,11 +194,15 @@ static int max77779_update_custom_parameters(struct max77779_model_data *model_d
 		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_NVM_nQRTable20, cp->qresidual20);
 	if (ret == 0)
 		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_NVM_nQRTable30, cp->qresidual30);
-
-	if (ret == 0) /* Write modelcfg.refresh */
-		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_NVM_nModelCfg, cp->modelcfg);
-	if (ret == 0) /* FIXME:REGMAP_WRITE_VERIFY fail */
-		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_NVM_nLearnCfg, cp->learncfg);
+	/* b/308287790 - Clear nMOdelCfg.Refresh if firmware revision < 2.6 */
+	if (revision < 2 || (revision == 2 && sub_rev < 6)) {
+		if (ret == 0)
+			ret = REGMAP_READ(debug_regmap, MAX77779_FG_NVM_nModelCfg, &data);
+		if (ret == 0)
+			ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_NVM_nModelCfg, data & 0x7FFF);
+	}
+	if (ret == 0)
+		ret = REGMAP_WRITE_VERIFY(debug_regmap, MAX77779_FG_NVM_nLearnCfg, cp->learncfg);
 	if (ret == 0)
 		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_NVM_RelaxCFG, cp->relaxcfg);
 	if (ret == 0)
@@ -219,10 +224,10 @@ static int max77779_update_custom_parameters(struct max77779_model_data *model_d
 }
 
 /*
- * Model loading procedure version: 0.1.2
+ * Model loading procedure version: 0.1.4
  * 0 is ok
  */
-int max77779_load_gauge_model(struct max77779_model_data *model_data)
+int max77779_load_gauge_model(struct max77779_model_data *model_data, int rev, int sub_rev)
 {
 	struct maxfg_regmap *regmap = model_data->regmap;
 	u16 data, hibcfg, config2, status, temp;
@@ -231,33 +236,30 @@ int max77779_load_gauge_model(struct max77779_model_data *model_data)
 	if (!model_data || !model_data->custom_model || !model_data->custom_model_size)
 		return -ENODATA;
 
+	if (!rev && !sub_rev)
+		return -EINVAL;
+
 	if (!regmap) {
 		dev_err(model_data->dev, "Error! No regmap\n");
 		return -EIO;
 	}
 
-	/* Step 1: Check for POR */
-	ret = REGMAP_READ(regmap, MAX77779_FG_Status, &data);
-	if (ret < 0) {
-		dev_err(model_data->dev, "Error reading status reg\n");
-		return -EINVAL;
+	/* Step 1: Check for POR (not needed, we're here when POR is set) */
+
+	/*
+	 * Step 2: Delay until FSTAT.DNR bit == 0
+	 * check FStat.DNR to wait it clear for data read
+	 */
+	for (retries = 20; retries > 0; retries--) {
+		ret = REGMAP_READ(regmap, MAX77779_FG_FStat, &data);
+		if (ret == 0 && !(data & MAX77779_FG_FStat_DNR_MASK))
+			break;
+		msleep(10);
 	}
-	if (data & MAX77779_FG_Status_PONR_MASK) {
-		/*
-		 * Step 2: Delay until FSTAT.DNR bit == 0
-		 * check FStat.DNR to wait it clear for data read
-		 */
-		for (retries = 20; retries > 0; retries--) {
-			ret = REGMAP_READ(regmap, MAX77779_FG_FStat, &data);
-			if (ret == 0 && !(data & MAX77779_FG_FStat_DNR_MASK))
-				break;
-			msleep(10);
-		}
-		dev_info(model_data->dev, "retries:%d, FSTAT:%#x\n", retries, data);
-		if (retries == 0) {
-			dev_err(model_data->dev, "Error FSTAT.DNR not clear\n");
-			return -ETIMEDOUT;
-		}
+	dev_info(model_data->dev, "retries:%d, FSTAT:%#x\n", retries, data);
+	if (retries == 0) {
+		dev_err(model_data->dev, "Error FSTAT.DNR not clear\n");
+		return -ETIMEDOUT;
 	}
 
 	/* Step 3.1: Unlock command */
@@ -283,7 +285,7 @@ int max77779_load_gauge_model(struct max77779_model_data *model_data)
 	}
 
 	/* Step 3.4.2: Write Custom Parameters */
-	ret = max77779_update_custom_parameters(model_data);
+	ret = max77779_update_custom_parameters(model_data, rev, sub_rev);
 	if (ret < 0) {
 		dev_err(model_data->dev, "cannot update custom parameters (%d)\n", ret);
 		goto error_done;
@@ -314,7 +316,7 @@ int max77779_load_gauge_model(struct max77779_model_data *model_data)
 		goto error_done;
 	}
 
-	/* b/296312718: Config2 rewrite here */
+	/* (Optional) Restore Config2 */
 	ret = REGMAP_WRITE(regmap, MAX77779_FG_Config2, model_data->parameters.config2);
 	if (ret < 0)
 		dev_err(model_data->dev, "cannot restore Config2 (%d)\n", ret);
@@ -337,20 +339,28 @@ int max77779_load_gauge_model(struct max77779_model_data *model_data)
 		goto error_done;
 	}
 
-	/* Step 3.4.7: Lock command */
+	/* Step 4.1: Clear POR bit */
+	for (retries = 10; retries > 0; retries--) {
+		ret = REGMAP_WRITE(regmap, MAX77779_FG_FG_INT_STS,
+				   MAX77779_FG_FG_INT_MASK_POR_m_MASK);
+		msleep(100);
+
+		if (ret == 0)
+			ret = REGMAP_READ(regmap, MAX77779_FG_FG_INT_STS, &status);
+
+		if (ret == 0 && !(status & MAX77779_FG_FG_INT_MASK_POR_m_MASK))
+			break;
+	}
+
+	if (retries == 0) {
+		dev_err(model_data->dev, "cannot clear PONR bit, fg_int_sts:%#x\n", status);
+		return -ETIMEDOUT;
+	}
+
+	/* Step 4.2: Lock command */
 	ret = max77779_fg_usr_lock_section(regmap, MAX77779_FG_ALL_SECTION, true);
 	if (ret < 0) {
 		dev_err(model_data->dev, "Error Lock (%d)\n", ret);
-		return ret;
-	}
-
-	/* Step 4: Initialization Complete */
-	ret = REGMAP_READ(regmap, MAX77779_FG_Status, &status);
-	if (ret == 0)
-		ret = MAX77779_FG_REGMAP_WRITE_VERIFY(regmap, MAX77779_FG_Status,
-						      status & MAX77779_FG_Status_PONR_CLEAR);
-	if (ret < 0) {
-		dev_err(model_data->dev, "cannot clear PONR bit (%d)\n", ret);
 		return ret;
 	}
 
