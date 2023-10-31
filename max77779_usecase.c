@@ -115,8 +115,8 @@ static int gs201_wlc_tx_enable(struct max77779_usecase_data *uc_data, int use_ca
 
 	if (!enable) {
 		if (!uc_data->reverse12_en) {
-			ret = max77779_chg_reg_write(uc_data->client,
-						     MAX77779_CHG_CNFG_11, 0x0);
+			ret = max77779_external_chg_reg_write(uc_data->client,
+							      MAX77779_CHG_CNFG_11, 0x0);
 			if (ret < 0)
 				pr_err("%s: fail to reset MAX77779_CHG_REVERSE_BOOST_VOUT\n",
 				       __func__);
@@ -182,15 +182,15 @@ static int gs201_wlc_tx_config(struct max77779_usecase_data *uc_data, int use_ca
 	/* No reverse 1:2 available, we need to configure sequoia */
 	if (!uc_data->reverse12_en) {
 		if (use_case == GSU_MODE_WLC_TX) {
-			ret = max77779_chg_reg_write(uc_data->client,
-						     MAX77779_CHG_CNFG_11,
-						     MAX77779_CHG_REVERSE_BOOST_VOUT_7V);
+			ret = max77779_external_chg_reg_write(uc_data->client,
+							      MAX77779_CHG_CNFG_11,
+							      MAX77779_CHG_REVERSE_BOOST_VOUT_7V);
 			if (ret < 0)
 				pr_err("fail to configure MAX77779_CHG_REVERSE_BOOST_VOUT\n");
 		} else {
-			ret = max77779_chg_reg_write(uc_data->client,
-						     MAX77779_CHG_CNFG_11,
-						     0x0);
+			ret = max77779_external_chg_reg_write(uc_data->client,
+							      MAX77779_CHG_CNFG_11,
+							      0x0);
 			if (ret < 0)
 				pr_err("fail to reset MAX77779_CHG_REVERSE_BOOST_VOUT\n");
 		}
@@ -199,7 +199,7 @@ static int gs201_wlc_tx_config(struct max77779_usecase_data *uc_data, int use_ca
 		if (ret < 0)
 			pr_err("%s: fail to read MAX77779_CHG_CNFG_05 ret:%d\n", __func__, ret);
 
-		ret = max77779_chg_reg_write(uc_data->client, MAX77779_CHG_CNFG_05,
+		ret = max77779_external_chg_reg_write(uc_data->client, MAX77779_CHG_CNFG_05,
 			_max77779_chg_cnfg_05_wcsm_ilim_set(val,
 					MAX77779_CHG_CNFG_05_WCSM_ILIM_1400_MA));
 		if (ret < 0) {

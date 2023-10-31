@@ -81,6 +81,29 @@ static inline int max77779_reg_read(struct regmap *regmap, uint8_t reg,
 	return ret;
 }
 
+/* 1 if changed, 0 if not changed, or < 0 on error */
+static int max77779_chg_prot(struct regmap *regmap, bool enable)
+{
+	const u8 value = enable ? 0 : MAX77779_CHG_CNFG_06_CHGPROT_MASK;
+	u8 prot;
+	int ret;
+
+	ret = max77779_reg_read(regmap, MAX77779_CHG_CNFG_06, &prot);
+	if (ret < 0)
+		return -EIO;
+
+	if ((prot & MAX77779_CHG_CNFG_06_CHGPROT_MASK) == value)
+		return 0;
+
+	ret = regmap_write_bits(regmap, MAX77779_CHG_CNFG_06,
+				MAX77779_CHG_CNFG_06_CHGPROT_MASK,
+				value);
+	if (ret < 0)
+		return -EIO;
+
+	return 1;
+}
+
 static inline int max77779_reg_write(struct regmap *regmap, uint8_t reg,
 				     uint8_t val)
 {
@@ -117,8 +140,6 @@ static inline int max77779_reg_update(struct max77779_chgr_data *data,
 	return ret;
 }
 
-/* ----------------------------------------------------------------------- */
-
 static int max77779_resume_check(struct max77779_chgr_data *data)
 {
 	int ret = 0;
@@ -131,29 +152,7 @@ static int max77779_resume_check(struct max77779_chgr_data *data)
 	return ret;
 }
 
-/* 1 if changed, 0 if not changed, or < 0 on error */
-static int max77779_chg_prot(struct regmap *regmap, bool enable)
-{
-	u8 value = enable ? 0 : MAX77779_CHG_CNFG_06_CHGPROT_MASK;
-	u8 prot;
-	int ret;
-
-	ret = max77779_reg_read(regmap, MAX77779_CHG_CNFG_06, &prot);
-	if (ret < 0)
-		return -EIO;
-
-	if ((prot & MAX77779_CHG_CNFG_06_CHGPROT_MASK) == value)
-		return 0;
-
-	ret = regmap_write_bits(regmap, MAX77779_CHG_CNFG_06,
-				MAX77779_CHG_CNFG_06_CHGPROT_MASK,
-				value);
-	if (ret < 0)
-		return -EIO;
-
-	return 1;
-}
-
+/* ----------------------------------------------------------------------- */
 int max77779_external_reg_read(struct i2c_client *client, uint8_t reg, uint8_t *val)
 {
 	struct max77779_chgr_data *data;
@@ -175,13 +174,14 @@ int max77779_external_reg_read(struct i2c_client *client, uint8_t reg, uint8_t *
 }
 EXPORT_SYMBOL_GPL(max77779_external_reg_read);
 
-static int max77779_chg_prot(struct regmap *regmap, bool enable);
+static bool max77779_chg_is_protected(uint8_t reg);
 
-int max77779_external_reg_write(struct i2c_client *client, uint8_t reg, uint8_t val)
+int max77779_external_chg_reg_write(struct i2c_client *client, uint8_t reg, uint8_t val)
 {
 	struct max77779_chgr_data *data;
 	int prot;
 	int ret = 0;
+	const bool is_protected = max77779_chg_is_protected(reg);
 
 	if (!client)
 		return -ENODEV;
@@ -193,40 +193,31 @@ int max77779_external_reg_write(struct i2c_client *client, uint8_t reg, uint8_t 
 	if (max77779_resume_check(data))
 		return -EAGAIN;
 
-	prot = max77779_chg_prot(data->regmap, false);
-	if (prot < 0)
-		return -EIO;
+	if (is_protected) {
+		prot = max77779_chg_prot(data->regmap, false);
+		if (prot < 0) {
+			dev_err(data->dev, "%s: cannot disable protection bits (%d)\n",
+			__func__, prot);
+			return prot;
+		}
+	}
 
-	if (max77779_reg_write(data->regmap, reg, val))
-		ret = -EIO;
+	ret = max77779_reg_write(data->regmap, reg, val);
 
-	prot = max77779_chg_prot(data->regmap, true);
-	if (prot < 0) {
-		dev_err(data->dev, "%s: cannot restore protection bits (%d)\n",
-		       __func__, prot);
-		return prot;
-	};
+	if (is_protected) {
+		prot = max77779_chg_prot(data->regmap, true);
+		if (prot < 0) {
+			dev_err(data->dev, "%s: cannot restore protection bits (%d)\n",
+			__func__, prot);
+			return prot;
+		};
+	}
+
 	return ret;
 }
-EXPORT_SYMBOL_GPL(max77779_external_reg_write);
+EXPORT_SYMBOL_GPL(max77779_external_chg_reg_write);
 
 /* ----------------------------------------------------------------------- */
-
-int max77779_chg_reg_write(struct i2c_client *client, u8 reg, u8 value)
-{
-	struct max77779_chgr_data *data;
-
-	if (!client)
-		return -ENODEV;
-
-	data = i2c_get_clientdata(client);
-	if (!data || !data->regmap)
-		return -ENODEV;
-
-	return max77779_reg_write(data->regmap, reg, value);
-}
-EXPORT_SYMBOL_GPL(max77779_chg_reg_write);
-
 int max77779_chg_reg_read(struct i2c_client *client, u8 reg, u8 *value)
 {
 	struct max77779_chgr_data *data;
@@ -893,8 +884,7 @@ static int max77779_set_usecase(struct max77779_chgr_data *data,
 exit_done:
 
 	/* finally set mode register */
-	ret = max77779_chg_reg_write(uc_data->client, MAX77779_CHG_CNFG_00,
-				     cb_data->reg);
+	ret = max77779_reg_write(data->regmap, MAX77779_CHG_CNFG_00, cb_data->reg);
 	pr_debug("%s: CHARGER_MODE=%x ret:%x\n", __func__, cb_data->reg, ret);
 	if (ret < 0) {
 		dev_err(data->dev,  "use_case=%d->%d CNFG_00=%x failed ret:%d\n",
@@ -2913,6 +2903,19 @@ static const struct regmap_config max77779_chg_regmap_cfg = {
 
 };
 
+static bool max77779_chg_is_protected(uint8_t reg)
+{
+	switch(reg) {
+	case MAX77779_CHG_CNFG_01:
+	case MAX77779_CHG_CNFG_03:
+	case MAX77779_CHG_CNFG_07 ... MAX77779_CHG_CNFG_08:
+	case MAX77779_CHG_CNFG_13 ... MAX77779_BAT_OILO2_CNFG_3:
+	case MAX77779_CHG_CUST_TM:
+		return true;
+	default:
+		return false;
+	}
+}
 
 /*
  * int[0]
