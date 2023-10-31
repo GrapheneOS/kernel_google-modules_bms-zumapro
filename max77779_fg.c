@@ -131,7 +131,6 @@ struct max77779_fg_chip {
 	int batt_id;
 	int batt_id_defer_cnt;
 	int cycle_count;
-	int cycle_count_offset;
 	u16 eeprom_cycle;
 	u16 designcap;
 
@@ -226,8 +225,8 @@ static inline int reg_to_resistance_micro_ohms(s16 val, u16 rsense)
 
 static inline int reg_to_cycles(u32 val)
 {
-	/* LSB: 1% of one cycle */
-	return DIV_ROUND_CLOSEST(val, 100);
+	/* LSB: 25% of one cycle */
+	return DIV_ROUND_CLOSEST(val * 25, 100);
 }
 
 static inline int reg_to_seconds(s16 val)
@@ -759,12 +758,10 @@ static int max77779_fg_update_battery_qh_based_capacity(struct max77779_fg_chip 
 	return 0;
 }
 
-#define EEPROM_CC_OVERFLOW_BIT	BIT(15)
-#define MAXIM_CYCLE_COUNT_RESET 655
 static void max77779_fg_restore_battery_cycle(struct max77779_fg_chip *chip)
 {
 	int ret = 0;
-	u16 eeprom_cycle, reg_cycle;
+	u16 reg_cycle;
 
 	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_Cycles, &reg_cycle);
 	if (ret < 0) {
@@ -781,7 +778,6 @@ static void max77779_fg_restore_battery_cycle(struct max77779_fg_chip *chip)
 	}
 
 	if (chip->eeprom_cycle == 0xFFFF) { /* empty storage */
-		reg_cycle /= 2;	/* save half value to record over 655 cycles case */
 		ret = gbms_storage_write(GBMS_TAG_CNHS, &reg_cycle, sizeof(reg_cycle));
 		if (ret < 0)
 			dev_info(chip->dev, "Fail to write eeprom cycle (%d)", ret);
@@ -790,22 +786,17 @@ static void max77779_fg_restore_battery_cycle(struct max77779_fg_chip *chip)
 		return;
 	}
 
-	if (chip->eeprom_cycle & EEPROM_CC_OVERFLOW_BIT)
-		chip->cycle_count_offset = MAXIM_CYCLE_COUNT_RESET;
-
-	eeprom_cycle = (chip->eeprom_cycle & 0x7FFF) << 1;
 	dev_info(chip->dev, "reg_cycle:%d, eeprom_cycle:%d, update:%c",
-		 reg_cycle, eeprom_cycle, eeprom_cycle > reg_cycle ? 'Y' : 'N');
-	if (eeprom_cycle > reg_cycle) {
+		 reg_cycle, chip->eeprom_cycle, chip->eeprom_cycle > reg_cycle ? 'Y' : 'N');
+	if (chip->eeprom_cycle > reg_cycle) {
 		ret = MAX77779_FG_REGMAP_WRITE_VERIFY(&chip->regmap, MAX77779_FG_Cycles,
-						      eeprom_cycle);
+						      chip->eeprom_cycle);
 		if (ret < 0)
 			dev_warn(chip->dev, "fail to update cycles (%d)", ret);
 	}
 }
 
-static u16 max77779_fg_save_battery_cycle(const struct max77779_fg_chip *chip,
-					  u16 reg_cycle)
+static u16 max77779_fg_save_battery_cycle(const struct max77779_fg_chip *chip, u16 reg_cycle)
 {
 	int ret = 0;
 	u16 eeprom_cycle = chip->eeprom_cycle;
@@ -813,18 +804,10 @@ static u16 max77779_fg_save_battery_cycle(const struct max77779_fg_chip *chip,
 	if (chip->por || reg_cycle == 0)
 		return eeprom_cycle;
 
-	/* save half value to record over 655 cycles case */
-	reg_cycle /= 2;
-
-	/* Over 655 cycles */
-	if (reg_cycle < eeprom_cycle)
-		reg_cycle |= EEPROM_CC_OVERFLOW_BIT;
-
 	if (reg_cycle <= eeprom_cycle)
 		return eeprom_cycle;
 
-	ret = gbms_storage_write(GBMS_TAG_CNHS, &reg_cycle,
-				sizeof(reg_cycle));
+	ret = gbms_storage_write(GBMS_TAG_CNHS, &reg_cycle, sizeof(reg_cycle));
 	if (ret < 0) {
 		dev_info(chip->dev, "Fail to write %d eeprom cycle count (%d)", reg_cycle, ret);
 	} else {
@@ -838,23 +821,6 @@ static u16 max77779_fg_save_battery_cycle(const struct max77779_fg_chip *chip,
 #define MAX17201_HIST_CYCLE_COUNT_OFFSET	0x4
 #define MAX17201_HIST_TIME_OFFSET		0xf
 
-/* WA for cycle count reset.
- * max17201 fuel gauge rolls over the cycle count to 0 and burns
- * an history entry with 0 cycles when the cycle count exceeds
- * 655. This code workaround the issue adding 655 to the cycle
- * count if the fuel gauge history has an entry with 0 cycles and
- * non 0 time-in-field.
- */
-static int max77779_fg_get_cycle_count_offset(struct max77779_fg_chip *chip)
-{
-	int offset = 0;
-
-	if (chip->eeprom_cycle & EEPROM_CC_OVERFLOW_BIT)
-		offset = MAXIM_CYCLE_COUNT_RESET;
-
-	return offset;
-}
-
 static int max77779_fg_get_cycle_count(struct max77779_fg_chip *chip)
 {
 	return chip->cycle_count;
@@ -862,7 +828,7 @@ static int max77779_fg_get_cycle_count(struct max77779_fg_chip *chip)
 
 static int max77779_fg_update_cycle_count(struct max77779_fg_chip *chip)
 {
-	int err, cycle_count;
+	int err;
 	u16 reg_cycle;
 
 	/*
@@ -876,15 +842,9 @@ static int max77779_fg_update_cycle_count(struct max77779_fg_chip *chip)
 	if (err < 0)
 		return err;
 
-	cycle_count = reg_to_cycles((u32)reg_cycle);
-	if ((chip->cycle_count == -1) ||
-	    ((cycle_count + chip->cycle_count_offset) < chip->cycle_count))
-		chip->cycle_count_offset =
-			max77779_fg_get_cycle_count_offset(chip);
+	chip->cycle_count = reg_to_cycles((u32)reg_cycle);
 
 	chip->eeprom_cycle = max77779_fg_save_battery_cycle(chip, reg_cycle);
-
-	chip->cycle_count = cycle_count + chip->cycle_count_offset;
 
 	if (chip->model_ok && reg_cycle >= chip->model_next_update) {
 		err = max77779_fg_set_next_update(chip);
@@ -1486,7 +1446,7 @@ static int max77779_fg_get_property(struct power_supply *psy,
 		/*
 		 * Snap charge_full to DESIGNCAP during early charge cycles to
 		 * prevent large fluctuations in FULLCAPNOM. MAX77779_FG_Cycles LSB
-		 * is 1%
+		 * is 25%
 		 */
 		err = max77779_fg_get_cycle_count(chip);
 		if (err < 0)
