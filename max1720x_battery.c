@@ -268,6 +268,8 @@ struct max1720x_chip {
 	u32 status_charge_threshold_ma;
 
 	struct wakeup_source *get_prop_ws;
+
+	int timerh_base;
 };
 
 #define MAX1720_EMPTY_VOLTAGE(profile, temp, cycle) \
@@ -2133,7 +2135,7 @@ static int max1720x_get_age(struct max1720x_chip *chip)
 	if (ret < 0)
 		return -ENODATA;
 
-	return reg_to_time_hr(timerh, chip);
+	return reg_to_time_hr(timerh + chip->timerh_base, chip);
 }
 
 #define MAX_HIST_FULLCAP	0x3FF
@@ -2188,6 +2190,33 @@ static int max1720x_get_fade_rate(struct max1720x_chip *chip, int *fade_rate)
 	return 0;
 }
 
+static void max1720x_update_timer_base(struct max1720x_chip *chip)
+{
+	struct max17x0x_eeprom_history hist = { 0 };
+	int ret, i, time_pre, time_now;
+
+	for (i = 0; i < BATT_MAX_HIST_CNT; i++) {
+		ret = gbms_storage_read_data(GBMS_TAG_HIST, &hist, sizeof(hist), i);
+		if (ret < 0)
+			return;
+
+		if (hist.timerh == 0xFF)
+			continue;
+
+		/* convert to register value */
+		time_now = hist.timerh * 7200 / 192;
+
+		if (time_pre == 0)
+			time_pre = time_now;
+
+		if (time_now < time_pre)
+			chip->timerh_base += time_pre;
+
+		time_pre = time_now;
+	}
+
+	dev_info(chip->dev, "timerh_base: %#X\n", chip->timerh_base);
+}
 
 static int max1720x_get_property(struct power_supply *psy,
 				 enum power_supply_property psp,
@@ -5754,6 +5783,8 @@ static void max1720x_init_work(struct work_struct *work)
 	max1720x_fg_irq_thread_fn(-1, chip);
 
 	max1720x_update_cycle_count(chip);
+
+	max1720x_update_timer_base(chip);
 
 	dev_info(chip->dev, "init_work done\n");
 	if (chip->gauge_type == -1)
