@@ -238,7 +238,7 @@ static inline int reg_to_seconds(s16 val)
 
 static inline int reg_to_vempty(u16 val)
 {
-	return ((val >> 7) & 0x1FF) * 20;
+	return ((val >> 7) & 0x1FF) * 10;
 }
 
 static inline int reg_to_vrecovery(u16 val)
