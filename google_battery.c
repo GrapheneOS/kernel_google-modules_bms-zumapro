@@ -374,6 +374,7 @@ struct health_data
 	int bhi_debug_imp_index;
 	int bhi_debug_sd_index;
 	int bhi_debug_health_index;
+	int bhi_debug_health_status;
 	/* algo BHI_ALGO_INDI capacity threshold */
 	int bhi_indi_cap;
 	/* algo BHI_ALGO_ACHI_B bounds check */
@@ -4008,14 +4009,16 @@ static int hist_get_index(int cycle_count, const struct batt_drv *batt_drv)
 static int bhi_cap_data_update(struct bhi_data *bhi_data, struct batt_drv *batt_drv)
 {
 	struct power_supply *fg_psy = batt_drv->fg_psy;
-	const int fade_rate = GPSY_GET_PROP(fg_psy, GBMS_PROP_CAPACITY_FADE_RATE);
+	int cap_fade, rc;
+	const int fade_rate = GPSY_GET_INT_PROP(fg_psy, GBMS_PROP_CAPACITY_FADE_RATE, &rc);
 	const int designcap = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN);
-	int cap_fade;
 
 	/* GBMS_PROP_CAPACITY_FADE_RATE is in percent */
 	if (designcap < 0)
 		return -ENODATA;
 	if (bhi_data->pack_capacity <= 0)
+		return -EINVAL;
+	if (rc)
 		return -EINVAL;
 
 	cap_fade = fade_rate * designcap / (bhi_data->pack_capacity * 1000);
@@ -4389,6 +4392,9 @@ static enum bhi_status bhi_calc_health_status(int algo, int health_index,
 {
 	enum bhi_status health_status;
 
+	if (data->bhi_debug_health_status)
+		return data->bhi_debug_health_status;
+
 	if (algo == BHI_ALGO_DISABLED)
 		return BH_UNKNOWN;
 
@@ -4398,6 +4404,9 @@ static enum bhi_status bhi_calc_health_status(int algo, int health_index,
 		if (data->bhi_cycle_grace && cycle_count < data->bhi_cycle_grace)
 			return BH_NOT_AVAILABLE;
 	}
+
+	if (data->cal_state == REC_STATE_SCHEDULED)
+		return BH_INCONSISTENT;
 
 	if (health_index < 0)
 		health_status = BH_UNKNOWN;
@@ -4426,6 +4435,16 @@ static int batt_bhi_data_load(struct batt_drv *batt_drv)
 	/* TODO: prime current impedance if not using RAVG */
 
 	return 0;
+}
+
+static int batt_bhi_map_algo(int algo, const struct health_data *health_data)
+{
+	if (algo != BHI_ALGO_DTOOL)
+		return algo;
+
+	/* diagnostic tool use BHI_ALGO_ACHI_B as default when bhi_algo is disabled */
+	return health_data->bhi_algo != BHI_ALGO_DISABLED ?
+	       health_data->bhi_algo : BHI_ALGO_ACHI_B;
 }
 
 /* call holding mutex_lock(&batt_drv->chg_lock)  */
@@ -7477,22 +7496,25 @@ static ssize_t health_index_stats_show(struct device *dev,
 
 	mutex_lock(&batt_drv->chg_lock);
 
-	for (i = 0; i < BHI_ALGO_MAX; i++) {
+	for (i = BHI_ALGO_DISABLED; i < BHI_ALGO_MAX; i++) {
 		int health_index, health_status, cap_index, imp_index, sd_index;
+		const int use_algo = batt_bhi_map_algo(i, health_data);
 
-		cap_index = bhi_calc_cap_index(i, batt_drv);
-		imp_index = bhi_calc_imp_index(i, health_data);
-		sd_index = bhi_calc_sd_index(i, health_data);
-		health_index = bhi_calc_health_index(i, health_data, cap_index, imp_index, sd_index);
-		health_status = bhi_calc_health_status(i, BHI_ROUND_INDEX(health_index), health_data);
+		cap_index = bhi_calc_cap_index(use_algo, batt_drv);
+		imp_index = bhi_calc_imp_index(use_algo, health_data);
+		sd_index = bhi_calc_sd_index(use_algo, health_data);
+		health_index = bhi_calc_health_index(use_algo, health_data, cap_index,
+						     imp_index, sd_index);
+		health_status = bhi_calc_health_status(use_algo, BHI_ROUND_INDEX(health_index),
+						       health_data);
 		if (health_index < 0)
 			continue;
 
 		pr_debug("bhi: %d: %d, %d,%d,%d %d,%d,%d %d,%d\n", i,
 			 health_status, health_index, cap_index, imp_index,
 			 bhi_data->swell_cumulative,
-			 bhi_health_get_capacity(i, bhi_data),
-			 bhi_health_get_impedance(i, bhi_data),
+			 bhi_health_get_capacity(use_algo, bhi_data),
+			 bhi_health_get_impedance(use_algo, bhi_data),
 			 bhi_data->battery_age,
 			 bhi_data->cycle_count);
 
@@ -7504,8 +7526,8 @@ static ssize_t health_index_stats_show(struct device *dev,
 				 BHI_ROUND_INDEX(cap_index),
 				 BHI_ROUND_INDEX(imp_index),
 				 bhi_data->swell_cumulative,
-				 bhi_health_get_capacity(i, bhi_data),
-				 bhi_health_get_impedance(i, bhi_data),
+				 bhi_health_get_capacity(use_algo, bhi_data),
+				 bhi_health_get_impedance(use_algo, bhi_data),
 				 bhi_data->battery_age,
 				 bhi_data->cycle_count,
 				 batt_bpst_stats_update(batt_drv));
@@ -7529,6 +7551,9 @@ static ssize_t health_algo_store(struct device *dev,
 	ret = kstrtoint(buf, 0, &value);
 	if (ret < 0)
 		return ret;
+
+	if (value < BHI_ALGO_DISABLED || value >= BHI_ALGO_MAX || value == BHI_ALGO_DTOOL)
+		return -EINVAL;
 
 	mutex_lock(&batt_drv->chg_lock);
 	batt_drv->health_data.bhi_algo = value;
@@ -8644,6 +8669,8 @@ static int batt_init_debugfs(struct batt_drv *batt_drv)
 			   &batt_drv->health_data.bhi_debug_sd_index);
 	debugfs_create_u32("bhi_debug_health_idx", 0644, de,
 			   &batt_drv->health_data.bhi_debug_health_index);
+	debugfs_create_u32("bhi_debug_health_status", 0644, de,
+			   &batt_drv->health_data.bhi_debug_health_status);
 	debugfs_create_file("bhi_debug_status", 0644, de, batt_drv,
 			   &debug_bhi_status_fops);
 	debugfs_create_file("reset_first_usage_date", 0644, de, batt_drv,
@@ -10189,6 +10216,7 @@ static int batt_bhi_init(struct batt_drv *batt_drv)
 	health_data->bhi_debug_imp_index = 0;
 	health_data->bhi_debug_sd_index = 0;
 	health_data->bhi_debug_health_index = 0;
+	health_data->bhi_debug_health_status = 0;
 	/* TODO: restore cal_state/cal_mode if reboot */
 	health_data->cal_state = REC_STATE_OK;
 	health_data->cal_mode = REC_MODE_RESET;
