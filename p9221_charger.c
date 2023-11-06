@@ -112,7 +112,7 @@ static bool p9xxx_setup_dc(struct device_node *node, struct p9221_charger_platfo
 static void p9xxx_setup_all(struct device_node *node, struct p9221_charger_platform_data *pdata);
 static void p9221_init_align(struct p9221_charger_data *charger);
 static int p9221_dream_defend_check_id(struct p9221_charger_data *charger);
-static enum p9xxx_rtx_gpio_state p9xxx_rtx_gpio_get(struct p9221_charger_data *charger);
+static bool p9xxx_rtx_gpio_is_state(struct p9221_charger_data *charger, enum p9xxx_rtx_gpio_state state);
 
 static char *align_status_str[] = {
 	"...", "M2C", "OK", "-1"
@@ -5191,7 +5191,7 @@ static ssize_t p9382_show_rtx_boost(struct device *dev,
 /* assume that we have 2 GPIO to turn on the boost */
 static int p9382_rtx_enable(struct p9221_charger_data *charger, bool enable)
 {
-	const bool rtx_gpio_retry = p9xxx_rtx_gpio_get(charger) == RTX_RETRY;
+	const bool rtx_gpio_retry = p9xxx_rtx_gpio_is_state(charger, RTX_RETRY);
 	int ret = 0;
 	int val, loops;
 
@@ -5378,12 +5378,17 @@ static int p9382_disable_dcin_en(struct p9221_charger_data *charger, bool enable
 	return ret;
 }
 
-static enum p9xxx_rtx_gpio_state p9xxx_rtx_gpio_get(struct p9221_charger_data *charger)
+static bool p9xxx_rtx_gpio_is_state(struct p9221_charger_data *charger,
+				    enum p9xxx_rtx_gpio_state state)
 {
-	enum p9xxx_rtx_gpio_state state;
 	int loops;
+	bool ret;
 
 	mutex_lock(&charger->rtx_gpio_lock);
+
+	/* only wait when enable to enable */
+	if (state != RTX_READY)
+		goto unlock;
 
 	for (loops = 10 ; loops ; loops--) {
 		if (charger->rtx_gpio_state != RTX_WAIT)
@@ -5394,10 +5399,10 @@ static enum p9xxx_rtx_gpio_state p9xxx_rtx_gpio_get(struct p9221_charger_data *c
 		msleep(100);
 		mutex_lock(&charger->rtx_gpio_lock);
 	}
-
-	state = charger->rtx_gpio_state;
+unlock:
+	ret = charger->rtx_gpio_state == state;
 	mutex_unlock(&charger->rtx_gpio_lock);
-	return state;
+	return ret;
 }
 
 static void p9xxx_rtx_gpio_wait(struct p9221_charger_data *charger)
@@ -5416,10 +5421,10 @@ static int p9xxx_rtx_mode_en(struct p9221_charger_data *charger, bool enable)
 	if (!enable)
 		return charger->chip_tx_mode_en(charger, false);
 
-	if (p9xxx_rtx_gpio_get(charger) != RTX_READY)
-		return -ENOTSUPP;
+	if (p9xxx_rtx_gpio_is_state(charger, RTX_READY))
+		return charger->chip_tx_mode_en(charger, true);
 
-	return charger->chip_tx_mode_en(charger, true);
+	return -ENOTSUPP;
 }
 
 /* requires mutex_lock(&charger->rtx_lock) when p9382_set_rtx() called */
@@ -6140,7 +6145,7 @@ static void p9382_txid_work(struct work_struct *work)
 /* requires mutex_lock(&charger->rtx_lock); */
 static void p9xxx_reset_rtx_for_ocp(struct p9221_charger_data *charger)
 {
-	const bool rtx_gpio_retry = p9xxx_rtx_gpio_get(charger) == RTX_RETRY;
+	const bool rtx_gpio_retry = p9xxx_rtx_gpio_is_state(charger, RTX_RETRY);
 	int ext_bst_on = 0;
 
 	if (!rtx_gpio_retry) {
@@ -6198,7 +6203,7 @@ static void p9382_rtx_work(struct work_struct *work)
 {
 	struct p9221_charger_data *charger = container_of(work,
 			struct p9221_charger_data, rtx_work.work);
-	const bool rtx_gpio_retry = p9xxx_rtx_gpio_get(charger) == RTX_RETRY;
+	const bool rtx_gpio_retry = p9xxx_rtx_gpio_is_state(charger, RTX_RETRY);
 	u8 mode_reg = 0;
 	int ret = 0;
 
