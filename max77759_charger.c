@@ -168,9 +168,9 @@ int max77759_external_reg_write(struct i2c_client *client, uint8_t reg, uint8_t 
 	prot = max77759_chg_prot(data->regmap, true);
 	if (prot < 0) {
 		dev_err(data->dev, "%s: cannot restore protection bits (%d)\n",
-		       __func__, prot);
+			__func__, prot);
 		return prot;
-	};
+	}
 	return ret;
 }
 EXPORT_SYMBOL_GPL(max77759_external_reg_write);
