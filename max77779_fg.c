@@ -2781,9 +2781,12 @@ static int max77779_fg_set_next_update(struct max77779_fg_chip *chip)
 
 	if (rc == 0 && chip->model_next_update)
 		rc = max77779_save_state_data(chip->model_data);
+	/*
+	 * cycle register LSB is 25% of one cycle
+	 * schedule next update at multiples of 4
+	 */
 	if (rc == 0)
-		chip->model_next_update = (reg_cycle + (1 << 6)) &
-					  ~((1 << 6) - 1);
+		chip->model_next_update = (reg_cycle + (1 << 2)) & ~((1 << 2) - 1);
 
 	pr_debug("%s: reg_cycle=%d next_update=%d rc=%d\n", __func__,
 		 reg_cycle, chip->model_next_update, rc);
