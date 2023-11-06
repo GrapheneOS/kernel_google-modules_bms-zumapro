@@ -97,6 +97,13 @@ struct gbatt_capacity_estimation {
 
 #define MAX77779_FG_NDGB_ADDRESS 0x37
 
+#define MAX77779_FG_EVENT_FULLCAPNOM_LOW     BIT(0)
+#define MAX77779_FG_EVENT_FULLCAPNOM_HIGH    BIT(1)
+#define MAX77779_FG_EVENT_REPSOC_EDET        BIT(2)
+#define MAX77779_FG_EVENT_REPSOC_FDET        BIT(3)
+#define MAX77779_FG_EVENT_REPSOC             BIT(4)
+#define MAX77779_FG_EVENT_VFOCV              BIT(5)
+
 struct max77779_fg_chip {
 	struct device *dev;
 	struct i2c_client *primary;
@@ -175,6 +182,10 @@ struct max77779_fg_chip {
 	bool current_offset_check_done;
 
 	bool fw_update_mode;
+
+	/* in-field logging */
+	int fg_logging_events;
+	u16 pre_fullcapnom;
 };
 
 static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj);
@@ -1839,6 +1850,142 @@ static int max77779_fg_monitor_log_data(struct max77779_fg_chip *chip, bool forc
 	return ret;
 }
 
+/* TODO: b/309384491 - FG register dump for max77779 */
+static int max77779_fg_extensive_dump_work(struct max77779_fg_chip *chip) {
+	return 0;
+}
+
+/* TODO: b/309384491 - FG register dump for max77779 */
+static int max77779_fg_recurent_dump_work(struct max77779_fg_chip *chip) {
+	return 0;
+}
+
+static int max77779_fg_check_logging_event(struct max77779_fg_chip *chip)
+{
+	int ret = 0, event = chip->fg_logging_events;
+	u16 data, fullcapnom, designcap, repsoc, mixsoc, edet, fdet, vfocv, avgvcell, ibat;
+	bool changed;
+
+	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_FullCapNom, &fullcapnom);
+	if (ret < 0)
+		return ret;
+
+	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_DesignCap, &designcap);
+	if (ret < 0)
+		return ret;
+
+	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_RepSOC, &data);
+	if (ret < 0)
+		return ret;
+	repsoc = (data >> 8) & 0x00FF;
+
+	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_MixSOC, &data);
+	if (ret < 0)
+		return ret;
+	mixsoc = (data >> 8) & 0x00FF;
+
+	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_FStat, &data);
+	if (ret < 0)
+		return ret;
+	edet = (data & MAX77779_FG_FStat_EDet_MASK);
+
+	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_Status2, &data);
+	if (ret < 0)
+		return ret;
+	fdet = (data & MAX77779_FG_Status2_FullDet_MASK);
+
+	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_VFOCV, &vfocv);
+	if (ret < 0)
+		return ret;
+
+	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_AvgVCell, &avgvcell);
+	if (ret < 0)
+		return ret;
+
+	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_Current, &ibat);
+	if (ret < 0)
+		return ret;
+
+	/* stop when FullCapNom updated */
+	if ((event & MAX77779_FG_EVENT_FULLCAPNOM_LOW) &&
+	    (fullcapnom != chip->pre_fullcapnom))
+		event &= ~MAX77779_FG_EVENT_FULLCAPNOM_LOW;
+
+	/* stop when FullCapNom updated */
+	if ((event & MAX77779_FG_EVENT_FULLCAPNOM_HIGH) &&
+	    (fullcapnom != chip->pre_fullcapnom))
+		event &= ~MAX77779_FG_EVENT_FULLCAPNOM_HIGH;
+
+	/* stop when RepSoc > 20% */
+	if ((event & MAX77779_FG_EVENT_REPSOC_EDET) && (repsoc > 20))
+		event &= ~MAX77779_FG_EVENT_REPSOC_EDET;
+
+	/* stop when RepSoc < 80% */
+	if ((event & MAX77779_FG_EVENT_REPSOC_FDET) && (repsoc < 80))
+		event &= ~MAX77779_FG_EVENT_REPSOC_FDET;
+
+	/* stop when abs(MixSoC - RepSoC) < 20% */
+	if ((event & MAX77779_FG_EVENT_REPSOC) && (abs(mixsoc - repsoc) < 20))
+		event &= ~MAX77779_FG_EVENT_REPSOC;
+
+	/* stop when VFOCV < (AvgVCell - 200mV) || VFOCV > (AvgVCell + 200mV) */
+	if ((event & MAX77779_FG_EVENT_VFOCV) &&
+	    (reg_to_micro_volt(vfocv) < (reg_to_micro_volt(avgvcell) - 200000) ||
+	     reg_to_micro_volt(vfocv) > (reg_to_micro_volt(avgvcell) + 200000)))
+		event &= ~MAX77779_FG_EVENT_VFOCV;
+
+	changed = event != chip->fg_logging_events;
+
+	/* trigger when FullCapNom < DesignCap x 60% */
+	if (fullcapnom < (designcap * 60 / 100)) {
+		event |= MAX77779_FG_EVENT_FULLCAPNOM_LOW;
+		chip->pre_fullcapnom = fullcapnom;
+	}
+
+	/* trigger when FullCapNom > DesignCap x 115% */
+	if (fullcapnom > (designcap * 115 / 100)) {
+		event |= MAX77779_FG_EVENT_FULLCAPNOM_HIGH;
+		chip->pre_fullcapnom = fullcapnom;
+	}
+
+	/* trigger when RepSoC > 10% && Empty detection bit is set */
+	if (repsoc > 10 && edet)
+		event |= MAX77779_FG_EVENT_REPSOC_EDET;
+
+	/* trigger when RepSoC < 90% && Full detection is enabled */
+	if (repsoc < 90 && fdet)
+		event |= MAX77779_FG_EVENT_REPSOC_FDET;
+
+	/* trigger when abs(MixSoC - RepSoC) > 25% */
+	if (abs(mixsoc - repsoc) > 25)
+		event |= MAX77779_FG_EVENT_REPSOC;
+
+	/*
+	 * trigger when (VFOCV < (AvgVCell - 1V) || VFOCV > (AvgVCell + 1V))
+	 *	         && abs(Current) < 5A
+	 */
+	if ((reg_to_micro_volt(vfocv) < (reg_to_micro_volt(avgvcell) - 1000000) ||
+	     reg_to_micro_volt(vfocv) > (reg_to_micro_volt(avgvcell) + 1000000)) &&
+	     abs(reg_to_micro_amp(ibat, chip->RSense)) < 5000000)
+		event |= MAX77779_FG_EVENT_VFOCV;
+
+	changed |= event != chip->fg_logging_events;
+
+	if (changed) {
+		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
+				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+				      "event changed 0x%02X->0x%02X: fullcapnom=%d designcap=%d "
+				      "repsoc=%d edet=%d fdet=%d mixsoc=%d vfocv=%d avgvcell=%d "
+				      "current=%d",
+				      chip->fg_logging_events, event, fullcapnom, designcap,
+				      repsoc, !!edet, !!fdet, mixsoc,
+				      reg_to_micro_volt(vfocv), reg_to_micro_volt(avgvcell),
+				      reg_to_micro_amp(ibat, chip->RSense));
+	}
+	chip->fg_logging_events = event;
+
+	return event;
+}
 
 static int max77779_get_pmic_i2c_client(struct max77779_fg_chip *chip)
 {
@@ -1977,6 +2124,7 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 	if (fg_status & MAX77779_FG_Status_dSOCi_MASK) {
 		max77779_fg_monitor_log_data(chip, false);
 		max77779_fg_update_cycle_count(chip);
+		max77779_fg_check_logging_event(chip);
 	}
 
 	if (chip->psy)
@@ -2370,7 +2518,7 @@ BATTERY_DEBUG_ATTRIBUTE(debug_reg_data_fops, max77779_fg_show_debug_data,
 			max77779_fg_set_debug_data);
 
 static ssize_t max77779_fg_show_dbg_debug_data(struct file *filp, char __user *buf,
-					   size_t count, loff_t *ppos)
+					       size_t count, loff_t *ppos)
 {
 	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)filp->private_data;
 	char msg[8];
@@ -2452,7 +2600,7 @@ static ssize_t max77779_fg_show_reg_all(struct file *filp, char __user *buf,
 BATTERY_DEBUG_ATTRIBUTE(debug_reg_all_fops, max77779_fg_show_reg_all, NULL);
 
 static ssize_t max77779_fg_show_dbg_reg_all(struct file *filp, char __user *buf,
-					size_t count, loff_t *ppos)
+					    size_t count, loff_t *ppos)
 {
 	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)filp->private_data;
 	const struct maxfg_regmap *map = &chip->regmap_debug;
@@ -2620,6 +2768,17 @@ static ssize_t act_impedance_show(struct device *dev,
 }
 
 static DEVICE_ATTR_RW(act_impedance);
+
+static ssize_t fg_logging_events_show(struct device *dev,
+				      struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct max77779_fg_chip *chip = power_supply_get_drvdata(psy);
+
+	return scnprintf(buf, PAGE_SIZE, "0x%02X\n", chip->fg_logging_events);
+}
+
+static DEVICE_ATTR_RO(fg_logging_events);
 
 static int max77779_fg_init_sysfs(struct max77779_fg_chip *chip)
 {
@@ -3338,6 +3497,7 @@ static struct attribute *max77779_fg_attrs[] = {
 	&dev_attr_resistance.attr,
 	&dev_attr_gmsr.attr,
 	&dev_attr_model_state.attr,
+	&dev_attr_fg_logging_events.attr,
 	NULL,
 };
 
