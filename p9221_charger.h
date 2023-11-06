@@ -926,6 +926,7 @@ struct p9221_charger_data {
 	bool				det_status;
 	int				det_on_debounce;
 	int				det_off_debounce;
+	struct mutex			irq_det_lock;
 
 #if IS_ENABLED(CONFIG_GPIOLIB)
 	struct gpio_chip gpio;

@@ -2964,7 +2964,7 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 				 fg_status, chip->model_reload);
 			/* trigger model load if not on-going */
 			if (chip->model_reload != MAX_M5_LOAD_MODEL_REQUEST) {
-				err = max1720x_model_reload(chip, true);
+				err = max1720x_model_reload(chip, false);
 				if (err < 0)
 					fg_status_clr &= ~MAX1720X_STATUS_POR;
 			}

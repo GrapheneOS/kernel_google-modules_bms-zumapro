@@ -2700,13 +2700,16 @@ static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 		ret = p9xxx_gpio_set_value(charger, charger->pdata->dc_switch_gpio, value);
 		break;
 	case P9XXX_GPIO_ONLINE_SPOOF:
+		mutex_lock(&charger->irq_det_lock);
 		charger->det_status = gpio_get_value(charger->pdata->irq_det_gpio);
 		if (charger->pdata->irq_det_gpio >= 0 && charger->det_status == 0 && charger->online) {
 			logbuffer_prlog(charger->log, "pxxx_gpio online_spoof=1");
 			enable_irq(charger->pdata->irq_det_int);
+			enable_irq_wake(charger->pdata->irq_det_int);
 			charger->online_spoof = true;
 			cancel_delayed_work(&charger->stop_online_spoof_work);
 		}
+		mutex_unlock(&charger->irq_det_lock);
 		break;
 	default:
 		ret = -EINVAL;
