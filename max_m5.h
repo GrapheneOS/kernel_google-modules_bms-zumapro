@@ -130,6 +130,7 @@ int max_m5_model_read_version(const struct max_m5_data *m5_data);
 int max_m5_model_get_cap_lsb(const struct max_m5_data *m5_data);
 int max_m5_reset_state_data(struct max_m5_data *m5_data);
 int max_m5_needs_reset_model_data(const struct max_m5_data *m5_data);
+int max_m5_get_designcap(const struct max_m5_data *m5_data);
 
 /*
  * max_m5 might use the low 8 bits of devname to keep the model version number
