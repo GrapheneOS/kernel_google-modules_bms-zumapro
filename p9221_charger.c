@@ -2616,6 +2616,12 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 
 		if (charger->last_capacity > WLC_HPP_SOC_LIMIT)
 			return -EOPNOTSUPP;
+		if (charger->last_capacity < 0) {
+			schedule_delayed_work(&charger->soc_work, 0);
+			dev_dbg(&charger->client->dev, "retry, last_capacity=%d\n",
+				charger->last_capacity);
+			return -EAGAIN;
+		}
 
 		/* need to check calibration is done before re-negotiate */
 		if (!charger->chip_is_calibrated(charger)) {
