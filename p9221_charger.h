@@ -581,6 +581,7 @@
 #define P9XXX_OP_DUTY_REG			0xA6
 #define P9XXX_TX_CUR_PWR_REG			0xAC
 #define P9XXX_RX_CUR_PWR_REG			0xCE
+#define RA9530_CMFET_REG			0xF4
 
 /* Features */
 typedef enum {
@@ -765,6 +766,7 @@ struct p9221_charger_platform_data {
 	u32				set_iop_vout_bpp;
 	u32				set_iop_vout_epp;
 	u32				lowest_fsw_khz;
+	u32				gpp_cmfet;
 };
 
 struct p9221_charger_ints_bit {
@@ -1061,6 +1063,7 @@ struct p9221_charger_data {
 	int (*chip_send_csp_in_txmode)(struct p9221_charger_data *chgr, u8 stat);
 	int (*chip_capdiv_en)(struct p9221_charger_data *chgr, u8 mode);
 	bool (*chip_is_calibrated)(struct p9221_charger_data *chgr);
+	void (*chip_set_cmfet)(struct p9221_charger_data *chgr);
 };
 
 u8 p9221_crc8(u8 *pdata, size_t nbytes, u8 crc);

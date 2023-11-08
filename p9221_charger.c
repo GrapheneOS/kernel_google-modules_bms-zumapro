@@ -3834,6 +3834,7 @@ static void p9221_notifier_check_dc(struct p9221_charger_data *charger)
 		p9221_write_fod(charger);
 		if (!charger->dc_icl_bpp)
 			p9221_icl_ramp_start(charger);
+		charger->chip_set_cmfet(charger);
 
 		/* Check if Tx in LL BPP mode */
 		p9xxx_check_ll_bpp_cep(charger);
@@ -7569,10 +7570,11 @@ static int p9xxx_parse_dt(struct device *dev,
 	else
 		pdata->wait_prop_irq_ms = data;
 
+	ret = of_property_read_u32(node, "idt,gpp-cmfet", &data);
+	pdata->gpp_cmfet = (ret == 0) ? data : 0;
+
 	pdata->bpp_cep_on_dl = of_property_read_bool(node, "google,bpp-cep-on-dl");
 	pdata->gpp_enhanced = of_property_read_bool(node, "google,gpp_enhanced");
-	pdata->hda_tz_wlc = of_property_read_bool(node, "google,hda-tz-wlc");
-
 	pdata->hda_tz_wlc = of_property_read_bool(node, "google,hda-tz-wlc");
 
 	return 0;

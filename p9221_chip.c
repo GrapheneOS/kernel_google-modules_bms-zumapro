@@ -2357,6 +2357,34 @@ static bool ra9530_chip_is_calibrated(struct p9221_charger_data *chgr)
 	return chgr->cc_vout_ready && (val & RA9530_EPP_CAL_STATE_MASK) == 0;
 }
 
+static void p9xxx_chip_set_cmfet(struct p9221_charger_data *chgr)
+{
+
+}
+
+static void ra9530_chip_set_cmfet(struct p9221_charger_data *chgr)
+{
+	u32 vout_mv, val = chgr->pdata->gpp_cmfet;
+	int ret;
+
+	if (chgr->pdata->gpp_cmfet <= 0)
+		return;
+
+	ret = chgr->chip_get_vout_max(chgr, &vout_mv);
+	if (ret == 0 && vout_mv < 8000)
+		val = 0;
+
+	if (!p9221_is_epp(chgr) || chgr->mfg != WLC_MFG_GOOGLE)
+		val = 0;
+
+	pr_info("vout_mv=%d, is_epp=%d, mfg=%d cmfet=%d\n",
+		vout_mv, p9221_is_epp(chgr), chgr->mfg, val);
+
+	ret = p9xxx_chip_set_cmfet_reg(chgr, val);
+	if (ret < 0)
+		pr_err("fail to write cmfet_reg, ret=%d\n", ret);
+}
+
 void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id)
 {
 	chgr->ints.mode_changed_bit = P9221R5_STAT_MODECHANGED;
@@ -2563,7 +2591,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_csp_addr = P9221R5_CHARGE_STAT_REG;
 		chgr->reg_light_load_addr = 0;
 		chgr->reg_mot_addr = 0;
-		chgr->reg_cmfet_addr = 0;
+		chgr->reg_cmfet_addr = RA9530_CMFET_REG;
 		chgr->reg_epp_tx_guarpwr_addr = P9221R5_EPP_TX_GUARANTEED_POWER_REG;
 		chgr->tx_api_limit = RA9530_I_API_Limit_1350MA;
 		chgr->tx_ocp = RA9530_TXOCP_1400MA;
@@ -2643,6 +2671,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 	chgr->chip_get_tx_pwr = p9221_chip_get_tx_pwr;
 	chgr->chip_get_rx_pwr = p9221_chip_get_rx_pwr;
 	chgr->chip_is_calibrated = p9xxx_chip_is_calibrated;
+	chgr->chip_set_cmfet = p9xxx_chip_set_cmfet;
 
 	switch (chip_id) {
 	case P9412_CHIP_ID:
@@ -2712,6 +2741,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->chip_get_tx_pwr = p9xxx_chip_get_tx_pwr;
 		chgr->chip_get_rx_pwr = p9xxx_chip_get_rx_pwr;
 		chgr->chip_is_calibrated = ra9530_chip_is_calibrated;
+		chgr->chip_set_cmfet = ra9530_chip_set_cmfet;
 		break;
 	case P9382A_CHIP_ID:
 		chgr->rtx_state = RTX_AVAILABLE;
