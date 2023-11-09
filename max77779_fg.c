@@ -1947,7 +1947,7 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 		return IRQ_NONE;
 
 	pm_runtime_get_sync(chip->dev);
-	if (!chip->init_complete || !chip->resume_complete) {
+	if (irq != -1 && (!chip->init_complete || !chip->resume_complete)) {
 		if (chip->init_complete && !chip->irq_disabled) {
 			chip->irq_disabled = true;
 			disable_irq_nosync(chip->primary->irq);
