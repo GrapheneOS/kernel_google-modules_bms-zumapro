@@ -6637,6 +6637,9 @@ static irqreturn_t p9221_irq_thread(int irq, void *irq_data)
 		goto out;
 	}
 
+	if (charger->ben_state == RTX_BOOST_ENABLED)
+		goto out;
+
 	/* todo interrupt handling for rx */
 	if (charger->ben_state) {
 		logbuffer_log(charger->rtx_log, "INT=%04x", irq_src);
