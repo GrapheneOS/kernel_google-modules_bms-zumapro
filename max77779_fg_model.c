@@ -81,7 +81,7 @@ int max77779_reset_state_data(struct max77779_model_data *model_data)
 	if (ret < 0)
 		dev_warn(model_data->dev, "Erase GMSR fail (%d)\n", ret);
 
-	return ret;
+	return ret == sizeof(data) ? 0 : ret;
 }
 
 static int max77779_read_custom_model(struct regmap *regmap, u16 *model_data,

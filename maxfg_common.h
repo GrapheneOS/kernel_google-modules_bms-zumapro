@@ -8,6 +8,7 @@
 #ifndef MAXFG_COMMON_H_
 #define MAXFG_COMMON_H_
 
+#include <linux/cdev.h>
 #include <linux/device.h>
 #include <linux/regmap.h>
 #include "gbms_power_supply.h"
@@ -37,6 +38,21 @@ enum maxfg_reg_tags {
 	MAXFG_TAG_msoc,
 	MAXFG_TAG_mmdt,
 	MAXFG_TAG_mmdc,
+	MAXFG_TAG_repsoc,
+	MAXFG_TAG_avcap,
+	MAXFG_TAG_repcap,
+	MAXFG_TAG_fulcap,
+	MAXFG_TAG_qh0,
+	MAXFG_TAG_qh,
+	MAXFG_TAG_dqacc,
+	MAXFG_TAG_dpacc,
+	MAXFG_TAG_qresd,
+	MAXFG_TAG_fstat,
+	MAXFG_TAG_learn,
+	MAXFG_TAG_filcfg,
+	MAXFG_TAG_vfcap,
+	MAXFG_TAG_cycles,
+	MAXFG_TAG_rslow,
 
 	MAXFG_TAG_BCNT,
 	MAXFG_TAG_SNUM,
@@ -72,6 +88,35 @@ struct maxfg_eeprom_history {
 	unsigned maxdischgcurr:4;
 };
 #pragma pack()
+
+/* Capacity Estimation */
+struct gbatt_capacity_estimation {
+	const struct maxfg_reg *bcea;
+	struct mutex batt_ce_lock;
+	struct delayed_work settle_timer;
+	int cap_tsettle;
+	int cap_filt_length;
+	int estimate_state;
+	bool cable_in;
+	int delta_cc_sum;
+	int delta_vfsoc_sum;
+	int cap_filter_count;
+	int start_cc;
+	int start_vfsoc;
+};
+
+#define ESTIMATE_DONE		2
+#define ESTIMATE_PENDING	1
+#define ESTIMATE_NONE		0
+
+#define CE_CAP_FILTER_COUNT	0
+#define CE_DELTA_CC_SUM_REG	1
+#define CE_DELTA_VFSOC_SUM_REG	2
+#define CE_FILTER_COUNT_MAX	15
+
+#define DEFAULT_BATTERY_ID		0
+#define DEFAULT_BATTERY_ID_RETRIES	20
+#define DUMMY_BATTERY_ID		170
 
 /* this is a map for u16 registers */
 #define ATOM_INIT_MAP(...)			\
@@ -118,6 +163,12 @@ static inline int reg_to_micro_volt(u16 val)
 {
 	/* LSB: 0.078125mV */
 	return div_u64((u64) val * 78125, 1000);
+}
+
+static inline int reg_to_resistance_micro_ohms(s16 val, u16 rsense)
+{
+	/* LSB: 1/4096 Ohm */
+	return div_s64((s64) val * 1000 * rsense, 4096);
 }
 
 #define NB_REGMAP_MAX 256
@@ -242,5 +293,14 @@ const struct maxfg_reg * maxfg_find_by_tag(struct maxfg_regmap *map, enum maxfg_
 int maxfg_reg_read(struct maxfg_regmap *map, enum maxfg_reg_tags tag, u16 *val);
 int maxfg_collect_history_data(void *buff, size_t size, bool is_por, u16 designcap,
 			       struct maxfg_regmap *regmap, struct maxfg_regmap *regmap_debug);
-
+int maxfg_read_resistance_avg(u16 RSense);
+int maxfg_read_resistance_raw(struct maxfg_regmap *map);
+int maxfg_read_resistance(struct maxfg_regmap *map, u16 RSense);
+int maxfg_health_get_ai(struct device *dev, int bhi_acim, u16 RSense);
+int batt_ce_load_data(struct maxfg_regmap *map, struct gbatt_capacity_estimation *cap_esti);
+void batt_ce_dump_data(const struct gbatt_capacity_estimation *cap_esti, struct logbuffer *log);
+void batt_ce_store_data(struct maxfg_regmap *map, struct gbatt_capacity_estimation *cap_esti);
+void batt_ce_stop_estimation(struct gbatt_capacity_estimation *cap_esti, int reason);
+int maxfg_health_write_ai(u16 act_impedance, u16 act_timerh);
+int maxfg_reg_log_data(struct maxfg_regmap *map, struct maxfg_regmap *map_debug, char *buf);
 #endif  // MAXFG_COMMON_H_

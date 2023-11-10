@@ -53,27 +53,27 @@ static struct maxfg_reg max77779_fg[] = {
 	[MAXFG_TAG_msoc] = { ATOM_INIT_REG16(MAX77779_FG_MixSOC)},
 	[MAXFG_TAG_mmdt] = { ATOM_INIT_REG16(MAX77779_FG_MaxMinTemp)},
 	[MAXFG_TAG_mmdc] = { ATOM_INIT_REG16(MAX77779_FG_MaxMinCurr)},
+	[MAXFG_TAG_repsoc] = { ATOM_INIT_REG16(MAX77779_FG_RepSOC)},
+	[MAXFG_TAG_avcap] = { ATOM_INIT_REG16(MAX77779_FG_AvCap)},
+	[MAXFG_TAG_repcap] = { ATOM_INIT_REG16(MAX77779_FG_RepCap)},
+	[MAXFG_TAG_fulcap] = { ATOM_INIT_REG16(MAX77779_FG_FullCap)},
+	[MAXFG_TAG_qh0] = { ATOM_INIT_REG16(MAX77779_FG_QH0)},
+	[MAXFG_TAG_qh] = { ATOM_INIT_REG16(MAX77779_FG_QH)},
+	[MAXFG_TAG_dqacc] = { ATOM_INIT_REG16(MAX77779_FG_dQAcc)},
+	[MAXFG_TAG_dpacc] = { ATOM_INIT_REG16(MAX77779_FG_dPAcc)},
+	[MAXFG_TAG_qresd] = { ATOM_INIT_REG16(MAX77779_FG_QResidual)},
+	[MAXFG_TAG_fstat] = { ATOM_INIT_REG16(MAX77779_FG_FStat)},
+	[MAXFG_TAG_learn] = { ATOM_INIT_REG16(MAX77779_FG_LearnCfg)},
+	[MAXFG_TAG_filcfg] = { ATOM_INIT_REG16(MAX77779_FG_NVM_nFilterCfg)},
+	[MAXFG_TAG_vfcap] = { ATOM_INIT_REG16(MAX77779_FG_VFRemCap)},
+	[MAXFG_TAG_cycles] = { ATOM_INIT_REG16(MAX77779_FG_Cycles)},
+	[MAXFG_TAG_rslow] = { ATOM_INIT_REG16(MAX77779_FG_RSlow)},
 };
 
 static struct maxfg_reg max77779_debug_fg[] = {
 	[MAXFG_TAG_tempco] = { ATOM_INIT_REG16(MAX77779_FG_NVM_nTempCo)},
 	[MAXFG_TAG_rcomp0] = { ATOM_INIT_REG16(MAX77779_FG_NVM_nRComp0)},
-};
-
-/* Capacity Estimation */
-struct gbatt_capacity_estimation {
-	const struct maxfg_reg *bcea;
-	struct mutex batt_ce_lock;
-	struct delayed_work settle_timer;
-	int cap_tsettle;
-	int cap_filt_length;
-	int estimate_state;
-	bool cable_in;
-	int delta_cc_sum;
-	int delta_vfsoc_sum;
-	int cap_filter_count;
-	int start_cc;
-	int start_vfsoc;
+	[MAXFG_TAG_filcfg] = { ATOM_INIT_REG16(MAX77779_FG_NVM_nFilterCfg)},
 };
 
 struct max77779_fg_chip {
@@ -284,8 +284,6 @@ enum max77779_fg_reg_sections {
 
 /** ------------------------------------------------------------------------ */
 
-int max77779_max17x0x_regmap_init(struct maxfg_regmap *regmap, struct i2c_client *clnt,
-				  const struct regmap_config *regmap_config, bool tag);
 int max77779_fg_usr_lock_section(const struct maxfg_regmap *map, enum max77779_fg_reg_sections section, bool enabled);
 int max77779_fg_register_write(const struct maxfg_regmap *regmap, unsigned int reg,
 			       u16 value, bool verify);
