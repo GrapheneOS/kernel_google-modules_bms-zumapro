@@ -2042,7 +2042,7 @@ static int max1720x_health_write_ai(u16 act_impedance, u16 act_timerh)
 	if (ret < 0)
 		return -EIO;
 
-	return ret;
+	return 0;
 }
 
 /* call holding chip->model_lock */
@@ -4050,7 +4050,7 @@ static int debug_cnhs_reset(void *data, u64 val)
 				sizeof(reset_val));
 	dev_info(chip->dev, "reset CNHS to %d, (ret=%d)\n", reset_val, ret);
 
-	return ret;
+	return ret == sizeof(reset_val) ? 0 : ret;
 }
 
 DEFINE_SIMPLE_ATTRIBUTE(debug_reset_cnhs_fops, NULL, debug_cnhs_reset, "%llu\n");
