@@ -31,7 +31,7 @@ int max777x9_pmic_reg_update(struct i2c_client *client,
 /* write to a register */
 int max77779_external_chg_reg_write(struct i2c_client *client, u8 reg, u8 value);
 /* read a register */
-int max77779_chg_reg_read(struct i2c_client *client, u8 reg, u8 *value);
+int max77779_external_chg_reg_read(struct i2c_client *client, u8 reg, u8 *value);
 /* update a register */
 int max77779_chg_reg_update(struct i2c_client *client, u8 reg, u8 mask, u8 value);
 /* change the mode register */

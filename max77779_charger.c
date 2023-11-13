@@ -206,7 +206,7 @@ static int max77779_resume_check(struct max77779_chgr_data *data)
 }
 
 /* ----------------------------------------------------------------------- */
-int max77779_external_reg_read(struct i2c_client *client, uint8_t reg, uint8_t *val)
+int max77779_external_chg_reg_read(struct i2c_client *client, uint8_t reg, uint8_t *val)
 {
 	struct max77779_chgr_data *data;
 
@@ -220,12 +220,9 @@ int max77779_external_reg_read(struct i2c_client *client, uint8_t reg, uint8_t *
 	if (max77779_resume_check(data))
 		return -EAGAIN;
 
-	if (max77779_readn(data->regmap, reg, val, 2) < 0)
-		return -EINVAL;
-
-	return 0;
+	return max77779_reg_read(data->regmap, reg, val);
 }
-EXPORT_SYMBOL_GPL(max77779_external_reg_read);
+EXPORT_SYMBOL_GPL(max77779_external_chg_reg_read);
 
 int max77779_external_chg_reg_write(struct i2c_client *client, uint8_t reg, uint8_t val)
 {
@@ -249,21 +246,6 @@ int max77779_external_chg_reg_write(struct i2c_client *client, uint8_t reg, uint
 EXPORT_SYMBOL_GPL(max77779_external_chg_reg_write);
 
 /* ----------------------------------------------------------------------- */
-int max77779_chg_reg_read(struct i2c_client *client, u8 reg, u8 *value)
-{
-	struct max77779_chgr_data *data;
-
-	if (!client)
-		return -ENODEV;
-
-	data = i2c_get_clientdata(client);
-	if (!data || !data->regmap)
-		return -ENODEV;
-
-	return max77779_reg_read(data->regmap, reg, value);
-}
-EXPORT_SYMBOL_GPL(max77779_chg_reg_read);
-
 int max77779_chg_reg_update(struct i2c_client *client,
 			    u8 reg, u8 mask, u8 value)
 {

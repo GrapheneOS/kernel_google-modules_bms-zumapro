@@ -19,25 +19,6 @@
 static int gs201_otg_enable(struct max77779_usecase_data *uc_data, bool enable);
 
 /* ----------------------------------------------------------------------- */
-static int max77779_chgr_reg_read(struct i2c_client *client, u8 reg, u8 *value)
-{
-	struct max77779_chgr_data *data;
-	int ret, ival;
-
-	if (!client)
-		return -ENODEV;
-
-	data = i2c_get_clientdata(client);
-	if (!data || !data->regmap)
-		return -ENODEV;
-
-	ret = regmap_read(data->regmap, reg, &ival);
-	if (ret == 0)
-		*value = 0xFF & ival;
-
-	return ret;
-}
-
 static int max77779_chgr_reg_update(struct i2c_client *client,
 			    u8 reg, u8 mask, u8 value)
 {
@@ -207,7 +188,7 @@ static int gs201_wlc_tx_config(struct max77779_usecase_data *uc_data, int use_ca
 				pr_err("fail to reset MAX77779_CHG_REVERSE_BOOST_VOUT\n");
 		}
 		/* Set WCSM to 1.4A */
-		ret = max77779_chg_reg_read(uc_data->client, MAX77779_CHG_CNFG_05, &val);
+		ret = max77779_external_chg_reg_read(uc_data->client, MAX77779_CHG_CNFG_05, &val);
 		if (ret < 0)
 			pr_err("%s: fail to read MAX77779_CHG_CNFG_05 ret:%d\n", __func__, ret);
 
@@ -233,8 +214,8 @@ static int gs201_otg_update_ilim(struct max77779_usecase_data *uc_data, int enab
 	if (enable) {
 		int rc;
 
-		rc = max77779_chgr_reg_read(uc_data->client, MAX77779_CHG_CNFG_05,
-					   &uc_data->otg_orig);
+		rc = max77779_external_chg_reg_read(uc_data->client, MAX77779_CHG_CNFG_05,
+					   	    &uc_data->otg_orig);
 		if (rc < 0) {
 			pr_err("%s: cannot read otg_ilim (%d), use default\n",
 			       __func__, rc);
@@ -718,8 +699,8 @@ static void gs201_setup_default_usecase(struct max77779_usecase_data *uc_data)
 					   GS201_OTG_ILIM_DEFAULT_MA);
 	if (ret < 0)
 		uc_data->otg_ilim = MAX77779_CHG_CNFG_05_OTG_ILIM_1500MA;
-	ret = max77779_chgr_reg_read(uc_data->client, MAX77779_CHG_CNFG_05,
-				    &uc_data->otg_orig);
+	ret = max77779_external_chg_reg_read(uc_data->client, MAX77779_CHG_CNFG_05,
+					     &uc_data->otg_orig);
 	if (ret == 0) {
 		uc_data->otg_orig &= MAX77779_CHG_CNFG_05_OTG_ILIM_MASK;
 	} else {
