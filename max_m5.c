@@ -419,7 +419,7 @@ int max_m5_reset_state_data(struct max_m5_data *m5_data)
 	if (ret < 0)
 		dev_warn(m5_data->dev, "Erase GMSR fail (%d)\n", ret);
 
-	return ret;
+	return ret == sizeof(data) ? 0 : ret;
 }
 
 int max_m5_needs_reset_model_data(const struct max_m5_data *m5_data)
