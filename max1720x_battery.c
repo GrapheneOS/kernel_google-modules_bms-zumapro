@@ -272,6 +272,8 @@ struct max1720x_chip {
 	int bhi_target_capacity;
 
 	struct wakeup_source *get_prop_ws;
+
+	int timerh_base;
 };
 
 #define MAX1720_EMPTY_VOLTAGE(profile, temp, cycle) \
@@ -2147,7 +2149,7 @@ static int max1720x_get_age(struct max1720x_chip *chip)
 	if (ret < 0)
 		return -ENODATA;
 
-	return reg_to_time_hr(timerh, chip);
+	return reg_to_time_hr(timerh + chip->timerh_base, chip);
 }
 
 /* TODO b/284191528 - Add to common code file */
@@ -2203,6 +2205,33 @@ static int max1720x_get_fade_rate(struct max1720x_chip *chip, int *fade_rate)
 	return 0;
 }
 
+static void max1720x_update_timer_base(struct max1720x_chip *chip)
+{
+	struct max17x0x_eeprom_history hist = { 0 };
+	int ret, i, time_pre, time_now;
+
+	for (i = 0; i < BATT_MAX_HIST_CNT; i++) {
+		ret = gbms_storage_read_data(GBMS_TAG_HIST, &hist, sizeof(hist), i);
+		if (ret < 0)
+			return;
+
+		if (hist.timerh == 0xFF)
+			continue;
+
+		/* convert to register value */
+		time_now = hist.timerh * 7200 / 192;
+
+		if (time_pre == 0)
+			time_pre = time_now;
+
+		if (time_now < time_pre)
+			chip->timerh_base += time_pre;
+
+		time_pre = time_now;
+	}
+
+	dev_info(chip->dev, "timerh_base: %#X\n", chip->timerh_base);
+}
 
 static int max1720x_get_property(struct power_supply *psy,
 				 enum power_supply_property psp,
@@ -2888,7 +2917,7 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 		return IRQ_NONE;
 
 	pm_runtime_get_sync(chip->dev);
-	if (!chip->init_complete || !chip->resume_complete) {
+	if (irq != -1 && (!chip->init_complete || !chip->resume_complete)) {
 		if (chip->init_complete && !chip->irq_disabled) {
 			chip->irq_disabled = true;
 			disable_irq_nosync(chip->primary->irq);
@@ -5807,6 +5836,8 @@ static void max1720x_init_work(struct work_struct *work)
 		max1720x_monitor_log_data(chip, true);
 
 	max1720x_update_cycle_count(chip);
+
+	max1720x_update_timer_base(chip);
 
 	dev_info(chip->dev, "init_work done\n");
 	if (chip->gauge_type == -1)

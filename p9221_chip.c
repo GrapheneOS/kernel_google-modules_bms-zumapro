@@ -2376,6 +2376,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_mot_addr = P9412_MOT_REG;
 		chgr->reg_cmfet_addr = P9412_CMFET_L_REG;
 		chgr->reg_epp_tx_guarpwr_addr = P9221R5_EPP_TX_GUARANTEED_POWER_REG;
+		chgr->reg_freq_limit_addr = 0;
 		break;
 	case RA9530_CHIP_ID:
 		chgr->reg_tx_id_addr = P9412_PROP_TX_ID_REG;
@@ -2392,6 +2393,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_mot_addr = 0;
 		chgr->reg_cmfet_addr = 0;
 		chgr->reg_epp_tx_guarpwr_addr = P9221R5_EPP_TX_GUARANTEED_POWER_REG;
+		chgr->reg_freq_limit_addr = 0;
 		break;
 	case P9382A_CHIP_ID:
 		chgr->reg_tx_id_addr = P9382_PROP_TX_ID_REG;
@@ -2408,6 +2410,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_mot_addr = 0;
 		chgr->reg_cmfet_addr = 0;
 		chgr->reg_epp_tx_guarpwr_addr = P9221R5_EPP_TX_GUARANTEED_POWER_REG;
+		chgr->reg_freq_limit_addr = 0;
 		break;
 	case P9222_CHIP_ID:
 		chgr->reg_tx_id_addr = P9222RE_PROP_TX_ID_REG;
@@ -2424,6 +2427,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_mot_addr = 0;
 		chgr->reg_cmfet_addr = 0;
 		chgr->reg_epp_tx_guarpwr_addr = P9222RE_EPP_TX_GUARANTEED_POWER_REG;
+		chgr->reg_freq_limit_addr = P9222RE_FREQ_LIMIT_REG;
 		break;
 	default:
 		chgr->reg_tx_id_addr = P9221R5_PROP_TX_ID_REG;
@@ -2440,6 +2444,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_mot_addr = 0;
 		chgr->reg_cmfet_addr = 0;
 		chgr->reg_epp_tx_guarpwr_addr = P9221R5_EPP_TX_GUARANTEED_POWER_REG;
+		chgr->reg_freq_limit_addr = 0;
 		break;
 	}
 }
