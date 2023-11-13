@@ -104,10 +104,33 @@ static int max77779_chg_prot(struct regmap *regmap, bool enable)
 	return 1;
 }
 
+static bool max77779_chg_is_protected(uint8_t reg);
+
 static inline int max77779_reg_write(struct regmap *regmap, uint8_t reg,
 				     uint8_t val)
 {
-	return regmap_write(regmap, reg, val);
+	const bool is_protected = max77779_chg_is_protected(reg);
+	int ret, prot;
+
+	if (is_protected) {
+		prot = max77779_chg_prot(regmap, false);
+		if (prot < 0) {
+			pr_err("%s: cannot disable protection bits (%d)\n", __func__, prot);
+			return prot;
+		}
+	}
+
+	ret = regmap_write(regmap, reg, val);
+
+	if (is_protected) {
+		prot = max77779_chg_prot(regmap, true);
+		if (prot < 0) {
+			pr_err("%s: cannot restore protection bits (%d)\n", __func__, prot);
+			return prot;
+		};
+	}
+
+	return ret;
 }
 
 static inline int max77779_readn(struct regmap *regmap, uint8_t reg,
@@ -119,7 +142,37 @@ static inline int max77779_readn(struct regmap *regmap, uint8_t reg,
 static inline int max77779_writen(struct regmap *regmap, uint8_t reg, /* NOTYPO */
 				  const uint8_t *val, int count)
 {
-	return regmap_bulk_write(regmap, reg, val, count);
+	bool is_protected = false;
+	int i, ret, prot;
+
+	if (count < 1)
+		return -EINVAL;
+
+	for (i = 0; i < count; i++) {
+		if (is_protected)
+			break;
+		is_protected |= max77779_chg_is_protected(reg + i);
+	}
+
+	if (is_protected) {
+		prot = max77779_chg_prot(regmap, false);
+		if (prot < 0) {
+			pr_err("%s: cannot disable protection bits (%d)\n", __func__, prot);
+			return prot;
+		}
+	}
+
+	ret = regmap_bulk_write(regmap, reg, val, count);
+
+	if (is_protected) {
+		prot = max77779_chg_prot(regmap, true);
+		if (prot < 0) {
+			pr_err("%s: cannot restore protection bits (%d)\n", __func__, prot);
+			return prot;
+		};
+	}
+
+	return ret;
 }
 
 static inline int max77779_reg_update(struct max77779_chgr_data *data,
@@ -133,7 +186,7 @@ static inline int max77779_reg_update(struct max77779_chgr_data *data,
 	if (!ret) {
 		tmp &= ~msk;
 		tmp |= val;
-		ret = regmap_write(data->regmap, reg, tmp);
+		ret = max77779_reg_write(data->regmap, reg, tmp);
 	}
 	mutex_unlock(&data->io_lock);
 
@@ -174,14 +227,10 @@ int max77779_external_reg_read(struct i2c_client *client, uint8_t reg, uint8_t *
 }
 EXPORT_SYMBOL_GPL(max77779_external_reg_read);
 
-static bool max77779_chg_is_protected(uint8_t reg);
-
 int max77779_external_chg_reg_write(struct i2c_client *client, uint8_t reg, uint8_t val)
 {
 	struct max77779_chgr_data *data;
-	int prot;
 	int ret = 0;
-	const bool is_protected = max77779_chg_is_protected(reg);
 
 	if (!client)
 		return -ENODEV;
@@ -193,25 +242,7 @@ int max77779_external_chg_reg_write(struct i2c_client *client, uint8_t reg, uint
 	if (max77779_resume_check(data))
 		return -EAGAIN;
 
-	if (is_protected) {
-		prot = max77779_chg_prot(data->regmap, false);
-		if (prot < 0) {
-			dev_err(data->dev, "%s: cannot disable protection bits (%d)\n",
-			__func__, prot);
-			return prot;
-		}
-	}
-
 	ret = max77779_reg_write(data->regmap, reg, val);
-
-	if (is_protected) {
-		prot = max77779_chg_prot(data->regmap, true);
-		if (prot < 0) {
-			dev_err(data->dev, "%s: cannot restore protection bits (%d)\n",
-			__func__, prot);
-			return prot;
-		};
-	}
 
 	return ret;
 }
@@ -375,7 +406,7 @@ static int max77779_read_wcin(struct max77779_chgr_data *data, int *vbyp)
 static int max77779_wdt_enable(struct max77779_chgr_data *data, bool enable)
 {
 	int ret;
-	u8 reg, prot;
+	u8 reg;
 
 	ret = max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_15, &reg);
 	if (ret < 0)
@@ -384,22 +415,11 @@ static int max77779_wdt_enable(struct max77779_chgr_data *data, bool enable)
 	if ((!!_max77779_chg_cnfg_15_wdten_get(reg)) == enable)
 		return 0;
 
-	prot = max77779_chg_prot(data->regmap, false);
-	if (prot < 0)
-		return -EIO;
-
 	/* this register is protected, read back to check if it worked */
 	reg = _max77779_chg_cnfg_15_wdten_set(reg, enable);
 	ret = max77779_reg_write(data->regmap, MAX77779_CHG_CNFG_15, reg);
 	if (ret < 0)
 		return -EIO;
-
-	prot = max77779_chg_prot(data->regmap, true);
-	if (prot < 0) {
-		pr_err("%s: cannot restore protection bits (%d)\n",
-		       __func__, prot);
-		return prot;
-	}
 
 	ret = max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_15, &reg);
 	if (ret < 0)
@@ -2006,14 +2026,11 @@ static int max77779_higher_headroom_enable(struct max77779_chgr_data *data, bool
 		return ret;
 
 	reg_rd = reg;
-	ret = max77779_chg_prot(data->regmap, false);
-	if (ret < 0)
-		return ret;
 
 	reg = _max77779_chg_cnfg_12_vchgin_reg_set(reg, val);
 	ret = max77779_reg_write(data->regmap, MAX77779_CHG_CNFG_12, reg);
 	if (ret)
-		goto done;;
+		goto done;
 
 	dev_dbg(data->dev, "%s: val: %#02x, reg: %#02x -> %#02x\n", __func__, val, reg_rd, reg);
 
@@ -2022,9 +2039,6 @@ static int max77779_higher_headroom_enable(struct max77779_chgr_data *data, bool
 		goto done;
 
 done:
-	ret = max77779_chg_prot(data->regmap, true);
-	if (ret < 0)
-		dev_err(data->dev, "%s: error enabling prot (%d)\n", __func__, ret);
 	return ret < 0 ? ret : 0;
 }
 
