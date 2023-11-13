@@ -9815,7 +9815,7 @@ static int batt_bhi_init(struct batt_drv *batt_drv)
 	struct health_data *health_data = &batt_drv->health_data;
 	struct bhi_data *bhi_data = &health_data->bhi_data;
 	u16 capacity_boundary[BHI_TREND_POINTS_SIZE];
-	int ret;
+	int ret, i;
 
 	/* set upper_bound value to BHI_CAPACITY_MAX(0xFFFF) */
 	memset(bhi_data->upper_bound.limit, 0xFF, sizeof(bhi_data->upper_bound.limit));
@@ -9873,7 +9873,7 @@ static int batt_bhi_init(struct batt_drv *batt_drv)
 		health_data->bhi_cycle_grace = BHI_CYCLE_GRACE_DEFAULT;
 
 	/* design is the value used to build the charge table */
-	health_data->bhi_data.pack_capacity = batt_drv->battery_capacity;
+	bhi_data->pack_capacity = batt_drv->battery_capacity;
 
 	/* need battery id to get right trend points */
 	batt_drv->batt_id = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_BATT_ID);
@@ -9885,14 +9885,16 @@ static int batt_bhi_init(struct batt_drv *batt_drv)
 						 batt_drv->battery_capacity)) {
 		memcpy(&bhi_data->lower_bound.limit[0], capacity_boundary,
 		       sizeof(capacity_boundary));
-		dev_info(batt_drv->device,
-			 "bhi_l_bound [%d, %d, %d, %d, %d, %d, %d, %d, %d, %d]\n",
-			 bhi_data->lower_bound.limit[0], bhi_data->lower_bound.limit[1],
-			 bhi_data->lower_bound.limit[2], bhi_data->lower_bound.limit[3],
-			 bhi_data->lower_bound.limit[4], bhi_data->lower_bound.limit[5],
-			 bhi_data->lower_bound.limit[6], bhi_data->lower_bound.limit[7],
-			 bhi_data->lower_bound.limit[8], bhi_data->lower_bound.limit[9]);
+	} else {
+		for (i = 0; i < BHI_TREND_POINTS_SIZE; i++)
+			bhi_data->lower_bound.limit[i] = bhi_data->pack_capacity * 60 / 100;
 	}
+	dev_info(batt_drv->device, "bhi_l_bound [%d, %d, %d, %d, %d, %d, %d, %d, %d, %d]\n",
+		 bhi_data->lower_bound.limit[0], bhi_data->lower_bound.limit[1],
+		 bhi_data->lower_bound.limit[2], bhi_data->lower_bound.limit[3],
+		 bhi_data->lower_bound.limit[4], bhi_data->lower_bound.limit[5],
+		 bhi_data->lower_bound.limit[6], bhi_data->lower_bound.limit[7],
+		 bhi_data->lower_bound.limit[8], bhi_data->lower_bound.limit[9]);
 
 	ret = of_property_read_u16_array(batt_id_node(batt_drv),
 					 "google,bhi-u-bound", &capacity_boundary[0],
@@ -9901,14 +9903,16 @@ static int batt_bhi_init(struct batt_drv *batt_drv)
 						 BHI_CAPACITY_MAX)) {
 		memcpy(&bhi_data->upper_bound.limit[0], capacity_boundary,
 		       sizeof(capacity_boundary));
-		dev_info(batt_drv->device,
-			 "bhi_u_bound [%d, %d, %d, %d, %d, %d, %d, %d, %d, %d]\n",
-			 bhi_data->upper_bound.limit[0], bhi_data->upper_bound.limit[1],
-			 bhi_data->upper_bound.limit[2], bhi_data->upper_bound.limit[3],
-			 bhi_data->upper_bound.limit[4], bhi_data->upper_bound.limit[5],
-			 bhi_data->upper_bound.limit[6], bhi_data->upper_bound.limit[7],
-			 bhi_data->upper_bound.limit[8], bhi_data->upper_bound.limit[9]);
+	} else {
+		for (i = 0; i < BHI_TREND_POINTS_SIZE; i++)
+			bhi_data->upper_bound.limit[i] = bhi_data->pack_capacity;
 	}
+	dev_info(batt_drv->device, "bhi_u_bound [%d, %d, %d, %d, %d, %d, %d, %d, %d, %d]\n",
+		 bhi_data->upper_bound.limit[0], bhi_data->upper_bound.limit[1],
+		 bhi_data->upper_bound.limit[2], bhi_data->upper_bound.limit[3],
+		 bhi_data->upper_bound.limit[4], bhi_data->upper_bound.limit[5],
+		 bhi_data->upper_bound.limit[6], bhi_data->upper_bound.limit[7],
+		 bhi_data->upper_bound.limit[8], bhi_data->upper_bound.limit[9]);
 
 	ret = of_property_read_u16_array(batt_id_node(batt_drv),
 					 "google,bhi-l-trigger", &capacity_boundary[0],
