@@ -4147,22 +4147,13 @@ static int bhi_calc_cap_index(int algo, struct batt_drv *batt_drv)
 
 	capacity_health = bhi_health_get_capacity(algo, bhi_data);
 
-	/* for BHI_ALGO_ACHI_B compare to aacr capacity */
-	if (algo == BHI_ALGO_ACHI_B || algo == BHI_ALGO_ACHI_RAVG_B) {
+	if (algo == BHI_ALGO_ACHI_B || algo == BHI_ALGO_ACHI_RAVG ||
+	    algo == BHI_ALGO_ACHI_RAVG_B) {
 		const int cycle_count = batt_drv->fake_aacr_cc ?
 					batt_drv->fake_aacr_cc : batt_drv->cycle_count;
 
-		if (algo == BHI_ALGO_ACHI_RAVG_B) {
-			l_bound = bhi_get_capacity_bound(cycle_count,
-							 &bhi_data->lower_bound.limit[0]);
-			u_bound = aacr_get_capacity_for_algo(batt_drv, cycle_count,
-							     BATT_AACR_ALGO_LOW_B);
-		} else {
-			l_bound = aacr_get_capacity_for_algo(batt_drv, cycle_count,
-							     BATT_AACR_ALGO_DEFAULT);
-			u_bound = bhi_get_capacity_bound(cycle_count,
-							 &bhi_data->upper_bound.limit[0]);
-		}
+		l_bound = bhi_get_capacity_bound(cycle_count, &bhi_data->lower_bound.limit[0]);
+		u_bound = bhi_get_capacity_bound(cycle_count, &bhi_data->upper_bound.limit[0]);
 
 		capacity_health = max(capacity_health, l_bound);
 		capacity_health = min(capacity_health, u_bound);
