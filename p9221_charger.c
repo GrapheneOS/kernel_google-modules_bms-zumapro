@@ -4966,7 +4966,7 @@ static ssize_t rtx_status_show(struct device *dev,
 		"not support", "available", "active", "disabled" };
 	int ext_bst_on = 0;
 
-	if (!charger->pdata->has_rtx)
+	if (!charger->pdata->has_rtx || charger->rtx_err == RTX_CHRG_NOT_SUP)
 		charger->rtx_state = RTX_NOTSUPPORTED;
 
 	p9xxx_setup_all(charger->dev->of_node, charger->pdata);

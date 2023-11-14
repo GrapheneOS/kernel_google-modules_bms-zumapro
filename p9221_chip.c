@@ -28,6 +28,7 @@
 #define P9XXX_GPIO_DC_SW_EN             4
 #define P9XXX_GPIO_ONLINE_SPOOF         5
 #define P9XXX_GPIO_RTX_STATE            6
+#define P9XXX_GPIO_RTX_SUPP             7
 #define P9XXX_GPIO_VBUS_EN              15
 
 /* Simple Chip Specific Accessors */
@@ -2930,15 +2931,21 @@ static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 			break;
 		}
 
-		if (value == 0)
-			charger->rtx_gpio_state = prev_state == RTX_READY ?
-						  RTX_RETRY : RTX_NOT_SUPP;
-		else
+		if (value == 0 && prev_state == RTX_READY)
+			charger->rtx_gpio_state = RTX_RETRY;
+		else if (value == 1)
 			charger->rtx_gpio_state = RTX_READY;
 
-		if (charger->rtx_gpio_state == RTX_NOT_SUPP)
-			charger->rtx_err = RTX_CHRG_NOT_SUP;
+		mutex_unlock(&charger->rtx_gpio_lock);
+		break;
+	case P9XXX_GPIO_RTX_SUPP:
+		mutex_lock(&charger->rtx_gpio_lock);
 
+		if (value == 0) {
+			charger->rtx_gpio_state = RTX_NOT_SUPP;
+			charger->rtx_err = RTX_CHRG_NOT_SUP;
+			schedule_work(&charger->uevent_work);
+		}
 		mutex_unlock(&charger->rtx_gpio_lock);
 		break;
 	default:
