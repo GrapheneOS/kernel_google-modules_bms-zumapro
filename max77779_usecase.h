@@ -38,6 +38,9 @@ struct max77779_usecase_data {
 	int use_case;
 
 	int rtx_ready; /* rtx ready gpio from wireless */
+	int rtx_available; /* rtx supported gpio from wlc, usecase set for UI */
+	struct delayed_work rtx_supported_work;
+
 	int rtx_retries;
 	int rtx_state;
 	struct power_supply *psy;
