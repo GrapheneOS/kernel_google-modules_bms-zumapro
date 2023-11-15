@@ -304,9 +304,9 @@ struct swelling_data {
 struct bhi_weight bhi_w[] = {
 	[BHI_ALGO_ACHI] = {100, 0, 0},
 	[BHI_ALGO_ACHI_B] = {100, 0, 0},
-	[BHI_ALGO_ACHI_RAVG] = {95, 5, 0},
-	[BHI_ALGO_ACHI_RAVG_B] = {95, 5, 0},
-	[BHI_ALGO_MIX_N_MATCH] = {90, 10, 5},
+	[BHI_ALGO_ACHI_RAVG] = {100, 0, 0},
+	[BHI_ALGO_ACHI_RAVG_B] = {100, 0, 0},
+	[BHI_ALGO_MIX_N_MATCH] = {90, 0, 10},
 };
 
 struct bm_date {
@@ -3819,8 +3819,6 @@ static int get_activation_date(struct health_data *health_data, struct rtc_time 
 static int bhi_individual_conditions_index(struct health_data *health_data)
 {
 	const struct bhi_data *bhi_data = &health_data->bhi_data;
-	const int cur_impedance = batt_ravg_value(&bhi_data->res_state);
-	const int age_impedance_max = bhi_data->act_impedance * 2;
 	const int cur_capacity_pct = 100 - bhi_data->capacity_fade;
 	const int bhi_indi_cap = health_data->bhi_indi_cap;
 	struct rtc_time tm;
@@ -3842,8 +3840,8 @@ static int bhi_individual_conditions_index(struct health_data *health_data)
 		battery_age = health_data->bhi_data.battery_age;
 	}
 
-	if (battery_age >= ONE_YEAR_HRS || cur_capacity_pct <= bhi_indi_cap ||
-	    (cur_impedance > 0 && age_impedance_max > 0 && cur_impedance >= age_impedance_max))
+	/* Removed impedance condition due to validation required */
+	if (battery_age >= ONE_YEAR_HRS || cur_capacity_pct <= bhi_indi_cap)
 		return health_data->need_rep_threshold * 100;
 
 	return BHI_ALGO_FULL_HEALTH;
