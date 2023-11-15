@@ -5816,6 +5816,17 @@ static ssize_t gpp_enhanced_store(struct device *dev,
 
 static DEVICE_ATTR_RW(gpp_enhanced);
 
+static ssize_t authstart_show(struct device *dev,
+			      struct device_attribute *attr,
+			      char *buf)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct p9221_charger_data *charger = i2c_get_clientdata(client);
+
+	return scnprintf(buf, PAGE_SIZE, "%c\n",
+			 charger->set_auth_icl ? 'Y' : 'N');
+}
+
 static ssize_t authstart_store(struct device *dev,
 			       struct device_attribute *attr,
 			       const char *buf, size_t count)
@@ -5854,10 +5865,10 @@ static ssize_t authstart_store(struct device *dev,
 unlock:
 	mutex_unlock(&charger->auth_lock);
 
-	return ret;
+	return ret == 0 ? count : ret;
 }
 
-static DEVICE_ATTR_WO(authstart);
+static DEVICE_ATTR_RW(authstart);
 
 static ssize_t log_current_filtered_show(struct device *dev,
 					 struct device_attribute *attr,
