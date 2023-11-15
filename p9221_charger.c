@@ -3921,7 +3921,12 @@ static void p9xxx_write_q_factor(struct p9221_charger_data *charger)
 
 static void p9xxx_update_q_factor(struct p9221_charger_data *charger)
 {
-	int ret, i;
+	int ret, i, q = 0;
+
+	if (charger->pdata->tx_4191q <= 0 &&
+	    charger->pdata->tx_1801q <= 0 &&
+	    charger->pdata->tx_2356q <= 0)
+		return;
 
 	for (i = 0; i < 5; i += 1) {
 		ret = p9xxx_chip_get_tx_mfg_code(charger, &charger->mfg);
@@ -3930,21 +3935,26 @@ static void p9xxx_update_q_factor(struct p9221_charger_data *charger)
 		usleep_range(100 * USEC_PER_MSEC, 120 * USEC_PER_MSEC);
 	}
 
-	if (charger->mfg == P9221_PTMC_EPP_TX_4191) {
-		ret = p9xxx_chip_set_q_factor_reg(charger, charger->pdata->tx_4191q);
-		if (ret == 0)
-			dev_info(&charger->client->dev,
-				 "update Q factor=%d(mfg=%x)\n",
-				 charger->pdata->tx_4191q, charger->mfg);
-	};
-
-	if (charger->mfg == P9221_PTMC_EPP_TX_1801) {
-		ret = p9xxx_chip_set_q_factor_reg(charger, charger->pdata->tx_1801q);
-		dev_info(&charger->client->dev, "update Q factor=%d(mfg=%x) ret=%d\n",
-			 charger->pdata->tx_1801q, charger->mfg, ret);
-	} else if (charger->pdata->tx_1801q > 0) {
-		p9xxx_write_q_factor(charger);
+	switch (charger->mfg) {
+	case P9221_PTMC_EPP_TX_4191:
+		q = charger->pdata->tx_4191q;
+		break;
+	case P9221_PTMC_EPP_TX_1801:
+		q = charger->pdata->tx_1801q;
+		break;
+	case P9221_PTMC_EPP_TX_2356:
+		q = charger->pdata->tx_2356q;
+		break;
+	default:
+		return;
 	}
+
+	if (q <= 0)
+		return;
+
+	ret = p9xxx_chip_set_q_factor_reg(charger, q);
+	dev_info(&charger->client->dev, "update Q factor=%d(mfg=%x) ret=%d\n",
+		 q, charger->mfg, ret);
 }
 
 static void p9221_notifier_work(struct work_struct *work)
@@ -7352,6 +7362,13 @@ static int p9xxx_parse_dt(struct device *dev,
 	} else {
 		pdata->tx_1801q = data;
 		dev_info(dev, "dt tx1801_q:%d\n", pdata->tx_1801q);
+	}
+	ret = of_property_read_u32(node, "google,tx2356_q", &data);
+	if (ret < 0) {
+		pdata->tx_2356q = -1;
+	} else {
+		pdata->tx_2356q = data;
+		dev_info(dev, "dt tx2356_q:%d\n", pdata->tx_2356q);
 	}
 
 	ret = of_property_read_u32(node, "google,epp_rp_value", &data);

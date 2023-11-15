@@ -83,6 +83,7 @@
 #define P9221_PTMC_EPP_TX_1912		0x32
 #define P9221_PTMC_EPP_TX_4191		0x50
 #define P9221_PTMC_EPP_TX_1801		0x28
+#define P9221_PTMC_EPP_TX_2356		0x2356
 
 #define P9222_RX_CALIBRATION_LIGHT_LOAD	0x5831
 #define P9222_LIGHT_LOAD_VALUE		0x0C
@@ -719,6 +720,7 @@ struct p9221_charger_platform_data {
 	int				rf_value;
 	int				tx_4191q;
 	int				tx_1801q;
+	int				tx_2356q;
 	int				epp_rp_value;
 	int				epp_rp_low_value;
 	int				needs_dcin_reset;
