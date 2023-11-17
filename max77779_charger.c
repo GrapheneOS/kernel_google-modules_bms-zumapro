@@ -178,17 +178,26 @@ static inline int max77779_writen(struct regmap *regmap, uint8_t reg, /* NOTYPO 
 static inline int max77779_reg_update(struct max77779_chgr_data *data,
 				      uint8_t reg, uint8_t msk, uint8_t val)
 {
-	int ret;
-	unsigned tmp;
+	const bool is_protected = max77779_chg_is_protected(reg);
+	int ret, prot;
 
-	mutex_lock(&data->io_lock);
-	ret = regmap_read(data->regmap, reg, &tmp);
-	if (!ret) {
-		tmp &= ~msk;
-		tmp |= val;
-		ret = max77779_reg_write(data->regmap, reg, tmp);
+	if (is_protected) {
+		prot = max77779_chg_prot(data->regmap, false);
+		if (prot < 0) {
+			pr_err("%s: cannot disable protection bits (%d)\n", __func__, prot);
+			return prot;
+		}
 	}
-	mutex_unlock(&data->io_lock);
+
+	ret = regmap_write_bits(data->regmap, reg, msk, val); /* forces update */
+
+	if (is_protected) {
+		prot = max77779_chg_prot(data->regmap, true);
+		if (prot < 0) {
+			pr_err("%s: cannot restore protection bits (%d)\n", __func__, prot);
+			return prot;
+		};
+	}
 
 	return ret;
 }
@@ -227,7 +236,6 @@ EXPORT_SYMBOL_GPL(max77779_external_chg_reg_read);
 int max77779_external_chg_reg_write(struct i2c_client *client, uint8_t reg, uint8_t val)
 {
 	struct max77779_chgr_data *data;
-	int ret = 0;
 
 	if (!client)
 		return -ENODEV;
@@ -239,15 +247,11 @@ int max77779_external_chg_reg_write(struct i2c_client *client, uint8_t reg, uint
 	if (max77779_resume_check(data))
 		return -EAGAIN;
 
-	ret = max77779_reg_write(data->regmap, reg, val);
-
-	return ret;
+	return max77779_reg_write(data->regmap, reg, val);
 }
 EXPORT_SYMBOL_GPL(max77779_external_chg_reg_write);
 
-/* ----------------------------------------------------------------------- */
-int max77779_chg_reg_update(struct i2c_client *client,
-			    u8 reg, u8 mask, u8 value)
+int max77779_external_chg_reg_update(struct i2c_client *client, u8 reg, u8 mask, u8 value)
 {
 	struct max77779_chgr_data *data;
 
@@ -258,9 +262,12 @@ int max77779_chg_reg_update(struct i2c_client *client,
 	if (!data || !data->regmap)
 		return -ENODEV;
 
-	return regmap_write_bits(data->regmap, reg, mask, value);
+	if (max77779_resume_check(data))
+		return -EAGAIN;
+
+	return max77779_reg_update(data, reg, mask, value);
 }
-EXPORT_SYMBOL_GPL(max77779_chg_reg_update);
+EXPORT_SYMBOL_GPL(max77779_external_chg_reg_update);
 
 int max77779_chg_mode_write(struct i2c_client *client,
 			    enum max77779_charger_modes mode)
@@ -3118,13 +3125,13 @@ static irqreturn_t max77779_chgr_irq(int irq, void *client)
 				pr_info("%s: THM2 %d->%d\n", __func__, data->thm2_sts, thm2_sts);
 				if (!thm2_sts) {
 					pr_info("%s: THM2 run recover...\n", __func__);
-					ret = regmap_write_bits(data->regmap, MAX77779_CHG_CNFG_13,
-							MAX77779_CHG_CNFG_13_THM2_HW_CTRL_MASK, 0);
+					ret = max77779_reg_update(data, MAX77779_CHG_CNFG_13,
+						MAX77779_CHG_CNFG_13_THM2_HW_CTRL_MASK, 0);
 					if (ret == 0)
-						ret = regmap_write_bits(data->regmap,
-								MAX77779_CHG_CNFG_13,
-								MAX77779_CHG_CNFG_13_THM2_HW_CTRL_MASK,
-								MAX77779_CHG_CNFG_13_THM2_HW_CTRL_MASK);
+						ret = max77779_reg_update(data,
+							MAX77779_CHG_CNFG_13,
+							MAX77779_CHG_CNFG_13_THM2_HW_CTRL_MASK,
+							MAX77779_CHG_CNFG_13_THM2_HW_CTRL_MASK);
 				}
 				data->thm2_sts = thm2_sts;
 			}
@@ -3538,22 +3545,22 @@ static int max77779_charger_probe(struct i2c_client *client,
 		dev_err(dev, "wd enable=%d failed %d\n", data->wden, ret);
 
 	/* disable fast charge safety timer */
-	max77779_chg_reg_update(data->uc_data.client, MAX77779_CHG_CNFG_01,
-				MAX77779_CHG_CNFG_01_FCHGTIME_MASK,
-				MAX77779_CHG_CNFG_01_FCHGTIME_CLEAR);
+	max77779_external_chg_reg_update(data->uc_data.client, MAX77779_CHG_CNFG_01,
+					 MAX77779_CHG_CNFG_01_FCHGTIME_MASK,
+					 MAX77779_CHG_CNFG_01_FCHGTIME_CLEAR);
 
 	if (of_property_read_bool(dev->of_node, "google,max77779-thm2-monitor")) {
 		/* enable THM2 monitor at 60 degreeC */
-		max77779_chg_reg_update(data->uc_data.client, MAX77779_CHG_CNFG_13,
-				MAX77779_CHG_CNFG_13_THM2_HW_CTRL_MASK |
-				MAX77779_CHG_CNFG_13_USB_TEMP_THR_MASK,
-				0xA);
+		max77779_external_chg_reg_update(data->uc_data.client, MAX77779_CHG_CNFG_13,
+						 MAX77779_CHG_CNFG_13_THM2_HW_CTRL_MASK |
+						 MAX77779_CHG_CNFG_13_USB_TEMP_THR_MASK,
+						 0xA);
 	} else if (!of_property_read_bool(dev->of_node, "max77779,usb-mon")) {
 		/* b/193355117 disable THM2 monitoring */
-		max77779_chg_reg_update(data->uc_data.client, MAX77779_CHG_CNFG_13,
-					MAX77779_CHG_CNFG_13_THM2_HW_CTRL_MASK |
-					MAX77779_CHG_CNFG_13_USB_TEMP_THR_MASK,
-					0);
+		max77779_external_chg_reg_update(data->uc_data.client, MAX77779_CHG_CNFG_13,
+						 MAX77779_CHG_CNFG_13_THM2_HW_CTRL_MASK |
+						 MAX77779_CHG_CNFG_13_USB_TEMP_THR_MASK,
+						 0);
 	}
 
 	mutex_unlock(&data->io_lock);

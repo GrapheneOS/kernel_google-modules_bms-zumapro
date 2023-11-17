@@ -19,21 +19,6 @@
 static int gs201_otg_enable(struct max77779_usecase_data *uc_data, bool enable);
 
 /* ----------------------------------------------------------------------- */
-static int max77779_chgr_reg_update(struct i2c_client *client,
-			    u8 reg, u8 mask, u8 value)
-{
-	struct max77779_chgr_data *data;
-
-	if (!client)
-		return -ENODEV;
-
-	data = i2c_get_clientdata(client);
-	if (!data || !data->regmap)
-		return -ENODEV;
-
-	return regmap_write_bits(data->regmap, reg, mask, value);
-}
-
 static int max77779_chgr_mode_write(struct i2c_client *client,
 			    enum max77779_charger_modes mode)
 {
@@ -229,9 +214,9 @@ static int gs201_otg_update_ilim(struct max77779_usecase_data *uc_data, int enab
 		ilim = uc_data->otg_orig;
 	}
 
-	return max77779_chgr_reg_update(uc_data->client, MAX77779_CHG_CNFG_05,
-				      MAX77779_CHG_CNFG_05_OTG_ILIM_MASK,
-				      ilim);
+	return max77779_external_chg_reg_update(uc_data->client, MAX77779_CHG_CNFG_05,
+						MAX77779_CHG_CNFG_05_OTG_ILIM_MASK,
+						ilim);
 }
 
 /*
@@ -351,9 +336,9 @@ static int gs201_ramp_bypass(struct max77779_usecase_data *uc_data, bool enable)
 {
 	const u8 value = enable ? MAX77779_CHG_CNFG_00_BYPV_RAMP_BYPASS_MASK : 0;
 
-	return max77779_chgr_reg_update(uc_data->client, MAX77779_CHG_CNFG_00,
-				       MAX77779_CHG_CNFG_00_BYPV_RAMP_BYPASS_MASK,
-				       value);
+	return max77779_external_chg_reg_update(uc_data->client, MAX77779_CHG_CNFG_00,
+						MAX77779_CHG_CNFG_00_BYPV_RAMP_BYPASS_MASK,
+						value);
 }
 
 /* cleanup from every usecase */
