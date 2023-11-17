@@ -277,40 +277,17 @@ int max77779_external_chg_mode_write(struct i2c_client *client, enum max77779_ch
 }
 EXPORT_SYMBOL_GPL(max77779_external_chg_mode_write);
 
-int max77779_chg_insel_write(struct i2c_client *client, u8 mask, u8 value)
+int max77779_external_chg_insel_write(struct i2c_client *client, u8 mask, u8 value)
 {
-	struct max77779_chgr_data *data;
-	int ret;
-
-	if (!client)
-		return -ENODEV;
-
-	data = i2c_get_clientdata(client);
-	if (!data || !data->regmap)
-		return -ENODEV;
-
-	ret = regmap_write_bits(data->regmap, MAX77779_CHG_CNFG_12, mask, value);
-	if (ret < 0)
-		return ret;
-
-	return ret;
+	return max77779_external_chg_reg_update(client, MAX77779_CHG_CNFG_12, mask, value);
 }
-EXPORT_SYMBOL_GPL(max77779_chg_insel_write);
+EXPORT_SYMBOL_GPL(max77779_external_chg_insel_write);
 
-int max77779_chg_insel_read(struct i2c_client *client, u8 *value)
+int max77779_external_chg_insel_read(struct i2c_client *client, u8 *value)
 {
-	struct max77779_chgr_data *data;
-
-	if (!client)
-		return -ENODEV;
-
-	data = i2c_get_clientdata(client);
-	if (!data || !data->regmap)
-		return -ENODEV;
-
-	return  max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_12, value);
+	return max77779_external_chg_reg_read(client, MAX77779_CHG_CNFG_12, value);
 }
-EXPORT_SYMBOL_GPL(max77779_chg_insel_read);
+EXPORT_SYMBOL_GPL(max77779_external_chg_insel_read);
 
 /* ----------------------------------------------------------------------- */
 
@@ -836,13 +813,13 @@ static int max77779_set_insel(struct max77779_chgr_data *data,
 	} else {
 		u8 value = 0;
 
-		wlc_on = max77779_chg_insel_read(uc_data->client, &value);
+		wlc_on = max77779_external_chg_insel_read(uc_data->client, &value);
 		if (wlc_on == 0)
 			wlc_on = (value & MAX77779_CHG_CNFG_12_WCINSEL) != 0;
 	}
 
 	/* changing [CHGIN|WCIN]_INSEL: works when protection is disabled  */
-	ret = max77779_chg_insel_write(uc_data->client, insel_mask, insel_value);
+	ret = max77779_external_chg_insel_write(uc_data->client, insel_mask, insel_value);
 
 	pr_debug("%s: usecase=%d->%d mask=%x insel=%x wlc_on=%d force_wlc=%d (%d)\n",
 		 __func__, from_uc, use_case, insel_mask, insel_value, wlc_on,

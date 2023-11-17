@@ -17,27 +17,6 @@
 #include "max77779_charger.h"
 
 static int gs201_otg_enable(struct max77779_usecase_data *uc_data, bool enable);
-
-/* ----------------------------------------------------------------------- */
-static int max77779_chgr_insel_write(struct i2c_client *client, u8 mask, u8 value)
-{
-	struct max77779_chgr_data *data;
-	int ret;
-
-	if (!client)
-		return -ENODEV;
-
-	data = i2c_get_clientdata(client);
-	if (!data || !data->regmap)
-		return -ENODEV;
-
-	ret = regmap_write_bits(data->regmap, MAX77779_CHG_CNFG_12, mask, value);
-	if (ret < 0)
-		return ret;
-
-	return ret;
-}
-
 /* ----------------------------------------------------------------------- */
 
 int gs201_wlc_en(struct max77779_usecase_data *uc_data, enum wlc_state_t state)
@@ -345,7 +324,7 @@ int gs201_force_standby(struct max77779_usecase_data *uc_data)
 		pr_err("%s: cannot reset mode register (%d)\n",
 			__func__, ret);
 
-	ret = max77779_chgr_insel_write(uc_data->client, insel_mask, insel_value);
+	ret = max77779_external_chg_insel_write(uc_data->client, insel_mask, insel_value);
 	if (ret < 0)
 		pr_err("%s: cannot reset insel (%d)\n",
 			__func__, ret);
