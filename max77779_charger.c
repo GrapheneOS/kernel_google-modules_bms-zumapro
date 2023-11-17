@@ -3512,22 +3512,28 @@ static int max77779_charger_probe(struct i2c_client *client,
 		dev_err(dev, "wd enable=%d failed %d\n", data->wden, ret);
 
 	/* disable fast charge safety timer */
-	max77779_external_chg_reg_update(data->uc_data.client, MAX77779_CHG_CNFG_01,
-					 MAX77779_CHG_CNFG_01_FCHGTIME_MASK,
-					 MAX77779_CHG_CNFG_01_FCHGTIME_CLEAR);
+	ret = max77779_reg_update(data, MAX77779_CHG_CNFG_01,
+				  MAX77779_CHG_CNFG_01_FCHGTIME_MASK,
+				  MAX77779_CHG_CNFG_01_FCHGTIME_CLEAR);
+	if (ret < 0)
+		dev_warn(dev, "disable fast charge safety timer failed %d\n", ret);
 
 	if (of_property_read_bool(dev->of_node, "google,max77779-thm2-monitor")) {
 		/* enable THM2 monitor at 60 degreeC */
-		max77779_external_chg_reg_update(data->uc_data.client, MAX77779_CHG_CNFG_13,
-						 MAX77779_CHG_CNFG_13_THM2_HW_CTRL_MASK |
-						 MAX77779_CHG_CNFG_13_USB_TEMP_THR_MASK,
-						 0xA);
+		ret = max77779_reg_update(data, MAX77779_CHG_CNFG_13,
+					  MAX77779_CHG_CNFG_13_THM2_HW_CTRL_MASK |
+					  MAX77779_CHG_CNFG_13_USB_TEMP_THR_MASK,
+					  0xA);
+		if (ret < 0)
+			dev_warn(dev, "enable THM2 monitor failed %d\n", ret);
 	} else if (!of_property_read_bool(dev->of_node, "max77779,usb-mon")) {
 		/* b/193355117 disable THM2 monitoring */
-		max77779_external_chg_reg_update(data->uc_data.client, MAX77779_CHG_CNFG_13,
-						 MAX77779_CHG_CNFG_13_THM2_HW_CTRL_MASK |
-						 MAX77779_CHG_CNFG_13_USB_TEMP_THR_MASK,
-						 0);
+		ret = max77779_reg_update(data, MAX77779_CHG_CNFG_13,
+					  MAX77779_CHG_CNFG_13_THM2_HW_CTRL_MASK |
+					  MAX77779_CHG_CNFG_13_USB_TEMP_THR_MASK,
+					  0);
+		if (ret < 0)
+			dev_warn(dev, "disable THM2 monitoring failed %d\n", ret);
 	}
 
 	mutex_unlock(&data->io_lock);
