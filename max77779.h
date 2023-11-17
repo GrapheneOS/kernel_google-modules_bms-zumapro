@@ -35,7 +35,7 @@ int max77779_external_chg_reg_read(struct i2c_client *client, u8 reg, u8 *value)
 /* update a register */
 int max77779_external_chg_reg_update(struct i2c_client *client, u8 reg, u8 mask, u8 value);
 /* change the mode register */
-int max77779_chg_mode_write(struct i2c_client *client, enum max77779_charger_modes mode);
+int max77779_external_chg_mode_write(struct i2c_client *client, enum max77779_charger_modes mode);
 /* change the insel register */
 int max77779_chg_insel_write(struct i2c_client *client, u8 mask, u8 value);
 /* read the insel register */

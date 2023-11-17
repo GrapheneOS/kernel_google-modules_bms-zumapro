@@ -672,7 +672,7 @@ static int max77779_fwl_prepare(struct max77779_fwupdate *fwu,
 	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed clear command / POR  interrupt");
 
 	/* TODO: 308211733 need to prevent mode change  */
-	ret = max77779_chg_mode_write(fwu->chg, MAX77779_CHGR_MODE_BOOST_ON);
+	ret = max77779_external_chg_mode_write(fwu->chg, MAX77779_CHGR_MODE_BOOST_ON);
 	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed to set mode BOOST_ON");
 
 	/* do unlock again */
@@ -757,7 +757,7 @@ static int max77779_fwl_poll_complete(struct max77779_fwupdate *fwu)
 		return -EIO;
 	}
 
-	ret = max77779_chg_mode_write(fwu->chg, MAX77779_CHGR_MODE_BUCK_ON);
+	ret = max77779_external_chg_mode_write(fwu->chg, MAX77779_CHGR_MODE_BUCK_ON);
 	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed to set MAX77779_CHGR_MODE_BUCK_ON");
 
 	max77779_wait_riscv_reboot(fwu);

@@ -19,23 +19,6 @@
 static int gs201_otg_enable(struct max77779_usecase_data *uc_data, bool enable);
 
 /* ----------------------------------------------------------------------- */
-static int max77779_chgr_mode_write(struct i2c_client *client,
-			    enum max77779_charger_modes mode)
-{
-	struct max77779_chgr_data *data;
-
-	if (!client)
-		return -ENODEV;
-
-	data = i2c_get_clientdata(client);
-	if (!data || !data->regmap)
-		return -ENODEV;
-
-	return regmap_write_bits(data->regmap, MAX77779_CHG_CNFG_00,
-				 MAX77779_CHG_CNFG_00_MODE_MASK,
-				 mode);
-}
-
 static int max77779_chgr_insel_write(struct i2c_client *client, u8 mask, u8 value)
 {
 	struct max77779_chgr_data *data;
@@ -320,7 +303,7 @@ int gs201_to_standby(struct max77779_usecase_data *uc_data, int use_case)
 		return 0;
 
 	/* transition to STBY (might need to be up) */
-	ret = max77779_chgr_mode_write(uc_data->client, MAX77779_CHGR_MODE_ALL_OFF);
+	ret = max77779_external_chg_mode_write(uc_data->client, MAX77779_CHGR_MODE_ALL_OFF);
 	if (ret < 0)
 		return -EIO;
 
@@ -357,7 +340,7 @@ int gs201_force_standby(struct max77779_usecase_data *uc_data)
 		pr_err("%s: cannot reset ramp_bypass (%d)\n",
 			__func__, ret);
 
-	ret = max77779_chgr_mode_write(uc_data->client, MAX77779_CHGR_MODE_ALL_OFF);
+	ret = max77779_external_chg_mode_write(uc_data->client, MAX77779_CHGR_MODE_ALL_OFF);
 	if (ret < 0)
 		pr_err("%s: cannot reset mode register (%d)\n",
 			__func__, ret);
@@ -382,8 +365,8 @@ static int gs201_otg_mode(struct max77779_usecase_data *uc_data, int to)
 	pr_debug("%s: to=%d\n", __func__, to);
 
 	if (to == GSU_MODE_USB_OTG) {
-		ret = max77779_chgr_mode_write(uc_data->client,
-					      MAX77779_CHGR_MODE_ALL_OFF);
+		ret = max77779_external_chg_mode_write(uc_data->client,
+						       MAX77779_CHGR_MODE_ALL_OFF);
 	}
 
 	return ret;
@@ -406,8 +389,8 @@ static int gs201_otg_enable_frs(struct max77779_usecase_data *uc_data)
 
 	/* the code default to write to the MODE register */
 
-	ret = max77779_chgr_mode_write(uc_data->client,
-					MAX77779_CHGR_MODE_OTG_BOOST_ON);
+	ret = max77779_external_chg_mode_write(uc_data->client,
+					       MAX77779_CHGR_MODE_OTG_BOOST_ON);
 	if (ret < 0) {
 		pr_debug("%s: cannot set CNFG_00 to 0xa ret:%d\n", __func__, ret);
 		return ret;

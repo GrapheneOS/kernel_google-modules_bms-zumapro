@@ -269,23 +269,13 @@ int max77779_external_chg_reg_update(struct i2c_client *client, u8 reg, u8 mask,
 }
 EXPORT_SYMBOL_GPL(max77779_external_chg_reg_update);
 
-int max77779_chg_mode_write(struct i2c_client *client,
-			    enum max77779_charger_modes mode)
+int max77779_external_chg_mode_write(struct i2c_client *client, enum max77779_charger_modes mode)
 {
-	struct max77779_chgr_data *data;
-
-	if (!client)
-		return -ENODEV;
-
-	data = i2c_get_clientdata(client);
-	if (!data || !data->regmap)
-		return -ENODEV;
-
-	return regmap_write_bits(data->regmap, MAX77779_CHG_CNFG_00,
-				 MAX77779_CHG_CNFG_00_MODE_MASK,
-				 mode);
+	return max77779_external_chg_reg_update(client, MAX77779_CHG_CNFG_00,
+						MAX77779_CHG_CNFG_00_MODE_MASK,
+						mode);
 }
-EXPORT_SYMBOL_GPL(max77779_chg_mode_write);
+EXPORT_SYMBOL_GPL(max77779_external_chg_mode_write);
 
 int max77779_chg_insel_write(struct i2c_client *client, u8 mask, u8 value)
 {
@@ -1139,9 +1129,9 @@ static int max77779_enable_sw_recharge(struct max77779_chgr_data *data,
 	/* This: will not trigger the usecase state machine */
 	ret = max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_00, &reg);
 	if (ret == 0)
-		ret = max77779_chg_mode_write(uc_data->client, MAX77779_CHGR_MODE_ALL_OFF);
+		ret = max77779_external_chg_mode_write(uc_data->client, MAX77779_CHGR_MODE_ALL_OFF);
 	if (ret == 0)
-		ret = max77779_chg_mode_write(uc_data->client, reg);
+		ret = max77779_external_chg_mode_write(uc_data->client, reg);
 
 	data->charge_done = false;
 
