@@ -2045,7 +2045,7 @@ static int max1720x_health_write_ai(u16 act_impedance, u16 act_timerh)
 	if (ret < 0)
 		return -EIO;
 
-	return ret;
+	return 0;
 }
 
 /* TODO b/284191528 - Add to common code file */
@@ -4058,7 +4058,7 @@ static int debug_cnhs_reset(void *data, u64 val)
 				sizeof(reset_val));
 	dev_info(chip->dev, "reset CNHS to %d, (ret=%d)\n", reset_val, ret);
 
-	return ret;
+	return ret == sizeof(reset_val) ? 0 : ret;
 }
 
 DEFINE_SIMPLE_ATTRIBUTE(debug_reset_cnhs_fops, NULL, debug_cnhs_reset, "%llu\n");
@@ -4123,13 +4123,39 @@ static const DEVICE_ATTR_RW(act_impedance);
 
 static int max17x0x_init_sysfs(struct max1720x_chip *chip)
 {
+	struct device *dev = &chip->psy->dev;
 	struct dentry *de;
 	int ret;
 
-	/* stats */
-	ret = device_create_file(&chip->psy->dev, &dev_attr_act_impedance);
+	/* Was POWER_SUPPLY_PROP_RESISTANCE_ID */
+	ret = device_create_file(dev, &dev_attr_resistance_id);
 	if (ret)
-		dev_err(&chip->psy->dev, "Failed to create act_impedance\n");
+		dev_err(dev, "Failed to create resistance_id attribute\n");
+
+	/* POWER_SUPPLY_PROP_RESISTANCE */
+	ret = device_create_file(dev, &dev_attr_resistance);
+	if (ret)
+		dev_err(dev, "Failed to create resistance attribute\n");
+
+	/* stats */
+	ret = device_create_file(dev, &dev_attr_act_impedance);
+	if (ret)
+		dev_err(dev, "Failed to create act_impedance\n");
+
+	if (chip->gauge_type == MAX_M5_GAUGE_TYPE) {
+		ret = device_create_file(dev, &dev_attr_m5_model_state);
+		if (ret)
+			dev_err(dev, "Failed to create model_state, ret=%d\n", ret);
+			/* Read GMSR */
+		ret = device_create_file(dev, &dev_attr_gmsr);
+		if (ret)
+			dev_err(dev, "Failed to create gmsr attribute\n");
+
+		/* RC switch enable/disable */
+		ret = device_create_file(dev, &dev_attr_rc_switch_enable);
+		if (ret)
+			dev_err(dev, "Failed to create rc_switch_enable attribute\n");
+	}
 
 	de = debugfs_create_dir(chip->max1720x_psy_desc.name, 0);
 	if (IS_ERR_OR_NULL(de))
@@ -6166,41 +6192,8 @@ static int max1720x_probe(struct i2c_client *client,
 		goto psy_unregister;
 	}
 
-	/* Was POWER_SUPPLY_PROP_RESISTANCE_ID */
-	ret = device_create_file(&chip->psy->dev, &dev_attr_resistance_id);
-	if (ret)
-		dev_err(dev, "Failed to create resistance_id attribute\n");
-
-	/* POWER_SUPPLY_PROP_RESISTANCE */
-	ret = device_create_file(&chip->psy->dev, &dev_attr_resistance);
-	if (ret)
-		dev_err(dev, "Failed to create resistance attribute\n");
-
-	/* Read GMSR */
-	ret = device_create_file(&chip->psy->dev, &dev_attr_gmsr);
-	if (ret)
-		dev_err(dev, "Failed to create gmsr attribute\n");
-
-	/* RC switch enable/disable */
-	ret = device_create_file(&chip->psy->dev, &dev_attr_rc_switch_enable);
-	if (ret)
-		dev_err(dev, "Failed to create rc_switch_enable attribute\n");
-
-	/*
-	 * TODO:
-	 *	POWER_SUPPLY_PROP_CHARGE_FULL_ESTIMATE -> GBMS_TAG_GCFE
-	 *	POWER_SUPPLY_PROP_RES_FILTER_COUNT -> GBMS_TAG_RFCN
-	 */
-
 	/* M5 battery model needs batt_id and is setup during init() */
 	chip->model_reload = MAX_M5_LOAD_MODEL_DISABLED;
-	if (chip->gauge_type == MAX_M5_GAUGE_TYPE) {
-		ret = device_create_file(&chip->psy->dev,
-					 &dev_attr_m5_model_state);
-		if (ret)
-			dev_err(dev, "Failed to create model_state, ret=%d\n",
-				ret);
-	}
 
 	chip->ce_log = logbuffer_register(chip->max1720x_psy_desc.name);
 	if (IS_ERR(chip->ce_log)) {
