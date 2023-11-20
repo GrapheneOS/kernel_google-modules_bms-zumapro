@@ -15,6 +15,7 @@ GBMS_MODULES =	GOOGLE_BMS \
 		CHARGER_MAX77729 \
 		CHARGER_MAX77759 \
 		CHARGER_MAX77779 \
+		CHARGER_MAX77779_I2C \
 		MAXQ_MAX77759 \
 		MAX77779_SP \
 		CHARGER_P9221 \
@@ -84,6 +85,9 @@ max77759-charger-objs += max77759_usecase.o
 obj-$(CONFIG_CHARGER_MAX77779)  += max77779-charger.o
 max77779-charger-objs += max77779_charger.o
 max77779-charger-objs += max77779_usecase.o
+
+obj-$(CONFIG_CHARGER_MAX77779_I2C) += max77779-charger-i2c.o
+max77779-charger-i2c-objs += max77779_charger_i2c.o
 
 obj-$(CONFIG_VIMON_MAX77779)  += max77779-vimon.o
 max77779-vimon-objs += max77779_vimon.o

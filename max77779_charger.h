@@ -7,8 +7,9 @@
 #ifndef MAX77779_CHARGER_H_
 #define MAX77779_CHARGER_H_
 
+#include <linux/gpio.h>
+
 #include "max77779_usecase.h"
-#include "max777x9_bcl.h"
 
 #define MAX77779_COP_SENSE_RESISTOR_VAL 2 /* 2mOhm */
 #define MAX77779_COP_MAX_VALUE (0xffff * 1000 / MAX77779_COP_SENSE_RESISTOR_VAL)
@@ -99,4 +100,11 @@ struct max77779_chgr_data {
 	int chg_term_voltage;
 	int chg_term_volt_debounce;
 };
+int max77779_charger_init(struct max77779_chgr_data *data);
+void max77779_charger_remove(struct max77779_chgr_data *data);
+bool max77779_chg_is_reg(struct device *dev, unsigned int reg);
+#if IS_ENABLED(CONFIG_PM)
+int max77779_charger_pm_suspend(struct device *dev);
+int max77779_charger_pm_resume(struct device *dev);
+#endif
 #endif

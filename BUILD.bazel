@@ -18,7 +18,6 @@ kernel_module(
     srcs = glob([
         "**/*.c",
         "**/*.h",
-        "Kbuild",
     ]) + [
         "//private/google-modules/bms/misc:headers",
         "//private/google-modules/soc/gs:gs_soc_headers",
@@ -37,6 +36,7 @@ kernel_module(
         "max77729_uic.ko",
         "max77759-charger.ko",
         "max77779-charger.ko",
+        "max77779-charger-i2c.ko",
         "p9221.ko",
         "pca9468.ko",
         "max77779_i2cm.ko",

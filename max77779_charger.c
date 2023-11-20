@@ -15,23 +15,14 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#include <linux/ctype.h>
-#include <linux/i2c.h>
-#include <linux/interrupt.h>
-#include <linux/kernel.h>
-#include <linux/module.h>
-#include <linux/pm_runtime.h>
-#include <linux/of.h>
-#include <linux/of_gpio.h>
-#include <linux/of_irq.h>
-#include <linux/regmap.h>
-#include <linux/thermal.h>
 #include <linux/debugfs.h>
-#include <linux/seq_file.h>
-#include <linux/platform_device.h>
-#include "gbms_power_supply.h"
+#include <linux/interrupt.h>
+#include <linux/module.h>
+#include <linux/of.h>
+#include <linux/pm_runtime.h>
+#include <linux/regmap.h>
+
 #include "google_bms.h"
-#include "max77779_fg.h"
 #include "max77779.h"
 #include "max77779_charger.h"
 
@@ -2881,7 +2872,7 @@ static int dbg_init_fs(struct max77779_chgr_data *data)
 	return 0;
 }
 
-static bool max77779_chg_is_reg(struct device *dev, unsigned int reg)
+bool max77779_chg_is_reg(struct device *dev, unsigned int reg)
 {
 	switch(reg) {
 	case MAX77779_CHG_CHGIN_I_ADC_L ... MAX77779_CHG_JEITA_FLAGS:
@@ -2895,17 +2886,7 @@ static bool max77779_chg_is_reg(struct device *dev, unsigned int reg)
 		return false;
 	}
 }
-
-static const struct regmap_config max77779_chg_regmap_cfg = {
-	.name = "max77779_charger",
-	.reg_bits = 8,
-	.val_bits = 8,
-	.val_format_endian = REGMAP_ENDIAN_NATIVE,
-	.max_register = MAX77779_CHG_CUST_TM,
-	.readable_reg = max77779_chg_is_reg,
-	.volatile_reg = max77779_chg_is_reg,
-
-};
+EXPORT_SYMBOL_GPL(max77779_chg_is_reg);
 
 static bool max77779_chg_is_protected(uint8_t reg)
 {
@@ -2960,9 +2941,9 @@ static u8 max77779_int_mask[MAX77779_CHG_INT_COUNT] = {
 	  MAX77779_CHG_INT2_CHG_STA_DONE_I_MASK)
 };
 
-static irqreturn_t max77779_chgr_irq(int irq, void *client)
+static irqreturn_t max77779_chgr_irq(int irq, void *d)
 {
-	struct max77779_chgr_data *data = client;
+	struct max77779_chgr_data *data = d;
 	u8 chg_int[MAX77779_CHG_INT_COUNT] = { 0 };
 	u8 chg_int_clr[MAX77779_CHG_INT_COUNT];
 	bool broadcast;
@@ -3363,7 +3344,7 @@ static struct irq_chip max77779_chg_irq_chip = {
 	.irq_bus_sync_unlock = max77779_chg_bus_sync_unlock,
 };
 
-static int max77779_chg_irq_setup(struct max77779_chgr_data* data)
+static int max77779_chg_irq_setup(struct max77779_chgr_data *data)
 {
 	struct device *dev = data->dev;
 	int i, irq;
@@ -3395,41 +3376,27 @@ static int max77779_chg_irq_setup(struct max77779_chgr_data* data)
 	return 0;
 }
 
-static int max77779_charger_probe(struct i2c_client *client,
-				  const struct i2c_device_id *id)
+/*
+ * Initialization requirements
+ * struct max77779_chgr_data *data
+ * - dev
+ * - regmap
+ * - irq_int
+ */
+int max77779_charger_init(struct max77779_chgr_data *data)
 {
 	struct power_supply_config chgr_psy_cfg = { 0 };
-	struct device *dev = &client->dev;
-	struct max77779_chgr_data *data;
-	struct regmap *regmap;
+	struct device *dev = data->dev;
 	const char *tmp;
 	u32 usb_otg_mv;
 	int ret = 0;
 	u8 ping;
 
-	/* pmic-irq driver needs to setup the irq */
-	if (client->irq < 0)
-		return -EPROBE_DEFER;
-
-	regmap = devm_regmap_init_i2c(client, &max77779_chg_regmap_cfg);
-	if (IS_ERR(regmap)) {
-		dev_err(dev, "Failed to initialize regmap\n");
-		return -EINVAL;
-	}
-
-	ret = max77779_reg_read(regmap, MAX77779_CHG_CNFG_00, &ping);
+	ret = max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_00, &ping);
 	if (ret < 0)
 		return -ENODEV;
 
 	/* TODO: PING or read HW version from PMIC */
-
-	data = devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
-	if (!data)
-		return -ENOMEM;
-
-	data->dev = dev;
-	data->client = client;
-	data->regmap = regmap;
 	data->fship_dtls = -1;
 	data->wden = false; /* TODO: read from DT */
 	data->mask = 0xFFFFFFFF;
@@ -3437,24 +3404,23 @@ static int max77779_charger_probe(struct i2c_client *client,
 	mutex_init(&data->wcin_inlim_lock);
 	atomic_set(&data->insel_cnt, 0);
 	atomic_set(&data->early_topoff_cnt, 0);
-	i2c_set_clientdata(client, data);
 
 	INIT_DELAYED_WORK(&data->cop_enable_work, max77779_cop_enable_work);
 	INIT_DELAYED_WORK(&data->wcin_inlim_work, max77779_wcin_inlim_work);
 
 	data->usecase_wake_lock = wakeup_source_register(NULL, "max77779-usecase");
 	if (!data->usecase_wake_lock) {
-		pr_err("Failed to register wakeup source\n");
+		dev_err(dev, "Failed to register wakeup source\n");
 		return -ENODEV;
 	}
 
 	ret = max77779_cop_config(data);
 	if (ret < 0)
-		dev_err(data->dev, "Error configuring COP\n");
+		dev_warn(dev, "Error configuring COP\n");
 
 	ret = max77779_chg_irq_setup(data);
 	if (ret < 0)
-		dev_err(data->dev, "Error configuring CHG SUB-IRQ Handler\n");
+		dev_warn(dev, "Error configuring CHG SUB-IRQ Handler\n");
 
 	/* NOTE: only one instance */
 	ret = of_property_read_string(dev->of_node, "max77779,psy-name", &tmp);
@@ -3474,12 +3440,11 @@ static int max77779_charger_probe(struct i2c_client *client,
 
 	/* CHARGER_MODE needs this (initialized to -EPROBE_DEFER) */
 	gs201_setup_usecases(&data->uc_data, NULL);
-	data->uc_data.client = client;
-
 	INIT_DELAYED_WORK(&data->mode_rerun_work, max77779_mode_rerun_work);
 
-	if (client->irq ) {
-		ret = devm_request_threaded_irq(data->dev, client->irq, NULL,
+	/* Init by probe */
+	if (data->irq_int) {
+		ret = devm_request_threaded_irq(data->dev, data->irq_int, NULL,
 						max77779_chg_irq_handler,
 						IRQF_TRIGGER_LOW |
 						IRQF_SHARED |
@@ -3487,29 +3452,28 @@ static int max77779_charger_probe(struct i2c_client *client,
 						"max77779_charger",
 						data);
 		if (ret == 0) {
-			enable_irq_wake(client->irq);
+			enable_irq_wake(data->irq_int);
 
 			/* might cause the isr to be called */
 			max77779_chg_irq_handler(-1, data);
-			ret = max77779_writen(regmap, MAX77779_CHG_INT_MASK, /* NOTYPO */
+			ret = max77779_writen(data->regmap, MAX77779_CHG_INT_MASK, /* NOTYPO */
 					      max77779_int_mask,
 					      sizeof(max77779_int_mask));
 			if (ret < 0)
-				dev_err(dev, "cannot set irq_mask (%d)\n", ret);
+				dev_warn(dev, "cannot set irq_mask (%d)\n", ret);
 
 			data->irq_disabled = false;
-			data->irq_int = client->irq;
 		}
 	}
 
 	ret = dbg_init_fs(data);
 	if (ret < 0)
-		dev_err(dev, "Failed to initialize debug fs\n");
+		dev_warn(dev, "Failed to initialize debug fs\n");
 
 	mutex_lock(&data->io_lock);
 	ret = max77779_wdt_enable(data, data->wden);
 	if (ret < 0)
-		dev_err(dev, "wd enable=%d failed %d\n", data->wden, ret);
+		dev_warn(dev, "wd enable=%d failed %d\n", data->wden, ret);
 
 	/* disable fast charge safety timer */
 	ret = max77779_reg_update(data, MAX77779_CHG_CNFG_01,
@@ -3554,12 +3518,12 @@ static int max77779_charger_probe(struct i2c_client *client,
 
 	ret = of_property_read_u32(dev->of_node, "max77779,usb-otg-mv", &usb_otg_mv);
 	if (ret)
-		dev_err(dev, "usb-otg-mv not found, using default\n");
+		dev_warn(dev, "usb-otg-mv not found, using default\n");
 
 	ret = max77779_otg_vbyp_mv_to_code(&data->uc_data.otg_value, ret ?
 					   GS201_OTG_DEFAULT_MV : usb_otg_mv);
 	if (ret < 0) {
-		dev_err(dev, "Invalid value of USB OTG voltage, set to 5000\n");
+		dev_dbg(dev, "Invalid value of USB OTG voltage, set to 5000\n");
 		data->uc_data.otg_value = MAX77779_CHG_CNFG_11_OTG_VBYP_5000MV;
 	}
 
@@ -3583,14 +3547,14 @@ static int max77779_charger_probe(struct i2c_client *client,
 
 #if IS_ENABLED(CONFIG_GPIOLIB)
 	max77779_gpio_init(data);
-	data->gpio.parent = &client->dev;
-	data->gpio.of_node = of_find_node_by_name(client->dev.of_node,
+	data->gpio.parent = dev;
+	data->gpio.of_node = of_find_node_by_name(dev->of_node,
 							    data->gpio.label);
 	if (!data->gpio.of_node)
-		dev_err(&client->dev, "Failed to find %s DT node\n", data->gpio.label);
+		dev_warn(dev, "Failed to find %s DT node\n", data->gpio.label);
 
-	ret = devm_gpiochip_add_data(&client->dev, &data->gpio, data);
-	dev_info(&client->dev, "%d GPIOs registered ret: %d\n", data->gpio.ngpio, ret);
+	ret = devm_gpiochip_add_data(dev, &data->gpio, data);
+	dev_dbg(dev, "%d GPIOs registered ret: %d\n", data->gpio.ngpio, ret);
 #endif
 
 	/* other drivers (ex tcpci) need this. */
@@ -3600,39 +3564,25 @@ static int max77779_charger_probe(struct i2c_client *client,
 
 	ret = max77779_init_wcin_psy(data);
 	if (ret < 0)
-		pr_err("Couldn't register dc power supply (%d)\n", ret);
+		dev_warn(dev, "Couldn't register dc power supply (%d)\n", ret);
 
 	dev_info(dev, "registered as %s\n", max77779_psy_desc.name);
 	return 0;
 }
+EXPORT_SYMBOL_GPL(max77779_charger_init);
 
-static void max77779_charger_remove(struct i2c_client *client)
+void max77779_charger_remove(struct max77779_chgr_data *data)
 {
-	struct max77779_chgr_data *data = i2c_get_clientdata(client);
-
 	if (data->de)
 		debugfs_remove(data->de);
 	wakeup_source_unregister(data->usecase_wake_lock);
 }
+EXPORT_SYMBOL_GPL(max77779_charger_remove);
 
-
-static const struct of_device_id max77779_charger_of_match_table[] = {
-	{ .compatible = "maxim,max77779chrg"},
-	{},
-};
-MODULE_DEVICE_TABLE(of, max77779_charger_of_match_table);
-
-static const struct i2c_device_id max77779_id[] = {
-	{"max77779_charger", 0},
-	{}
-};
-MODULE_DEVICE_TABLE(i2c, max77779_id);
-
-#if defined CONFIG_PM
-static int max77779_charger_pm_suspend(struct device *dev)
+#if IS_ENABLED(CONFIG_PM)
+int max77779_charger_pm_suspend(struct device *dev)
 {
-	struct platform_device *pdev = to_platform_device(dev);
-	struct max77779_chgr_data *data = platform_get_drvdata(pdev);
+	struct max77779_chgr_data *data = dev_get_drvdata(dev);
 
 	pm_runtime_get_sync(data->dev);
 	data->resume_complete = false;
@@ -3640,11 +3590,11 @@ static int max77779_charger_pm_suspend(struct device *dev)
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(max77779_charger_pm_suspend);
 
-static int max77779_charger_pm_resume(struct device *dev)
+int max77779_charger_pm_resume(struct device *dev)
 {
-	struct platform_device *pdev = to_platform_device(dev);
-	struct max77779_chgr_data *data = platform_get_drvdata(pdev);
+	struct max77779_chgr_data *data = dev_get_drvdata(dev);
 
 	pm_runtime_get_sync(data->dev);
 	data->resume_complete = true;
@@ -3657,29 +3607,8 @@ static int max77779_charger_pm_resume(struct device *dev)
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(max77779_charger_pm_resume);
 #endif
-
-static const struct dev_pm_ops max77779_charger_pm_ops = {
-	SET_LATE_SYSTEM_SLEEP_PM_OPS(
-		max77779_charger_pm_suspend,
-		max77779_charger_pm_resume)
-};
-
-static struct i2c_driver max77779_charger_i2c_driver = {
-	.driver = {
-		.name = "max77779-charger",
-		.owner = THIS_MODULE,
-		.of_match_table = max77779_charger_of_match_table,
-#ifdef CONFIG_PM
-		.pm = &max77779_charger_pm_ops,
-#endif
-	},
-	.id_table = max77779_id,
-	.probe    = max77779_charger_probe,
-	.remove   = max77779_charger_remove,
-};
-
-module_i2c_driver(max77779_charger_i2c_driver);
 
 MODULE_DESCRIPTION("Maxim 77779 Charger Driver");
 MODULE_AUTHOR("Prasanna Prapancham <prapancham@google.com>");
