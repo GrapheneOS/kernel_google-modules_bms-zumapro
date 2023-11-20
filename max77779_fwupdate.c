@@ -42,7 +42,9 @@
 
 /* FG's reg 0x40 and status value of 0x82 are not documented */
 #define MAX77779_FG_BOOT_CHECK_REG 0x40
+#define MAX77779_FG_SECUPDATE_STATUS_REG 0x6F
 #define MAX77779_FG_BOOT_CHECK_SUCCESS 0x82
+#define MAX77779_FG_SECUPDATE_STATUS_SUCCESS 0x03
 
 /* vimon's memory mapped to 0x80 */
 #define MAX77779_VIMON_MEM_BASE_ADDR 0x80
@@ -96,6 +98,7 @@ enum max77779_fwupdate_rsp_code {
 
 enum max77779_fwupdate_cmd {
 	MAX77779_CMD_CLEAR_ALL = 0x00,
+        MAX77779_CMD_REBOOT_FG = 0x0F,
 	MAX77779_CMD_REBOOT_RISCV = 0x080F,
 };
 
@@ -675,10 +678,6 @@ static int max77779_fwl_prepare(struct max77779_fwupdate *fwu,
 	ret = max77779_external_chg_mode_write(fwu->chg, MAX77779_CHGR_MODE_BOOST_ON);
 	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed to set mode BOOST_ON");
 
-	/* do unlock again */
-	ret = max77779_change_fg_lock(fwu, FG_ST_UNLOCK_ALL_SECTION);
-	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed unlock FG");
-
 	ret = max77779_send_command(fwu, MAX77779_CMD_REBOOT_RISCV);
 	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed send command CMD_REBOOT_RISCV");
 
@@ -693,7 +692,7 @@ static int max77779_fwl_write(struct max77779_fwupdate *fwu, const u8 *fw_binary
 			      u32 size, u32 *written)
 {
 	int ret;
-	unsigned int crc;
+	unsigned int val;
 
 	dev_info(fwu->dev, "perform firmware update\n");
 
@@ -725,13 +724,17 @@ static int max77779_fwl_write(struct max77779_fwupdate *fwu, const u8 *fw_binary
 	*written += MAX77779_FW_IMG_SZ_PACKET;
 
 	fwu->crc_val = 0;
-	ret = max77779_external_pmic_reg_read(fwu->pmic, MAX77779_FG_AP_DATAIN0, &crc);
+	ret = max77779_external_pmic_reg_read(fwu->pmic, MAX77779_FG_AP_DATAIN0, &val);
 	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed to read crc information");
-	fwu->crc_val = (u8)crc;
+	dev_info(fwu->dev, "RISCV lock status: %x\n", val);
 
-	ret = max77779_external_pmic_reg_read(fwu->pmic, MAX77779_FG_AP_DATAIN1, &crc);
+	ret = max77779_external_pmic_reg_read(fwu->pmic, MAX77779_FG_AP_DATAIN2, &val);
 	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed to read crc information");
-	fwu->crc_val |= (crc << 8);
+	fwu->crc_val = val;
+
+	ret = max77779_external_pmic_reg_read(fwu->pmic, MAX77779_FG_AP_DATAIN3, &val);
+	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed to read crc information");
+	fwu->crc_val |= (val << 8);
 
 
 	/* Session End */
@@ -746,7 +749,7 @@ static int max77779_fwl_write(struct max77779_fwupdate *fwu, const u8 *fw_binary
 
 static int max77779_fwl_poll_complete(struct max77779_fwupdate *fwu)
 {
-	int ret;
+	int ret, val;
 
 	dev_info(fwu->dev, "max77779_fwl_poll_complete\n");
 
@@ -757,9 +760,20 @@ static int max77779_fwl_poll_complete(struct max77779_fwupdate *fwu)
 		return -EIO;
 	}
 
+	ret = max77779_external_fg_reg_read(fwu->fg, MAX77779_FG_SECUPDATE_STATUS_REG, &val);
+	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed to read MAX77779_FG_SECUPDATE_STATUS_REG");
+	if (val != MAX77779_FG_SECUPDATE_STATUS_SUCCESS) {
+		dev_err(fwu->dev, "firmware update fail: MAX77779_FG_SECUPDATE_STATUS_REG:%02x\n",
+			val);
+		return -EAGAIN;
+	}
+
 	ret = max77779_external_chg_mode_write(fwu->chg, MAX77779_CHGR_MODE_BUCK_ON);
 	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed to set MAX77779_CHGR_MODE_BUCK_ON");
 
+	/* b/310710147: risc-v is not operational state. requires reboot */
+	max77779_external_pmic_reg_write(fwu->pmic, MAX77779_FG_COMMAND_HW,
+					 MAX77779_CMD_REBOOT_FG);
 	max77779_wait_riscv_reboot(fwu);
 
 	ret = max77779_get_firmware_version(fwu, &fwu->v_new);
@@ -896,7 +910,7 @@ static ssize_t trigger_update_firmware(struct device *dev,
 	return count;
 }
 
-static DEVICE_ATTR(update_firmware, 0660, NULL, trigger_update_firmware);
+static DEVICE_ATTR(update_firmware, 0220, NULL, trigger_update_firmware);
 
 static int debug_enable_update(void *data, u64 val)
 {

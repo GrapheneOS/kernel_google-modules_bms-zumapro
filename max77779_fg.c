@@ -3387,6 +3387,7 @@ static bool max77779_fg_is_reg(struct device *dev, unsigned int reg)
 	case 0x45 ... 0x48:
 	case 0x4C ... 0x4E:
 	case 0x52 ... 0x54:
+	case 0x6F: /* secure update result */
 	case 0x80 ... 0x9F: /* Model */
 	case 0xA0: /* CGain */
 	case 0xA3: /* Model cfg */
