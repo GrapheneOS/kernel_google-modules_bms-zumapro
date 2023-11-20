@@ -163,6 +163,14 @@ config MAX77779_PMIC
 	depends on OF
 	help
 	  Handle IRQs for Sequoia
+choice
+	default MAX77779_PMIC_I2C
+	prompt "MAX77779 PMIC Bus module"
+config MAX77779_PMIC_I2C
+	bool "I2C"
+	depends on I2C
+	select REGMAP_I2C
+endchoice
 
 config MAX77779_PMIC_IRQ
 	tristate "Maxim 77779 PMIC IRQ"
