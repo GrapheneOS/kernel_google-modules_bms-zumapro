@@ -120,9 +120,17 @@ endchoice
 
 config VIMON_MAX77779
 	tristate "Maxim MAX77779 VIMON driver"
-	depends on I2C && OF
+	depends on OF
 	help
 	  Say Y to enable support for the Maxim MAX77779 VIMON.
+choice
+	default VIMON_MAX77779_I2C
+	prompt "MAX77779 Vimon Bus module"
+config VIMON_MAX77779_I2C
+	bool "I2C"
+	depends on I2C
+	select REGMAP_I2C
+endchoice
 
 config PMIC_MAX77729
 	tristate "Maxim MAX77729 PMIC driver"
@@ -218,4 +226,3 @@ config FWUPDATE_MAX77779
 	select FW_LOADER
 	help
 	  Handle firmware update for Sequoia
-

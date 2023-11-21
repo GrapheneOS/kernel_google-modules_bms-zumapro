@@ -36,6 +36,7 @@ GBMS_MODULES =	GOOGLE_BMS \
 		FG_MAX77779 \
 		FG_MAX77779_I2C \
 		VIMON_MAX77779 \
+		VIMON_MAX77779_I2C \
 		FWUPDATE_MAX77779
 
 obj-$(CONFIG_GOOGLE_BMS)	+= google-bms.o
@@ -94,6 +95,9 @@ max77779-charger-i2c-objs += max77779_charger_i2c.o
 
 obj-$(CONFIG_VIMON_MAX77779)  += max77779-vimon.o
 max77779-vimon-objs += max77779_vimon.o
+
+obj-$(CONFIG_VIMON_MAX77779_I2C)  += max77779-vimon-i2c.o
+max77779-vimon-i2c-objs += max77779_vimon_i2c.o
 
 # Wireless charging
 obj-$(CONFIG_CHARGER_P9221)	+= p9221.o

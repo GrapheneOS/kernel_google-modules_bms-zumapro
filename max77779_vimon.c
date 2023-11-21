@@ -4,45 +4,15 @@
  *
  * MAX77779 BATTVIMON management
  */
-#include <linux/i2c.h>
-#include <linux/kernel.h>
+#include <linux/debugfs.h>
+#include <linux/device.h>
+#include <linux/irq.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
-#include <linux/gpio.h>
-#include <linux/gpio/driver.h>
-#include <linux/irq.h>
 #include <linux/regmap.h>
 
-#include <linux/device.h>
-#include "max77779_regs.h"
 #include "max77779.h"
-#include <linux/debugfs.h>
-
-#define MAX77779_VIMON_SIZE 0xFF
-#define MAX77779_VIMON_DEFAULT_MAX_CNT 256
-#define MAX77779_VIMON_DEFAULT_MAX_TRIGGERS 1
-
-#define MAX77779_VIMON_BUFFER_SIZE 0x100
-#define MAX77779_VIMON_OFFSET_BASE 0x80
-
-enum max77779_vimon_state {
-	MAX77779_VIMON_ERROR = -1,
-	MAX77779_VIMON_IDLE = 0,
-	MAX77779_VIMON_RUNNING,
-	MAX77779_VIMON_DATA_AVAILABLE,
-};
-
-struct max77779_vimon_data {
-	struct device *dev;
-	struct regmap *regmap;
-	struct dentry *de;
-	struct mutex vimon_lock;
-	unsigned max_cnt;
-	unsigned max_triggers;
-	enum max77779_vimon_state state;
-	char *buf;
-};
-
+#include "max77779_vimon.h"
 
 static int max77779_vimon_reg_read(struct device *dev,
 		unsigned int reg, unsigned int *val)
@@ -350,19 +320,11 @@ DEFINE_SIMPLE_ATTRIBUTE(debug_start_fops, max77779_vimon_debug_start,
 			NULL, "%02llx\n");
 
 
-static bool max77779_vimon_is_reg(struct device *dev, unsigned int reg)
+bool max77779_vimon_is_reg(struct device *dev, unsigned int reg)
 {
 	return (reg >= 0 && reg < MAX77779_VIMON_SIZE);
 }
-
-static const struct regmap_config max77779_vimon_regmap_cfg = {
-	.reg_bits = 8,
-	.val_bits = 16,
-	.val_format_endian = REGMAP_ENDIAN_NATIVE,
-	.max_register = MAX77779_VIMON_SIZE,
-	.readable_reg = max77779_vimon_is_reg,
-	.volatile_reg = max77779_vimon_is_reg,
-};
+EXPORT_SYMBOL_GPL(max77779_vimon_is_reg);
 
 static int max77779_vimon_init_fs(struct max77779_vimon_data *data)
 {
@@ -428,29 +390,18 @@ static irqreturn_t max77779_vimon_irq(int irq, void *ptr)
 	return IRQ_HANDLED;
 }
 
-static int max77779_vimon_probe(struct i2c_client *client,
-				const struct i2c_device_id *id)
+/*
+ * Initialization requirements
+ * struct max77779_vimon_data *data
+ * - dev
+ * - regmap
+ * - irq
+ */
+int max77779_vimon_init(struct max77779_vimon_data *data)
 {
-	struct device *dev = &client->dev;
-	struct max77779_vimon_data *data;
-	struct regmap *regmap;
+	struct device *dev = data->dev;
 	uint16_t cfg_mask = 0;
 	int ret;
-
-
-	data = devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
-	if (!data)
-		return -ENOMEM;
-
-	data->dev = dev;
-	i2c_set_clientdata(client, data);
-
-	regmap = devm_regmap_init_i2c(client, &max77779_vimon_regmap_cfg);
-        if (IS_ERR(regmap)) {
-                dev_err(dev, "Failed to initialize regmap\n");
-                return -EINVAL;
-        }
-	data->regmap = regmap;
 
 	mutex_init(&data->vimon_lock);
 
@@ -476,61 +427,35 @@ static int max77779_vimon_probe(struct i2c_client *client,
 	data->buf = devm_kzalloc(dev, sizeof(*data->buf * data->max_cnt * data->max_triggers * 2),
 				GFP_KERNEL);
 
-	/* pmic-irq driver needs to setup the irq */
-	if (client->irq < 0)
-		return -EPROBE_DEFER;
-
-	ret = devm_request_threaded_irq(data->dev, client->irq, NULL,
-			max77779_vimon_irq,
-			IRQF_TRIGGER_LOW | IRQF_SHARED | IRQF_ONESHOT,
-			"max77779_vimon", data);
-	if (ret < 0)
-		dev_err(dev, "Failed to get irq thread.\n");
+	if (data->irq){
+		ret = devm_request_threaded_irq(data->dev, data->irq, NULL,
+				max77779_vimon_irq,
+				IRQF_TRIGGER_LOW | IRQF_SHARED | IRQF_ONESHOT,
+				"max77779_vimon", data);
+		if (ret < 0)
+			dev_warn(dev, "Failed to get irq thread.\n");
+	} else {
+		dev_warn(dev, "irq not setup\n");
+	}
 
 	ret = max77779_vimon_init_fs(data);
 	if (ret < 0)
-		dev_err(dev, "Failed to initialize debug fs\n");
+		dev_warn(dev, "Failed to initialize debug fs\n");
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(max77779_vimon_init);
 
-static void max77779_vimon_remove(struct i2c_client *client)
+void max77779_vimon_remove(struct max77779_vimon_data *data)
 {
-	struct max77779_vimon_data *data = i2c_get_clientdata(client);
-
 	if (data->de)
 		debugfs_remove(data->de);
 
-	if (client->irq)
-		free_irq(client->irq, data);
+	if (data->irq)
+		free_irq(data->irq, data);
 }
+EXPORT_SYMBOL_GPL(max77779_vimon_remove);
 
-static const struct of_device_id max77779_vimon_of_match_table[] = {
-	{ .compatible = "maxim,max77779vimon"},
-	{},
-};
-MODULE_DEVICE_TABLE(of, max77779_vimon_of_match_table);
-
-static const struct i2c_device_id max77779_vimon_id[] = {
-	{"max77779_vimon", 0},
-	{}
-};
-MODULE_DEVICE_TABLE(i2c, max77779_vimon_id);
-
-static struct i2c_driver max77779_vimon_i2c_driver = {
-	.driver = {
-		.name = "max77779-vimon",
-		.owner = THIS_MODULE,
-		.of_match_table = max77779_vimon_of_match_table,
-		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
-	},
-	.id_table = max77779_vimon_id,
-	.probe	= max77779_vimon_probe,
-	.remove   = max77779_vimon_remove,
-};
-
-
-module_i2c_driver(max77779_vimon_i2c_driver);
 MODULE_DESCRIPTION("max77779 VIMON Driver");
 MODULE_AUTHOR("Daniel Okazaki <dtokazaki@google.com>");
 MODULE_AUTHOR("Chungro Lee <chungro@google.com>");
