@@ -1130,6 +1130,17 @@ int max_m5_fg_model_cstr(char *buf, int max, const struct max_m5_data *m5_data)
 	return len;
 }
 
+int max_m5_get_rc_switch_param(struct max_m5_data *m5_data, u16 *rc2_tempco, u16 *rc2_learncfg)
+{
+	if (m5_data->parameters.tempco <= 0 || m5_data->parameters.learncfg <= 0)
+		return -EINVAL;
+
+	*rc2_tempco = m5_data->parameters.tempco;
+	*rc2_learncfg = m5_data->parameters.learncfg;
+
+	return 0;
+}
+
 /* custom model parameters */
 int max_m5_fg_model_sscan(struct max_m5_data *m5_data, const char *buf, int max)
 {
