@@ -279,6 +279,7 @@ struct max1720x_chip {
 static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj);
 static int max1720x_set_next_update(struct max1720x_chip *chip);
 static int max1720x_monitor_log_data(struct max1720x_chip *chip, bool force_log);
+static int max17201_init_rc_switch(struct max1720x_chip *chip);
 
 static bool max17x0x_reglog_init(struct max1720x_chip *chip)
 {
@@ -3693,8 +3694,11 @@ static int debug_batt_id_set(void *data, u64 val)
 
 	/* re-init the model data (lookup in DT) */
 	ret = max1720x_init_model(chip);
-	if (ret == 0)
+	if (ret == 0) {
+		/* lookup tempco and learncfg in DT */
+		max17201_init_rc_switch(chip);
 		max1720x_model_reload(chip, true);
+	}
 
 	mutex_unlock(&chip->model_lock);
 
@@ -4494,31 +4498,26 @@ static int max17201_init_rc_switch(struct max1720x_chip *chip)
 
 	ret = of_property_read_u32(chip->dev->of_node, "maxim,rc-soc", &chip->rc_switch.soc);
 	if (ret < 0)
-		return ret;
+		return -EINVAL;
 
 	ret = of_property_read_u32(chip->dev->of_node, "maxim,rc-temp", &chip->rc_switch.temp);
 	if (ret < 0)
-		return ret;
+		return -EINVAL;
 
 	ret = of_property_read_u16(chip->batt_node, "maxim,rc1-tempco", &chip->rc_switch.rc1_tempco);
 	if (ret < 0)
-		return ret;
+		return -EINVAL;
 
-	/* Same as INI value */
-	ret = of_property_read_u16(chip->batt_node, "maxim,rc2-tempco", &chip->rc_switch.rc2_tempco);
+	ret = max_m5_get_rc_switch_param(chip->model_data, &chip->rc_switch.rc2_tempco,
+					 &chip->rc_switch.rc2_learncfg);
 	if (ret < 0)
-		return ret;
-
-	/* Same as INI value */
-	ret = of_property_read_u16(chip->batt_node, "maxim,rc2-learncfg", &chip->rc_switch.rc2_learncfg);
-	if (ret < 0)
-		return ret;
+		return -EINVAL;
 
 	chip->rc_switch.available = true;
 
-	dev_warn(chip->dev, "rc_switch: enable:%d soc/temp:%d/%d tempco_rc1/rc2:%#x/%#x\n",
-		 chip->rc_switch.enable, chip->rc_switch.soc, chip->rc_switch.temp,
-		 chip->rc_switch.rc1_tempco, chip->rc_switch.rc2_tempco);
+	dev_info(chip->dev, "rc_switch soc:%d temp:%d rc1_tempco:%#x rc2_tempco:%#x cfg:%#x\n",
+		 chip->rc_switch.soc, chip->rc_switch.temp, chip->rc_switch.rc1_tempco,
+		 chip->rc_switch.rc2_tempco, chip->rc_switch.rc2_learncfg);
 
 	if (chip->rc_switch.enable)
 		schedule_delayed_work(&chip->rc_switch.switch_work, msecs_to_jiffies(60 * 1000));

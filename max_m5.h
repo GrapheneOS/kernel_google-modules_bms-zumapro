@@ -197,6 +197,7 @@ int max_m5_model_state_sscan(struct max_m5_data *m5_data, const char *buf,
 int max_m5_fg_model_sscan(struct max_m5_data *m5_data, const char *buf,
 			  int max);
 int max_m5_fg_model_cstr(char *buf, int max, const struct max_m5_data *m5_data);
+int max_m5_get_rc_switch_param(struct max_m5_data *m5_data, u16 *rc2_tempco, u16 *rc2_learncfg);
 
 /* read saved value */
 ssize_t max_m5_gmsr_state_cstr(char *buf, int max);
