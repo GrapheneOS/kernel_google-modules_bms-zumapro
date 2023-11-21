@@ -190,6 +190,20 @@ config MAX77779_PMIC_SGPIO
 	help
 	  Handle GPIOS for Sequoia
 
+config MAX77779_SP
+	tristate "Maxim 77779 Scratchpad"
+	depends on OF
+	help
+	  Handle Scratchpad for Sequoia
+choice
+	default MAX77779_SP_I2C
+	prompt "MAX77779 Scratchpad Bus module"
+config MAX77779_SP_I2C
+	bool "I2C"
+	depends on I2C
+	select REGMAP_I2C
+endchoice
+
 config FWUPDATE_MAX77779
 	tristate "Maxim 77779 Firmware Update"
 	depends on I2C && OF

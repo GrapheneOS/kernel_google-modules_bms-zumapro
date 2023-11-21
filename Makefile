@@ -18,6 +18,7 @@ GBMS_MODULES =	GOOGLE_BMS \
 		CHARGER_MAX77779_I2C \
 		MAXQ_MAX77759 \
 		MAX77779_SP \
+		MAX77779_SP_I2C \
 		CHARGER_P9221 \
 		MAX1720X_BATTERY \
 		MAX_M5 \
@@ -141,6 +142,9 @@ obj-$(CONFIG_MAX20339)	+= max20339.o
 # max77779 Scratch Space
 obj-$(CONFIG_MAX77779_SP)	+= max77779-sp.o
 max77779-sp-objs += max77779_sp.o
+
+obj-$(CONFIG_MAX77779_SP_I2C)	+= max77779-sp-i2c.o
+max77779-sp-i2c-objs += max77779_sp_i2c.o
 
 # MAX77779 PMIC
 obj-$(CONFIG_MAX77779_I2CM) += max77779_i2cm.o

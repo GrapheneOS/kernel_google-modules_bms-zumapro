@@ -1,48 +1,20 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (C) 2020, Google Inc
+ * Copyright (C) 2023, Google Inc
  *
  * MAX77779 Scratch space management
  */
 
-#include <linux/completion.h>
 #include <linux/debugfs.h>
-#include <linux/delay.h>
-#include <linux/gpio.h>
-#include <linux/gpio/consumer.h>
-#include <linux/interrupt.h>
-#include <linux/i2c.h>
-#include <linux/kernel.h>
+#include <linux/device.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
+#include <linux/of.h>
 #include <linux/regmap.h>
-#include <linux/pm_runtime.h>
 
 #include "max77779_regs.h"
 #include "gbms_storage.h"
-
-#define RSBM_ADDR				0
-#define RSBR_ADDR				4
-#define SUFG_ADDR				8
-#define RSOC_ADDR				10
-#define RS_TAG_LENGTH				4
-#define SU_TAG_LENGTH				1
-#define RSOC_TAG_LENGTH				2
-#define RS_TAG_OFFSET_ADDR			0
-#define RS_TAG_OFFSET_LENGTH			1
-#define RS_TAG_OFFSET_DATA			2
-#define OPCODE_USER_SPACE_R_RES_LEN 32
-
-#define MAX77779_SP_DATA		0x80
-#define MAX77779_SP_SIZE 		0x255
-
-struct max77779_sp_data {
-	struct device *dev;
-	struct regmap *regmap;
-	struct dentry *de;
-	struct mutex  page_lock; /* might need spinlock */
-	u32 debug_reg_address;
-};
+#include "max77779_sp.h"
 
 /* hold lock on &data->page_lock */
 static int max77779_sp_rd(uint8_t *buff, int addr, size_t count, struct regmap *regmap)
@@ -230,21 +202,12 @@ static struct gbms_storage_desc max77779_sp_dsc = {
 	.iter = max77779_sp_iter,
 };
 
-static bool max77779_sp_is_reg(struct device *dev, unsigned int reg)
+bool max77779_sp_is_reg(struct device *dev, unsigned int reg)
 {
 	return (reg == MAX77779_SP_PAGE_CTRL) ||
 		   (reg >= MAX77779_SP_DATA && reg < MAX77779_SP_SIZE);
 }
-
-static const struct regmap_config max77779_regmap_cfg = {
-	.name = "max77779_scratch",
-	.reg_bits = 8,
-	.val_bits = 16,
-	.val_format_endian = REGMAP_ENDIAN_NATIVE,
-	.max_register = MAX77779_SP_SIZE,
-	.readable_reg = max77779_sp_is_reg,
-	.volatile_reg = max77779_sp_is_reg,
-};
+EXPORT_SYMBOL_GPL(max77779_sp_is_reg);
 
 static int max77779_sp_dbg_init_fs(struct max77779_sp_data *data)
 {
@@ -258,82 +221,45 @@ static int max77779_sp_dbg_init_fs(struct max77779_sp_data *data)
 	return 0;
 }
 
-static int max77779_sp_probe(struct i2c_client *client,
-							  const struct i2c_device_id *id)
+/*
+ * Initialization requirements
+ * struct max77779_sp_data *data
+ * - dev
+ * - regmap
+ */
+int max77779_sp_init(struct max77779_sp_data *data)
 {
-	struct device *dev = &client->dev;
-	struct max77779_sp_data *data;
-	struct regmap *regmap;
 	int ret, page;
 
-	regmap = devm_regmap_init_i2c(client, &max77779_regmap_cfg);
-	if (IS_ERR(regmap)) {
-		dev_err(dev, "Failed to initialize regmap\n");
-		return -EINVAL;
-	}
-
-	ret = regmap_read(regmap, MAX77779_SP_PAGE_CTRL, &page);
+	ret = regmap_read(data->regmap, MAX77779_SP_PAGE_CTRL, &page);
 	if (ret) {
-		dev_err(dev, "Unable to find scratchpad (%d)\n", ret);
+		dev_err(data->dev, "Unable to find scratchpad (%d)\n", ret);
 		return ret;
 	}
 
-	data = devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
-	if (!data)
-		return -ENOMEM;
-
 	mutex_init(&data->page_lock);
 
-	data->dev = dev;
-	data->regmap = regmap;
-	i2c_set_clientdata(client, data);
-
-	if (!of_property_read_bool(dev->of_node, "max77779,no-storage")) {
+	if (!of_property_read_bool(data->dev->of_node, "max77779,no-storage")) {
 		ret = gbms_storage_register(&max77779_sp_dsc, "max77779_sp", data);
 		if (ret < 0)
-			dev_err(dev, "register failed, ret:%d\n", ret);
+			dev_warn(data->dev, "register failed, ret:%d\n", ret);
 	}
 
 	ret = max77779_sp_dbg_init_fs(data);
 	if (ret < 0)
-		dev_err(dev, "Failed to initialize debug fs\n");
+		dev_warn(data->dev, "Failed to initialize debug fs\n");
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(max77779_sp_init);
 
-static void max77779_sp_remove(struct i2c_client *client)
+void max77779_sp_remove(struct max77779_sp_data *data)
 {
-	struct max77779_sp_data *data = i2c_get_clientdata(client);
-
 	if (data->de)
 		debugfs_remove(data->de);
 }
+EXPORT_SYMBOL_GPL(max77779_sp_remove);
 
-
-static const struct of_device_id max77779_scratch_of_match_table[] = {
-	{ .compatible = "adi,max77779_sp"},
-	{},
-};
-MODULE_DEVICE_TABLE(of, max77779_scratch_of_match_table);
-
-static const struct i2c_device_id max77779_id[] = {
-	{"max77779_sp", 0},
-	{}
-};
-MODULE_DEVICE_TABLE(i2c, max77779_id);
-
-static struct i2c_driver max77779_scratch_i2c_driver = {
-	.driver = {
-		.name = "max77779-sp",
-		.owner = THIS_MODULE,
-		.of_match_table = max77779_scratch_of_match_table,
-	},
-	.id_table = max77779_id,
-	.probe    = max77779_sp_probe,
-	.remove   = max77779_sp_remove,
-};
-
-module_i2c_driver(max77779_scratch_i2c_driver);
 MODULE_DESCRIPTION("max77779 Scratch Driver");
 MODULE_AUTHOR("AleX Pelosi <apelosi@google.com>");
 MODULE_LICENSE("GPL");
