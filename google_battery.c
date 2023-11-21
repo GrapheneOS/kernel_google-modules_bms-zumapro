@@ -1954,6 +1954,10 @@ static void batt_chg_stats_update(struct batt_drv *batt_drv, int temp_idx,
 		soc_in = -1;
 	}
 
+	/* Log CSI info into chg_stats */
+	ce_data->csi_aggregate_status = batt_drv->csi_stats.aggregate_status;
+	ce_data->csi_aggregate_type = batt_drv->csi_stats.aggregate_type;
+
 	/* Note: To log new voltage tiers, add to list in go/pixel-vtier-defs */
 	/* ---  Log tiers in PARALLEL below ---  */
 
@@ -2200,7 +2204,8 @@ static bool batt_chg_stats_close(struct batt_drv *batt_drv,
 		/* all charge tiers including health */
 		memcpy(ce_qual, &batt_drv->ce_data, sizeof(*ce_qual));
 
-		pr_info("MSC_STAT %s: elap=%lld ssoc=%d->%d v=%d->%d c=%d->%d hdl=%lld hrs=%d hti=%d/%d\n",
+		pr_info("MSC_STAT %s: elap=%lld ssoc=%d->%d v=%d->%d c=%d->%d hdl=%lld hrs=%d"
+			" hti=%d/%d csi=%d/%d\n",
 			reason,
 			ce_qual->last_update - ce_qual->first_update,
 			ce_qual->charging_stats.ssoc_in,
@@ -2212,7 +2217,9 @@ static bool batt_chg_stats_close(struct batt_drv *batt_drv,
 			ce_qual->ce_health.rest_deadline,
 			ce_qual->ce_health.rest_state,
 			ce_qual->health_stats.vtier_idx,
-			ce_qual->health_pause_stats.vtier_idx);
+			ce_qual->health_pause_stats.vtier_idx,
+			ce_qual->csi_aggregate_status,
+			ce_qual->csi_aggregate_type);
 	}
 
 	return publish;
@@ -2354,13 +2361,15 @@ static int batt_chg_stats_cstr(char *buff, int size,
 				ce_data->adapter_details.ad_voltage * 100,
 				ce_data->adapter_details.ad_amperage * 100);
 
-	len += scnprintf(&buff[len], size - len, "%s%hu,%hu, %hu,%hu %d",
+	len += scnprintf(&buff[len], size - len, "%s%hu,%hu, %hu,%hu %d %hu,%hu",
 				(verbose) ?  "\nS: " : ", ",
 				ce_data->charging_stats.ssoc_in,
 				ce_data->charging_stats.voltage_in,
 				ce_data->charging_stats.ssoc_out,
 				ce_data->charging_stats.voltage_out,
-				state_capacity);
+				state_capacity,
+				ce_data->csi_aggregate_status,
+				ce_data->csi_aggregate_type);
 
 
 	if (verbose) {
