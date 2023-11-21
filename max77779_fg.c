@@ -16,26 +16,14 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": %s " fmt, __func__
 
-#include <linux/err.h>
-#include <linux/i2c.h>
-#include <linux/iio/consumer.h>
+#include <linux/debugfs.h>
 #include <linux/interrupt.h>
 #include <linux/module.h>
 #include <linux/of.h>
-#include <linux/of_gpio.h>
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
-#include <linux/slab.h>
-#include <linux/time.h>
 
-#include <linux/cdev.h>
-#include <linux/device.h>
-#include <linux/fs.h> /* register_chrdev, unregister_chrdev */
-#include <linux/seq_file.h> /* seq_read, seq_lseek, single_release */
 #include "max77779_fg.h"
-#include "max77779_pmic.h"
-
-#include <linux/debugfs.h>
 
 #define MAX77779_FG_TPOR_MS 800
 
@@ -56,22 +44,6 @@
 
 enum max77779_fg_command_bits {
 	MAX77779_FG_COMMAND_HARDWARE_RESET = 0x000F,
-};
-
-/* Capacity Estimation */
-struct gbatt_capacity_estimation {
-	const struct maxfg_reg *bcea;
-	struct mutex batt_ce_lock;
-	struct delayed_work settle_timer;
-	int cap_tsettle;
-	int cap_filt_length;
-	int estimate_state;
-	bool cable_in;
-	int delta_cc_sum;
-	int delta_vfsoc_sum;
-	int cap_filter_count;
-	int start_cc;
-	int start_vfsoc;
 };
 
 #define DEFAULT_BATTERY_ID		0
@@ -95,98 +67,12 @@ struct gbatt_capacity_estimation {
 /* No longer used in 79, used for taskperiod re-scaling in 59 */
 #define MAX77779_LSB 1
 
-#define MAX77779_FG_NDGB_ADDRESS 0x37
-
 #define MAX77779_FG_EVENT_FULLCAPNOM_LOW     BIT(0)
 #define MAX77779_FG_EVENT_FULLCAPNOM_HIGH    BIT(1)
 #define MAX77779_FG_EVENT_REPSOC_EDET        BIT(2)
 #define MAX77779_FG_EVENT_REPSOC_FDET        BIT(3)
 #define MAX77779_FG_EVENT_REPSOC             BIT(4)
 #define MAX77779_FG_EVENT_VFOCV              BIT(5)
-
-struct max77779_fg_chip {
-	struct device *dev;
-	struct i2c_client *primary;
-	struct i2c_client *secondary;
-	struct i2c_client *pmic_i2c_client;
-
-	int gauge_type;	/* -1 not present, 0=max1720x, 1=max1730x */
-	struct maxfg_regmap regmap;
-	struct maxfg_regmap regmap_debug;
-	struct power_supply *psy;
-	struct delayed_work init_work;
-	struct device_node *batt_node;
-
-	u16 devname;
-
-	/* config */
-	void *model_data;
-	struct mutex model_lock;
-	struct delayed_work model_work;
-	int model_next_update;
-	/* also used to restore model state from permanent storage */
-	u16 reg_prop_capacity_raw;
-	bool model_state_valid;	/* state read from persistent */
-	int model_reload;
-	bool model_ok;		/* model is running */
-
-	int fake_battery;
-
-	u16 RSense;
-	u16 RConfig;
-
-	int batt_id;
-	int batt_id_defer_cnt;
-	int cycle_count;
-	u16 eeprom_cycle;
-	u16 designcap;
-
-	bool init_complete;
-	bool resume_complete;
-	bool irq_disabled;
-	u16 health_status;
-	int fake_capacity;
-	int previous_qh;
-	int current_capacity;
-	int prev_charge_status;
-	char serial_number[30];
-	bool offmode_charger;
-	bool por;
-
-	unsigned int debug_irq_none_cnt;
-
-	/* Capacity Estimation */
-	struct gbatt_capacity_estimation cap_estimate;
-	struct logbuffer *ce_log;
-
-	/* debug interface, register to read or write */
-	u32 debug_reg_address;
-	u32 debug_dbg_reg_address;
-
-	/* dump data to logbuffer periodically */
-	struct logbuffer *monitor_log;
-	u16 pre_repsoc;
-
-	struct power_supply_desc max77779_fg_psy_desc;
-
-	int bhi_fcn_count;
-	int bhi_acim;
-
-	/* battery current criteria for report status charge */
-	u32 status_charge_threshold_ma;
-
-	bool fw_check_done;
-	bool is_fake_temp;
-	int fake_temperature;
-
-	bool current_offset_check_done;
-
-	bool fw_update_mode;
-
-	/* in-field logging */
-	int fg_logging_events;
-	u16 pre_fullcapnom;
-};
 
 static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj);
 static int max77779_fg_set_next_update(struct max77779_fg_chip *chip);
@@ -3342,7 +3228,7 @@ static int max77779_read_gauge_type(struct max77779_fg_chip *chip)
 	return gauge_type;
 }
 
-static bool max77779_fg_dbg_is_reg(struct device *dev, unsigned int reg)
+bool max77779_fg_dbg_is_reg(struct device *dev, unsigned int reg)
 {
 	switch (reg) {
 		case 0x9C ... 0x9F:
@@ -3359,17 +3245,9 @@ static bool max77779_fg_dbg_is_reg(struct device *dev, unsigned int reg)
 	}
 	return false;
 }
+EXPORT_SYMBOL_GPL(max77779_fg_dbg_is_reg);
 
-const struct regmap_config max77779_fg_debug_regmap_cfg = {
-	.reg_bits = 8,
-	.val_bits = 16,
-	.val_format_endian = REGMAP_ENDIAN_NATIVE,
-	.max_register = MAX77779_FG_NVM_nThermCfg,
-	.readable_reg = max77779_fg_dbg_is_reg,
-	.volatile_reg = max77779_fg_dbg_is_reg,
-};
-
-static bool max77779_fg_is_reg(struct device *dev, unsigned int reg)
+bool max77779_fg_is_reg(struct device *dev, unsigned int reg)
 {
 	switch (reg) {
 	case 0x00 ... 0x14:
@@ -3405,83 +3283,7 @@ static bool max77779_fg_is_reg(struct device *dev, unsigned int reg)
 
 	return false;
 }
-
-const struct regmap_config max77779_fg_regmap_cfg = {
-	.reg_bits = 8,
-	.val_bits = 16,
-	.val_format_endian = REGMAP_ENDIAN_NATIVE,
-	.max_register = MAX77779_FG_USR,
-	.readable_reg = max77779_fg_is_reg,
-	.volatile_reg = max77779_fg_is_reg,
-};
-
-const struct maxfg_reg max77779_fg[] = {
-	[MAXFG_TAG_avgc] = { ATOM_INIT_REG16(MAX77779_FG_AvgCurrent)},
-	[MAXFG_TAG_cnfg] = { ATOM_INIT_REG16(MAX77779_FG_Config)},
-	[MAXFG_TAG_mmdv] = { ATOM_INIT_REG16(MAX77779_FG_MaxMinVolt)},
-	[MAXFG_TAG_vcel] = { ATOM_INIT_REG16(MAX77779_FG_VCell)},
-	[MAXFG_TAG_temp] = { ATOM_INIT_REG16(MAX77779_FG_Temp)},
-	[MAXFG_TAG_curr] = { ATOM_INIT_REG16(MAX77779_FG_Current)},
-	[MAXFG_TAG_mcap] = { ATOM_INIT_REG16(MAX77779_FG_MixCap)},
-	[MAXFG_TAG_vfsoc] = { ATOM_INIT_REG16(MAX77779_FG_VFSOC)},
-	[MAXFG_TAG_tempco] = { ATOM_INIT_REG16(MAX77779_FG_NVM_nTempCo)},
-	[MAXFG_TAG_rcomp0] = { ATOM_INIT_REG16(MAX77779_FG_NVM_nRComp0)},
-	[MAXFG_TAG_timerh] = { ATOM_INIT_REG16(MAX77779_FG_TimerH)},
-	[MAXFG_TAG_descap] = { ATOM_INIT_REG16(MAX77779_FG_DesignCap)},
-	[MAXFG_TAG_fcnom] = { ATOM_INIT_REG16(MAX77779_FG_FullCapNom)},
-	[MAXFG_TAG_fcrep] = { ATOM_INIT_REG16(MAX77779_FG_FullCapRep)},
-	[MAXFG_TAG_msoc] = { ATOM_INIT_REG16(MAX77779_FG_MixSOC)},
-	[MAXFG_TAG_mmdt] = { ATOM_INIT_REG16(MAX77779_FG_MaxMinTemp)},
-	[MAXFG_TAG_mmdc] = { ATOM_INIT_REG16(MAX77779_FG_MaxMinCurr)},
-};
-
-const struct maxfg_reg max77779_debug_fg[] = {
-	[MAXFG_TAG_tempco] = { ATOM_INIT_REG16(MAX77779_FG_NVM_nTempCo)},
-	[MAXFG_TAG_rcomp0] = { ATOM_INIT_REG16(MAX77779_FG_NVM_nRComp0)},
-};
-
-int max77779_max17x0x_regmap_init(struct maxfg_regmap *regmap, struct i2c_client *clnt,
-				  const struct regmap_config *regmap_config, bool tag)
-{
-	struct regmap *map;
-
-	map = devm_regmap_init_i2c(clnt, regmap_config);
-	if (IS_ERR(map))
-		return IS_ERR_VALUE(map);
-
-	if (tag) {
-		regmap->regtags.max = ARRAY_SIZE(max77779_fg);
-		regmap->regtags.map = max77779_fg;
-	} else {
-		regmap->regtags.max = ARRAY_SIZE(max77779_debug_fg);
-		regmap->regtags.map = max77779_debug_fg;
-	}
-
-	regmap->regmap = map;
-	return 0;
-}
-
-/* NOTE: NEED TO COME BEFORE REGISTER ACCESS */
-static int max77779_fg_regmap_init(struct max77779_fg_chip *chip)
-{
-	int ret = max77779_max17x0x_regmap_init(&chip->regmap, chip->primary,
-						&max77779_fg_regmap_cfg,
-						true);
-	if (ret < 0) {
-		dev_err(chip->dev, "Failed to re-initialize regmap (%ld)\n",
-			IS_ERR_VALUE(chip->regmap.regmap));
-		return -EINVAL;
-	}
-
-	ret = max77779_max17x0x_regmap_init(&chip->regmap_debug, chip->secondary,
-					    &max77779_fg_debug_regmap_cfg, false);
-	if (ret < 0) {
-		dev_err(chip->dev, "Failed to re-initialize debug regmap (%ld)\n",
-			IS_ERR_VALUE(chip->regmap_debug.regmap));
-		return IS_ERR_VALUE(chip->regmap_debug.regmap);
-	}
-	return 0;
-}
+EXPORT_SYMBOL_GPL(max77779_fg_is_reg);
 
 void *max77779_get_model_data(struct i2c_client *client)
 {
@@ -3489,7 +3291,6 @@ void *max77779_get_model_data(struct i2c_client *client)
 
 	return chip ? chip->model_data : NULL;
 }
-
 
 static struct attribute *max77779_fg_attrs[] = {
 	&dev_attr_act_impedance.attr,
@@ -3506,45 +3307,25 @@ static const struct attribute_group max77779_fg_attr_grp = {
 	.attrs = max77779_fg_attrs,
 };
 
-static int max77779_fg_probe(struct i2c_client *client,
-			     const struct i2c_device_id *id)
+/*
+ * Initialization requirements
+ * struct max77779_fg_chip *chip
+ *  - dev
+ *  - irq
+ *  - regmap
+ *  - regmap_debug
+ */
+int max77779_fg_init(struct max77779_fg_chip *chip)
 {
-	struct max77779_fg_chip *chip;
-	struct device *dev = &client->dev;
+	struct device *dev = chip->dev;
 	struct power_supply_config psy_cfg = { };
 	const char *psy_name = NULL;
 	char monitor_name[32];
 	int ret = 0;
 	u32 data32;
 
-	if (client->irq < 0)
-		return -EPROBE_DEFER;
-
-	chip = devm_kzalloc(dev, sizeof(*chip), GFP_KERNEL);
-	if (!chip)
-		return -ENOMEM;
-
-	chip->dev = dev;
 	chip->fake_battery = of_property_read_bool(dev->of_node, "max77779,no-battery") ? 0 : -1;
-	chip->primary = client;
 	chip->batt_id_defer_cnt = DEFAULT_BATTERY_ID_RETRIES;
-	i2c_set_clientdata(client, chip);
-
-	chip->secondary = i2c_new_ancillary_device(chip->primary, "ndbg",
-						   MAX77779_FG_NDGB_ADDRESS);
-	if (IS_ERR(chip->secondary)) {
-		dev_err(dev, "Error setting up ancillary i2c bus(%ld)\n",
-			IS_ERR_VALUE(chip->secondary));
-		goto i2c_unregister_primary;
-	}
-	i2c_set_clientdata(chip->secondary, chip);
-
-	/* needs chip->primary */
-	ret = max77779_fg_regmap_init(chip);
-	if (ret < 0) {
-		dev_err(dev, "Failed to initialize regmap(s)\n");
-		goto i2c_unregister;
-	}
 
 	mutex_init(&section_lock);
 
@@ -3568,8 +3349,8 @@ static int max77779_fg_probe(struct i2c_client *client,
 			 debug_reglog ? "" : "not ");
 	}
 
-	if (client->irq) {
-		ret = devm_request_threaded_irq(chip->dev, chip->primary->irq, NULL,
+	if (chip->irq) {
+		ret = devm_request_threaded_irq(chip->dev, chip->irq, NULL,
 						max77779_fg_irq_thread_fn,
 						IRQF_TRIGGER_LOW |
 						IRQF_SHARED |
@@ -3577,13 +3358,13 @@ static int max77779_fg_probe(struct i2c_client *client,
 						MAX77779_FG_I2C_DRIVER_NAME,
 						chip);
 		dev_info(chip->dev, "FG irq handler registered at %d (%d)\n",
-			 chip->primary->irq, ret);
+			 chip->irq, ret);
 
 		if (ret == 0)
-			enable_irq_wake(chip->primary->irq);
+			enable_irq_wake(chip->irq);
 	} else {
 		dev_err(dev, "cannot allocate irq\n");
-		goto i2c_unregister;
+		return ret;
 	}
 
 	psy_cfg.drv_data = chip;
@@ -3614,12 +3395,12 @@ static int max77779_fg_probe(struct i2c_client *client,
 	if (IS_ERR(chip->psy)) {
 		dev_err(dev, "Couldn't register as power supply\n");
 		ret = PTR_ERR(chip->psy);
-		goto i2c_unregister;
+		goto irq_unregister;
 	}
 
 	ret = sysfs_create_group(&chip->psy->dev.kobj, &max77779_fg_attr_grp);
 	if (ret)
-		dev_err(dev, "Failed to create sysfs group\n");
+		dev_warn(dev, "Failed to create sysfs group\n");
 
 	/*
 	 * TODO:
@@ -3635,6 +3416,7 @@ static int max77779_fg_probe(struct i2c_client *client,
 		ret = PTR_ERR(chip->ce_log);
 		dev_err(dev, "failed to obtain logbuffer, ret=%d\n", ret);
 		chip->ce_log = NULL;
+		goto power_supply_unregister;
 	}
 
 	scnprintf(monitor_name, sizeof(monitor_name), "%s_%s",
@@ -3644,6 +3426,7 @@ static int max77779_fg_probe(struct i2c_client *client,
 		ret = PTR_ERR(chip->monitor_log);
 		dev_err(dev, "failed to obtain logbuffer, ret=%d\n", ret);
 		chip->monitor_log = NULL;
+		goto power_supply_unregister;
 	}
 
 	ret = of_property_read_u32(dev->of_node, "google,bhi-fcn-count",
@@ -3663,54 +3446,39 @@ static int max77779_fg_probe(struct i2c_client *client,
 
 	return 0;
 
-i2c_unregister:
-	i2c_unregister_device(chip->secondary);
-i2c_unregister_primary:
-	i2c_unregister_device(chip->primary);
-	devm_kfree(dev, chip);
+power_supply_unregister:
+	power_supply_unregister(chip->psy);
+irq_unregister:
+	free_irq(chip->irq, chip);
 
 	return ret;
 }
+EXPORT_SYMBOL_GPL(max77779_fg_init);
 
-static void max77779_fg_remove(struct i2c_client *client)
+void max77779_fg_remove(struct max77779_fg_chip *chip)
 {
-	struct max77779_fg_chip *chip = i2c_get_clientdata(client);
-
 	if (chip->ce_log) {
 		logbuffer_unregister(chip->ce_log);
 		chip->ce_log = NULL;
 	}
 
-	max77779_free_data(chip->model_data);
+	if (chip->model_data)
+		max77779_free_data(chip->model_data);
 	cancel_delayed_work(&chip->init_work);
 	cancel_delayed_work(&chip->model_work);
 
-	if (chip->primary->irq)
-		free_irq(chip->primary->irq, chip);
+	if (chip->irq)
+		free_irq(chip->irq, chip);
 
-	if (chip->secondary)
-		i2c_unregister_device(chip->secondary);
-
-	power_supply_unregister(chip->psy);
+	if (chip->psy)
+		power_supply_unregister(chip->psy);
 }
+EXPORT_SYMBOL_GPL(max77779_fg_remove);
 
-static const struct of_device_id max77779_of_match[] = {
-	{ .compatible = "maxim,max77779fg"},
-	{},
-};
-MODULE_DEVICE_TABLE(of, max77779_of_match);
-
-static const struct i2c_device_id max77779_fg_id[] = {
-	{"max77779_fg", 0},
-	{}
-};
-MODULE_DEVICE_TABLE(i2c, max77779_fg_id);
-
-#ifdef CONFIG_PM_SLEEP
-static int max77779_pm_suspend(struct device *dev)
+#if IS_ENABLED(CONFIG_PM)
+int max77779_fg_pm_suspend(struct device *dev)
 {
-	struct i2c_client *client = to_i2c_client(dev);
-	struct max77779_fg_chip *chip = i2c_get_clientdata(client);
+	struct max77779_fg_chip *chip = dev_get_drvdata(dev);
 
 	pm_runtime_get_sync(chip->dev);
 	chip->resume_complete = false;
@@ -3718,11 +3486,11 @@ static int max77779_pm_suspend(struct device *dev)
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(max77779_fg_pm_suspend);
 
-static int max77779_pm_resume(struct device *dev)
+int max77779_fg_pm_resume(struct device *dev)
 {
-	struct i2c_client *client = to_i2c_client(dev);
-	struct max77779_fg_chip *chip = i2c_get_clientdata(client);
+	struct max77779_fg_chip *chip = dev_get_drvdata(dev);
 
 	pm_runtime_get_sync(chip->dev);
 	chip->resume_complete = true;
@@ -3735,25 +3503,9 @@ static int max77779_pm_resume(struct device *dev)
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(max77779_fg_pm_resume);
 #endif
 
-static const struct dev_pm_ops max77779_pm_ops = {
-	SET_NOIRQ_SYSTEM_SLEEP_PM_OPS(max77779_pm_suspend, max77779_pm_resume)
-};
-
-static struct i2c_driver max77779_fg_i2c_driver = {
-	.driver = {
-		   .name = "max77779-fg",
-		   .of_match_table = max77779_of_match,
-		   .pm = &max77779_pm_ops,
-		   .probe_type = PROBE_PREFER_ASYNCHRONOUS,
-		   },
-	.id_table = max77779_fg_id,
-	.probe = max77779_fg_probe,
-	.remove = max77779_fg_remove,
-};
-
-module_i2c_driver(max77779_fg_i2c_driver);
 MODULE_AUTHOR("AleX Pelosi <apelosi@google.com>");
 MODULE_AUTHOR("Keewan Jung <keewanjung@google.com>");
 MODULE_AUTHOR("Jenny Ho <hsiufangho@google.com>");

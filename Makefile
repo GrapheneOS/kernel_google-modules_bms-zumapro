@@ -34,6 +34,7 @@ GBMS_MODULES =	GOOGLE_BMS \
 		STWC68 \
 		LN8411 \
 		FG_MAX77779 \
+		FG_MAX77779_I2C \
 		VIMON_MAX77779 \
 		FWUPDATE_MAX77779
 
@@ -135,6 +136,9 @@ obj-$(CONFIG_FG_MAX77779)  += max77779-fg.o
 max77779-fg-objs += max77779_fg.o
 max77779-fg-objs += max77779_fg_model.o
 max77779-fg-objs += maxfg_common.o
+
+obj-$(CONFIG_FG_MAX77779_I2C)  += max77779-fg-i2c.o
+max77779-fg-i2c-objs += max77779_fg_i2c.o
 
 # OVP
 obj-$(CONFIG_MAX20339)	+= max20339.o

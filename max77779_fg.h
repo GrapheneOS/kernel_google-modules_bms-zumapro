@@ -33,6 +33,134 @@
 /* Config2: must not enable TAlert */
 #define MAX77779_FG_MODEL_VERSION_REG	MAX77779_FG_TAlrtTh
 
+#define MAX77779_FG_NDGB_ADDRESS 0x37
+
+static struct maxfg_reg max77779_fg[] = {
+	[MAXFG_TAG_avgc] = { ATOM_INIT_REG16(MAX77779_FG_AvgCurrent)},
+	[MAXFG_TAG_cnfg] = { ATOM_INIT_REG16(MAX77779_FG_Config)},
+	[MAXFG_TAG_mmdv] = { ATOM_INIT_REG16(MAX77779_FG_MaxMinVolt)},
+	[MAXFG_TAG_vcel] = { ATOM_INIT_REG16(MAX77779_FG_VCell)},
+	[MAXFG_TAG_temp] = { ATOM_INIT_REG16(MAX77779_FG_Temp)},
+	[MAXFG_TAG_curr] = { ATOM_INIT_REG16(MAX77779_FG_Current)},
+	[MAXFG_TAG_mcap] = { ATOM_INIT_REG16(MAX77779_FG_MixCap)},
+	[MAXFG_TAG_vfsoc] = { ATOM_INIT_REG16(MAX77779_FG_VFSOC)},
+	[MAXFG_TAG_tempco] = { ATOM_INIT_REG16(MAX77779_FG_NVM_nTempCo)},
+	[MAXFG_TAG_rcomp0] = { ATOM_INIT_REG16(MAX77779_FG_NVM_nRComp0)},
+	[MAXFG_TAG_timerh] = { ATOM_INIT_REG16(MAX77779_FG_TimerH)},
+	[MAXFG_TAG_descap] = { ATOM_INIT_REG16(MAX77779_FG_DesignCap)},
+	[MAXFG_TAG_fcnom] = { ATOM_INIT_REG16(MAX77779_FG_FullCapNom)},
+	[MAXFG_TAG_fcrep] = { ATOM_INIT_REG16(MAX77779_FG_FullCapRep)},
+	[MAXFG_TAG_msoc] = { ATOM_INIT_REG16(MAX77779_FG_MixSOC)},
+	[MAXFG_TAG_mmdt] = { ATOM_INIT_REG16(MAX77779_FG_MaxMinTemp)},
+	[MAXFG_TAG_mmdc] = { ATOM_INIT_REG16(MAX77779_FG_MaxMinCurr)},
+};
+
+static struct maxfg_reg max77779_debug_fg[] = {
+	[MAXFG_TAG_tempco] = { ATOM_INIT_REG16(MAX77779_FG_NVM_nTempCo)},
+	[MAXFG_TAG_rcomp0] = { ATOM_INIT_REG16(MAX77779_FG_NVM_nRComp0)},
+};
+
+/* Capacity Estimation */
+struct gbatt_capacity_estimation {
+	const struct maxfg_reg *bcea;
+	struct mutex batt_ce_lock;
+	struct delayed_work settle_timer;
+	int cap_tsettle;
+	int cap_filt_length;
+	int estimate_state;
+	bool cable_in;
+	int delta_cc_sum;
+	int delta_vfsoc_sum;
+	int cap_filter_count;
+	int start_cc;
+	int start_vfsoc;
+};
+
+struct max77779_fg_chip {
+	struct device *dev;
+	struct i2c_client *primary;
+	struct i2c_client *secondary;
+	struct i2c_client *pmic_i2c_client;
+
+	int irq;
+
+	int gauge_type;	/* -1 not present, 0=max1720x, 1=max1730x */
+	struct maxfg_regmap regmap;
+	struct maxfg_regmap regmap_debug;
+	struct power_supply *psy;
+	struct delayed_work init_work;
+	struct device_node *batt_node;
+
+	u16 devname;
+
+	/* config */
+	void *model_data;
+	struct mutex model_lock;
+	struct delayed_work model_work;
+	int model_next_update;
+	/* also used to restore model state from permanent storage */
+	u16 reg_prop_capacity_raw;
+	bool model_state_valid;	/* state read from persistent */
+	int model_reload;
+	bool model_ok;		/* model is running */
+
+	int fake_battery;
+
+	u16 RSense;
+	u16 RConfig;
+
+	int batt_id;
+	int batt_id_defer_cnt;
+	int cycle_count;
+	u16 eeprom_cycle;
+	u16 designcap;
+
+	bool init_complete;
+	bool resume_complete;
+	bool irq_disabled;
+	u16 health_status;
+	int fake_capacity;
+	int previous_qh;
+	int current_capacity;
+	int prev_charge_status;
+	char serial_number[30];
+	bool offmode_charger;
+	bool por;
+
+	unsigned int debug_irq_none_cnt;
+
+	/* Capacity Estimation */
+	struct gbatt_capacity_estimation cap_estimate;
+	struct logbuffer *ce_log;
+
+	/* debug interface, register to read or write */
+	u32 debug_reg_address;
+	u32 debug_dbg_reg_address;
+
+	/* dump data to logbuffer periodically */
+	struct logbuffer *monitor_log;
+	u16 pre_repsoc;
+
+	struct power_supply_desc max77779_fg_psy_desc;
+
+	int bhi_fcn_count;
+	int bhi_acim;
+
+	/* battery current criteria for report status charge */
+	u32 status_charge_threshold_ma;
+
+	bool fw_check_done;
+	bool is_fake_temp;
+	int fake_temperature;
+
+	bool current_offset_check_done;
+
+	bool fw_update_mode;
+
+	/* in-field logging */
+	int fg_logging_events;
+	u16 pre_fullcapnom;
+};
 
 /** ------------------------------------------------------------------------ */
 
@@ -189,4 +317,13 @@ ssize_t max77779_gmsr_state_cstr(char *buf, int max);
 
 void *max77779_get_model_data(struct i2c_client *client);
 
+int max77779_fg_init(struct max77779_fg_chip *chip);
+bool max77779_fg_dbg_is_reg(struct device *dev, unsigned int reg);
+bool max77779_fg_is_reg(struct device *dev, unsigned int reg);
+void max77779_fg_remove(struct max77779_fg_chip *chip);
+
+#if IS_ENABLED(CONFIG_PM)
+int max77779_fg_pm_suspend(struct device *dev);
+int max77779_fg_pm_resume(struct device *dev);
+#endif
 #endif
