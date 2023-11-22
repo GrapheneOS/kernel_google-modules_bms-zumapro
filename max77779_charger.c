@@ -693,7 +693,7 @@ static int max77779_get_usecase(struct max77779_foreach_cb_data *cb_data,
 		 * NOTE: mode=0 if standby, mode=5 if charging, mode=0xa on otg
 		 * TODO: handle rTx + DC and some more.
 		 */
-		if (dc_on && cb_data->wlc_rx) {
+		if (dc_on && wlc_rx) {
 			/* WLC_DC->WLC_DC+USB -> ignore dc_on */
 		} else if (dc_on) {
 			if (uc_data->reverse12_en)
