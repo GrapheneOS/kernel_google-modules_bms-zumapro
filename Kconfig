@@ -173,6 +173,14 @@ config MAX77779_I2CM
 	depends on OF
 	help
 	  Bus to bridge I2C to Maxim 77779
+choice
+	default MAX77779_I2CM_I2C
+	prompt "MAX77779 I2CM Bus module"
+config MAX77779_I2CM_I2C
+	bool "I2C"
+	depends on I2C
+	select REGMAP_I2C
+endchoice
 
 config MAX77779_PMIC
 	tristate "Maxim 77779 PMIC"
