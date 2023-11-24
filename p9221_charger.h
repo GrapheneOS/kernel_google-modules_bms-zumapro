@@ -324,6 +324,7 @@
 #define P9222RE_TX_MFG_CODE_REG			0x106
 #define P9222RE_PROP_TX_ID_REG			0x118
 #define P9222RE_DIE_TEMP_ADC_REG		0x12A
+#define P9222RE_FREQ_LIMIT_REG			0x14A
 #define P9222RE_COM_PACKET_TYPE_ADDR		0x600
 #define P9222RE_COM_CHAN_SEND_SIZE_REG		0x601
 #define P9222RE_DATA_BUF_START			0x604
@@ -695,6 +696,7 @@ struct p9221_charger_platform_data {
 	int				epp_vout_mv;
 	u8				fod[P9221R5_NUM_FOD];
 	u8				fod_epp[P9221R5_NUM_FOD];
+	u8				fod_gpp[P9221R5_NUM_FOD];
 	u8				fod_epp_comp[P9221R5_NUM_FOD];
 	u8				fod_epp_iop[P9221R5_NUM_FOD];
 	u8				fod_hpp[P9221R5_NUM_FOD];
@@ -702,6 +704,7 @@ struct p9221_charger_platform_data {
 	struct p9221_fod_data		hpp_fods[P9412_HPP_FOD_SETS];
 	int				fod_num;
 	int				fod_epp_num;
+	int				fod_gpp_num;
 	int				fod_epp_comp_num;
 	int				fod_epp_iop_num;
 	int				fod_hpp_num;
@@ -761,6 +764,7 @@ struct p9221_charger_platform_data {
 	bool				hda_tz_wlc;
 	u32				set_iop_vout_bpp;
 	u32				set_iop_vout_epp;
+	u32				lowest_fsw_khz;
 };
 
 struct p9221_charger_ints_bit {
@@ -972,6 +976,7 @@ struct p9221_charger_data {
 	int				enable_i2c_debug;
 	char				*i2c_txdebug_buf;
 	char				*i2c_rxdebug_buf;
+	struct mutex			irq_det_lock;
 
 #if IS_ENABLED(CONFIG_GPIOLIB)
 	struct gpio_chip gpio;
@@ -1000,6 +1005,7 @@ struct p9221_charger_data {
 	u16				reg_mot_addr;
 	u16				reg_cmfet_addr;
 	u16				reg_epp_tx_guarpwr_addr;
+	u16				reg_freq_limit_addr;
 
 	int (*reg_read_n)(struct p9221_charger_data *chgr, u16 reg,
 			  void *buf, size_t n);
@@ -1137,6 +1143,8 @@ enum p9xxx_renego_state {
       -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_mot_addr, data))
 #define p9xxx_chip_set_cmfet_reg(chgr, data) (chgr->reg_cmfet_addr == 0 ? \
       -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_cmfet_addr, data))
+#define p9xxx_chip_set_freq_limit(chgr, data) (chgr->reg_freq_limit_addr == 0 ? \
+      -ENOTSUPP : chgr->reg_write_16(chgr, chgr->reg_freq_limit_addr, data))
 #define logbuffer_prlog(p, fmt, ...)     \
       gbms_logbuffer_prlog(p, LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG, fmt, ##__VA_ARGS__)
 #endif /* __P9221_CHARGER_H__ */

@@ -75,6 +75,7 @@ enum wlc_align_codes {
 enum wlc_chg_mode {
 	WLC_BPP = 0,
 	WLC_EPP,
+	WLC_GPP,
 	WLC_EPP_COMP,
 	WLC_EPP_IOP,
 	WLC_HPP,
@@ -430,7 +431,7 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 	int ret;
 	int retries = 3;
 	int vout_mv;
-	static char *wlc_mode[] = { "BPP", "EPP", "EPP_COMP", "EPP_IOP",
+	static char *wlc_mode[] = { "BPP", "EPP", "GPP", "EPP_COMP", "EPP_IOP",
 				    "HPP_0", "HPP_1", "HPP_2", "HPP_3",
 				    "HPP_4", "HPP_5", "HPP_6", "HPP_7" };
 
@@ -458,6 +459,8 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 			mode = p9221_check_fod_by_fsw(charger);
 		if (charger->pdata->fod_iop_mfg_num > 0)
 			mode = p9xxx_check_iop_fod_by_mfg(charger);
+		if (charger->pdata->fod_gpp_num > 0 && charger->mfg == WLC_MFG_GOOGLE)
+			mode = WLC_GPP;
 		if (mode == WLC_EPP) {
 			fod = charger->pdata->fod_epp;
 			fod_count = charger->pdata->fod_epp_num;
@@ -467,6 +470,14 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 		} else if (mode == WLC_EPP_IOP) {
 			fod = charger->pdata->fod_epp_iop;
 			fod_count = charger->pdata->fod_epp_iop_num;
+		} else if (mode == WLC_GPP) {
+			/*
+			 * Prevent chip damage during jiggling test, set frequency limit
+			 * (0: Disable frequency limit function)
+			 */
+			p9xxx_chip_set_freq_limit(charger, charger->pdata->lowest_fsw_khz);
+			fod = charger->pdata->fod_gpp;
+			fod_count = charger->pdata->fod_gpp_num;
 		}
 	}
 
@@ -3768,18 +3779,19 @@ static void p9221_notifier_check_dc(struct p9221_charger_data *charger)
 	cancel_delayed_work(&charger->dcin_work);
 	del_timer(&charger->vrect_timer);
 
+	mutex_lock(&charger->irq_det_lock);
 	if (charger->online_spoof && dc_in == 1) {
 		/* stop spoofing is queued */
-		if (cancel_delayed_work(&charger->stop_online_spoof_work))
-			logbuffer_prlog(charger->log, "dc=1: online_spoof=0");
-		else
+		if (!cancel_delayed_work(&charger->stop_online_spoof_work))
 			dev_err(&charger->client->dev,
 				"Error: no spoof work even though spoof=1 && dc=1\n");
-		if (charger->online_spoof)
-			disable_irq(charger->pdata->irq_det_int);
+		logbuffer_prlog(charger->log, "dc=1: online_spoof=0");
+		disable_irq_wake(charger->pdata->irq_det_int);
+		disable_irq(charger->pdata->irq_det_int);
 		charger->online_spoof = false;
 		gvotable_cast_bool_vote(charger->wlc_spoof_votable, "WLC", false);
 	}
+	mutex_unlock(&charger->irq_det_lock);
 
 	if (charger->log) {
 		u32 vout_uv;
@@ -6717,19 +6729,27 @@ out:
 	return IRQ_HANDLED;
 }
 
+/*
+ * This is a timeout function to disable the online_spoof when WLC gets re-enabled. It will
+ * only be called in the event that DCIN doesn't come back for 2 seconds even though WLC is
+ * no longer disabled.
+ */
 static void p9xxx_stop_online_spoof_work(struct work_struct *work)
 {
 	struct p9221_charger_data *charger = container_of(work,
 			struct p9221_charger_data, stop_online_spoof_work.work);
 
+	mutex_lock(&charger->irq_det_lock);
 	if (charger->online_spoof) {
 		/* timeout after WLC re-enabled */
 		logbuffer_prlog(charger->log, "timeout: online_spoof=0");
+		disable_irq_wake(charger->pdata->irq_det_int);
 		disable_irq(charger->pdata->irq_det_int);
 		charger->online_spoof = false;
 		gvotable_cast_bool_vote(charger->wlc_spoof_votable, "WLC", false);
 		power_supply_changed(charger->wc_psy);
 	}
+	mutex_unlock(&charger->irq_det_lock);
 }
 
 static void p9xxx_change_det_status_work(struct work_struct *work)
@@ -6740,9 +6760,11 @@ static void p9xxx_change_det_status_work(struct work_struct *work)
 
 	/* Debounce det status */
 	logbuffer_log(charger->log, "irq_det debounce: val=%d", det_gpio);
+	mutex_lock(&charger->irq_det_lock);
 	if (charger->det_status != det_gpio) {
 		if (det_gpio == 1 && charger->det_status == 0 && charger->online_spoof) {
 			logbuffer_prlog(charger->log, "det=0: online_spoof=0");
+			disable_irq_wake(charger->pdata->irq_det_int);
 			disable_irq(charger->pdata->irq_det_int);
 			charger->online_spoof = false;
                         gvotable_cast_bool_vote(charger->wlc_spoof_votable, "WLC", false);
@@ -6753,6 +6775,7 @@ static void p9xxx_change_det_status_work(struct work_struct *work)
 		logbuffer_prlog(charger->log, "det=1->1: online_spoof=1");
 		schedule_delayed_work(&charger->stop_online_spoof_work, 0);
 	}
+	mutex_unlock(&charger->irq_det_lock);
 	__pm_relax(charger->det_status_ws);
 }
 
@@ -7210,6 +7233,7 @@ static int p9xxx_parse_dt(struct device *dev,
 	/* Optional FOD data */
 	p9221_parse_fod(dev, &pdata->fod_num, pdata->fod, "fod");
 	p9221_parse_fod(dev, &pdata->fod_epp_num, pdata->fod_epp, "fod_epp");
+	p9221_parse_fod(dev, &pdata->fod_gpp_num, pdata->fod_gpp, "fod_gpp");
 	p9221_parse_fod(dev, &pdata->fod_epp_comp_num, pdata->fod_epp_comp, "fod_epp_comp");
 	p9221_parse_fod(dev, &pdata->fod_epp_iop_num, pdata->fod_epp_iop, "fod_epp_iop");
 
@@ -7505,6 +7529,11 @@ static int p9xxx_parse_dt(struct device *dev,
 	else
 		pdata->set_iop_vout_epp = data;
 
+	ret = of_property_read_u32(node, "google,lowest-freq-limit-khz", &data);
+	if (ret < 0)
+		pdata->lowest_fsw_khz = 0;
+	else
+		pdata->lowest_fsw_khz = data;
 
 	/* Calibrate light load */
 	pdata->light_load = of_property_read_bool(node, "google,light_load");
@@ -7823,6 +7852,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	mutex_init(&charger->auth_lock);
 	mutex_init(&charger->renego_lock);
 	mutex_init(&charger->fod_lock);
+	mutex_init(&charger->irq_det_lock);
 	timer_setup(&charger->vrect_timer, p9221_vrect_timer_handler, 0);
 	timer_setup(&charger->align_timer, p9221_align_timer_handler, 0);
 	INIT_DELAYED_WORK(&charger->dcin_work, p9221_dcin_work);
@@ -7998,9 +8028,10 @@ static int p9221_charger_probe(struct i2c_client *client,
 		if (ret) {
 			dev_err(&client->dev, "Failed to request IRQ_DET\n");
 		} else {
+			mutex_lock(&charger->irq_det_lock);
 			charger->det_status = gpio_get_value_cansleep(charger->pdata->irq_det_gpio);
-			enable_irq_wake(charger->pdata->irq_det_int);
 			disable_irq(charger->pdata->irq_det_int);
+			mutex_unlock(&charger->irq_det_lock);
 		}
 	}
 

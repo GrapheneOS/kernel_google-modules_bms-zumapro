@@ -4002,19 +4002,69 @@ static int batt_get_activation_date(struct bhi_data *bhi_data)
 	return 0;
 }
 
+static int get_activation_date(struct health_data *health_data, struct rtc_time *tm)
+{
+	struct bhi_data *bhi_data = &health_data->bhi_data;
+	struct bm_date date;
+
+	/* read activation date when data is not successfully read in probe */
+	if (bhi_data->act_date[0] == 0) {
+		int ret;
+
+		ret = batt_get_activation_date(bhi_data);
+		if (ret < 0)
+			return ret;
+	}
+
+	/*
+	 * convert date to epoch
+	 * for example:
+	 * act_date: ASCII 2/2/3 -> bm_y/bm_m/bm_d: 22/02/03
+	 *                       -> tm_year/tm_mon/tm_mday: 122/01/03
+	 *                       -> epoch: 164384640
+	 */
+	date.bm_y = xymd_to_date(bhi_data->act_date[0]) + 20;
+	date.bm_m = xymd_to_date(bhi_data->act_date[1]);
+	date.bm_d = xymd_to_date(bhi_data->act_date[2]);
+
+	tm->tm_year = date.bm_y + 100; /* base is 1900 */
+	tm->tm_mon = date.bm_m - 1;    /* 0 is Jan ... 11 is Dec */
+	tm->tm_mday = date.bm_d;       /* 1st ... 31th */
+
+	return 0;
+}
+
+#define ONE_HR_SEC		3600
 #define ONE_YEAR_HRS		(24 * 365)
 #define BHI_INDI_CAP_DEFAULT	85
-static int bhi_individual_conditions_index(const struct health_data *health_data)
+static int bhi_individual_conditions_index(struct health_data *health_data)
 {
 	const struct bhi_data *bhi_data = &health_data->bhi_data;
 	const int cur_impedance = batt_ravg_value(&bhi_data->res_state);
 	const int age_impedance_max = bhi_data->act_impedance * 2;
 	const int cur_capacity_pct = 100 - bhi_data->capacity_fade;
 	const int bhi_indi_cap = health_data->bhi_indi_cap;
+	struct rtc_time tm;
+	int battery_age, ret;
 
-	if (health_data->bhi_data.battery_age >= ONE_YEAR_HRS ||
-	    (cur_impedance > 0 && age_impedance_max > 0 && cur_impedance >= age_impedance_max) ||
-	    cur_capacity_pct <= bhi_indi_cap)
+	ret = get_activation_date(health_data, &tm);
+	if (ret == 0) {
+		struct timespec64 ts;
+		unsigned long long date_in_epoch;
+
+		/* get by local time */
+		ktime_get_real_ts64(&ts);
+		date_in_epoch = ts.tv_sec - (sys_tz.tz_minuteswest * 60);
+
+		battery_age = (date_in_epoch - rtc_tm_to_time64(&tm)) / ONE_HR_SEC;
+		pr_debug("%s: age: act_date:%d timerh:%d\n", __func__, battery_age,
+			 health_data->bhi_data.battery_age);
+	} else {
+		battery_age = health_data->bhi_data.battery_age;
+	}
+
+	if (battery_age >= ONE_YEAR_HRS || cur_capacity_pct <= bhi_indi_cap ||
+	    (cur_impedance > 0 && age_impedance_max > 0 && cur_impedance >= age_impedance_max))
 		return health_data->need_rep_threshold * 100;
 
 	return BHI_ALGO_FULL_HEALTH;
@@ -4113,22 +4163,13 @@ static int bhi_calc_cap_index(int algo, struct batt_drv *batt_drv)
 
 	capacity_health = bhi_health_get_capacity(algo, bhi_data);
 
-	/* for BHI_ALGO_ACHI_B compare to aacr capacity */
-	if (algo == BHI_ALGO_ACHI_B || algo == BHI_ALGO_ACHI_RAVG_B) {
+	if (algo == BHI_ALGO_ACHI_B || algo == BHI_ALGO_ACHI_RAVG ||
+	    algo == BHI_ALGO_ACHI_RAVG_B) {
 		const int cycle_count = batt_drv->fake_aacr_cc ?
 					batt_drv->fake_aacr_cc : batt_drv->cycle_count;
 
-		if (algo == BHI_ALGO_ACHI_RAVG_B) {
-			l_bound = bhi_get_capacity_bound(cycle_count,
-							 &bhi_data->lower_bound.limit[0]);
-			u_bound = aacr_get_capacity_for_algo(batt_drv, cycle_count,
-							     BATT_AACR_ALGO_LOW_B);
-		} else {
-			l_bound = aacr_get_capacity_for_algo(batt_drv, cycle_count,
-							     BATT_AACR_ALGO_DEFAULT);
-			u_bound = bhi_get_capacity_bound(cycle_count,
-							 &bhi_data->upper_bound.limit[0]);
-		}
+		l_bound = bhi_get_capacity_bound(cycle_count, &bhi_data->lower_bound.limit[0]);
+		u_bound = bhi_get_capacity_bound(cycle_count, &bhi_data->upper_bound.limit[0]);
 
 		capacity_health = max(capacity_health, l_bound);
 		capacity_health = min(capacity_health, u_bound);
@@ -4336,7 +4377,7 @@ static int bhi_cycle_count_index(const struct health_data *health_data)
 	return cc_index;
 }
 
-static int bhi_calc_health_index(int algo, const struct health_data *health_data,
+static int bhi_calc_health_index(int algo, struct health_data *health_data,
 				 int cap_index, int imp_index, int sd_index)
 {
 	int ratio, index;
@@ -4407,8 +4448,10 @@ static enum bhi_status bhi_calc_health_status(int algo, int health_index,
 
 	if (algo == BHI_ALGO_ACHI_B || algo == BHI_ALGO_ACHI_RAVG_B) {
 		const int cycle_count = data->bhi_data.cycle_count;
+		const int l_bound = bhi_get_capacity_bound(cycle_count,
+							   &data->bhi_data.lower_bound.limit[0]);
 
-		if (data->bhi_cycle_grace && cycle_count < data->bhi_cycle_grace)
+		if (l_bound == 0 && data->bhi_cycle_grace && cycle_count < data->bhi_cycle_grace)
 			return BH_NOT_AVAILABLE;
 	}
 
@@ -7744,35 +7787,16 @@ static ssize_t first_usage_date_show(struct device *dev,
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
 	struct bhi_data *bhi_data = &batt_drv->health_data.bhi_data;
-	struct bm_date date;
 	struct rtc_time tm;
+	int ret;
 
 	/* return if the device tree is set */
 	if (bhi_data->first_usage_date)
 		return scnprintf(buf, PAGE_SIZE, "%d\n", bhi_data->first_usage_date);
 
-	/* read activation date when data is not successfully read in probe */
-	if (bhi_data->act_date[0] == 0) {
-		int ret;
-
-		ret = batt_get_activation_date(&batt_drv->health_data.bhi_data);
-		if (ret < 0)
-			return scnprintf(buf, PAGE_SIZE, "%d\n", ret);
-	}
-
-	/* convert date to epoch
-	 * for example:
-	 * act_date: ASCII 2/2/3 -> bm_y/bm_m/bm_d: 22/02/03
-	 *                       -> tm_year/tm_mon/tm_mday: 122/01/03
-	 *                       -> epoch: 164384640
-	 */
-	date.bm_y = xymd_to_date(bhi_data->act_date[0]) + 20;
-	date.bm_m = xymd_to_date(bhi_data->act_date[1]);
-	date.bm_d = xymd_to_date(bhi_data->act_date[2]);
-
-	tm.tm_year = date.bm_y + 100;	// base is 1900
-	tm.tm_mon = date.bm_m - 1;	// 0 is Jan ... 11 is Dec
-	tm.tm_mday = date.bm_d;		// 1st ... 31th
+	ret = get_activation_date(&batt_drv->health_data, &tm);
+	if (ret < 0)
+		return scnprintf(buf, PAGE_SIZE, "%d\n", -EIO);
 
 	return scnprintf(buf, PAGE_SIZE, "%lld\n", rtc_tm_to_time64(&tm));
 }
@@ -10224,7 +10248,7 @@ static int batt_bhi_init(struct batt_drv *batt_drv)
 	struct health_data *health_data = &batt_drv->health_data;
 	struct bhi_data *bhi_data = &health_data->bhi_data;
 	u16 capacity_boundary[BHI_TREND_POINTS_SIZE];
-	int ret;
+	int ret, i;
 
 	/* set upper_bound value to BHI_CAPACITY_MAX(0xFFFF) */
 	memset(bhi_data->upper_bound.limit, 0xFF, sizeof(bhi_data->upper_bound.limit));
@@ -10282,7 +10306,7 @@ static int batt_bhi_init(struct batt_drv *batt_drv)
 		health_data->bhi_cycle_grace = 0;
 
 	/* design is the value used to build the charge table */
-	health_data->bhi_data.pack_capacity = batt_drv->battery_capacity;
+	bhi_data->pack_capacity = batt_drv->battery_capacity;
 
 	/* need battery id to get right trend points */
 	batt_drv->batt_id = GPSY_GET_PROP(batt_drv->fg_psy, GBMS_PROP_BATT_ID);
@@ -10294,14 +10318,16 @@ static int batt_bhi_init(struct batt_drv *batt_drv)
 						 batt_drv->battery_capacity)) {
 		memcpy(&bhi_data->lower_bound.limit[0], capacity_boundary,
 		       sizeof(capacity_boundary));
-		dev_info(batt_drv->device,
-			 "bhi_l_bound [%d, %d, %d, %d, %d, %d, %d, %d, %d, %d]\n",
-			 bhi_data->lower_bound.limit[0], bhi_data->lower_bound.limit[1],
-			 bhi_data->lower_bound.limit[2], bhi_data->lower_bound.limit[3],
-			 bhi_data->lower_bound.limit[4], bhi_data->lower_bound.limit[5],
-			 bhi_data->lower_bound.limit[6], bhi_data->lower_bound.limit[7],
-			 bhi_data->lower_bound.limit[8], bhi_data->lower_bound.limit[9]);
+	} else {
+		for (i = 0; i < BHI_TREND_POINTS_SIZE; i++)
+			bhi_data->lower_bound.limit[i] = bhi_data->pack_capacity * 60 / 100;
 	}
+	dev_info(batt_drv->device, "bhi_l_bound [%d, %d, %d, %d, %d, %d, %d, %d, %d, %d]\n",
+		 bhi_data->lower_bound.limit[0], bhi_data->lower_bound.limit[1],
+		 bhi_data->lower_bound.limit[2], bhi_data->lower_bound.limit[3],
+		 bhi_data->lower_bound.limit[4], bhi_data->lower_bound.limit[5],
+		 bhi_data->lower_bound.limit[6], bhi_data->lower_bound.limit[7],
+		 bhi_data->lower_bound.limit[8], bhi_data->lower_bound.limit[9]);
 
 	ret = of_property_read_u16_array(gbms_batt_id_node(batt_drv->device->of_node),
 					 "google,bhi-u-bound", &capacity_boundary[0],
@@ -10310,14 +10336,16 @@ static int batt_bhi_init(struct batt_drv *batt_drv)
 						 BHI_CAPACITY_MAX)) {
 		memcpy(&bhi_data->upper_bound.limit[0], capacity_boundary,
 		       sizeof(capacity_boundary));
-		dev_info(batt_drv->device,
-			 "bhi_u_bound [%d, %d, %d, %d, %d, %d, %d, %d, %d, %d]\n",
-			 bhi_data->upper_bound.limit[0], bhi_data->upper_bound.limit[1],
-			 bhi_data->upper_bound.limit[2], bhi_data->upper_bound.limit[3],
-			 bhi_data->upper_bound.limit[4], bhi_data->upper_bound.limit[5],
-			 bhi_data->upper_bound.limit[6], bhi_data->upper_bound.limit[7],
-			 bhi_data->upper_bound.limit[8], bhi_data->upper_bound.limit[9]);
+	} else {
+		for (i = 0; i < BHI_TREND_POINTS_SIZE; i++)
+			bhi_data->upper_bound.limit[i] = bhi_data->pack_capacity;
 	}
+	dev_info(batt_drv->device, "bhi_u_bound [%d, %d, %d, %d, %d, %d, %d, %d, %d, %d]\n",
+		 bhi_data->upper_bound.limit[0], bhi_data->upper_bound.limit[1],
+		 bhi_data->upper_bound.limit[2], bhi_data->upper_bound.limit[3],
+		 bhi_data->upper_bound.limit[4], bhi_data->upper_bound.limit[5],
+		 bhi_data->upper_bound.limit[6], bhi_data->upper_bound.limit[7],
+		 bhi_data->upper_bound.limit[8], bhi_data->upper_bound.limit[9]);
 
 	ret = of_property_read_u16_array(gbms_batt_id_node(batt_drv->device->of_node),
 					 "google,bhi-l-trigger", &capacity_boundary[0],
