@@ -284,6 +284,7 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj);
 static int max1720x_set_next_update(struct max1720x_chip *chip);
 static int max1720x_monitor_log_data(struct max1720x_chip *chip, bool force_log);
 static int max17201_init_rc_switch(struct max1720x_chip *chip);
+static int max1720x_update_cycle_count(struct max1720x_chip *chip);
 
 static bool max17x0x_reglog_init(struct max1720x_chip *chip)
 {
@@ -1538,6 +1539,8 @@ static void max1720x_restore_battery_cycle(struct max1720x_chip *chip)
 		ret = REGMAP_WRITE_VERIFY(&chip->regmap, MAX1720X_CYCLES, eeprom_cycle);
 		if (ret < 0)
 			dev_warn(chip->dev, "fail to update cycles (%d)", ret);
+		else
+			max1720x_update_cycle_count(chip);
 	}
 }
 
@@ -5125,6 +5128,7 @@ static int max1720x_init_chip(struct max1720x_chip *chip)
 
 	/* max_m5 triggers loading of the model in the irq handler on POR */
 	if (!chip->por && chip->gauge_type == MAX_M5_GAUGE_TYPE) {
+		max1720x_update_cycle_count(chip);
 		ret = max1720x_init_max_m5(chip);
 		if (ret < 0)
 			return ret;
@@ -5851,8 +5855,6 @@ static void max1720x_init_work(struct work_struct *work)
 	/* Force dump log once to get initial data */
 	if (!chip->por)
 		max1720x_monitor_log_data(chip, true);
-
-	max1720x_update_cycle_count(chip);
 
 	max1720x_update_timer_base(chip);
 
