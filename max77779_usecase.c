@@ -18,6 +18,14 @@
 
 static int gs201_otg_enable(struct max77779_usecase_data *uc_data, bool enable);
 /* ----------------------------------------------------------------------- */
+static void gs201_charge_full_5v_enable(struct max77779_usecase_data *uc_data, bool enable)
+{
+	if (!uc_data->force_5v_votable)
+		uc_data->force_5v_votable = gvotable_election_get_handle(VOTABLE_FORCE_5V);
+
+	if (uc_data->force_5v_votable)
+		gvotable_cast_int_vote(uc_data->force_5v_votable, "USECASE", enable, 1);
+}
 
 int gs201_wlc_en(struct max77779_usecase_data *uc_data, enum wlc_state_t state)
 {
@@ -55,6 +63,8 @@ static int gs201_wlc_tx_enable(struct max77779_usecase_data *uc_data, int use_ca
 
 	if (!enable) {
 		if (!uc_data->reverse12_en) {
+			gs201_charge_full_5v_enable(uc_data, true);
+
 			ret = max77779_external_chg_reg_write(uc_data->client,
 							      MAX77779_CHG_CNFG_11, 0x0);
 			if (ret < 0)
@@ -85,22 +95,24 @@ static int gs201_wlc_tx_enable(struct max77779_usecase_data *uc_data, int use_ca
 		return 0;
 	}
 
-	if (!uc_data->reverse12_en && (use_case == GSU_MODE_USB_CHG_WLC_TX) &&
-	   (uc_data->input_uv != 9000000)) {
-		if (uc_data->rtx_retries) {
-			pr_debug("%s: retries %d\n", __func__, uc_data->rtx_retries);
-			uc_data->rtx_state = GSU_RTX_RETRY;
-			uc_data->rtx_retries--;
-			return -EAGAIN;
+	if (!uc_data->reverse12_en) {
+		if ((use_case == GSU_MODE_USB_CHG_WLC_TX) && (uc_data->input_uv != 9000000)) {
+			if (uc_data->rtx_retries) {
+				pr_debug("%s: retries %d\n", __func__, uc_data->rtx_retries);
+				uc_data->rtx_state = GSU_RTX_RETRY;
+				uc_data->rtx_retries--;
+				return -EAGAIN;
+			}
+
+			pr_err("%s: disabling rtx, usb max_voltage not 9V max_usbv=%d",
+			__func__, uc_data->input_uv);
+
+			if (uc_data->rtx_available >= 0)
+				gpio_set_value_cansleep(uc_data->rtx_available, 0);
+			uc_data->rtx_state = GSU_RTX_DISABLED;
+			return -EINVAL;
 		}
-
-		pr_err("%s: disabling rtx, usb max_voltage not 9V max_usbv=%d",
-		__func__, uc_data->input_uv);
-
-		if (uc_data->rtx_available >= 0)
-			gpio_set_value_cansleep(uc_data->rtx_available, 0);
-		uc_data->rtx_state = GSU_RTX_DISABLED;
-		return -EINVAL;
+		gs201_charge_full_5v_enable(uc_data, false);
 	}
 
 	ret = gs201_wlc_en(uc_data, WLC_ENABLED);
@@ -121,7 +133,7 @@ static int gs201_wlc_tx_config(struct max77779_usecase_data *uc_data, int use_ca
 	u8 val;
 	int ret = 0;
 
-	/* No reverse 1:2 available, we need to configure sequoia */
+	/* No reverse 1:2 available, we need to configure max77779 */
 	if (!uc_data->reverse12_en) {
 		if (use_case == GSU_MODE_WLC_TX) {
 			ret = max77779_external_chg_reg_write(uc_data->client,

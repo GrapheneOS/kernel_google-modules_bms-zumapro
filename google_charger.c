@@ -285,6 +285,7 @@ struct chg_drv {
 	struct gvotable_election *tx_icl_votable;
 	struct gvotable_election *msc_last_votable;
 	struct gvotable_election *chg_mdis;
+	struct gvotable_election *force_5v_votable;
 
 	bool init_done;
 	bool batt_present;
@@ -2385,6 +2386,7 @@ static void chg_work(struct work_struct *work)
 	int soc = -1, update_interval = -1;
 	bool chg_done = false;
 	int success, rc = 0;
+	int force_5v;
 
 	__pm_stay_awake(chg_drv->chg_ws);
 
@@ -2625,12 +2627,17 @@ update_charger:
 	if (soc != 100)
 		chg_done = false;
 
+	force_5v = gvotable_get_current_int_vote(chg_drv->force_5v_votable);
+
+	if (chg_done)
+		pr_debug("MSC_CHG charge full force 5V: %d\n", force_5v);
+
 	/* tied to the charger: could tie to battery @ 100% instead */
-	if (!chg_drv->chg_term.usb_5v && chg_done && usb_pd_is_high_volt(&ad)) {
+	if (!chg_drv->chg_term.usb_5v && chg_done && usb_pd_is_high_volt(&ad) && force_5v) {
 		pr_info("MSC_CHG switch to 5V on full\n");
 		chg_update_capability(chg_drv->tcpm_psy, PDO_FIXED_5V, 0);
 		chg_drv->chg_term.usb_5v = 1;
-	} else if (chg_drv->pps_data.stage == PPS_ACTIVE && chg_done) {
+	} else if (((chg_drv->pps_data.stage == PPS_ACTIVE) || !force_5v) && chg_done) {
 		pr_info("MSC_CHG switch to Fixed Profile on full\n");
 		chg_drv->pps_data.stage = PPS_DISABLED;
 		chg_update_capability(chg_drv->tcpm_psy, PDO_FIXED_HIGH_VOLTAGE,
@@ -4445,6 +4452,17 @@ static int chg_disable_std_votables(struct chg_drv *chg_drv)
 	return 0;
 }
 
+static int chg_force_5v_cb(struct gvotable_election *el,
+			  const char *reason, void *vote)
+{
+	struct chg_drv *chg_drv = gvotable_get_data(el);
+
+	if (chg_drv->chg_psy)
+		power_supply_changed(chg_drv->chg_psy);
+
+	return 0;
+}
+
 static void chg_destroy_votables(struct chg_drv *chg_drv)
 {
 	gvotable_destroy_election(chg_drv->msc_fv_votable);
@@ -4456,6 +4474,7 @@ static void chg_destroy_votables(struct chg_drv *chg_drv)
 	gvotable_destroy_election(chg_drv->msc_last_votable);
 	gvotable_destroy_election(chg_drv->charging_policy_votable);
 	gvotable_destroy_election(chg_drv->thermal_level_votable);
+	gvotable_destroy_election(chg_drv->force_5v_votable);
 
 	chg_drv->msc_fv_votable = NULL;
 	chg_drv->msc_fcc_votable = NULL;
@@ -4468,6 +4487,7 @@ static void chg_destroy_votables(struct chg_drv *chg_drv)
 	chg_drv->msc_last_votable = NULL;
 	chg_drv->charging_policy_votable = NULL;
 	chg_drv->thermal_level_votable = NULL;
+	chg_drv->force_5v_votable = NULL;
 }
 
 /* TODO: qcom/battery.c mostly handles PL charging: we don't need it.
@@ -4604,6 +4624,20 @@ static int chg_create_votables(struct chg_drv *chg_drv)
 	gvotable_set_default(chg_drv->thermal_level_votable, (void *)0);
 	gvotable_set_vote2str(chg_drv->thermal_level_votable, gvotable_v2s_int);
 	gvotable_election_set_name(chg_drv->thermal_level_votable, VOTABLE_THERMAL_LVL);
+
+	chg_drv->force_5v_votable =
+		gvotable_create_int_election(NULL, gvotable_comparator_int_min,
+					     chg_force_5v_cb, chg_drv);
+	if (IS_ERR_OR_NULL(chg_drv->force_5v_votable)) {
+		ret = PTR_ERR(chg_drv->force_5v_votable);
+		chg_drv->force_5v_votable = NULL;
+		goto error_exit;
+	}
+
+	gvotable_set_default(chg_drv->force_5v_votable, (void *)1);
+	gvotable_set_vote2str(chg_drv->force_5v_votable, gvotable_v2s_int);
+	gvotable_election_set_name(chg_drv->force_5v_votable, VOTABLE_FORCE_5V);
+	gvotable_use_default(chg_drv->force_5v_votable, true);
 
 	return 0;
 

@@ -46,6 +46,8 @@ struct max77779_usecase_data {
 	struct power_supply *psy;
 
 	bool dcin_is_dock;
+
+	struct gvotable_election *force_5v_votable;
 };
 
 enum gsu_usecases {
