@@ -924,7 +924,6 @@ struct p9221_charger_data {
 	u8				ptmc_id_str[(sizeof(u16) * 2) + 1];
 	u32				aicl_delay_ms;
 	u32				aicl_icl_ua;
-	int				rtx_state;
 	u32				rtx_csp;
 	int				rtx_err;
 	int				rtx_reset_cnt;
@@ -1106,6 +1105,12 @@ enum p9382_rtx_err {
 	RTX_HARD_OCP,
 	RTX_CHRG_NOT_SUP,
 };
+
+#define RTX_BATT_LOW_BIT		BIT(0)
+#define RTX_OVER_TEMP_BIT		BIT(1)
+#define RTX_TX_CONFLICT_BIT		BIT(2)
+#define RTX_HARD_OCP_BIT		BIT(3)
+#define RTX_CHRG_NOTSUP_BIT		BIT(4)
 
 enum p9xxx_rtx_gpio_state {
 	RTX_WAIT = 0,

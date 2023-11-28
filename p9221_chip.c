@@ -2719,7 +2719,6 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 
 	switch (chip_id) {
 	case P9412_CHIP_ID:
-		chgr->rtx_state = RTX_AVAILABLE;
 		chgr->rx_buf_size = P9412_DATA_BUF_SIZE;
 		chgr->tx_buf_size = P9412_DATA_BUF_SIZE;
 
@@ -2753,7 +2752,6 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->chip_is_calibrated = p9412_chip_is_calibrated;
 		break;
 	case RA9530_CHIP_ID:
-		chgr->rtx_state = RTX_AVAILABLE;
 		chgr->rx_buf_size = RA9530_DATA_BUF_SIZE;
 		chgr->tx_buf_size = RA9530_DATA_BUF_SIZE;
 		chgr->chip_get_rx_ilim = ra9530_chip_get_rx_ilim;
@@ -2789,7 +2787,6 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->chip_set_bpp_icl = ra9530_chip_set_bpp_icl;
 		break;
 	case P9382A_CHIP_ID:
-		chgr->rtx_state = RTX_AVAILABLE;
 		chgr->rx_buf_size = P9221R5_DATA_RECV_BUF_SIZE;
 		chgr->tx_buf_size = P9221R5_DATA_SEND_BUF_SIZE;
 
@@ -2825,7 +2822,6 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->chip_get_vrect = p9222_chip_get_vrect;
 		chgr->chip_set_cmd = p9222_chip_set_cmd_reg;
 
-		chgr->rtx_state = RTX_NOTSUPPORTED;
 		chgr->rx_buf_size = P9221R5_DATA_RECV_BUF_SIZE;
 		chgr->tx_buf_size = P9221R5_DATA_SEND_BUF_SIZE;
 
@@ -2854,7 +2850,6 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->chip_capdiv_en = p9221_capdiv_en;
 		break;
 	default:
-		chgr->rtx_state = RTX_NOTSUPPORTED;
 		chgr->rx_buf_size = P9221R5_DATA_RECV_BUF_SIZE;
 		chgr->tx_buf_size = P9221R5_DATA_SEND_BUF_SIZE;
 
@@ -3034,7 +3029,10 @@ static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 
 		if (value == 0) {
 			charger->rtx_gpio_state = RTX_NOT_SUPP;
-			charger->rtx_err = RTX_CHRG_NOT_SUP;
+			charger->rtx_err |= RTX_CHRG_NOTSUP_BIT;
+			schedule_work(&charger->uevent_work);
+		} else if (value == 1 && charger->rtx_err & RTX_CHRG_NOTSUP_BIT) {
+			charger->rtx_err &= ~RTX_CHRG_NOTSUP_BIT;
 			schedule_work(&charger->uevent_work);
 		}
 		mutex_unlock(&charger->rtx_gpio_lock);

@@ -4979,6 +4979,31 @@ static ssize_t rx_lvl_show(struct device *dev,
 
 static DEVICE_ATTR_RO(rx_lvl);
 
+/* requires mutex_unlock(&charger->rtx_lock); */
+static enum p9382_rtx_state p9xxx_get_rtx_status(struct p9221_charger_data *charger)
+{
+	int ext_bst_on = 0, rtx_err = charger->rtx_err;
+
+	p9xxx_setup_all(charger->dev->of_node, charger->pdata);
+
+	if (rtx_err & RTX_OVER_TEMP_BIT)
+		return RTX_DISABLED;
+
+	if (!charger->pdata->has_rtx || rtx_err & RTX_CHRG_NOTSUP_BIT)
+		return RTX_NOTSUPPORTED;
+
+	if (charger->pdata->ben_gpio > 0)
+		ext_bst_on = gpio_get_value_cansleep(charger->pdata->ben_gpio);
+
+	if (p9221_is_online(charger))
+		return (charger->ben_state || charger->rtx_reset_cnt) ? RTX_ACTIVE : RTX_DISABLED;
+
+	if (!ext_bst_on)
+		return RTX_AVAILABLE;
+
+	return RTX_DISABLED;
+}
+
 static ssize_t rtx_status_show(struct device *dev,
 				     struct device_attribute *attr,
 				     char *buf)
@@ -4987,29 +5012,14 @@ static ssize_t rtx_status_show(struct device *dev,
 	struct p9221_charger_data *charger = i2c_get_clientdata(client);
 	static const char * const rtx_state_text[] = {
 		"not support", "available", "active", "disabled" };
-	int ext_bst_on = 0;
+	enum p9382_rtx_state rtx_status;
 
-	if (!charger->pdata->has_rtx || charger->rtx_err == RTX_CHRG_NOT_SUP)
-		charger->rtx_state = RTX_NOTSUPPORTED;
-
-	p9xxx_setup_all(charger->dev->of_node, charger->pdata);
-
-	if (p9221_is_online(charger)) {
-		if (charger->ben_state || charger->rtx_reset_cnt)
-			charger->rtx_state = RTX_ACTIVE;
-		else
-			charger->rtx_state = RTX_DISABLED;
-	} else {
-		if (charger->pdata->ben_gpio > 0)
-			ext_bst_on = gpio_get_value_cansleep(charger->pdata->ben_gpio);
-		if (ext_bst_on)
-			charger->rtx_state = RTX_DISABLED;
-		else
-			charger->rtx_state = RTX_AVAILABLE;
-	}
+	mutex_lock(&charger->rtx_lock);
+	rtx_status = p9xxx_get_rtx_status(charger);
+	mutex_unlock(&charger->rtx_lock);
 
 	return scnprintf(buf, PAGE_SIZE, "%s\n",
-			 rtx_state_text[charger->rtx_state]);
+			 rtx_state_text[rtx_status]);
 }
 
 static DEVICE_ATTR_RO(rtx_status);
@@ -5043,8 +5053,20 @@ static ssize_t rtx_err_show(struct device *dev,
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct p9221_charger_data *charger = i2c_get_clientdata(client);
+	int err = RTX_NO_ERROR, rtx_err = charger->rtx_err;
 
-	return scnprintf(buf, PAGE_SIZE, "%d\n", charger->rtx_err);
+	if (rtx_err & RTX_BATT_LOW_BIT)
+		err = RTX_BATT_LOW;
+	else if (rtx_err & RTX_OVER_TEMP_BIT)
+		err = RTX_OVER_TEMP;
+	else if (rtx_err & RTX_TX_CONFLICT_BIT)
+		err = RTX_TX_CONFLICT;
+	else if (rtx_err & RTX_HARD_OCP_BIT)
+		err = RTX_HARD_OCP;
+	else if (rtx_err & RTX_CHRG_NOTSUP_BIT)
+		err = RTX_CHRG_NOT_SUP;
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", err);
 }
 
 static DEVICE_ATTR_RO(rtx_err);
@@ -5452,7 +5474,7 @@ static bool p9xxx_rtx_gpio_is_state(struct p9221_charger_data *charger,
 
 	mutex_lock(&charger->rtx_gpio_lock);
 
-	/* only wait when enable to enable */
+	/* only wait when try to enable */
 	if (state != RTX_READY)
 		goto unlock;
 
@@ -5612,8 +5634,7 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 	}
 error:
 	if (charger->rtx_reset_cnt > 0) {
-		if (charger->rtx_err != RTX_CHRG_NOT_SUP)
-			charger->rtx_err = RTX_HARD_OCP;
+		charger->rtx_err |= RTX_HARD_OCP_BIT;
 		charger->rtx_reset_cnt = 0;
 	}
 done:
@@ -5741,6 +5762,7 @@ static ssize_t rtx_store(struct device *dev,
 	struct i2c_client *client = to_i2c_client(dev);
 	struct p9221_charger_data *charger = i2c_get_clientdata(client);
 	int ret;
+	enum p9382_rtx_state rtx_status;
 
 	p9xxx_setup_all(charger->dev->of_node, charger->pdata);
 
@@ -5763,7 +5785,13 @@ static ssize_t rtx_store(struct device *dev,
 		gvotable_cast_vote(charger->bcl_wlc_votable, BCL_DEV_VOTER, (void *)BCL_WLC_VOTE,
 				   WLC_ENABLED_TX);
 		charger->rtx_reset_cnt = 0;
-		ret = p9382_set_rtx(charger, true);
+		rtx_status = p9xxx_get_rtx_status(charger);
+		if (rtx_status == RTX_AVAILABLE)
+			ret = p9382_set_rtx(charger, true);
+		else if (rtx_status == RTX_ACTIVE)
+			ret = 0;
+		else
+			ret = -ENODEV;
 		mutex_unlock(&charger->rtx_lock);
 	} else {
 		return -EINVAL;
@@ -6223,7 +6251,7 @@ static void p9382_txid_work(struct work_struct *work)
 }
 
 /* requires mutex_lock(&charger->rtx_lock); */
-static void p9xxx_reset_rtx_for_ocp(struct p9221_charger_data *charger)
+static void p9xxx_reset_rtx(struct p9221_charger_data *charger)
 {
 	const bool rtx_gpio_retry = p9xxx_rtx_gpio_is_state(charger, RTX_RETRY);
 	int ext_bst_on = 0;
@@ -6233,9 +6261,11 @@ static void p9xxx_reset_rtx_for_ocp(struct p9221_charger_data *charger)
 
 		if (charger->rtx_reset_cnt >= RTX_RESET_COUNT_MAX) {
 			if (charger->rtx_reset_cnt == RTX_RESET_COUNT_MAX)
-				charger->rtx_err = RTX_HARD_OCP;
+				charger->rtx_err |= RTX_HARD_OCP_BIT;
 			charger->rtx_reset_cnt = 0;
 		}
+	} else {
+		charger->rtx_reset_cnt = 0;
 	}
 	charger->is_rtx_mode = false;
 	p9382_set_rtx(charger, false);
@@ -6269,7 +6299,7 @@ static void p9xxx_rtx_reset_work(struct work_struct *work)
 	if (!charger->ben_state)
 		goto unlock_done;
 
-	p9xxx_reset_rtx_for_ocp(charger);
+	p9xxx_reset_rtx(charger);
 
 unlock_done:
 	mutex_unlock(&charger->rtx_lock);
@@ -6304,7 +6334,7 @@ static void p9382_rtx_work(struct work_struct *work)
 	logbuffer_log(charger->rtx_log, "is_rtx_on: ben=%d, mode=%02x, ret=%d",
 		      charger->ben_state, mode_reg, ret);
 
-	p9xxx_reset_rtx_for_ocp(charger);
+	p9xxx_reset_rtx(charger);
 
 reschedule:
 	schedule_delayed_work(&charger->rtx_work,
@@ -6363,16 +6393,16 @@ static void rtx_irq_handler(struct p9221_charger_data *charger, u16 irq_src)
 
 	if (irq_src & (hard_ocp_bit | tx_conflict_bit | ocp_ping_bit)) {
 		if (irq_src & hard_ocp_bit)
-			charger->rtx_err = RTX_HARD_OCP;
+			charger->rtx_err |= RTX_HARD_OCP_BIT;
 		else if (irq_src & tx_conflict_bit)
-			charger->rtx_err = RTX_TX_CONFLICT;
+			charger->rtx_err |= RTX_TX_CONFLICT_BIT;
 
 		logbuffer_prlog(charger->rtx_log, "rtx_err=%d, STATUS_REG=%04x",
 				charger->rtx_err, status_reg);
 
 		cancel_delayed_work_sync(&charger->rtx_work);
-		if (charger->rtx_err == RTX_HARD_OCP) {
-			charger->rtx_err = 0;
+		if (charger->rtx_err & RTX_HARD_OCP_BIT) {
+			charger->rtx_err = RTX_NO_ERROR;
 			schedule_work(&charger->rtx_reset_work);
 		} else {
 			charger->is_rtx_mode = false;
