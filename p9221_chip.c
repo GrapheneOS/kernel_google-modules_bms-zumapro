@@ -2548,6 +2548,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_cmfet_addr = P9412_CMFET_L_REG;
 		chgr->reg_epp_tx_guarpwr_addr = P9221R5_EPP_TX_GUARANTEED_POWER_REG;
 		chgr->tx_api_limit = P9412_I_API_Limit_1350MA;
+		chgr->reg_freq_limit_addr = 0;
 		break;
 	case RA9530_CHIP_ID:
 		chgr->reg_tx_id_addr = P9412_PROP_TX_ID_REG;
@@ -2571,6 +2572,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->wlc_ocp = RA9530_ILIM_MAX_UA;
 		chgr->low_neg_pwr_icl = RA9530_ILIM_500UA;
 		chgr->det_off_debounce = 1000;
+		chgr->reg_freq_limit_addr = 0;
 		break;
 	case P9382A_CHIP_ID:
 		chgr->reg_tx_id_addr = P9382_PROP_TX_ID_REG;
@@ -2587,6 +2589,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_mot_addr = 0;
 		chgr->reg_cmfet_addr = 0;
 		chgr->reg_epp_tx_guarpwr_addr = P9221R5_EPP_TX_GUARANTEED_POWER_REG;
+		chgr->reg_freq_limit_addr = 0;
 		break;
 	case P9222_CHIP_ID:
 		chgr->reg_tx_id_addr = P9222RE_PROP_TX_ID_REG;
@@ -2603,6 +2606,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_mot_addr = 0;
 		chgr->reg_cmfet_addr = 0;
 		chgr->reg_epp_tx_guarpwr_addr = P9222RE_EPP_TX_GUARANTEED_POWER_REG;
+		chgr->reg_freq_limit_addr = P9222RE_FREQ_LIMIT_REG;
 		break;
 	default:
 		chgr->reg_tx_id_addr = P9221R5_PROP_TX_ID_REG;
@@ -2619,6 +2623,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_mot_addr = 0;
 		chgr->reg_cmfet_addr = 0;
 		chgr->reg_epp_tx_guarpwr_addr = P9221R5_EPP_TX_GUARANTEED_POWER_REG;
+		chgr->reg_freq_limit_addr = 0;
 		break;
 	}
 }
@@ -2895,6 +2900,7 @@ static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 		ret = p9xxx_gpio_set_value(charger, charger->pdata->dc_switch_gpio, value);
 		break;
 	case P9XXX_GPIO_ONLINE_SPOOF:
+		mutex_lock(&charger->irq_det_lock);
 		if (charger->pdata->irq_det_gpio >= 0 &&
 		    value && charger->online && !charger->online_spoof) {
 			if (charger->pdata->ldo_en_gpio > 0) {
@@ -2905,6 +2911,7 @@ static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 				logbuffer_prlog(charger->log, "online_spoof=1");
 			}
 			enable_irq(charger->pdata->irq_det_int);
+			enable_irq_wake(charger->pdata->irq_det_int);
 			charger->online_spoof = true;
 			cancel_delayed_work(&charger->stop_online_spoof_work);
 			charger->det_status = gpio_get_value_cansleep(charger->pdata->irq_det_gpio);
@@ -2915,6 +2922,7 @@ static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 						 msecs_to_jiffies(DET_READY_DEBOUNCE_MS));
 			}
 		}
+		mutex_unlock(&charger->irq_det_lock);
 		if (!value && charger->pdata->ldo_en_gpio > 0) {
 			gpio_set_value_cansleep(charger->pdata->ldo_en_gpio, 0);
 			logbuffer_prlog(charger->log, "pxxx_gpio online_spoof=0 ldo_en_gpio=0");
