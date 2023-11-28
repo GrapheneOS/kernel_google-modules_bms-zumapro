@@ -6929,21 +6929,9 @@ static void p9382_rtx_disable_work(struct work_struct *work)
 {
 	struct p9221_charger_data *charger = container_of(work,
 			struct p9221_charger_data, rtx_disable_work);
-	char reason[GVOTABLE_MAX_REASON_LEN];
-	int tx_icl, ret = 0;
+	int ret = 0;
 
 	mutex_lock(&charger->rtx_lock);
-	/* Set error reason rtx is disabled due to overtemp*/
-	tx_icl = gvotable_get_current_int_vote(charger->tx_icl_votable);
-	gvotable_get_current_reason(charger->tx_icl_votable, reason, GVOTABLE_MAX_REASON_LEN);
-	if (tx_icl == 0 && (strcmp(reason, THERMAL_DAEMON_VOTER) == 0 ||
-				strcmp(reason, REASON_MDIS) == 0)) {
-		charger->rtx_err = RTX_OVER_TEMP;
-		logbuffer_log(charger->rtx_log,
-			      "over temp vote %d to tx_icl, voter: %s",
-			      tx_icl, reason);
-	}
-
 	if (!charger->bcl_wlc_votable)
 		charger->bcl_wlc_votable = gvotable_election_get_handle(BCL_WLC);
 	if (!charger->bcl_wlc_votable) {
@@ -7677,6 +7665,17 @@ static int p9382a_tx_icl_vote_callback(struct gvotable_election *el,
 	struct p9221_charger_data *charger = gvotable_get_data(el);
 	int icl_ua = GVOTABLE_PTR_TO_INT(vote);
 	int ret = 0;
+
+	if (icl_ua == 0 &&
+	    (strcmp(reason, THERMAL_DAEMON_VOTER) == 0 ||
+	    strcmp(reason, REASON_MDIS) == 0)) {
+		charger->rtx_err |= RTX_OVER_TEMP_BIT;
+		schedule_work(&charger->uevent_work);
+		logbuffer_log(charger->rtx_log, "tx_icl: %d, voter: %s", icl_ua, reason);
+	} else if (icl_ua && charger->rtx_err & RTX_OVER_TEMP_BIT) {
+		charger->rtx_err &= ~RTX_OVER_TEMP_BIT;
+		schedule_work(&charger->uevent_work);
+	}
 
 	if (!charger->ben_state)
 		return 0;
