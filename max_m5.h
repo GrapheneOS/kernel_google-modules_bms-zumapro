@@ -25,7 +25,7 @@
 /* change to 1 or 0 to load FG model with default parameters on startup */
 #define MAX_M5_LOAD_MODEL_DISABLED	-1
 #define MAX_M5_LOAD_MODEL_IDLE		0
-#define MAX_M5_LOAD_MODEL_REQUEST	5
+#define MAX_M5_LOAD_MODEL_REQUEST	1
 
 #define MAX_M5_FG_MODEL_START		0x80
 #define MAX_M5_FG_MODEL_SIZE		48
