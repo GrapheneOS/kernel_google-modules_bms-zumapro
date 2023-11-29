@@ -2955,12 +2955,12 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 		} else {
 			dev_warn(chip->dev, "POR is set(%04x), model reload:%d\n",
 				 fg_status, chip->model_reload);
-			/* trigger model load if not on-going */
-			if (chip->model_reload != MAX_M5_LOAD_MODEL_REQUEST) {
-				err = max1720x_model_reload(chip, false);
-				if (err < 0)
-					fg_status_clr &= ~MAX1720X_STATUS_POR;
-			}
+			/*
+			 * trigger model load if not on-going, clear POR only when
+			 * model loading done successfully
+			 */
+			if (chip->model_reload != MAX_M5_LOAD_MODEL_REQUEST)
+				max1720x_model_reload(chip, false);
 		}
 		mutex_unlock(&chip->model_lock);
 	}
@@ -4463,7 +4463,7 @@ static void max1720x_model_work(struct work_struct *work)
 			chip->model_reload = MAX_M5_LOAD_MODEL_DISABLED;
 			chip->model_ok = false;
 		} else if (chip->model_reload > MAX_M5_LOAD_MODEL_IDLE) {
-			chip->model_reload -= 1;
+			chip->model_reload += 1;
 		}
 	}
 
