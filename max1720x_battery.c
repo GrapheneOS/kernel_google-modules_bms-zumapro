@@ -2160,11 +2160,11 @@ static int max1720x_get_age(struct max1720x_chip *chip)
 
 /* TODO b/284191528 - Add to common code file */
 #define MAX_HIST_FULLCAP	0x3FF
-static int max1720x_get_fade_rate(struct max1720x_chip *chip, int *fade_rate)
+static int max1720x_get_fade_rate(struct max1720x_chip *chip, int *fade_rate, enum gbms_property p)
 {
 	struct max17x0x_eeprom_history hist = { 0 };
 	int bhi_fcn_count = chip->bhi_fcn_count;
-	int ret, ratio, i, fcn_sum = 0;
+	int ret, ratio, i, fcn_sum = 0, fcr_sum = 0;
 	u16 hist_idx;
 
 	ret = gbms_storage_read(GBMS_TAG_HCNT, &hist_idx, sizeof(hist_idx));
@@ -2192,18 +2192,21 @@ static int max1720x_get_fade_rate(struct max1720x_chip *chip, int *fade_rate)
 		ret = gbms_storage_read_data(GBMS_TAG_HIST, &hist,
 					     sizeof(hist), hist_idx);
 
-		dev_dbg(chip->dev, "%s: idx=%d hist.fc=%d (%x) ret=%d\n", __func__,
-			hist_idx, hist.fullcapnom, hist.fullcapnom, ret);
+		dev_dbg(chip->dev, "%s: idx=%d hist.fcn=%d (%x) hist.fcr=%d (%x) ret=%d\n",
+				    __func__, hist_idx, hist.fullcapnom, hist.fullcapnom,
+				    hist.fullcaprep, hist.fullcaprep, ret);
 
 		if (ret < 0 || ret != sizeof(hist))
 			return -EINVAL;
 
 		/* hist.fullcapnom = fullcapnom * 800 / designcap */
 		fcn_sum += hist.fullcapnom;
+		fcr_sum += hist.fullcaprep;
 	}
 
 	/* convert from max17x0x_eeprom_history to percent */
-	ratio = fcn_sum / (bhi_fcn_count * 8);
+	ratio = (p == GBMS_PROP_CAPACITY_FADE_RATE_FCR) ? fcr_sum / (bhi_fcn_count * 8)
+							: fcn_sum / (bhi_fcn_count * 8);
 
 	/* allow negative value when capacity larger than design */
 	*fade_rate = 100 - ratio;
@@ -2480,7 +2483,8 @@ static int max1720x_get_property(struct power_supply *psy,
 		val->intval = batt_ce_full_estimate(&chip->cap_estimate);
 		break;
 	case GBMS_PROP_CAPACITY_FADE_RATE:
-		err = max1720x_get_fade_rate(chip, &val->intval);
+	case GBMS_PROP_CAPACITY_FADE_RATE_FCR:
+		err = max1720x_get_fade_rate(chip, &val->intval, psp);
 		break;
 	case GBMS_PROP_BATT_ID:
 		val->intval = chip->batt_id;
