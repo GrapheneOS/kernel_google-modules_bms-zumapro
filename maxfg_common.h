@@ -287,7 +287,7 @@ static inline int maxfg_regmap_writeverify(const struct maxfg_regmap *map,
 
 /* dump FG model data */
 void dump_model(struct device *dev, u16 model_start, u16 *data, int count);
-int maxfg_get_fade_rate(struct device *dev, int bhi_fcn_count, int *fade_rate);
+int maxfg_get_fade_rate(struct device *dev, int bhi_fcn_count, int *fade_rate, enum gbms_property p);
 const struct maxfg_reg * maxfg_find_by_tag(struct maxfg_regmap *map, enum maxfg_reg_tags tag);
 int maxfg_reg_read(struct maxfg_regmap *map, enum maxfg_reg_tags tag, u16 *val);
 int maxfg_collect_history_data(void *buff, size_t size, bool is_por, u16 designcap,

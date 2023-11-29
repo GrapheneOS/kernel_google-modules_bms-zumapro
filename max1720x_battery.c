@@ -2011,7 +2011,8 @@ static int max1720x_get_property(struct power_supply *psy,
 		val->intval = batt_ce_full_estimate(&chip->cap_estimate);
 		break;
 	case GBMS_PROP_CAPACITY_FADE_RATE:
-		err = maxfg_get_fade_rate(chip->dev, chip->bhi_fcn_count, &val->intval);
+	case GBMS_PROP_CAPACITY_FADE_RATE_FCR:
+		err = maxfg_get_fade_rate(chip->dev, chip->bhi_fcn_count, &val->intval, psp);
 		break;
 	case GBMS_PROP_BATT_ID:
 		val->intval = chip->batt_id;

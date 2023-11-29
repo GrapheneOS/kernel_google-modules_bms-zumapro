@@ -310,6 +310,7 @@ struct bhi_weight bhi_w[] = {
 	[BHI_ALGO_ACHI_RAVG] = {100, 0, 0},
 	[BHI_ALGO_ACHI_RAVG_B] = {100, 0, 0},
 	[BHI_ALGO_MIX_N_MATCH] = {90, 0, 10},
+	[BHI_ALGO_ACHI_FCR] = {100, 0, 0},
 };
 
 struct bm_date {
@@ -334,7 +335,8 @@ struct bhi_data
 
 	/* capacity metrics */
 	int pack_capacity;		/* mAh, from the FG or from charge table */
-	int capacity_fade;		/* from the FG */
+	int capacity_fade;		/* calculated from battery history fullcapnom */
+	int capacity_fade_fcr;		/* calculated from battery history fullcaprep */
 
 	/* impedance */
 	u32 act_impedance;		/* resistance, qualified */
@@ -4098,8 +4100,10 @@ static int hist_get_index(int cycle_count, const struct batt_drv *batt_drv)
 static int bhi_cap_data_update(struct bhi_data *bhi_data, struct batt_drv *batt_drv)
 {
 	struct power_supply *fg_psy = batt_drv->fg_psy;
-	int cap_fade, rc;
+	int rc, rc_fcr;
 	const int fade_rate = GPSY_GET_INT_PROP(fg_psy, GBMS_PROP_CAPACITY_FADE_RATE, &rc);
+	const int fade_rate_fcr =
+		GPSY_GET_INT_PROP(fg_psy, GBMS_PROP_CAPACITY_FADE_RATE_FCR, &rc_fcr);
 	const int designcap = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN);
 
 	/* GBMS_PROP_CAPACITY_FADE_RATE is in percent */
@@ -4107,15 +4111,17 @@ static int bhi_cap_data_update(struct bhi_data *bhi_data, struct batt_drv *batt_
 		return -ENODATA;
 	if (bhi_data->pack_capacity <= 0)
 		return -EINVAL;
-	if (rc)
+	if (rc && rc_fcr)
 		return -EINVAL;
 
-	cap_fade = fade_rate * designcap / (bhi_data->pack_capacity * 1000);
+	if (rc == 0)
+		bhi_data->capacity_fade = fade_rate * designcap / (bhi_data->pack_capacity * 1000);
+	if (rc_fcr == 0)
+		bhi_data->capacity_fade_fcr =
+			fade_rate_fcr * designcap / (bhi_data->pack_capacity * 1000);
 
-	bhi_data->capacity_fade = cap_fade;
-
-	pr_debug("%s: cap_fade=%d, cycle_count=%d\n", __func__,
-		bhi_data->capacity_fade, bhi_data->cycle_count);
+	pr_debug("%s: cap_fade=%d, cap_fade_fcr=%d, cycle_count=%d\n", __func__,
+		 bhi_data->capacity_fade, bhi_data->capacity_fade_fcr, bhi_data->cycle_count);
 
 	return 0;
 }
@@ -4127,7 +4133,10 @@ static int bhi_cap_data_update(struct bhi_data *bhi_data, struct batt_drv *batt_
  */
 static int bhi_health_get_capacity(int algo, const struct bhi_data *bhi_data)
 {
-	return bhi_data->pack_capacity * (100 - bhi_data->capacity_fade) / 100;
+	const int fade_rate = (algo == BHI_ALGO_ACHI_FCR) ? bhi_data->capacity_fade_fcr
+							  : bhi_data->capacity_fade;
+
+	return bhi_data->pack_capacity * (100 - fade_rate) / 100;
 }
 
 static bool bhi_bound_validity_check(const u16 *capacity, int lower, int upper)
@@ -4160,12 +4169,34 @@ static int bhi_get_capacity_bound(int cycle_count, const u16 *cap_bound)
 	return ca_under + (cycle_count - (index * 100)) * (ca_upper - ca_under) / 100;
 }
 
+static bool bhi_algo_has_bounds(int algo)
+{
+	return algo == BHI_ALGO_ACHI_B || algo == BHI_ALGO_ACHI_RAVG ||
+	       algo == BHI_ALGO_ACHI_RAVG_B;
+}
+
+static int bhi_algo_apply_bounds(int algo, int capacity_health, int cycle_count,
+				 const struct bhi_data *bhi_data)
+{
+	int cap, l_bound, u_bound;
+
+	l_bound = bhi_get_capacity_bound(cycle_count, &bhi_data->lower_bound.limit[0]);
+	u_bound = bhi_get_capacity_bound(cycle_count, &bhi_data->upper_bound.limit[0]);
+
+	cap = max(capacity_health, l_bound);
+	cap = min(capacity_health, u_bound);
+
+	pr_debug("%s: algo=%d l_bound=%d u_bound=%d\n", __func__, algo, l_bound, u_bound);
+
+	return cap;
+}
+
 /* The limit for capacity is 80% of design */
 static int bhi_calc_cap_index(int algo, struct batt_drv *batt_drv)
 {
 	const struct health_data *health_data = &batt_drv->health_data;
 	const struct bhi_data *bhi_data = &health_data->bhi_data;
-	int capacity_health, index, l_bound = 0, u_bound = 100;
+	int capacity_health, index;
 
 	if (algo == BHI_ALGO_DISABLED)
 		return BHI_ALGO_FULL_HEALTH;
@@ -4178,16 +4209,12 @@ static int bhi_calc_cap_index(int algo, struct batt_drv *batt_drv)
 
 	capacity_health = bhi_health_get_capacity(algo, bhi_data);
 
-	if (algo == BHI_ALGO_ACHI_B || algo == BHI_ALGO_ACHI_RAVG ||
-	    algo == BHI_ALGO_ACHI_RAVG_B) {
+	if (bhi_algo_has_bounds(algo)) {
 		const int cycle_count = batt_drv->fake_aacr_cc ?
 					batt_drv->fake_aacr_cc : batt_drv->cycle_count;
 
-		l_bound = bhi_get_capacity_bound(cycle_count, &bhi_data->lower_bound.limit[0]);
-		u_bound = bhi_get_capacity_bound(cycle_count, &bhi_data->upper_bound.limit[0]);
-
-		capacity_health = max(capacity_health, l_bound);
-		capacity_health = min(capacity_health, u_bound);
+		capacity_health = bhi_algo_apply_bounds(algo, capacity_health, cycle_count,
+							bhi_data);
 	}
 
 	/*
@@ -4197,9 +4224,9 @@ static int bhi_calc_cap_index(int algo, struct batt_drv *batt_drv)
 
 	index = (capacity_health * BHI_ALGO_FULL_HEALTH) / bhi_data->pack_capacity;
 
-	pr_debug("%s: algo=%d index=%d ch=%d, clb=%d, cub=%d, pc=%d, fr=%d\n", __func__,
-		algo, index, capacity_health, l_bound, u_bound, bhi_data->pack_capacity,
-		bhi_data->capacity_fade);
+	pr_debug("%s: algo=%d index=%d ch=%d, pc=%d, fr=%d, fr_fcr=%d\n", __func__, algo, index,
+		 capacity_health, bhi_data->pack_capacity, bhi_data->capacity_fade,
+		 bhi_data->capacity_fade_fcr);
 
 	return index;
 }
@@ -4413,6 +4440,7 @@ static int bhi_calc_health_index(int algo, struct health_data *health_data,
 	case BHI_ALGO_ACHI_RAVG:
 	case BHI_ALGO_ACHI_RAVG_B:
 	case BHI_ALGO_MIX_N_MATCH:
+	case BHI_ALGO_ACHI_FCR:
 		w_ci = bhi_w[algo].w_ci;
 		w_ii = bhi_w[algo].w_ii;
 		w_sd = bhi_w[algo].w_sd;
@@ -4450,6 +4478,11 @@ static int bhi_calc_health_index(int algo, struct health_data *health_data,
 	return index;
 }
 
+static bool bhi_algo_has_grace(int algo)
+{
+	return algo == BHI_ALGO_ACHI_B || algo == BHI_ALGO_ACHI_RAVG_B;
+}
+
 static enum bhi_status bhi_calc_health_status(int algo, int health_index,
 					      const struct health_data *data)
 {
@@ -4461,7 +4494,7 @@ static enum bhi_status bhi_calc_health_status(int algo, int health_index,
 	if (algo == BHI_ALGO_DISABLED)
 		return BH_UNKNOWN;
 
-	if (algo == BHI_ALGO_ACHI_B || algo == BHI_ALGO_ACHI_RAVG_B) {
+	if (bhi_algo_has_grace(algo)) {
 		const int cycle_count = data->bhi_data.cycle_count;
 		const int l_bound = bhi_get_capacity_bound(cycle_count,
 							   &data->bhi_data.lower_bound.limit[0]);
