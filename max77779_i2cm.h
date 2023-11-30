@@ -7,57 +7,37 @@
 #define MAX77779_I2CM_H_
 #include <linux/regmap.h>
 
-#define DONEI_SET(v) (((v) << MAX77779_I2CM_INTERRUPT_DONEI_SHIFT) & \
-		MAX77779_I2CM_INTERRUPT_DONEI_MASK)
-#define DONEI_GET(v) (((v) & MAX77779_I2CM_INTERRUPT_DONEI_MASK) >> \
-		MAX77779_I2CM_INTERRUPT_DONEI_SHIFT)
-#define ERRI_SET(v) (((v) << MAX77779_I2CM_INTERRUPT_ERRI_SHIFT) & \
-		MAX77779_I2CM_INTERRUPT_ERRI_MASK)
-#define ERRI_GET(v) (((v) & MAX77779_I2CM_INTERRUPT_ERRI_MASK) >> \
-		MAX77779_I2CM_INTERRUPT_ERRI_SHIFT)
+#include "max77779_regs.h"
 
-#define DONEIM_SET(v) (((v) << MAX77779_I2CM_INTMASK_DONEIM_SHIFT) & \
-		MAX77779_I2CM_INTMASK_DONEIM_MASK)
-#define DONEIM_GET(v) (((v) & MAX77779_I2CM_INTMASK_DONEIM_MASK) >> \
-		MAX77779_I2CM_INTMASK_DONEIM_SHIFT)
-#define ERRIM_SET(v) (((v) << MAX77779_I2CM_INTMASK_ERRIM_SHIFT) & \
-		MAX77779_I2CM_INTMASK_ERRIM_MASK)
-#define ERRIM_GET(v) (((v) & MAX77779_I2CM_INTMASK_ERRIM_MASK) >> \
-		MAX77779_I2CM_INTMASK_ERRIM_SHIFT)
+#define DONEI_SET(v) _max77779_i2cm_interrupt_donei_set(0, v)
+#define DONEI_GET(v) _max77779_i2cm_interrupt_donei_get(v)
+#define ERRI_SET(v) _max77779_i2cm_interrupt_erri_set(0, v)
+#define ERRI_GET(v) _max77779_i2cm_interrupt_erri_get(v)
 
-#define ERROR_SET(v) (((v) << MAX77779_I2CM_STATUS_ERROR_SHIFT) & \
-		MAX77779_I2CM_STATUS_ERROR_MASK)
-#define ERROR_GET(v) (((v) & MAX77779_I2CM_STATUS_ERROR_MASK) >> \
-		MAX77779_I2CM_STATUS_ERROR_SHIFT)
+#define DONEIM_SET(v) _max77779_i2cm_intmask_doneim_set(0, v)
+#define DONEIM_GET(v) _max77779_i2cm_intmask_doneim_get(v)
+#define ERRIM_SET(v) _max77779_i2cm_intmask_errim_set(0, v)
+#define ERRIM_GET(v) _max77779_i2cm_intmask_errim_get(v)
 
-#define I2CEN_SET(v) (((v) << MAX77779_I2CM_CONTROL_I2CEN_SHIFT) & \
-		MAX77779_I2CM_CONTROL_I2CEN_MASK)
-#define I2CEN_GET(v) (((v) & MAX77779_I2CM_CONTROL_I2CEN_MASK) >> \
-		MAX77779_I2CM_CONTROL_I2CEN_SHIFT)
-#define CLOCK_SPEED_SET(v) (((v) << MAX77779_I2CM_CONTROL_CLOCK_SPEED_SHIFT) & \
-		MAX77779_I2CM_CONTROL_CLOCK_SPEED_MASK)
-#define CLOCK_SPEED_GET(v) (((v) & MAX77779_I2CM_CONTROL_CLOCK_SPEED_MASK) >> \
-		MAX77779_I2CM_CONTROL_CLOCK_SPEED_SHIFT)
+#define ERROR_SET(v) _max77779_i2cm_status_error_set(0, v)
+#define ERROR_GET(v) _max77779_i2cm_status_error_get(v)
 
-#define SID_SET(v) (((v) << MAX77779_I2CM_SLADD_SLAVE_ID_SHIFT) & \
-		MAX77779_I2CM_SLADD_SLAVE_ID_MASK)
-#define SID_GET(v) (((v) & MAX77779_I2CM_SLADD_SLAVE_ID_MASK) >> \
-		MAX77779_I2CM_SLADD_SLAVE_ID_SHIFT)
+#define I2CEN_SET(v) _max77779_i2cm_control_i2cen_set(0, v)
+#define I2CEN_GET(v) _max77779_i2cm_control_i2cen_get(v)
+#define CLOCK_SPEED_SET(v) _max77779_i2cm_control_clock_speed_set(0, v)
+#define CLOCK_SPEED_GET(v) _max77779_i2cm_control_clock_speed_get(v)
 
-#define TXCNT_SET(v) (((v) << MAX77779_I2CM_TXDATA_CNT_TXCNT_SHIFT) & \
-		MAX77779_I2CM_TXDATA_CNT_TXCNT_MASK)
-#define TXCNT_GET(v) (((v) & MAX77779_I2CM_TXDATA_CNT_TXCNT_MASK) >> \
-		MAX77779_I2CM_TXDATA_CNT_TXCNT_SHIFT)
+#define SID_SET(v) _max77779_i2cm_sladd_slave_id_set(0, v)
+#define SID_GET(v) _max77779_i2cm_sladd_slave_id_get(v)
 
-#define I2CMWRITE_SET(v) (((v) << MAX77779_I2CM_CMD_I2CMWRITE_SHIFT) & \
-		MAX77779_I2CM_CMD_I2CMWRITE_MASK)
-#define I2CMWRITE_GET(v) (((v) & MAX77779_I2CM_CMD_I2CMWRITE_MASK) >> \
-		MAX77779_I2CM_CMD_I2CMWRITE_SHIFT)
+#define TXCNT_SET(v) _max77779_i2cm_txdata_cnt_txcnt_set(0, v)
+#define TXCNT_GET(v) _max77779_i2cm_txdata_cnt_txcnt_get(v)
 
-#define I2CMREAD_SET(v) (((v) << MAX77779_I2CM_CMD_I2CMREAD_SHIFT) & \
-		MAX77779_I2CM_CMD_I2CMREAD_MASK)
-#define I2CMREAD_GET(v) (((v) & MAX77779_I2CM_CMD_I2CMREAD_MASK) >> \
-		MAX77779_I2CM_CMD_I2CMREAD_SHIFT)
+#define I2CMWRITE_SET(v) _max77779_i2cm_cmd_i2cmwrite_set(0, v)
+#define I2CMWRITE_GET(v) _max77779_i2cm_cmd_i2cmwrite_get(v)
+
+#define I2CMREAD_SET(v) _max77779_i2cm_cmd_i2cmread_set(0, v)
+#define I2CMREAD_GET(v) _max77779_i2cm_cmd_i2cmread_get(v)
 
 #define I2CM_ERR_ARBITRATION_LOSS(status_err)	(!!((status_err) & BIT(0)))
 #define I2CM_ERR_TIMEOUT(status_err)		(!!((status_err) & BIT(1)))
