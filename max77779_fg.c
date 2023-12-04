@@ -1969,11 +1969,6 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 
 		/* trigger model load if not on-going */
 		if (chip->model_reload != MAX77779_FG_LOAD_MODEL_REQUEST) {
-			/* Mask the interrupt before model load */
-			err = max77779_fg_mask_por(chip, true);
-			if (err < 0)
-				dev_warn(chip->dev, "unable to mask por bit, err=%d\n", err);
-
 			err = max77779_fg_model_reload(chip, false);
 			if (err < 0)
 				dev_dbg(chip->dev, "unable to reload model, err=%d\n", err);
