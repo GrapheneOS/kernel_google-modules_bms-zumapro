@@ -691,8 +691,12 @@ static int gbatt_get_raw_temp(struct batt_drv *batt_drv, int *temp)
 
 static inline void batt_update_cycle_count(struct batt_drv *batt_drv)
 {
-	batt_drv->cycle_count = GPSY_GET_PROP(batt_drv->fg_psy,
-					      POWER_SUPPLY_PROP_CYCLE_COUNT);
+	const int ret = GPSY_GET_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_CYCLE_COUNT);
+
+	if (ret >= 0)
+		batt_drv->cycle_count = ret;
+	else
+		dev_warn(batt_drv->device, "Failed to get cycle count (%d)\n", ret);
 }
 
 static int google_battery_tz_get_cycle_count(void *data, int *cycle_count)
