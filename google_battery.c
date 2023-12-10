@@ -5494,10 +5494,9 @@ msc_logic_exit:
 }
 
 /* charge profile not in battery */
-static int batt_init_chg_profile(struct batt_drv *batt_drv)
+static int batt_init_chg_profile(struct batt_drv *batt_drv, struct device_node *node)
 {
 	struct gbms_chg_profile *profile = &batt_drv->chg_profile;
-	struct device_node *node = batt_drv->device->of_node;
 	int ret = 0;
 
 	/* handle retry */
@@ -5508,14 +5507,13 @@ static int batt_init_chg_profile(struct batt_drv *batt_drv)
 	}
 
 	/* this is in mAh */
-	ret = of_property_read_u32(gbms_batt_id_node(batt_drv->device->of_node),
+	ret = of_property_read_u32(gbms_batt_id_node(node),
 				   "google,chg-battery-capacity",
 				    &batt_drv->battery_capacity);
 	/* google,chg-battery-capacity does not exist in the child_node */
 	if (ret < 0)
-		ret = of_property_read_u32(batt_drv->device->of_node,
-					   "google,chg-battery-capacity",
-					    &batt_drv->battery_capacity);
+		ret = of_property_read_u32(node, "google,chg-battery-capacity",
+					   &batt_drv->battery_capacity);
 	if (ret < 0)
 		pr_warn("read chg-battery-capacity from gauge\n");
 
@@ -5541,8 +5539,6 @@ static int batt_init_chg_profile(struct batt_drv *batt_drv)
 		}
 
 		if (batt_drv->battery_capacity == 0) {
-			struct device_node *node = batt_drv->device->of_node;
-
 			ret = of_property_read_u32(node,
 					"google,chg-battery-default-capacity",
 						&batt_drv->battery_capacity);
@@ -5554,7 +5550,7 @@ static int batt_init_chg_profile(struct batt_drv *batt_drv)
 	}
 
 	/* TODO: dump the AACR table if supported */
-	ret = gbms_read_aacr_limits(profile, gbms_batt_id_node(batt_drv->device->of_node));
+	ret = gbms_read_aacr_limits(profile, gbms_batt_id_node(node));
 	if (ret == 0)
 		pr_info("AACR: supported\n");
 
@@ -10593,7 +10589,7 @@ static void google_battery_init_work(struct work_struct *work)
 	/* could read EEPROM and history here */
 
 	/* chg_profile will use cycle_count when aacr is enabled */
-	ret = batt_init_chg_profile(batt_drv);
+	ret = batt_init_chg_profile(batt_drv, node);
 	if (ret == -EPROBE_DEFER)
 		goto retry_init_work;
 
