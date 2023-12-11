@@ -7768,10 +7768,10 @@ static bool p9xxx_find_votable(struct p9221_charger_data *charger)
 	if (!charger->dc_icl_votable)
 		dev_warn(&charger->client->dev, "Could not find DC_ICL votable\n");
 
-        if (!charger->wlc_spoof_votable)
-                charger->wlc_spoof_votable = gvotable_election_get_handle("WLC_SPOOF");
-        if (!charger->wlc_spoof_votable)
-                dev_warn(&charger->client->dev, "Could not find WLC SPOOF votable\n");
+	if (charger->pdata->ldo_en_gpio > 0 && !charger->wlc_spoof_votable)
+		charger->wlc_spoof_votable = gvotable_election_get_handle("WLC_SPOOF");
+	if (charger->pdata->ldo_en_gpio > 0 && !charger->wlc_spoof_votable)
+		dev_warn(&charger->client->dev, "Could not find WLC SPOOF votable\n");
 	/*
 	 * Find the DC_SUSPEND, we use this to disable DCIN before
 	 * enter RTx mode
@@ -7789,7 +7789,7 @@ static bool p9xxx_find_votable(struct p9221_charger_data *charger)
 	return charger->dc_icl_votable != NULL &&
 	       charger->dc_suspend_votable != NULL &&
 	       charger->chg_mode_votable != NULL &&
-	       charger->wlc_spoof_votable != NULL;
+	       (charger->pdata->ldo_en_gpio > 0 && charger->wlc_spoof_votable != NULL);
 }
 
 static int p9221_charger_probe(struct i2c_client *client,
