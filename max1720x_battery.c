@@ -283,6 +283,8 @@ struct max1720x_chip {
 static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj);
 static int max1720x_set_next_update(struct max1720x_chip *chip);
 static int max1720x_monitor_log_data(struct max1720x_chip *chip, bool force_log);
+static int max17201_init_rc_switch(struct max1720x_chip *chip);
+static int max1720x_update_cycle_count(struct max1720x_chip *chip);
 
 static bool max17x0x_reglog_init(struct max1720x_chip *chip)
 {
@@ -1538,6 +1540,8 @@ static void max1720x_restore_battery_cycle(struct max1720x_chip *chip)
 		ret = REGMAP_WRITE_VERIFY(&chip->regmap, MAX1720X_CYCLES, eeprom_cycle);
 		if (ret < 0)
 			dev_warn(chip->dev, "fail to update cycles (%d)", ret);
+		else
+			max1720x_update_cycle_count(chip);
 	}
 }
 
@@ -2991,12 +2995,12 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 		} else {
 			dev_warn(chip->dev, "POR is set(%04x), model reload:%d\n",
 				 fg_status, chip->model_reload);
-			/* trigger model load if not on-going */
-			if (chip->model_reload != MAX_M5_LOAD_MODEL_REQUEST) {
-				err = max1720x_model_reload(chip, false);
-				if (err < 0)
-					fg_status_clr &= ~MAX1720X_STATUS_POR;
-			}
+			/*
+			 * trigger model load if not on-going, clear POR only when
+			 * model loading done successfully
+			 */
+			if (chip->model_reload != MAX_M5_LOAD_MODEL_REQUEST)
+				max1720x_model_reload(chip, false);
 		}
 		mutex_unlock(&chip->model_lock);
 	}
@@ -3738,8 +3742,11 @@ static int debug_batt_id_set(void *data, u64 val)
 
 	/* re-init the model data (lookup in DT) */
 	ret = max1720x_init_model(chip);
-	if (ret == 0)
+	if (ret == 0) {
+		/* lookup tempco and learncfg in DT */
+		max17201_init_rc_switch(chip);
 		max1720x_model_reload(chip, true);
+	}
 
 	mutex_unlock(&chip->model_lock);
 
@@ -4531,7 +4538,7 @@ static void max1720x_model_work(struct work_struct *work)
 			chip->model_reload = MAX_M5_LOAD_MODEL_DISABLED;
 			chip->model_ok = false;
 		} else if (chip->model_reload > MAX_M5_LOAD_MODEL_IDLE) {
-			chip->model_reload -= 1;
+			chip->model_reload += 1;
 		}
 	}
 
@@ -4569,31 +4576,26 @@ static int max17201_init_rc_switch(struct max1720x_chip *chip)
 
 	ret = of_property_read_u32(chip->dev->of_node, "maxim,rc-soc", &chip->rc_switch.soc);
 	if (ret < 0)
-		return ret;
+		return -EINVAL;
 
 	ret = of_property_read_u32(chip->dev->of_node, "maxim,rc-temp", &chip->rc_switch.temp);
 	if (ret < 0)
-		return ret;
+		return -EINVAL;
 
 	ret = of_property_read_u16(chip->batt_node, "maxim,rc1-tempco", &chip->rc_switch.rc1_tempco);
 	if (ret < 0)
-		return ret;
+		return -EINVAL;
 
-	/* Same as INI value */
-	ret = of_property_read_u16(chip->batt_node, "maxim,rc2-tempco", &chip->rc_switch.rc2_tempco);
+	ret = max_m5_get_rc_switch_param(chip->model_data, &chip->rc_switch.rc2_tempco,
+					 &chip->rc_switch.rc2_learncfg);
 	if (ret < 0)
-		return ret;
-
-	/* Same as INI value */
-	ret = of_property_read_u16(chip->batt_node, "maxim,rc2-learncfg", &chip->rc_switch.rc2_learncfg);
-	if (ret < 0)
-		return ret;
+		return -EINVAL;
 
 	chip->rc_switch.available = true;
 
-	dev_warn(chip->dev, "rc_switch: enable:%d soc/temp:%d/%d tempco_rc1/rc2:%#x/%#x\n",
-		 chip->rc_switch.enable, chip->rc_switch.soc, chip->rc_switch.temp,
-		 chip->rc_switch.rc1_tempco, chip->rc_switch.rc2_tempco);
+	dev_info(chip->dev, "rc_switch soc:%d temp:%d rc1_tempco:%#x rc2_tempco:%#x cfg:%#x\n",
+		 chip->rc_switch.soc, chip->rc_switch.temp, chip->rc_switch.rc1_tempco,
+		 chip->rc_switch.rc2_tempco, chip->rc_switch.rc2_learncfg);
 
 	if (chip->rc_switch.enable)
 		schedule_delayed_work(&chip->rc_switch.switch_work, msecs_to_jiffies(60 * 1000));
@@ -5134,6 +5136,7 @@ static int max1720x_init_chip(struct max1720x_chip *chip)
 
 	/* max_m5 triggers loading of the model in the irq handler on POR */
 	if (!chip->por && chip->gauge_type == MAX_M5_GAUGE_TYPE) {
+		max1720x_update_cycle_count(chip);
 		ret = max1720x_init_max_m5(chip);
 		if (ret < 0)
 			return ret;
@@ -5860,8 +5863,6 @@ static void max1720x_init_work(struct work_struct *work)
 	/* Force dump log once to get initial data */
 	if (!chip->por)
 		max1720x_monitor_log_data(chip, true);
-
-	max1720x_update_cycle_count(chip);
 
 	max1720x_update_timer_base(chip);
 
