@@ -6296,6 +6296,49 @@ static ssize_t debug_get_blf_state(struct file *filp, char __user *buf,
 }
 BATTERY_DEBUG_ATTRIBUTE(debug_blf_state_fops, debug_get_blf_state, 0);
 
+static int debug_chg_profile_switch_read(void *data, u64 *val)
+{
+	struct batt_drv *batt_drv = data;
+
+	*val = batt_drv->chg_profile.debug_chg_profile;
+	return 0;
+}
+
+static int debug_chg_profile_switch_write(void *data, u64 val)
+{
+	struct batt_drv *batt_drv = data;
+	struct device_node *node;
+	int ret;
+
+	if (batt_drv->chg_profile.debug_chg_profile == !!val)
+		return 0;
+
+	if (val)
+		node = of_find_node_by_name(batt_drv->device->of_node,
+					    "google_debug_chg_profile");
+	else
+		node = batt_drv->device->of_node;
+
+	if (!node)
+		return 0;
+
+	batt_drv->chg_profile.cccm_limits = 0;
+	ret = batt_init_chg_profile(batt_drv, node);
+	if (ret < 0)
+		return ret;
+
+	pr_info("update debug_chg_profile:%d -> %d\n",
+		batt_drv->chg_profile.debug_chg_profile, (int)val);
+
+	batt_drv->chg_profile.debug_chg_profile = val;
+
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(debug_chg_profile_switch_fops,
+			debug_chg_profile_switch_read,
+			debug_chg_profile_switch_write, "%llu\n");
+
 static ssize_t debug_get_bhi_status(struct file *filp, char __user *buf,
 				   size_t count, loff_t *ppos)
 {
@@ -8774,6 +8817,10 @@ static int batt_init_debugfs(struct batt_drv *batt_drv)
 
 	/* drain test */
 	debugfs_create_u32("restrict_level_critical", 0644, de, &batt_drv->restrict_level_critical);
+
+	/* charging profile */
+	debugfs_create_file("chg_profile_switch", 0600, de, batt_drv,
+			    &debug_chg_profile_switch_fops);
 
 	return 0;
 }
