@@ -824,7 +824,6 @@ struct p9221_charger_data {
 	u16				chip_id;
 	int				online;
 	bool				enabled;
-	bool				disable_irq;
 	u16				addr;
 	u8				count;
 	u8				cust_id;
