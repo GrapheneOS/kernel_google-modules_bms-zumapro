@@ -84,6 +84,7 @@
 #define P9221_PTMC_EPP_TX_4191		0x50
 #define P9221_PTMC_EPP_TX_1801		0x28
 #define P9221_PTMC_EPP_TX_2356		0x2356
+#define P9221_PTMC_EPP_TX_2767		0x005D
 
 #define P9222_RX_CALIBRATION_LIGHT_LOAD	0x5831
 #define P9222_LIGHT_LOAD_VALUE		0x0C
@@ -723,6 +724,7 @@ struct p9221_charger_platform_data {
 	int				tx_4191q;
 	int				tx_1801q;
 	int				tx_2356q;
+	u32				tx_2767_icl;
 	int				epp_rp_value;
 	int				epp_rp_low_value;
 	int				needs_dcin_reset;
@@ -775,6 +777,7 @@ struct p9221_charger_platform_data {
 	u32				set_iop_vout_epp;
 	u32				lowest_fsw_khz;
 	u32				gpp_cmfet;
+	bool				freq_108_disable_ramp;
 };
 
 struct p9221_charger_ints_bit {
@@ -1045,6 +1048,7 @@ struct p9221_charger_data {
 	int (*chip_get_vout)(struct p9221_charger_data *chgr, u32 *mv);
 	int (*chip_get_iout)(struct p9221_charger_data *chgr, u32 *ma);
 	int (*chip_get_op_freq)(struct p9221_charger_data *chgr, u32 *khz);
+	int (*chip_get_ping_freq)(struct p9221_charger_data *chgr, u32 *khz);
 	int (*chip_get_op_duty)(struct p9221_charger_data *chgr, u32 *duty);
 	int (*chip_get_op_bridge)(struct p9221_charger_data *chgr, u8 *hf);
 	int (*chip_get_tx_pwr)(struct p9221_charger_data *chgr, u16 *pwr);

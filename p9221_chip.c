@@ -374,6 +374,31 @@ static int p9222_chip_get_op_freq(struct p9221_charger_data *chgr, u32 *khz)
 	*khz = (u32) val;
 	return 0;
 }
+static int p9xxx_chip_get_ping_freq(struct p9221_charger_data *chgr, u32 *khz)
+{
+	int ret;
+	u16 val;
+
+	ret = chgr->reg_read_16(chgr, P9221R5_TX_PINGFREQ_REG, &val);
+	if (ret)
+		return ret;
+
+	*khz = (u32) val;
+	return 0;
+}
+
+static int p9222_chip_get_ping_freq(struct p9221_charger_data *chgr, u32 *khz)
+{
+	int ret;
+	u16 val;
+
+	ret = chgr->reg_read_16(chgr, P9222RE_TX_PINGFREQ_REG, &val);
+	if (ret)
+		return ret;
+
+	*khz = (u32) val;
+	return 0;
+}
 
 /*
  * chip_get_op_duty
@@ -1748,12 +1773,22 @@ static void p9222_check_neg_power(struct p9221_charger_data *chgr)
 	u32 vout_mv;
 	int ret;
 
-	chgr->dc_icl_epp_neg = chgr->pdata->epp_icl > 0 ? chgr->pdata->epp_icl : P9221_DC_ICL_EPP_UA;
+	chgr->dc_icl_epp_neg = chgr->pdata->epp_icl > 0 ?
+			       chgr->pdata->epp_icl : P9221_DC_ICL_EPP_UA;
 
+	/* For EPP but Vout < 9V */
 	ret = chgr->chip_get_vout_max(chgr, &vout_mv);
 	if (ret == 0 && vout_mv > 0 && vout_mv < 9000) {
 		chgr->dc_icl_epp_neg = P9221_DC_ICL_BPP_UA;
-		dev_info(&chgr->client->dev, "EPP less than 10W,use dc_icl=%dmA\n", chgr->dc_icl_epp_neg);
+		dev_info(&chgr->client->dev, "EPP less than 10W,use dc_icl=%dmA\n",
+			 chgr->dc_icl_epp_neg);
+	}
+
+	/* Based on mfg code to set EPP DC_ICL */
+	if (chgr->mfg == P9221_PTMC_EPP_TX_2767 && chgr->pdata->tx_2767_icl > 0) {
+		chgr->dc_icl_epp_neg = chgr->pdata->tx_2767_icl;
+		dev_info(&chgr->client->dev, "EPP TX(%d), use dc_icl=%dmA\n",
+			 chgr->mfg, chgr->dc_icl_epp_neg);
 	}
 }
 /* Read EPP_CUR_NEGOTIATED_POWER_REG to configure DC_ICL for EPP */
@@ -2376,7 +2411,11 @@ static void ra9530_chip_set_cmfet(struct p9221_charger_data *chgr)
 
 static int p9xxx_chip_set_bpp_icl(struct p9221_charger_data *chgr)
 {
-	return P9221_DC_ICL_BPP_UA;
+	int default_icl;
+
+	default_icl = chgr->pdata->bpp_icl > 0 ? chgr->pdata->bpp_icl : P9221_DC_ICL_BPP_UA;
+
+	return default_icl;
 }
 
 static int ra9530_chip_set_bpp_icl(struct p9221_charger_data *chgr)
@@ -2703,6 +2742,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 	chgr->chip_is_calibrated = p9xxx_chip_is_calibrated;
 	chgr->chip_set_cmfet = p9xxx_chip_set_cmfet;
 	chgr->chip_set_bpp_icl = p9xxx_chip_set_bpp_icl;
+	chgr->chip_get_ping_freq = p9xxx_chip_get_ping_freq;
 
 	switch (chip_id) {
 	case P9412_CHIP_ID:
@@ -2835,6 +2875,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->chip_send_txid = p9221_send_txid;
 		chgr->chip_send_csp_in_txmode = p9221_send_csp_in_txmode;
 		chgr->chip_capdiv_en = p9221_capdiv_en;
+		chgr->chip_get_ping_freq = p9222_chip_get_ping_freq;
 		break;
 	default:
 		chgr->rx_buf_size = P9221R5_DATA_RECV_BUF_SIZE;

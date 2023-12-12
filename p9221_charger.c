@@ -3465,6 +3465,24 @@ exit_done:
 	mutex_unlock(&charger->auth_lock);
 }
 
+static bool is_ping_freq_fixed_at(struct p9221_charger_data *charger, u32 khz)
+{
+	int ret;
+	u32 val;
+
+	ret = charger->chip_get_ping_freq(charger, &val);
+
+	if (ret < 0)
+		return false;
+
+	if ((val > khz + 2) || (val < khz - 2))
+		return false;
+
+	dev_info(&charger->client->dev, "Fixed ping freq = %dkhz\n", val);
+
+	return true;
+}
+
 static enum alarmtimer_restart p9221_icl_ramp_alarm_cb(struct alarm *alarm,
 						       ktime_t now)
 {
@@ -3529,6 +3547,9 @@ static void p9221_icl_ramp_start(struct p9221_charger_data *charger)
 
 	/* Only ramp on BPP at this time */
 	if (p9221_is_epp(charger) || no_ramp)
+		return;
+
+	if (charger->pdata->freq_108_disable_ramp && is_ping_freq_fixed_at(charger, 108))
 		return;
 
 	p9221_icl_ramp_reset(charger);
@@ -7638,6 +7659,13 @@ static int p9xxx_parse_dt(struct device *dev,
 	ret = of_property_read_u32(node, "google,bpp_dcicl_lower_vout_ramp_ua", &data);
 	if (ret == 0)
 		pdata->bpp_lv_icl_ramp_ua = data;
+
+	ret = of_property_read_u32(node, "google,tx2767_icl_ua", &data);
+	if (ret == 0)
+		pdata->tx_2767_icl = data;
+
+	pdata->freq_108_disable_ramp = of_property_read_bool(node,
+						"google,bpp-freq108-disable-ramp");
 
 	return 0;
 }
