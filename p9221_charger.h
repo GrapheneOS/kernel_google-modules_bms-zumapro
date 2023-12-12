@@ -747,8 +747,12 @@ struct p9221_charger_platform_data {
 	bool				needs_align_check;
 	/* phone type for tx_id*/
 	u8				phone_type;
-	u32				epp_icl;
-	u32				gpp_icl;
+	u32				epp_icl;		/* EPP default ICL ua*/
+	u32				gpp_icl;		/* GPP 15W ICL ua */
+	u32				bpp_icl;		/* BPP default ICL ua */
+	u32				bpp_lv_icl;		/* BPP ICL with lower Vout */
+	u32				bpp_icl_ramp_ua;	/* BPP ramp ICL */
+	u32				bpp_lv_icl_ramp_ua;	/* BPP ramp ICL with lower Vout */
 	/* calibrate light load */
 	bool				light_load;
 	int				nb_hpp_fod_vol;
@@ -978,6 +982,7 @@ struct p9221_charger_data {
 	char				*i2c_txdebug_buf;
 	char				*i2c_rxdebug_buf;
 	struct mutex			irq_det_lock;
+	struct mutex			icl_lock;
 
 #if IS_ENABLED(CONFIG_GPIOLIB)
 	struct gpio_chip gpio;
@@ -1063,6 +1068,7 @@ struct p9221_charger_data {
 	int (*chip_capdiv_en)(struct p9221_charger_data *chgr, u8 mode);
 	bool (*chip_is_calibrated)(struct p9221_charger_data *chgr);
 	void (*chip_set_cmfet)(struct p9221_charger_data *chgr);
+	int (*chip_set_bpp_icl)(struct p9221_charger_data *chgr);
 };
 
 u8 p9221_crc8(u8 *pdata, size_t nbytes, u8 crc);

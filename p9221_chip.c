@@ -2386,6 +2386,48 @@ static void ra9530_chip_set_cmfet(struct p9221_charger_data *chgr)
 		pr_err("fail to write cmfet_reg, ret=%d\n", ret);
 }
 
+static int p9xxx_chip_set_bpp_icl(struct p9221_charger_data *chgr)
+{
+	return P9221_DC_ICL_BPP_UA;
+}
+
+static int ra9530_chip_set_bpp_icl(struct p9221_charger_data *chgr)
+{
+	u32 vout_mv;
+	int ret, icl = P9221_DC_ICL_BPP_UA, ramp_icl;
+
+	if (p9221_is_epp(chgr))
+		return icl;
+
+	if (chgr->pdata->bpp_icl == 0 && chgr->pdata->bpp_lv_icl == 0)
+		return icl;
+
+	ret = chgr->chip_get_vout_max(chgr, &vout_mv);
+	if (ret < 0)
+		return icl;
+
+	mutex_lock(&chgr->icl_lock);
+	chgr->icl_ramp_ua = P9221_DC_ICL_BPP_RAMP_DEFAULT_UA;
+
+	if (vout_mv > 6000) {
+		icl = chgr->pdata->bpp_icl ? chgr->pdata->bpp_icl : icl;
+		ramp_icl = chgr->pdata->bpp_icl_ramp_ua;
+	} else {
+		icl = chgr->pdata->bpp_lv_icl ? chgr->pdata->bpp_lv_icl : icl;
+		ramp_icl = chgr->pdata->bpp_lv_icl_ramp_ua;
+	}
+
+	chgr->pdata->icl_ramp_delay_ms = ramp_icl ? P9221_DC_ICL_BPP_RAMP_DELAY_DEFAULT_MS : -1;
+	chgr->icl_ramp_ua = ramp_icl ? ramp_icl : chgr->icl_ramp_ua;
+
+	logbuffer_log(chgr->log, "bpp_icl=%d, ramp_icl=%d, ramp_en=%d\n",
+		      icl, chgr->icl_ramp_ua, chgr->pdata->icl_ramp_delay_ms > 0);
+
+	mutex_unlock(&chgr->icl_lock);
+
+	return icl;
+}
+
 void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id)
 {
 	chgr->ints.mode_changed_bit = P9221R5_STAT_MODECHANGED;
@@ -2672,6 +2714,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 	chgr->chip_get_rx_pwr = p9221_chip_get_rx_pwr;
 	chgr->chip_is_calibrated = p9xxx_chip_is_calibrated;
 	chgr->chip_set_cmfet = p9xxx_chip_set_cmfet;
+	chgr->chip_set_bpp_icl = p9xxx_chip_set_bpp_icl;
 
 	switch (chip_id) {
 	case P9412_CHIP_ID:
@@ -2742,6 +2785,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->chip_get_rx_pwr = p9xxx_chip_get_rx_pwr;
 		chgr->chip_is_calibrated = ra9530_chip_is_calibrated;
 		chgr->chip_set_cmfet = ra9530_chip_set_cmfet;
+		chgr->chip_set_bpp_icl = ra9530_chip_set_bpp_icl;
 		break;
 	case P9382A_CHIP_ID:
 		chgr->rtx_state = RTX_AVAILABLE;

@@ -3308,7 +3308,7 @@ static int p9221_set_dc_icl(struct p9221_charger_data *charger)
 	}
 
 	/* Default to BPP ICL */
-	icl = P9221_DC_ICL_BPP_UA;
+	icl = charger->chip_set_bpp_icl(charger);
 
 	if (charger->chg_on_rtx)
 		icl = P9221_DC_ICL_RTX_UA;
@@ -3825,6 +3825,7 @@ static void p9221_notifier_check_dc(struct p9221_charger_data *charger)
 		}
 		p9221_set_dc_icl(charger);
 		p9xxx_set_vout_iop(charger);
+		charger->fod_mode = -1;
 		p9221_write_fod(charger);
 		if (!charger->dc_icl_bpp)
 			p9221_icl_ramp_start(charger);
@@ -7573,6 +7574,22 @@ static int p9xxx_parse_dt(struct device *dev,
 	pdata->gpp_enhanced = of_property_read_bool(node, "google,gpp_enhanced");
 	pdata->hda_tz_wlc = of_property_read_bool(node, "google,hda-tz-wlc");
 
+	ret = of_property_read_u32(node, "google,bpp_dcicl_default_ua", &data);
+	if (ret == 0)
+		pdata->bpp_icl = data;
+
+	ret = of_property_read_u32(node, "google,bpp_dcicl_lower_vout_ua", &data);
+	if (ret == 0)
+		pdata->bpp_lv_icl = data;
+
+	ret = of_property_read_u32(node, "google,bpp_dcicl_ramp_ua", &data);
+	if (ret == 0)
+		pdata->bpp_icl_ramp_ua = data;
+
+	ret = of_property_read_u32(node, "google,bpp_dcicl_lower_vout_ramp_ua", &data);
+	if (ret == 0)
+		pdata->bpp_lv_icl_ramp_ua = data;
+
 	return 0;
 }
 
@@ -7852,6 +7869,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	charger->det_status = 1;
 	charger->cc_vout_ready = false;
 	charger->set_auth_icl = false;
+	charger->fod_mode = -1;
 	mutex_init(&charger->io_lock);
 	mutex_init(&charger->cmd_lock);
 	mutex_init(&charger->stats_lock);
@@ -7862,6 +7880,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	mutex_init(&charger->renego_lock);
 	mutex_init(&charger->fod_lock);
 	mutex_init(&charger->irq_det_lock);
+	mutex_init(&charger->icl_lock);
 	timer_setup(&charger->vrect_timer, p9221_vrect_timer_handler, 0);
 	timer_setup(&charger->align_timer, p9221_align_timer_handler, 0);
 	INIT_DELAYED_WORK(&charger->dcin_work, p9221_dcin_work);
