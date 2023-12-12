@@ -118,7 +118,7 @@ struct max77779_fwupdate {
 
 	struct delayed_work update_work;
 
-	struct i2c_client *pmic;
+	struct device *pmic;
 	struct i2c_client *fg;
 	struct i2c_client *vimon;
 	struct i2c_client *chg;
@@ -162,14 +162,10 @@ static int max77779_fwupdate_init(struct max77779_fwupdate *fwu)
 	fwu->debug_image.data = NULL;
 	fwu->debug_image.size = 0;
 
+	fwu->pmic = max77779_get_dev(fwu->dev, MAX77779_PMIC_OF_NAME);
 	if (!fwu->pmic) {
-		dn = of_parse_phandle(dev->of_node, "max77779,pmic", 0);
-		if (!dn)
-			return -ENXIO;
-
-		fwu->pmic = of_find_i2c_device_by_node(dn);
-		if (!fwu->pmic)
-			return -EPROBE_DEFER;
+		dev_err(dev, "Error finding pmic\n");
+		return -EPROBE_DEFER;
 	}
 
 	if (!fwu->fg) {
@@ -232,7 +228,7 @@ static int max77779_wait_cpu_reset(struct max77779_fwupdate *fwu)
 {
 	int ret;
 	int cnt = 0;
-	unsigned int val;
+	uint8_t val;
 
 	dev_info(fwu->dev, "waiting for cpu reset\n");
 
@@ -258,7 +254,7 @@ static int max77779_wait_fw_update(struct max77779_fwupdate *fwu)
 {
 	int ret;
 	int cnt = 0;
-	unsigned int val;
+	uint8_t val;
 
 	dev_info(fwu->dev, "waiting for firmware update\n");
 
@@ -377,8 +373,7 @@ static int max77779_trigger_interrupt(struct max77779_fwupdate *fwu,
 {
 	int ret;
 
-	ret = max77779_external_pmic_reg_write(fwu->pmic, MAX77779_FG_AP_DATAOUT_OPCODE,
-					       (unsigned int)intr);
+	ret = max77779_external_pmic_reg_write(fwu->pmic, MAX77779_FG_AP_DATAOUT_OPCODE, intr);
 	if (ret)
 		dev_err(fwu->dev, "failed to write pmic reg %02x (%d) in trigger_interrupt\n",
 			MAX77779_FG_AP_DATAOUT_OPCODE, ret);
@@ -390,7 +385,7 @@ static int max77779_get_firmware_version(struct max77779_fwupdate *fwu,
 					 struct max77779_version_info *ver)
 {
 	int ret;
-	unsigned int major, minor;
+	uint8_t major, minor;
 
 	ret = max77779_external_pmic_reg_read(fwu->pmic, MAX77779_FG_FW_REV, &major);
 	if (ret) {
@@ -404,8 +399,8 @@ static int max77779_get_firmware_version(struct max77779_fwupdate *fwu,
 		dev_err(fwu->dev, "failed to read pmic reg %02x (%d) in read firmware version\n",
 			MAX77779_FG_FW_SUB_REV, ret);
 
-	ver->major = (u8)major;
-	ver->minor = (u8)minor;
+	ver->major = major;
+	ver->minor = minor;
 
 max77779_get_firmware_version_done:
 	return ret;
@@ -692,7 +687,7 @@ static int max77779_fwl_write(struct max77779_fwupdate *fwu, const u8 *fw_binary
 			      u32 size, u32 *written)
 {
 	int ret;
-	unsigned int val;
+	uint8_t val;
 
 	dev_info(fwu->dev, "perform firmware update\n");
 
