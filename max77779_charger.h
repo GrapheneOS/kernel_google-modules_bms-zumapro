@@ -73,7 +73,7 @@ struct max77779_chgr_data {
 	bool irq_disabled;
 	bool disable_internal_irq_handler;
 
-	struct i2c_client *pmic_i2c_client;
+	struct device *pmic_dev;
 
 	struct dentry *de;
 

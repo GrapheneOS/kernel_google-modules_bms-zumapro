@@ -282,23 +282,22 @@ EXPORT_SYMBOL_GPL(max77779_external_chg_insel_read);
 
 /* ----------------------------------------------------------------------- */
 
-static int max77779_find_pmic(struct max77779_chgr_data *data)
+struct device* max77779_get_dev(struct device *dev, const char* name)
 {
 	struct device_node *dn;
+	struct i2c_client *client;
 
-	if (data->pmic_i2c_client)
-		return 0;
-
-	dn = of_parse_phandle(data->dev->of_node, "max77779,pmic", 0);
+	dn = of_parse_phandle(dev->of_node, name, 0);
 	if (!dn)
-		return -ENXIO;
+		return NULL;
 
-	data->pmic_i2c_client = of_find_i2c_device_by_node(dn);
-	if (!data->pmic_i2c_client)
-		return -EAGAIN;
+	client = of_find_i2c_device_by_node(dn);
 
-	return 0;
+	of_node_put(dn);
+
+	return client ? &client->dev : NULL;
 }
+EXPORT_SYMBOL_GPL(max77779_get_dev);
 
 static struct power_supply* max77779_get_fg_psy(struct max77779_chgr_data *chg)
 {
@@ -2527,11 +2526,15 @@ static ssize_t show_fship_dtls(struct device *dev,
 	if(max77779_resume_check(data))
 		return -EAGAIN;
 
-	ret = max77779_find_pmic(data);
-	if (ret < 0)
-		return ret;
+	if (!data->pmic_dev) {
+		data->pmic_dev = max77779_get_dev(data->dev, MAX77779_PMIC_OF_NAME);
+		if (!data->pmic_dev) {
+			dev_err(dev, "Error finding pmic\n");
+			return -EIO;
+		}
+	}
 
-	ret = max777x9_pmic_reg_read(data->pmic_i2c_client, MAX77779_PMIC_INT_MASK, &pmic_rd, 1);
+	ret = max77779_external_pmic_reg_read(data->pmic_dev, MAX77779_PMIC_INT_MASK, &pmic_rd);
 	if (ret < 0)
 		return -EIO;
 
@@ -2547,8 +2550,7 @@ static ssize_t show_fship_dtls(struct device *dev,
 			_max77779_chg_details_04_fship_exit_dtls_get(fship_dtls);
 
 		pmic_rd = _max77779_pmic_int_mask_fship_not_rd_set(pmic_rd, 1);
-		ret = max777x9_pmic_reg_write(data->pmic_i2c_client, MAX77779_PMIC_INT_MASK,
-					      &pmic_rd, 1);
+		ret = max77779_external_pmic_reg_write(data->pmic_dev, MAX77779_PMIC_INT_MASK, pmic_rd);
 		if (ret < 0)
 			pr_err("FSHIP: cannot update RD (%d)\n", ret);
 
