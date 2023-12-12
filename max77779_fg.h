@@ -80,7 +80,7 @@ struct max77779_fg_chip {
 	struct device *dev;
 	struct i2c_client *primary;
 	struct i2c_client *secondary;
-	struct i2c_client *pmic_i2c_client;
+	struct device *pmic_dev;
 
 	int irq;
 

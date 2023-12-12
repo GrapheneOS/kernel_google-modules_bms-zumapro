@@ -1128,29 +1128,34 @@ static int max77779_fg_get_age(struct max77779_fg_chip *chip)
 	return reg_to_time_hr(timerh, chip);
 }
 
+static int max77779_fg_find_pmic(struct max77779_fg_chip *chip)
+{
+	if (chip->pmic_dev)
+		return 0;
+
+	chip->pmic_dev = max77779_get_dev(chip->dev, MAX77779_PMIC_OF_NAME);
+
+	return chip->pmic_dev == NULL ? -ENXIO : 0;
+}
+
 #define MAX77779_FG_CHECK_FW_VER	1
 #define MAX77779_FG_AVAILABLE_FW_VER	15
 #define MAX77779_FG_FW_VER_TEMP	220
 static int max77779_fg_check_fw_ver(struct max77779_fg_chip *chip)
 {
-	struct device_node *dn;
-	unsigned int fw_rev, fw_sub_rev;
+	uint8_t fw_rev, fw_sub_rev;
 	int ret;
 
 	if (chip->fw_check_done)
 		return 0;
 
-	if (!chip->pmic_i2c_client) {
-		dn = of_parse_phandle(chip->dev->of_node, "max77779,pmic", 0);
-		if (!dn)
-			return -ENXIO;
-
-		chip->pmic_i2c_client = of_find_i2c_device_by_node(dn);
-		if (!chip->pmic_i2c_client)
-			return -EAGAIN;
+	ret = max77779_fg_find_pmic(chip);
+	if (ret) {
+		dev_err(chip->dev, "Error finding pmic\n");
+		return ret;
 	}
 
-	ret = max77779_external_pmic_reg_read(chip->pmic_i2c_client, MAX77779_FG_FW_REV, &fw_rev);
+	ret = max77779_external_pmic_reg_read(chip->pmic_dev, MAX77779_FG_FW_REV, &fw_rev);
 	if (ret < 0)
 		return ret;
 
@@ -1159,8 +1164,7 @@ static int max77779_fg_check_fw_ver(struct max77779_fg_chip *chip)
 		goto exit_done;
 	}
 
-	ret = max77779_external_pmic_reg_read(chip->pmic_i2c_client, MAX77779_FG_FW_SUB_REV,
-					      &fw_sub_rev);
+	ret = max77779_external_pmic_reg_read(chip->pmic_dev, MAX77779_FG_FW_SUB_REV, &fw_sub_rev);
 	if (ret < 0)
 		return ret;
 
@@ -1242,28 +1246,19 @@ static int max77779_adjust_cgain(struct max77779_fg_chip *chip, unsigned int otp
 #define CHECK_CURRENT_OFFSET_OTP_REVISION	2
 static void max77779_current_offset_check(struct max77779_fg_chip *chip)
 {
-	struct device_node *dn;
-	unsigned int otp_revision;
+	uint8_t otp_revision;
 	int ret;
 
 	if (chip->current_offset_check_done)
 		return;
 
-	if (!chip->pmic_i2c_client) {
-		dn = of_parse_phandle(chip->dev->of_node, "max77779,pmic", 0);
-		if (!dn) {
-			dev_err(chip->dev, "failed to get node max77779,pmic\n");
-			return;
-		}
-
-		chip->pmic_i2c_client = of_find_i2c_device_by_node(dn);
-		if (!chip->pmic_i2c_client) {
-			dev_err(chip->dev, "failed to get pmic_i2c_client\n");
-			return;
-		}
+	ret = max77779_fg_find_pmic(chip);
+	if (ret) {
+		dev_err(chip->dev, "Error finding pmic\n");
+		return;
 	}
 
-	ret = max77779_external_pmic_reg_read(chip->pmic_i2c_client, MAX77779_PMIC_OTP_REVISION,
+	ret = max77779_external_pmic_reg_read(chip->pmic_dev, MAX77779_PMIC_OTP_REVISION,
 					      &otp_revision);
 	if (ret < 0) {
 		dev_err(chip->dev, "failed to read PMIC_OTP_REVISION\n");
@@ -1873,23 +1868,6 @@ static int max77779_fg_check_logging_event(struct max77779_fg_chip *chip)
 	return event;
 }
 
-static int max77779_get_pmic_i2c_client(struct max77779_fg_chip *chip)
-{
-	struct device_node *dn;
-
-	if (!chip->pmic_i2c_client) {
-		dn = of_parse_phandle(chip->dev->of_node, "max77779,pmic", 0);
-		if (!dn)
-			return -ENXIO;
-
-		chip->pmic_i2c_client = of_find_i2c_device_by_node(dn);
-		if (!chip->pmic_i2c_client)
-			return -EAGAIN;
-	}
-
-	return 0;
-}
-
 /*
  * A full reset restores the ICs to their power-up state the same as if power
  * had been cycled.
@@ -1899,12 +1877,13 @@ static int max77779_fg_full_reset(struct max77779_fg_chip *chip)
 {
 	int ret = 0;
 
-	if (!chip->pmic_i2c_client)
-		ret = max77779_get_pmic_i2c_client(chip);
-	if (ret != 0)
+	ret = max77779_fg_find_pmic(chip);
+	if (ret) {
+		dev_err(chip->dev, "Error finding pmic\n");
 		return ret;
+	}
 
-	ret = max77779_external_pmic_reg_write(chip->pmic_i2c_client, MAX77779_FG_COMMAND_HW,
+	ret = max77779_external_pmic_reg_write(chip->pmic_dev, MAX77779_FG_COMMAND_HW,
 					       CMD_HW_RESET);
 	dev_warn(chip->dev, "%s, ret=%d\n", __func__, ret);
 	if (ret == 0)
