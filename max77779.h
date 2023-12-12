@@ -19,14 +19,9 @@
 #define MAX77779_PMIC_REV_A1		0x02
 
 #define MAX77779_PMIC_ID_SEQ	0x79
+#define MAX77779_PMIC_OF_NAME	"max77779,pmic"
 
-int max777x9_pmic_get_id(struct i2c_client *client, u8 *id, u8 *rev);
-int max777x9_pmic_reg_read(struct i2c_client *client,
-			   u8 addr, u8 *val, int len);
-int max777x9_pmic_reg_write(struct i2c_client *client,
-			    u8 addr, const u8 *val, int len);
-int max777x9_pmic_reg_update(struct i2c_client *client,
-			     u8 reg, u8 mask, u8 value);
+struct device* max77779_get_dev(struct device *dev, const char *name);
 
 /* write to a register */
 int max77779_external_chg_reg_write(struct i2c_client *client, u8 reg, u8 value);
@@ -41,10 +36,9 @@ int max77779_external_chg_insel_write(struct i2c_client *client, u8 mask, u8 val
 /* read the insel register */
 int max77779_external_chg_insel_read(struct i2c_client *client, u8 *value);
 
-int max77779_external_pmic_reg_read(struct i2c_client *client,
-				    unsigned int reg, unsigned int *val);
-int max77779_external_pmic_reg_write(struct i2c_client *client,
-				     unsigned int reg, unsigned int val);
+int max77779_external_pmic_reg_read(struct device *dev, uint8_t reg, uint8_t *val);
+int max77779_external_pmic_reg_write(struct device *dev, uint8_t reg, uint8_t val);
+int max77779_external_pmic_reg_update(struct device *dev, uint8_t reg, uint8_t msk, uint8_t val);
 
 int max77779_external_fg_reg_read(struct i2c_client *client,
 				  unsigned int reg, unsigned int *val);

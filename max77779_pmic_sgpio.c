@@ -51,14 +51,14 @@ static int max77779_pmic_sgpio_get_direction(struct gpio_chip *gc,
 {
 	struct max77779_pmic_sgpio_info *info = gpiochip_get_data(gc);
 	struct device *core = info->core;
-	unsigned int reg = MAX77779_SGPIO_CNFG0 + offset;
-	unsigned int mode;
+	const uint8_t reg = MAX77779_SGPIO_CNFG0 + offset;
+	uint8_t mode;
 	int err;
 
 	if (offset >= gc->ngpio)
 		return -EINVAL;
 
-	err = max77779_pmic_reg_read(core, reg, &mode);
+	err = max77779_external_pmic_reg_read(core, reg, &mode);
 	if (err) {
 		dev_err(info->dev, "Unable to read SGPIO config (%d)\n", err);
 		return err;
@@ -83,16 +83,15 @@ static int max77779_pmic_sgpio_direction_input(struct gpio_chip *gc,
 {
 	struct max77779_pmic_sgpio_info *info = gpiochip_get_data(gc);
 	struct device *core = info->core;
-	unsigned int reg = MAX77779_SGPIO_CNFG0 + offset;
-	unsigned int mask = MAX77779_SGPIO_CNFG0_MODE_MASK;
-	unsigned int val;
+	const uint8_t reg = MAX77779_SGPIO_CNFG0 + offset;
+	const uint8_t mask = MAX77779_SGPIO_CNFG0_MODE_MASK;
+	uint8_t val;
 
 	if (offset >= gc->ngpio)
 		return -EINVAL;
 
-	val = MAX77779_SGPIO_CNFGx_MODE_INPUT
-			<< MAX77779_SGPIO_CNFG0_MODE_SHIFT;
-	return max77779_pmic_reg_update(core, reg, mask, val);
+	val = MAX77779_SGPIO_CNFGx_MODE_INPUT << MAX77779_SGPIO_CNFG0_MODE_SHIFT;
+	return max77779_external_pmic_reg_update(core, reg, mask, val);
 }
 
 static int max77779_pmic_sgpio_direction_output(struct gpio_chip *gc,
@@ -100,33 +99,31 @@ static int max77779_pmic_sgpio_direction_output(struct gpio_chip *gc,
 {
 	struct max77779_pmic_sgpio_info *info = gpiochip_get_data(gc);
 	struct device *core = info->core;
-	unsigned int reg = MAX77779_SGPIO_CNFG0 + offset;
-	unsigned int mask = MAX77779_SGPIO_CNFG0_MODE_MASK |
-			MAX77779_SGPIO_CNFG0_DATA_MASK;
-	unsigned int val;
+	const uint8_t reg = MAX77779_SGPIO_CNFG0 + offset;
+	const uint8_t mask = MAX77779_SGPIO_CNFG0_MODE_MASK | MAX77779_SGPIO_CNFG0_DATA_MASK;
+	uint8_t val;
 
 	if (offset >= gc->ngpio)
 		return -EINVAL;
 
 	val = (!!value) << MAX77779_SGPIO_CNFG0_DATA_SHIFT;
-	val |= MAX77779_SGPIO_CNFGx_MODE_OUTPUT
-			<< MAX77779_SGPIO_CNFG0_MODE_SHIFT;
+	val |= MAX77779_SGPIO_CNFGx_MODE_OUTPUT << MAX77779_SGPIO_CNFG0_MODE_SHIFT;
 
-	return max77779_pmic_reg_update(core, reg, mask, val);
+	return max77779_external_pmic_reg_update(core, reg, mask, val);
 }
 
 static int max77779_pmic_sgpio_get(struct gpio_chip *gc, unsigned int offset)
 {
 	struct max77779_pmic_sgpio_info *info = gpiochip_get_data(gc);
 	struct device *core = info->core;
-	unsigned int reg = MAX77779_SGPIO_CNFG0 + offset;
-	unsigned int val;
+	const uint8_t reg = MAX77779_SGPIO_CNFG0 + offset;
+	uint8_t val;
 	int err;
 
 	if (offset >= gc->ngpio)
 		return -EINVAL;
 
-	err = max77779_pmic_reg_read(core, reg, &val);
+	err = max77779_external_pmic_reg_read(core, reg, &val);
 	if (err) {
 		dev_err(info->dev, "Unable to read SGPIO config (%d)\n", err);
 		return err;
@@ -140,15 +137,15 @@ static void max77779_pmic_sgpio_set(struct gpio_chip *gc,
 {
 	struct max77779_pmic_sgpio_info *info = gpiochip_get_data(gc);
 	struct device *core = info->core;
-	unsigned int reg = MAX77779_SGPIO_CNFG0 + offset;
-	unsigned int mask = MAX77779_SGPIO_CNFG0_DATA_MASK;
-	unsigned int val;
+	const uint8_t reg = MAX77779_SGPIO_CNFG0 + offset;
+	const uint8_t mask = MAX77779_SGPIO_CNFG0_DATA_MASK;
+	uint8_t val;
 
 	if (offset >= gc->ngpio)
 		return;
 
 	val = !!value << MAX77779_SGPIO_CNFG0_DATA_SHIFT;
-	max77779_pmic_reg_update(core, reg, mask, val);
+	max77779_external_pmic_reg_update(core, reg, mask, val);
 }
 
 static void max77779_pmic_sgpio_set_irq_valid_mask(struct gpio_chip *gc,
@@ -246,10 +243,7 @@ static void max77779_pmic_sgpio_bus_sync_unlock(struct irq_data *d)
 	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
 	struct max77779_pmic_sgpio_info *info = gpiochip_get_data(gc);
 	struct device *core = info->core;
-	unsigned int id;
-	unsigned int reg;
-	unsigned int unmasked;
-	unsigned int cnfg_val;
+	unsigned int id, reg, unmasked, cnfg_val;
 
 	if (!(info->trig_type_u | info->mask_u))
 		goto unlock_out;
@@ -271,7 +265,7 @@ static void max77779_pmic_sgpio_bus_sync_unlock(struct irq_data *d)
 		cnfg_val <<= MAX77779_SGPIO_CNFG0_IRQ_SEL_SHIFT;
 
 		if (unmasked)
-			max77779_pmic_reg_update(core, reg,
+			max77779_external_pmic_reg_update(core, reg,
 					MAX77779_SGPIO_CNFG0_IRQ_SEL_MASK,
 					cnfg_val);
 
@@ -286,11 +280,10 @@ static bool max77779_sgpio_handle_nested_irq(struct max77779_pmic_sgpio_info *in
 					     int offset)
 {
 	struct irq_domain *domain = info->gpio_chip.irq.domain;
-	unsigned int sgpio_sts_reg = MAX77779_SGPIO_CNFG0 + offset;
+	uint8_t sgpio_sts_reg = MAX77779_SGPIO_CNFG0 + offset;
 	int sub_irq;
 	struct device *core = info->core;
-	unsigned int sgpio_sts;
-	unsigned int sgpio_val;
+	uint8_t sgpio_sts, sgpio_val;
 	unsigned int trig_type;
 	bool lvl_active;
 	int err;
@@ -302,7 +295,7 @@ static bool max77779_sgpio_handle_nested_irq(struct max77779_pmic_sgpio_info *in
 	trig_type = info->trig_type[offset];
 	if (trig_type & (IRQF_TRIGGER_HIGH | IRQF_TRIGGER_LOW)) {
 		/* check that the level condition has been handled */
-		err = max77779_pmic_reg_read(core, sgpio_sts_reg, &sgpio_sts);
+		err = max77779_external_pmic_reg_read(core, sgpio_sts_reg, &sgpio_sts);
 		if (err) {
 			dev_err_ratelimited(info->dev, "read error %d\n", err);
 			return true;
@@ -322,13 +315,12 @@ static irqreturn_t max77779_sgpio_irq_handler(int irq, void *ptr)
 {
 	struct max77779_pmic_sgpio_info *info = ptr;
 	struct device *core = info->core;
-	unsigned int sgpio_int;
-	unsigned int sgpio_handled = 0;
+	uint8_t sgpio_int, sgpio_handled = 0;
 	int offset;
 	int err;
 	bool handled;
 
-	err = max77779_pmic_reg_read(core, MAX77779_SGPIO_INT,
+	err = max77779_external_pmic_reg_read(core, MAX77779_SGPIO_INT,
 			&sgpio_int);
 	if (err) {
 		dev_err_ratelimited(info->dev, "read error %d\n", err);
@@ -347,7 +339,7 @@ static irqreturn_t max77779_sgpio_irq_handler(int irq, void *ptr)
 	 * Only clear the handled bits.
 	 * We will be called again for any that don't get cleared.
 	 */
-	err = max77779_pmic_reg_write(core, MAX77779_SGPIO_INT,
+	err = max77779_external_pmic_reg_write(core, MAX77779_SGPIO_INT,
 			sgpio_handled);
 	if (err)
 		dev_err_ratelimited(info->dev, "write error %d\n", err);

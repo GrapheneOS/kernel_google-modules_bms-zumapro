@@ -6,6 +6,7 @@
  */
 #define pr_fmt(fmt) KBUILD_MODNAME ": %s " fmt, __func__
 
+#include <linux/i2c.h>
 #include <linux/mfd/core.h>
 #include <linux/module.h>
 #include <linux/regmap.h>
@@ -19,81 +20,72 @@
 
 #define MAX77779_PMIC_ID_VAL	0x79
 
-int max77779_pmic_reg_read(struct device *core_dev,
-		unsigned int reg, unsigned int *val)
+
+static inline int max77779_pmic_reg_read(struct regmap *regmap, uint8_t reg, uint8_t *val)
 {
-	struct max77779_pmic_info *info = dev_get_drvdata(core_dev);
+	int ret, ival;
 
-	if (!info || !info->regmap)
-		return -EAGAIN;
-
-	return regmap_read(info->regmap, reg, val);
-}
-EXPORT_SYMBOL_GPL(max77779_pmic_reg_read);
-
-int max77779_pmic_reg_write(struct device *core_dev,
-		unsigned int reg, unsigned int val)
-{
-	struct max77779_pmic_info *info = dev_get_drvdata(core_dev);
-
-	if (!info || !info->regmap)
-		return -EAGAIN;
-
-	return regmap_write(info->regmap, reg, val);
-}
-EXPORT_SYMBOL_GPL(max77779_pmic_reg_write);
-
-int max77779_external_pmic_reg_read(struct i2c_client *client, unsigned int reg, unsigned int *val)
-{
-	struct max77779_pmic_info *data;
-	int ret;
-
-	if (!client)
-		return -ENODEV;
-
-	data = i2c_get_clientdata(client);
-	if (!data || !data->regmap)
-		return -ENODEV;
-
-	ret = regmap_read(data->regmap, reg, val);
+	ret = regmap_read(regmap, reg, &ival);
+	if (ret == 0)
+		*val = 0xFF & ival;
 
 	return ret;
+}
+
+static int max77779_pmic_reg_write(struct regmap *map, uint8_t reg, uint8_t val)
+{
+	return regmap_write(map, reg, val);
+}
+
+static int max77779_pmic_reg_update(struct regmap *map, uint8_t reg, uint8_t mask, uint8_t val)
+{
+	return regmap_update_bits(map, reg, mask, val);
+}
+
+int max77779_external_pmic_reg_read(struct device *dev, uint8_t reg, uint8_t *val)
+{
+	struct max77779_pmic_info *info;
+
+	if (!dev)
+		return -ENODEV;
+
+	info = dev_get_drvdata(dev);
+	if (!info || !info->regmap)
+		return -ENODEV;
+
+	return max77779_pmic_reg_read(info->regmap, reg, val);
 }
 EXPORT_SYMBOL_GPL(max77779_external_pmic_reg_read);
 
-int max77779_external_pmic_reg_write(struct i2c_client *client, unsigned int reg, unsigned int val)
+int max77779_external_pmic_reg_write(struct device *dev, uint8_t reg, uint8_t val)
 {
-	struct max77779_pmic_info *data;
-	int ret = 0;
+	struct max77779_pmic_info *info;
 
-	if (!client)
+	if (!dev)
 		return -ENODEV;
 
-	data = i2c_get_clientdata(client);
-	if (!data || !data->regmap)
+	info = dev_get_drvdata(dev);
+	if (!info || !info->regmap)
 		return -ENODEV;
 
-	ret = regmap_write(data->regmap, reg, val);
-
-	return ret;
+	return max77779_pmic_reg_write(info->regmap, reg, val);
 }
 EXPORT_SYMBOL_GPL(max77779_external_pmic_reg_write);
 
-int max77779_pmic_reg_update(struct device *core_dev, unsigned int reg,
-		unsigned int mask, unsigned int val)
+int max77779_external_pmic_reg_update(struct device *dev, uint8_t reg, uint8_t msk, uint8_t val)
 {
-	struct max77779_pmic_info *info = dev_get_drvdata(core_dev);
-	int err;
+	struct max77779_pmic_info *info;
 
+	if (!dev)
+		return -ENODEV;
+
+	info = dev_get_drvdata(dev);
 	if (!info || !info->regmap)
-		return -EAGAIN;
+		return -ENODEV;
 
-	err = regmap_update_bits(info->regmap, reg, mask, val);
-	if (err)
-		dev_err(core_dev, "error updating %#02x err = %d\n", reg, err);
-	return err;
+	return max77779_pmic_reg_update(info->regmap, reg, msk, val);
 }
-EXPORT_SYMBOL_GPL(max77779_pmic_reg_update);
+EXPORT_SYMBOL_GPL(max77779_external_pmic_reg_update);
 
 #ifdef CONFIG_DEBUG_FS
 static int addr_write(void *d, u64 val)
@@ -117,17 +109,16 @@ static int data_write(void *d, u64 val)
 {
 	struct max77779_pmic_info *info = d;
 
-	return max77779_pmic_reg_write(info->dev, info->addr,
-			(unsigned int)(val & 0xff));
+	return max77779_pmic_reg_write(info->regmap, info->addr, (val & 0xff));
 }
 
 static int data_read(void *d, u64 *val)
 {
 	struct max77779_pmic_info *info = d;
-	unsigned int rd_val;
+	uint8_t rd_val;
 	int ret;
 
-	ret = max77779_pmic_reg_read(info->dev, info->addr, &rd_val);
+	ret = max77779_pmic_reg_read(info->regmap, info->addr, &rd_val);
 	*val = rd_val;
 
 	return ret;
@@ -139,7 +130,7 @@ static ssize_t max77779_pmic_show_reg_all(struct file *filp, char __user *buf,
 {
 	struct max77779_pmic_info *info = (struct max77779_pmic_info *)filp->private_data;
 	u32 reg_address;
-	unsigned int reg = 0;
+	uint8_t reg = 0;
 	char *tmp;
 	int ret = 0, len = 0;
 
@@ -153,7 +144,7 @@ static ssize_t max77779_pmic_show_reg_all(struct file *filp, char __user *buf,
 		return -ENOMEM;
 
 	for (reg_address = MAX77779_PMIC_ID; reg_address <= MAX77779_VGPI_CNFG; reg_address++) {
-		ret = max77779_pmic_reg_read(info->dev, reg_address, &reg);
+		ret = max77779_pmic_reg_read(info->regmap, reg_address, &reg);
 		if (ret < 0)
 			continue;
 
@@ -241,10 +232,10 @@ static const struct mfd_cell max77779_pmic_devs[] = {
  */
 int max77779_pmic_init(struct max77779_pmic_info *info)
 {
-	unsigned int pmic_id;
+	uint8_t pmic_id;
 	int err = 0;
 
-	err = regmap_read(info->regmap, MAX77779_PMIC_ID, &pmic_id);
+	err = max77779_pmic_reg_read(info->regmap, MAX77779_PMIC_ID, &pmic_id);
 	if (err) {
 		dev_err(info->dev, "Unable to read Device ID (%d)\n", err);
 		return err;

@@ -14,6 +14,7 @@
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
 
+#include "max77779.h"
 #include "max77779_pmic.h"
 
 #define MAX77779_SGPIO_CNFGx_MODE_INPUT		0b01
@@ -130,37 +131,37 @@ static int max77779_pinconf_set(struct pinctrl_dev *pctldev,
 	int i;
 
 	for (i = 0; i < num_configs; i++) {
-		u32 param = pinconf_to_config_param(configs[i]);
-		u32 arg = pinconf_to_config_argument(configs[i]);
+		const u32 param = pinconf_to_config_param(configs[i]);
+		const u32 arg = pinconf_to_config_argument(configs[i]);
 
 		switch (param) {
 		case PIN_CONFIG_BIAS_PULL_UP:
 		{
-			u32 enable = pinconf_to_config_argument(configs[i]);
+			const u8 enable = pinconf_to_config_argument(configs[i]);
 
 			if (enable) {
-				err = max77779_pmic_reg_update(info->core,
+				err = max77779_external_pmic_reg_update(info->core,
 						MAX77779_SGPIO_PD, BIT(pin), ~BIT(pin));
 				if (err)
 					break;
 			}
 
-			err = max77779_pmic_reg_update(info->core,
+			err = max77779_external_pmic_reg_update(info->core,
 					MAX77779_SGPIO_PU, BIT(pin), enable << pin);
 			break;
 		}
 		case PIN_CONFIG_BIAS_PULL_DOWN:
 		{
-			u32 enable = pinconf_to_config_argument(configs[i]);
+			const u8 enable = pinconf_to_config_argument(configs[i]);
 
 			if (enable) {
-				err = max77779_pmic_reg_update(info->core,
+				err = max77779_external_pmic_reg_update(info->core,
 						MAX77779_SGPIO_PU, BIT(pin), ~BIT(pin));
 				if (err)
 					break;
 			}
 
-			err = max77779_pmic_reg_update(info->core,
+			err = max77779_external_pmic_reg_update(info->core,
 					MAX77779_SGPIO_PD, BIT(pin), enable << pin);
 			if (err)
 				return err;
@@ -169,37 +170,36 @@ static int max77779_pinconf_set(struct pinctrl_dev *pctldev,
 		}
 		case PIN_CONFIG_BIAS_DISABLE:
 		{
-			err = max77779_pmic_reg_update(info->core,
+			err = max77779_external_pmic_reg_update(info->core,
 					MAX77779_SGPIO_PU, BIT(pin), ~BIT(pin));
 			if (err)
 				break;
 
-			err = max77779_pmic_reg_update(info->core,
+			err = max77779_external_pmic_reg_update(info->core,
 					MAX77779_SGPIO_PD, BIT(pin), ~BIT(pin));
 			break;
 		}
 		case PIN_CONFIG_INPUT_ENABLE:
 		{
-			unsigned int reg = MAX77779_SGPIO_CNFG0 + pin;
-			unsigned int mask = MAX77779_SGPIO_CNFG0_MODE_MASK;
-			unsigned int rval;
+			const u8 reg = MAX77779_SGPIO_CNFG0 + pin;
+			const u8 mask = MAX77779_SGPIO_CNFG0_MODE_MASK;
+			const u8 rval = _max77779_sgpio_cnfg0_mode_set(reg,
+						MAX77779_SGPIO_CNFGx_MODE_INPUT);
 
-			rval = MAX77779_SGPIO_CNFGx_MODE_INPUT << MAX77779_SGPIO_CNFG0_MODE_SHIFT;
-			err =  max77779_pmic_reg_update(info->core, reg, mask, rval);
+			err =  max77779_external_pmic_reg_update(info->core, reg, mask, rval);
 			break;
 		}
 		case PIN_CONFIG_OUTPUT:
 		case PIN_CONFIG_OUTPUT_ENABLE:
 		{
-			unsigned int reg = MAX77779_SGPIO_CNFG0 + pin;
-			unsigned int mask = MAX77779_SGPIO_CNFG0_MODE_MASK |
+			const u8 reg = MAX77779_SGPIO_CNFG0 + pin;
+			const u8 mask = MAX77779_SGPIO_CNFG0_MODE_MASK |
 					MAX77779_SGPIO_CNFG0_DATA_MASK;
-			unsigned int rval;
+			const u8 rval = _max77779_sgpio_cnfg0_data_set(reg, !!arg) |
+					_max77779_sgpio_cnfg0_mode_set(reg,
+						MAX77779_SGPIO_CNFGx_MODE_OUTPUT);
 
-			rval = (!!arg) << MAX77779_SGPIO_CNFG0_DATA_SHIFT;
-			rval |= MAX77779_SGPIO_CNFGx_MODE_OUTPUT
-					<< MAX77779_SGPIO_CNFG0_MODE_SHIFT;
-			err =  max77779_pmic_reg_update(info->core, reg, mask, rval);
+			err =  max77779_external_pmic_reg_update(info->core, reg, mask, rval);
 			break;
 		}
 		default:
@@ -248,7 +248,7 @@ static int max77779_pinctrl_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct max77779_pctrl_info *info;
 	int err;
-	unsigned int val;
+	uint8_t val;
 
 	info = devm_kzalloc(dev, sizeof(*info), GFP_KERNEL);
 	if (!info)
@@ -260,7 +260,7 @@ static int max77779_pinctrl_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, info);
 
 	info->pctl = devm_pinctrl_register(dev, &max77779_pinctrl_desc, info);
-	err = max77779_pmic_reg_read(info->core, MAX77779_SGPIO_PD, &val);
+	err = max77779_external_pmic_reg_read(info->core, MAX77779_SGPIO_PD, &val);
 	if (!err)
 		dev_err(info->dev, "MAX77779_SGPIO_PD = %#02x\n", val);
 

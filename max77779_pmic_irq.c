@@ -33,13 +33,12 @@ static irqreturn_t max77779_pmic_irq_handler(int irq, void *ptr)
 {
 	struct max77779_pmic_irq_info *info = ptr;
 	struct device *core = info->core;
-	unsigned int intsrc_sts;
+	uint8_t intsrc_sts;
 	int sub_irq;
 	int offset;
 	int err;
 
-	err = max77779_pmic_reg_read(core, MAX77779_PMIC_INTSRC_STS,
-			&intsrc_sts);
+	err = max77779_external_pmic_reg_read(core, MAX77779_PMIC_INTSRC_STS, &intsrc_sts);
 	if (err) {
 		dev_err_ratelimited(info->dev, "read error %d\n", err);
 		return IRQ_NONE;
@@ -53,8 +52,7 @@ static irqreturn_t max77779_pmic_irq_handler(int irq, void *ptr)
 		}
 	}
 
-	err = max77779_pmic_reg_write(core, MAX77779_PMIC_INTSRC_STS,
-			intsrc_sts);
+	err = max77779_external_pmic_reg_write(core, MAX77779_PMIC_INTSRC_STS, intsrc_sts);
 	if (err)
 		dev_err_ratelimited(info->dev, "write error %d\n", err);
 
@@ -118,15 +116,13 @@ static void max77779_pmic_bus_sync_unlock(struct irq_data *d)
 {
 	struct max77779_pmic_irq_info *info = irq_data_get_irq_chip_data(d);
 	struct device *core = info->core;
-	unsigned int offset;
-	unsigned int value;
-	unsigned int intb_mask;
+	uint8_t offset, value, intb_mask;
 	int err;
 
 	if (!info->mask_u)
 		goto unlock_out;
 
-	err = max77779_pmic_reg_read(core, MAX77779_PMIC_INTB_MASK, &intb_mask);
+	err = max77779_external_pmic_reg_read(core, MAX77779_PMIC_INTB_MASK, &intb_mask);
 	if (err < 0) {
 		dev_err(info->dev, "Unable to read interrupt mask (%d)\n", err);
 		goto unlock_out;
@@ -143,7 +139,7 @@ static void max77779_pmic_bus_sync_unlock(struct irq_data *d)
 		info->mask_u &= ~(1 << offset);
 	}
 
-	err = max77779_pmic_reg_write(core, MAX77779_PMIC_INTB_MASK, intb_mask);
+	err = max77779_external_pmic_reg_write(core, MAX77779_PMIC_INTB_MASK, intb_mask);
 	if (err < 0) {
 		dev_err(info->dev, "Unable to write interrupt mask (%d)\n", err);
 		goto unlock_out;
@@ -213,14 +209,13 @@ static int max77779_pmic_irq_probe(struct platform_device *pdev)
 		dev_warn(dev, "Unable to make irq wakeable.\n");
 
 	/* mask and clear all interrupts */
-	err =  max77779_pmic_reg_write(info->core,
-			MAX77779_PMIC_INTB_MASK, 0xff);
+	err =  max77779_external_pmic_reg_write(info->core, MAX77779_PMIC_INTB_MASK, 0xff);
 	if (err) {
 		dev_err(dev, "Unable to clear mask. err = %d\n", err);
 		return err;
 	}
 
-	max77779_pmic_reg_write(info->core, MAX77779_PMIC_INTSRC_STS, 0xff);
+	err = max77779_external_pmic_reg_write(info->core, MAX77779_PMIC_INTSRC_STS, 0xff);
 	if (err) {
 		dev_err(dev, "Unable to clear ints. err = %d\n", err);
 		return err;

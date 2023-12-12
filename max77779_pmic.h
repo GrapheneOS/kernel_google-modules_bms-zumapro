@@ -14,21 +14,11 @@
 struct max77779_pmic_info {
 	struct device		*dev;
 	struct regmap		*regmap;
-	struct i2c_client	*client;
 #if IS_ENABLED(CONFIG_DEBUG_FS)
 	struct dentry		*de;
 	unsigned int		addr;
 #endif
 };
-
-extern int max77779_pmic_reg_read(struct device *core_dev,
-		unsigned int reg, unsigned int *val);
-
-extern int max77779_pmic_reg_write(struct device *core_dev,
-		unsigned int reg, unsigned int val);
-
-extern int max77779_pmic_reg_update(struct device *core_dev,
-		unsigned int reg, unsigned int mask, unsigned int val);
 
 bool max77779_pmic_is_readable(struct device *dev, unsigned int reg);
 int max77779_pmic_init(struct max77779_pmic_info *info);

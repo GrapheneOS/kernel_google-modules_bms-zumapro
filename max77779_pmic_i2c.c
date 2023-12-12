@@ -33,7 +33,6 @@ static int max77779_pmic_i2c_probe(struct i2c_client *client, const struct i2c_d
 		return -ENOMEM;
 
 	info->dev = dev;
-	info->client = client;
 	i2c_set_clientdata(client, info);
 
 	info->regmap = devm_regmap_init_i2c(client, &max77779_pmic_regmap_cfg);
