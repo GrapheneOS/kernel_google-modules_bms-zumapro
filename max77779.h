@@ -45,11 +45,8 @@ int max77779_external_fg_reg_read(struct i2c_client *client,
 int max77779_external_fg_reg_write(struct i2c_client *client,
 				   unsigned int reg, unsigned int val);
 
-int max77779_external_vimon_reg_read(struct i2c_client *client,
-				     unsigned int reg, void *val, int len);
-int max77779_external_vimon_reg_write(struct i2c_client *client,
-				      unsigned int reg, const void *val, int len);
-
+int max77779_external_vimon_reg_read(struct device *dev, uint16_t reg, void *val, int len);
+int max77779_external_vimon_reg_write(struct device *dev, uint16_t reg, const void *val, int len);
 
 int max77779_fg_enable_firmware_update(struct i2c_client *client, bool enable);
 

@@ -67,10 +67,10 @@ static int max77779_vimon_reg_update(struct device *dev, unsigned int reg,
 	return err;
 }
 
-int max77779_external_vimon_reg_read(struct i2c_client *client,
-				     unsigned int reg, void *val, int len)
+int max77779_external_vimon_reg_read(struct device *dev, uint16_t reg, void *val, int len)
 {
-	struct max77779_vimon_data *data = i2c_get_clientdata(client);
+	struct max77779_vimon_data *data = dev_get_drvdata(dev);
+
 	if (!data || !data->regmap)
 		return -EAGAIN;
 
@@ -78,10 +78,10 @@ int max77779_external_vimon_reg_read(struct i2c_client *client,
 }
 EXPORT_SYMBOL_GPL(max77779_external_vimon_reg_read);
 
-int max77779_external_vimon_reg_write(struct i2c_client *client,
-				      unsigned int reg, const void *val, int len)
+int max77779_external_vimon_reg_write(struct device *dev, uint16_t reg, const void *val, int len)
 {
-	struct max77779_vimon_data *data = i2c_get_clientdata(client);
+	struct max77779_vimon_data *data = dev_get_drvdata(dev);
+
 	if (!data || !data->regmap)
 		return -EAGAIN;
 
