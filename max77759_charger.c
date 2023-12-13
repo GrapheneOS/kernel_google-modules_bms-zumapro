@@ -119,14 +119,14 @@ static int max77759_resume_check(struct max77759_chgr_data *data)
 	return ret;
 }
 
-int max77759_external_reg_read(struct i2c_client *client, uint8_t reg, uint8_t *val)
+int max77759_external_reg_read(struct device *dev, uint8_t reg, uint8_t *val)
 {
 	struct max77759_chgr_data *data;
 
-	if (!client)
+	if (!dev)
 		return -ENODEV;
 
-	data = i2c_get_clientdata(client);
+	data = dev_get_drvdata(dev);
 	if (!data || !data->regmap)
 		return -ENODEV;
 
@@ -142,16 +142,16 @@ EXPORT_SYMBOL_GPL(max77759_external_reg_read);
 
 static int max77759_chg_prot(struct regmap *regmap, bool enable);
 
-int max77759_external_reg_write(struct i2c_client *client, uint8_t reg, uint8_t val)
+int max77759_external_reg_write(struct device *dev, uint8_t reg, uint8_t val)
 {
 	struct max77759_chgr_data *data;
 	int prot;
 	int ret = 0;
 
-	if (!client)
+	if (!dev)
 		return -ENODEV;
 
-	data = i2c_get_clientdata(client);
+	data = dev_get_drvdata(dev);
 	if (!data || !data->regmap)
 		return -ENODEV;
 
