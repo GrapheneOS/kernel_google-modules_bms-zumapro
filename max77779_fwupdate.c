@@ -119,7 +119,7 @@ struct max77779_fwupdate {
 	struct delayed_work update_work;
 
 	struct device *pmic;
-	struct i2c_client *fg;
+	struct device *fg;
 	struct device *vimon;
 	struct device *chg;
 
@@ -168,14 +168,10 @@ static int max77779_fwupdate_init(struct max77779_fwupdate *fwu)
 		return -EPROBE_DEFER;
 	}
 
+	fwu->fg = max77779_get_dev(fwu->dev, "max77779,fg");
 	if (!fwu->fg) {
-		dn = of_parse_phandle(dev->of_node, "max77779,fg", 0);
-		if (!dn)
-			return -ENXIO;
-
-		fwu->fg = of_find_i2c_device_by_node(dn);
-		if (!fwu->fg)
-			return -EPROBE_DEFER;
+		dev_err(dev, "Error finding fg\n");
+		return -EPROBE_DEFER;
 	}
 
 	fwu->vimon = max77779_get_dev(fwu->dev, "max77779,vimon");
@@ -276,7 +272,7 @@ static int max77779_wait_riscv_reboot(struct max77779_fwupdate *fwu)
 {
 	int ret;
 	int cnt = 0;
-	unsigned int val;
+	uint16_t val;
 
 	dev_info(fwu->dev, "waiting for riscv reboot\n");
 
@@ -298,7 +294,7 @@ static int max77779_wait_riscv_reboot(struct max77779_fwupdate *fwu)
 static int check_boot_completed(struct max77779_fwupdate *fwu)
 {
 	int ret;
-	unsigned int val;
+	uint16_t val;
 
 	ret = max77779_external_fg_reg_read(fwu->fg, MAX77779_FG_BOOT_CHECK_REG, &val);
 	if (ret) {
@@ -319,7 +315,7 @@ static int check_boot_completed(struct max77779_fwupdate *fwu)
 static int max77779_check_timer_refresh(struct max77779_fwupdate *fwu)
 {
 	int ret;
-	unsigned int val0, val1;
+	uint16_t val0, val1;
 
 	dev_info(fwu->dev, "check for timer refresh\n");
 
@@ -510,7 +506,7 @@ max77779_load_fw_binary_done:
 static inline int max77779_clear_state_for_update(struct max77779_fwupdate *fwu)
 {
 	int ret;
-	unsigned int val;
+	uint16_t val;
 
 	/* clear POR bits*/
 	ret = max77779_external_fg_reg_read(fwu->fg, MAX77779_FG_FG_INT_STS, &val);
@@ -737,7 +733,8 @@ static int max77779_fwl_write(struct max77779_fwupdate *fwu, const u8 *fw_binary
 
 static int max77779_fwl_poll_complete(struct max77779_fwupdate *fwu)
 {
-	int ret, val;
+	int ret;
+	uint16_t val;
 
 	dev_info(fwu->dev, "max77779_fwl_poll_complete\n");
 
@@ -827,7 +824,7 @@ perform_firmware_update_cleanup:
 static void firmware_update_work(struct work_struct* work)
 {
 	int ret;
-	unsigned int val;
+	uint16_t val;
 	struct max77779_version_info target_version;
 	const struct firmware* fw_data;
 	struct max77779_fwupdate *fwu = NULL;
