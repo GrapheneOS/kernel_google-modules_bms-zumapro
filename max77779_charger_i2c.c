@@ -36,8 +36,7 @@ static int max77779_charger_i2c_probe(struct i2c_client *client, const struct i2
 		return -ENOMEM;
 
 	data->dev = dev;
-	data->client = client;
-	data->uc_data.client = data->client;
+	data->uc_data.dev = dev;
 	data->regmap = regmap;
 	data->irq_int = client->irq;
 

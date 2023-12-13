@@ -217,14 +217,14 @@ static int max77779_resume_check(struct max77779_chgr_data *data)
 }
 
 /* ----------------------------------------------------------------------- */
-int max77779_external_chg_reg_read(struct i2c_client *client, uint8_t reg, uint8_t *val)
+int max77779_external_chg_reg_read(struct device *dev, uint8_t reg, uint8_t *val)
 {
 	struct max77779_chgr_data *data;
 
-	if (!client)
+	if (!dev)
 		return -ENODEV;
 
-	data = i2c_get_clientdata(client);
+	data = dev_get_drvdata(dev);
 	if (!data || !data->regmap)
 		return -ENODEV;
 
@@ -235,14 +235,14 @@ int max77779_external_chg_reg_read(struct i2c_client *client, uint8_t reg, uint8
 }
 EXPORT_SYMBOL_GPL(max77779_external_chg_reg_read);
 
-int max77779_external_chg_reg_write(struct i2c_client *client, uint8_t reg, uint8_t val)
+int max77779_external_chg_reg_write(struct device *dev, uint8_t reg, uint8_t val)
 {
 	struct max77779_chgr_data *data;
 
-	if (!client)
+	if (!dev)
 		return -ENODEV;
 
-	data = i2c_get_clientdata(client);
+	data = dev_get_drvdata(dev);
 	if (!data || !data->regmap)
 		return -ENODEV;
 
@@ -253,14 +253,14 @@ int max77779_external_chg_reg_write(struct i2c_client *client, uint8_t reg, uint
 }
 EXPORT_SYMBOL_GPL(max77779_external_chg_reg_write);
 
-int max77779_external_chg_reg_update(struct i2c_client *client, u8 reg, u8 mask, u8 value)
+int max77779_external_chg_reg_update(struct device *dev, u8 reg, u8 mask, u8 value)
 {
 	struct max77779_chgr_data *data;
 
-	if (!client)
+	if (!dev)
 		return -ENODEV;
 
-	data = i2c_get_clientdata(client);
+	data = dev_get_drvdata(dev);
 	if (!data || !data->regmap)
 		return -ENODEV;
 
@@ -271,23 +271,23 @@ int max77779_external_chg_reg_update(struct i2c_client *client, u8 reg, u8 mask,
 }
 EXPORT_SYMBOL_GPL(max77779_external_chg_reg_update);
 
-int max77779_external_chg_mode_write(struct i2c_client *client, enum max77779_charger_modes mode)
+int max77779_external_chg_mode_write(struct device *dev, enum max77779_charger_modes mode)
 {
-	return max77779_external_chg_reg_update(client, MAX77779_CHG_CNFG_00,
+	return max77779_external_chg_reg_update(dev, MAX77779_CHG_CNFG_00,
 						MAX77779_CHG_CNFG_00_MODE_MASK,
 						mode);
 }
 EXPORT_SYMBOL_GPL(max77779_external_chg_mode_write);
 
-int max77779_external_chg_insel_write(struct i2c_client *client, u8 mask, u8 value)
+int max77779_external_chg_insel_write(struct device *dev, u8 mask, u8 value)
 {
-	return max77779_external_chg_reg_update(client, MAX77779_CHG_CNFG_12, mask, value);
+	return max77779_external_chg_reg_update(dev, MAX77779_CHG_CNFG_12, mask, value);
 }
 EXPORT_SYMBOL_GPL(max77779_external_chg_insel_write);
 
-int max77779_external_chg_insel_read(struct i2c_client *client, u8 *value)
+int max77779_external_chg_insel_read(struct device *dev, u8 *value)
 {
-	return max77779_external_chg_reg_read(client, MAX77779_CHG_CNFG_12, value);
+	return max77779_external_chg_reg_read(dev, MAX77779_CHG_CNFG_12, value);
 }
 EXPORT_SYMBOL_GPL(max77779_external_chg_insel_read);
 
@@ -591,7 +591,7 @@ static int max77779_get_otg_usecase(struct max77779_foreach_cb_data *cb_data,
 static int max77779_get_usecase(struct max77779_foreach_cb_data *cb_data,
 				struct max77779_usecase_data *uc_data)
 {
-	struct max77779_chgr_data *data = i2c_get_clientdata(uc_data->client);
+	struct max77779_chgr_data *data = dev_get_drvdata(uc_data->dev);
 	const int buck_on = cb_data->chgin_off ? 0 : cb_data->buck_on;
 	const int chgr_on = cb_data_is_chgr_on(cb_data);
 	bool wlc_tx = cb_data->wlc_tx != 0;
@@ -814,13 +814,13 @@ static int max77779_set_insel(struct max77779_chgr_data *data,
 	} else {
 		u8 value = 0;
 
-		wlc_on = max77779_external_chg_insel_read(uc_data->client, &value);
+		wlc_on = max77779_external_chg_insel_read(uc_data->dev, &value);
 		if (wlc_on == 0)
 			wlc_on = (value & MAX77779_CHG_CNFG_12_WCINSEL) != 0;
 	}
 
 	/* changing [CHGIN|WCIN]_INSEL: works when protection is disabled  */
-	ret = max77779_external_chg_insel_write(uc_data->client, insel_mask, insel_value);
+	ret = max77779_external_chg_insel_write(uc_data->dev, insel_mask, insel_value);
 
 	pr_debug("%s: usecase=%d->%d mask=%x insel=%x wlc_on=%d force_wlc=%d (%d)\n",
 		 __func__, from_uc, use_case, insel_mask, insel_value, wlc_on,
@@ -1107,9 +1107,9 @@ static int max77779_enable_sw_recharge(struct max77779_chgr_data *data,
 	/* This: will not trigger the usecase state machine */
 	ret = max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_00, &reg);
 	if (ret == 0)
-		ret = max77779_external_chg_mode_write(uc_data->client, MAX77779_CHGR_MODE_ALL_OFF);
+		ret = max77779_external_chg_mode_write(uc_data->dev, MAX77779_CHGR_MODE_ALL_OFF);
 	if (ret == 0)
-		ret = max77779_external_chg_mode_write(uc_data->client, reg);
+		ret = max77779_external_chg_mode_write(uc_data->dev, reg);
 
 	data->charge_done = false;
 
@@ -1660,7 +1660,7 @@ static void max77779_wcin_inlim_work(struct work_struct *work)
 		goto done;
 
 	if (!data->dc_icl_votable) {
-		dev_err(&data->client->dev, "Could not get votable: DC_ICL\n");
+		dev_err(data->dev, "Could not get votable: DC_ICL\n");
 		return;
 	}
 
@@ -1730,10 +1730,10 @@ static void max77779_gpio_set(struct gpio_chip *chip, unsigned int offset, int v
 		break;
 	}
 
-	pr_debug("%s: GPIO offset=%d value=%d ret:%d\n", __func__, offset, value, ret);
+	dev_dbg(data->dev, "%s: GPIO offset=%d value=%d ret:%d\n", __func__, offset, value, ret);
 
 	if (ret < 0)
-		dev_err(&data->client->dev, "GPIO%d: value=%d ret:%d\n", offset, value, ret);
+		dev_warn(data->dev, "GPIO%d: value=%d ret:%d\n", offset, value, ret);
 }
 
 static void max77779_gpio_init(struct max77779_chgr_data *data)

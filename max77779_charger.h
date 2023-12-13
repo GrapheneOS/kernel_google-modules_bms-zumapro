@@ -20,7 +20,6 @@
 
 struct max77779_chgr_data {
 	struct device *dev;
-	struct i2c_client *client;
 
 	/* Charger sub-IRQ routing for COP */
 	struct irq_domain	*domain;
