@@ -3465,7 +3465,7 @@ exit_done:
 	mutex_unlock(&charger->auth_lock);
 }
 
-static bool is_ping_freq_fixed_at(struct p9221_charger_data *charger, u32 khz)
+bool is_ping_freq_fixed_at(struct p9221_charger_data *charger, u32 khz)
 {
 	int ret;
 	u32 val;
@@ -3550,6 +3550,9 @@ static void p9221_icl_ramp_start(struct p9221_charger_data *charger)
 		return;
 
 	if (charger->pdata->freq_108_disable_ramp && is_ping_freq_fixed_at(charger, 108))
+		return;
+
+	if (charger->pdata->magsafe_optimized && is_ping_freq_fixed_at(charger, 128))
 		return;
 
 	p9221_icl_ramp_reset(charger);
@@ -3855,6 +3858,7 @@ static void p9221_notifier_check_dc(struct p9221_charger_data *charger)
 					       P9XXX_SW_RAMP_ICL_START_UA, true);
 			charger->sw_ramp_done = true;
 		}
+		charger->chip_magsafe_optimized(charger);
 		p9221_set_dc_icl(charger);
 		p9xxx_set_vout_iop(charger);
 		charger->fod_mode = -1;
@@ -7643,6 +7647,7 @@ static int p9xxx_parse_dt(struct device *dev,
 	pdata->bpp_cep_on_dl = of_property_read_bool(node, "google,bpp-cep-on-dl");
 	pdata->gpp_enhanced = of_property_read_bool(node, "google,gpp_enhanced");
 	pdata->hda_tz_wlc = of_property_read_bool(node, "google,hda-tz-wlc");
+	pdata->magsafe_optimized = of_property_read_bool(node, "google,magsafe-optimized");
 
 	ret = of_property_read_u32(node, "google,bpp_dcicl_default_ua", &data);
 	if (ret == 0)

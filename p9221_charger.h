@@ -336,6 +336,13 @@
 
 #define P9222RE_COM_CCACTIVATE			BIT(9)
 
+#define P9222_MOT_REG				0x152
+#define P9222_MOT_70PCT				0x0E
+#define P9222_MOT_60PCT				0x0C
+#define P9222_MOT_50PCT				0x0A
+#define P9222_MOT_40PCT				0x08
+#define P9222_MOT_30PCT				0x06
+
 /*
  * P9222 SYSTEM_MODE_REG bits
  */
@@ -778,6 +785,7 @@ struct p9221_charger_platform_data {
 	u32				lowest_fsw_khz;
 	u32				gpp_cmfet;
 	bool				freq_108_disable_ramp;
+	bool				magsafe_optimized;
 };
 
 struct p9221_charger_ints_bit {
@@ -1076,6 +1084,7 @@ struct p9221_charger_data {
 	bool (*chip_is_calibrated)(struct p9221_charger_data *chgr);
 	void (*chip_set_cmfet)(struct p9221_charger_data *chgr);
 	int (*chip_set_bpp_icl)(struct p9221_charger_data *chgr);
+	void (*chip_magsafe_optimized)(struct p9221_charger_data *chgr);
 };
 
 u8 p9221_crc8(u8 *pdata, size_t nbytes, u8 crc);
@@ -1085,6 +1094,7 @@ int p9221_wlc_disable(struct p9221_charger_data *charger, int disable, u8 reason
 int p9221_set_auth_dc_icl(struct p9221_charger_data *charger, bool enable);
 int p9xxx_sw_ramp_icl(struct p9221_charger_data *charger, const int icl_target);
 int p9xxx_gpio_set_value(struct p9221_charger_data *charger, int gpio, int value);
+bool is_ping_freq_fixed_at(struct p9221_charger_data *charger, u32 khz);
 
 void p9xxx_gpio_init(struct p9221_charger_data *charger);
 extern int p9221_chip_init_funcs(struct p9221_charger_data *charger,

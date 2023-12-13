@@ -2455,6 +2455,33 @@ static int ra9530_chip_set_bpp_icl(struct p9221_charger_data *chgr)
 	return icl;
 }
 
+static void p9xxx_magsafe_optimized(struct p9221_charger_data *chgr)
+{
+
+}
+
+static void p9222_magsafe_optimized(struct p9221_charger_data *chgr)
+{
+	int ret;
+
+	if (!chgr->pdata->magsafe_optimized)
+		return;
+
+	/* check BPP mode && ping frequency == 128k */
+	if (p9221_is_epp(chgr) || !is_ping_freq_fixed_at(chgr, 128))
+		return;
+
+	/* set MOT(minimum on-time) to 60% */
+	ret = p9xxx_chip_set_mot_reg(chgr, P9222_MOT_60PCT);
+	if (ret < 0)
+		dev_err(&chgr->client->dev, "Fail to set MOT, ret=%d\n", ret);
+
+	/* set Vout to 6.4V */
+	ret = chgr->chip_set_vout_max(chgr, 6400);
+	if (ret < 0)
+		dev_err(&chgr->client->dev, "Fail to set Vout, ret=%d\n", ret);
+}
+
 void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id)
 {
 	chgr->ints.mode_changed_bit = P9221R5_STAT_MODECHANGED;
@@ -2701,7 +2728,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_rf_value_addr = P9222RE_RESONANCE_FREQ_REG;
 		chgr->reg_csp_addr = P9222RE_CHARGE_STAT_REG;
 		chgr->reg_light_load_addr = P9222_RX_CALIBRATION_LIGHT_LOAD;
-		chgr->reg_mot_addr = 0;
+		chgr->reg_mot_addr = P9222_MOT_REG;
 		chgr->reg_cmfet_addr = 0;
 		chgr->reg_epp_tx_guarpwr_addr = P9222RE_EPP_TX_GUARANTEED_POWER_REG;
 		chgr->reg_freq_limit_addr = P9222RE_FREQ_LIMIT_REG;
@@ -2743,6 +2770,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 	chgr->chip_set_cmfet = p9xxx_chip_set_cmfet;
 	chgr->chip_set_bpp_icl = p9xxx_chip_set_bpp_icl;
 	chgr->chip_get_ping_freq = p9xxx_chip_get_ping_freq;
+	chgr->chip_magsafe_optimized = p9xxx_magsafe_optimized;
 
 	switch (chip_id) {
 	case P9412_CHIP_ID:
@@ -2876,6 +2904,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->chip_send_csp_in_txmode = p9221_send_csp_in_txmode;
 		chgr->chip_capdiv_en = p9221_capdiv_en;
 		chgr->chip_get_ping_freq = p9222_chip_get_ping_freq;
+		chgr->chip_magsafe_optimized = p9222_magsafe_optimized;
 		break;
 	default:
 		chgr->rx_buf_size = P9221R5_DATA_RECV_BUF_SIZE;
