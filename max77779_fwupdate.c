@@ -121,7 +121,7 @@ struct max77779_fwupdate {
 	struct device *pmic;
 	struct i2c_client *fg;
 	struct device *vimon;
-	struct i2c_client *chg;
+	struct device *chg;
 
 	struct platform_device *batt;
 
@@ -184,14 +184,10 @@ static int max77779_fwupdate_init(struct max77779_fwupdate *fwu)
 		return -EPROBE_DEFER;
 	}
 
+	fwu->chg = max77779_get_dev(fwu->dev, "max77779,chg");
 	if (!fwu->chg) {
-		dn = of_parse_phandle(dev->of_node, "max77779,chg", 0);
-		if (!dn)
-			return -ENXIO;
-
-		fwu->chg = of_find_i2c_device_by_node(dn);
-		if (!fwu->chg)
-			return -EPROBE_DEFER;
+		dev_err(dev, "Error finding chg\n");
+		return -EPROBE_DEFER;
 	}
 
 	if (!fwu->batt) {
