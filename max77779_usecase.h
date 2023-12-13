@@ -33,7 +33,7 @@ struct max77779_usecase_data {
 	u8 otg_value;		/* CHG_CNFG_11:VBYPSET for USB OTG Voltage */
 	int input_uv;
 
-	struct i2c_client *client;
+	struct device *dev;
 	bool init_done;
 	int use_case;
 

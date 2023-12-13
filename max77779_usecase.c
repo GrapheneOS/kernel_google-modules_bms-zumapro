@@ -39,7 +39,7 @@ int gs201_wlc_en(struct max77779_usecase_data *uc_data, enum wlc_state_t state)
 		return 0;
 
 	if (state == WLC_SPOOFED && uc_data->wlc_spoof_vbyp > 0) {
-		ret = max77779_external_chg_reg_write(uc_data->client, MAX77779_CHG_CNFG_11,
+		ret = max77779_external_chg_reg_write(uc_data->dev, MAX77779_CHG_CNFG_11,
 					     uc_data->wlc_spoof_vbyp);
 		pr_debug("%s: MAX77779_CHG_CNFG_11 write to %02x (ret = %d)\n",
 			 __func__, uc_data->wlc_spoof_vbyp, ret);
@@ -65,8 +65,7 @@ static int gs201_wlc_tx_enable(struct max77779_usecase_data *uc_data, int use_ca
 		if (!uc_data->reverse12_en) {
 			gs201_charge_full_5v_enable(uc_data, true);
 
-			ret = max77779_external_chg_reg_write(uc_data->client,
-							      MAX77779_CHG_CNFG_11, 0x0);
+			ret = max77779_external_chg_reg_write(uc_data->dev, MAX77779_CHG_CNFG_11, 0x0);
 			if (ret < 0)
 				pr_err("%s: fail to reset MAX77779_CHG_REVERSE_BOOST_VOUT\n",
 				       __func__);
@@ -136,24 +135,24 @@ static int gs201_wlc_tx_config(struct max77779_usecase_data *uc_data, int use_ca
 	/* No reverse 1:2 available, we need to configure max77779 */
 	if (!uc_data->reverse12_en) {
 		if (use_case == GSU_MODE_WLC_TX) {
-			ret = max77779_external_chg_reg_write(uc_data->client,
+			ret = max77779_external_chg_reg_write(uc_data->dev,
 							      MAX77779_CHG_CNFG_11,
 							      MAX77779_CHG_REVERSE_BOOST_VOUT_7V);
 			if (ret < 0)
 				pr_err("fail to configure MAX77779_CHG_REVERSE_BOOST_VOUT\n");
 		} else {
-			ret = max77779_external_chg_reg_write(uc_data->client,
+			ret = max77779_external_chg_reg_write(uc_data->dev,
 							      MAX77779_CHG_CNFG_11,
 							      0x0);
 			if (ret < 0)
 				pr_err("fail to reset MAX77779_CHG_REVERSE_BOOST_VOUT\n");
 		}
 		/* Set WCSM to 1.4A */
-		ret = max77779_external_chg_reg_read(uc_data->client, MAX77779_CHG_CNFG_05, &val);
+		ret = max77779_external_chg_reg_read(uc_data->dev, MAX77779_CHG_CNFG_05, &val);
 		if (ret < 0)
 			pr_err("%s: fail to read MAX77779_CHG_CNFG_05 ret:%d\n", __func__, ret);
 
-		ret = max77779_external_chg_reg_write(uc_data->client, MAX77779_CHG_CNFG_05,
+		ret = max77779_external_chg_reg_write(uc_data->dev, MAX77779_CHG_CNFG_05,
 			_max77779_chg_cnfg_05_wcsm_ilim_set(val,
 					MAX77779_CHG_CNFG_05_WCSM_ILIM_1400_MA));
 		if (ret < 0) {
@@ -175,7 +174,7 @@ static int gs201_otg_update_ilim(struct max77779_usecase_data *uc_data, int enab
 	if (enable) {
 		int rc;
 
-		rc = max77779_external_chg_reg_read(uc_data->client, MAX77779_CHG_CNFG_05,
+		rc = max77779_external_chg_reg_read(uc_data->dev, MAX77779_CHG_CNFG_05,
 					   	    &uc_data->otg_orig);
 		if (rc < 0) {
 			pr_err("%s: cannot read otg_ilim (%d), use default\n",
@@ -190,7 +189,7 @@ static int gs201_otg_update_ilim(struct max77779_usecase_data *uc_data, int enab
 		ilim = uc_data->otg_orig;
 	}
 
-	return max77779_external_chg_reg_update(uc_data->client, MAX77779_CHG_CNFG_05,
+	return max77779_external_chg_reg_update(uc_data->dev, MAX77779_CHG_CNFG_05,
 						MAX77779_CHG_CNFG_05_OTG_ILIM_MASK,
 						ilim);
 }
@@ -296,7 +295,7 @@ int gs201_to_standby(struct max77779_usecase_data *uc_data, int use_case)
 		return 0;
 
 	/* transition to STBY (might need to be up) */
-	ret = max77779_external_chg_mode_write(uc_data->client, MAX77779_CHGR_MODE_ALL_OFF);
+	ret = max77779_external_chg_mode_write(uc_data->dev, MAX77779_CHGR_MODE_ALL_OFF);
 	if (ret < 0)
 		return -EIO;
 
@@ -314,7 +313,7 @@ static int gs201_ramp_bypass(struct max77779_usecase_data *uc_data, bool enable)
 {
 	const u8 value = enable ? MAX77779_CHG_CNFG_00_BYPV_RAMP_BYPASS_MASK : 0;
 
-	return max77779_external_chg_reg_update(uc_data->client, MAX77779_CHG_CNFG_00,
+	return max77779_external_chg_reg_update(uc_data->dev, MAX77779_CHG_CNFG_00,
 						MAX77779_CHG_CNFG_00_BYPV_RAMP_BYPASS_MASK,
 						value);
 }
@@ -335,12 +334,12 @@ int gs201_force_standby(struct max77779_usecase_data *uc_data)
 		pr_err("%s: cannot reset ramp_bypass (%d)\n",
 			__func__, ret);
 
-	ret = max77779_external_chg_mode_write(uc_data->client, MAX77779_CHGR_MODE_ALL_OFF);
+	ret = max77779_external_chg_mode_write(uc_data->dev, MAX77779_CHGR_MODE_ALL_OFF);
 	if (ret < 0)
 		pr_err("%s: cannot reset mode register (%d)\n",
 			__func__, ret);
 
-	ret = max77779_external_chg_insel_write(uc_data->client, insel_mask, insel_value);
+	ret = max77779_external_chg_insel_write(uc_data->dev, insel_mask, insel_value);
 	if (ret < 0)
 		pr_err("%s: cannot reset insel (%d)\n",
 			__func__, ret);
@@ -360,7 +359,7 @@ static int gs201_otg_mode(struct max77779_usecase_data *uc_data, int to)
 	pr_debug("%s: to=%d\n", __func__, to);
 
 	if (to == GSU_MODE_USB_OTG) {
-		ret = max77779_external_chg_mode_write(uc_data->client,
+		ret = max77779_external_chg_mode_write(uc_data->dev,
 						       MAX77779_CHGR_MODE_ALL_OFF);
 	}
 
@@ -384,7 +383,7 @@ static int gs201_otg_enable_frs(struct max77779_usecase_data *uc_data)
 
 	/* the code default to write to the MODE register */
 
-	ret = max77779_external_chg_mode_write(uc_data->client,
+	ret = max77779_external_chg_mode_write(uc_data->dev,
 					       MAX77779_CHGR_MODE_OTG_BOOST_ON);
 	if (ret < 0) {
 		pr_debug("%s: cannot set CNFG_00 to 0xa ret:%d\n", __func__, ret);
@@ -698,7 +697,7 @@ static void gs201_setup_default_usecase(struct max77779_usecase_data *uc_data)
 					   GS201_OTG_ILIM_DEFAULT_MA);
 	if (ret < 0)
 		uc_data->otg_ilim = MAX77779_CHG_CNFG_05_OTG_ILIM_1500MA;
-	ret = max77779_external_chg_reg_read(uc_data->client, MAX77779_CHG_CNFG_05,
+	ret = max77779_external_chg_reg_read(uc_data->dev, MAX77779_CHG_CNFG_05,
 					     &uc_data->otg_orig);
 	if (ret == 0) {
 		uc_data->otg_orig &= MAX77779_CHG_CNFG_05_OTG_ILIM_MASK;
