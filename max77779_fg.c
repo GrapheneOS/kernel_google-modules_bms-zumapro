@@ -1814,25 +1814,36 @@ DEFINE_SIMPLE_ATTRIBUTE(debug_fg_reset_fops, NULL, debug_fg_reset, "%llu\n");
 
 int max77779_fg_enable_firmware_update(struct i2c_client *client, bool enable) {
 	struct max77779_fg_chip *chip = i2c_get_clientdata(client);
-	if (!chip)
-		return -EAGAIN;
+	int ret = -EAGAIN;
 
-	chip->fw_update_mode = enable;
+	if (!chip)
+		return ret;
+
+	mutex_lock(&chip->model_lock);
 
 	pm_runtime_get_sync(chip->dev);
 	if (!chip->init_complete || !chip->resume_complete)
-		return -EAGAIN;
+		goto max77779_fg_enable_firmware_update_exit;
 
 	/* enable/disable irq for firmware update */
 	if (enable && !chip->irq_disabled) {
 		chip->irq_disabled = true;
+		disable_irq_wake(chip->primary->irq);
 		disable_irq(chip->primary->irq);
 	} else if (!enable && chip->irq_disabled) {
 		chip->irq_disabled = false;
 		enable_irq(chip->primary->irq);
+		enable_irq_wake(chip->primary->irq);
 	}
 
-	return 0;
+	chip->fw_update_mode = enable;
+	ret = 0;
+
+max77779_fg_enable_firmware_update_exit:
+	pm_runtime_put_sync(chip->dev);
+	mutex_unlock(&chip->model_lock);
+
+	return ret;
 };
 
 EXPORT_SYMBOL_GPL(max77779_fg_enable_firmware_update);
