@@ -3157,12 +3157,6 @@ static int p9221_notifier_cb(struct notifier_block *nb, unsigned long event,
 	const char *batt_name = IS_ERR_OR_NULL(charger->batt_psy) || !charger->batt_psy->desc ?
 				NULL : charger->batt_psy->desc->name;
 
-	if (!charger->votable_init_done) {
-		charger->votable_init_done = p9xxx_find_votable(charger);
-		if (charger->votable_init_done)
-			dev_dbg(&charger->client->dev, "p9xxx_find_votable is done\n");
-	}
-
 	if (charger->ben_state)
 		goto out;
 
@@ -3964,6 +3958,12 @@ static void p9221_notifier_work(struct work_struct *work)
 		 charger->ben_state,
 		 charger->check_dc, charger->check_np,
 		 charger->check_det);
+
+	if (!charger->votable_init_done) {
+		charger->votable_init_done = p9xxx_find_votable(charger);
+		if (charger->votable_init_done)
+			dev_dbg(&charger->client->dev, "p9xxx_find_votable is done\n");
+	}
 
 	p9xxx_setup_all(charger->dev->of_node, charger->pdata);
 
