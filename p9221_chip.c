@@ -2355,7 +2355,8 @@ static bool ra9530_chip_is_calibrated(struct p9221_charger_data *chgr)
 
 	dev_dbg(&chgr->client->dev, "EPP_CAL_STATE_REG=%02x\n", val);
 
-	return chgr->cc_vout_ready && (val & RA9530_EPP_CAL_STATE_MASK) == 0;
+	return chgr->cc_vout_ready &&
+	       (val & RA9530_EPP_CAL_STATE_MASK) == RA9530_EPP_CALIBRATED_STATE;
 }
 
 static void p9xxx_chip_set_cmfet(struct p9221_charger_data *chgr)
