@@ -2554,8 +2554,10 @@ static void batt_res_work(struct batt_drv *batt_drv)
 
 /* ------------------------------------------------------------------------- */
 
-static uint16_t batt_csi_status_mask(int status)
+static int batt_csi_status_mask(void *data, const char *reason, void *vote)
 {
+	uint16_t *aggregate_status = data;
+	int status = (long)vote;
 	uint16_t status_mask = 0;
 
 	switch (status) {
@@ -2605,11 +2607,15 @@ static uint16_t batt_csi_status_mask(int status)
 		break;
 	}
 
-	return status_mask;
+	*aggregate_status |= status_mask;
+
+	return 0;
 }
 
-static uint16_t batt_csi_type_mask(int type)
+static int batt_csi_type_mask(void *data, const char *reason, void *vote)
 {
+	uint16_t *aggregate_type = data;
+	int type = (long)vote;
 	uint16_t type_mask = 0;
 
 	switch (type) {
@@ -2638,7 +2644,9 @@ static uint16_t batt_csi_type_mask(int type)
 		break;
 	}
 
-	return type_mask;
+	*aggregate_type |= type_mask;
+
+	return 0;
 }
 
 static void batt_init_csi_stat(struct batt_drv *batt_drv)
@@ -2724,8 +2732,10 @@ static void batt_update_csi_stat(struct batt_drv *batt_drv)
 		csi_stats->time_stat_last_update = now;
 	}
 
-	csi_stats->aggregate_status |= batt_csi_status_mask(batt_drv->csi_current_status);
-	csi_stats->aggregate_type |= batt_csi_type_mask(batt_drv->csi_current_type);
+	gvotable_election_for_each(batt_drv->csi_type_votable, batt_csi_type_mask,
+				   &csi_stats->aggregate_type);
+	gvotable_election_for_each(batt_drv->csi_status_votable, batt_csi_status_mask,
+				   &csi_stats->aggregate_status);
 	elap = now - csi_stats->time_stat_last_update;
 	csi_stats->time_sum += elap;
 	csi_stats->ad_type = ad->ad_type;
