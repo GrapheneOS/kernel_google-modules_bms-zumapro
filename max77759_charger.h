@@ -38,7 +38,6 @@ struct max77759_chgr_data {
 
 	int irq_gpio;
 	int irq_int;
-	bool irq_disabled;
 
 	struct i2c_client *fg_i2c_client;
 	struct i2c_client *pmic_i2c_client;
