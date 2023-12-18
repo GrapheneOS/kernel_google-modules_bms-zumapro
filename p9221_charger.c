@@ -6283,10 +6283,7 @@ static irqreturn_t p9221_irq_thread(int irq, void *irq_data)
 
 	pm_runtime_get_sync(charger->dev);
 	if (!charger->resume_complete) {
-		if (!charger->disable_irq) {
-			charger->disable_irq = true;
-			disable_irq_nosync(charger->pdata->irq_int);
-		}
+		dev_warn(charger->dev, "%s: irq skipped, irq:%d\n", __func__, irq);
 		pm_runtime_put_sync(charger->dev);
 		return IRQ_HANDLED;
 	}
@@ -7515,8 +7512,6 @@ static int p9221_charger_probe(struct i2c_client *client,
 	 * We will receive a VRECTON after enabling IRQ if the device is
 	 * if the device is already in-field when the driver is probed.
 	 */
-	enable_irq_wake(charger->pdata->irq_int);
-
 	if (gpio_is_valid(charger->pdata->irq_det_gpio)) {
 		ret = devm_request_threaded_irq(
 			&client->dev, charger->pdata->irq_det_int, NULL,
@@ -7719,7 +7714,13 @@ static int p9221_pm_suspend(struct device *dev)
 	struct p9221_charger_data *charger = i2c_get_clientdata(client);
 
 	pm_runtime_get_sync(charger->dev);
+	dev_dbg(dev, "%s\n", __func__);
+
 	charger->resume_complete = false;
+	if (device_may_wakeup(dev)) {
+		dev_dbg(dev, "%s: enable irq wake\n", __func__);
+		enable_irq_wake(charger->pdata->irq_int);
+	}
 	pm_runtime_put_sync(charger->dev);
 
 	return 0;
@@ -7731,11 +7732,13 @@ static int p9221_pm_resume(struct device *dev)
 	struct p9221_charger_data *charger = i2c_get_clientdata(client);
 
 	pm_runtime_get_sync(charger->dev);
-	charger->resume_complete = true;
-	if (charger->disable_irq) {
-		enable_irq(charger->pdata->irq_int);
-		charger->disable_irq = false;
+	dev_dbg(dev, "%s\n", __func__);
+
+	if (device_may_wakeup(dev)) {
+		dev_dbg(dev, "%s: disable irq wake\n", __func__);
+		disable_irq_wake(charger->pdata->irq_int);
 	}
+	charger->resume_complete = true;
 	pm_runtime_put_sync(charger->dev);
 
 	return 0;
