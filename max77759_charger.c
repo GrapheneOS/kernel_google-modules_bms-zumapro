@@ -2654,10 +2654,7 @@ static irqreturn_t max77759_chgr_irq(int irq, void *client)
 	int ret;
 
 	if (max77759_resume_check(data)) {
-		if (data->init_complete && !data->irq_disabled) {
-			data->irq_disabled = true;
-			disable_irq_nosync(data->irq_int);
-		}
+		dev_warn(data->dev, "%s: irq skipped, irq:%d\n", __func__, irq);
 		return IRQ_HANDLED;
 	}
 
@@ -2946,35 +2943,6 @@ static int max77759_charger_probe(struct i2c_client *client,
 
 	INIT_DELAYED_WORK(&data->mode_rerun_work, max77759_mode_rerun_work);
 
-	data->irq_gpio = of_get_named_gpio(dev->of_node, "max77759,irq-gpio", 0);
-	if (data->irq_gpio < 0) {
-		dev_err(dev, "failed get irq_gpio\n");
-	} else {
-		client->irq = gpio_to_irq(data->irq_gpio);
-
-		ret = devm_request_threaded_irq(data->dev, client->irq, NULL,
-						max77759_chgr_irq,
-						IRQF_TRIGGER_LOW |
-						IRQF_SHARED |
-						IRQF_ONESHOT,
-						"max77759_charger",
-						data);
-		if (ret == 0) {
-			enable_irq_wake(client->irq);
-
-			/* might cause the isr to be called */
-			max77759_chgr_irq(-1, data);
-			ret = max77759_writen(regmap, MAX77759_CHG_INT_MASK,
-					      max77759_int_mask,
-					      sizeof(max77759_int_mask));
-			if (ret < 0)
-				dev_err(dev, "cannot set irq_mask (%d)\n", ret);
-
-			data->irq_disabled = false;
-			data->irq_int = client->irq;
-		}
-	}
-
 	ret = dbg_init_fs(data);
 	if (ret < 0)
 		dev_err(dev, "Failed to initialize debug fs\n");
@@ -3068,6 +3036,32 @@ static int max77759_charger_probe(struct i2c_client *client,
 	if (ret < 0)
 		pr_err("Couldn't register dc power supply (%d)\n", ret);
 
+	/* Init irq last */
+	data->irq_gpio = of_get_named_gpio(dev->of_node, "max77759,irq-gpio", 0);
+	if (data->irq_gpio < 0) {
+		dev_err(dev, "failed get irq_gpio\n");
+	} else {
+		client->irq = gpio_to_irq(data->irq_gpio);
+
+		ret = devm_request_threaded_irq(data->dev, client->irq, NULL,
+						max77759_chgr_irq,
+						IRQF_TRIGGER_LOW |
+						IRQF_SHARED |
+						IRQF_ONESHOT,
+						"max77759_charger",
+						data);
+		if (ret == 0) {
+			ret = max77759_writen(regmap, MAX77759_CHG_INT_MASK,
+					      max77759_int_mask,
+					      sizeof(max77759_int_mask));
+			if (ret < 0)
+				dev_err(dev, "cannot set irq_mask (%d)\n", ret);
+
+			data->irq_int = client->irq;
+			device_init_wakeup(dev, true);
+		}
+	}
+
 	dev_info(dev, "registered as %s\n", max77759_psy_desc.name);
 	return 0;
 }
@@ -3078,6 +3072,8 @@ static void max77759_charger_remove(struct i2c_client *client)
 
 	if (data->de)
 		debugfs_remove(data->de);
+
+	device_init_wakeup(data->dev, false);
 	wakeup_source_unregister(data->usecase_wake_lock);
 	wakeup_source_unregister(data->otg_fccm_wake_lock);
 }
@@ -3102,7 +3098,13 @@ static int max77759_charger_pm_suspend(struct device *dev)
 	struct max77759_chgr_data *data = platform_get_drvdata(pdev);
 
 	pm_runtime_get_sync(data->dev);
+	dev_dbg(dev, "%s\n", __func__);
+
 	data->resume_complete = false;
+	if (device_may_wakeup(dev)) {
+		dev_dbg(dev, "%s: enable irq wake\n", __func__);
+		enable_irq_wake(data->irq_int);
+	}
 	pm_runtime_put_sync(data->dev);
 
 	return 0;
@@ -3114,12 +3116,13 @@ static int max77759_charger_pm_resume(struct device *dev)
 	struct max77759_chgr_data *data = platform_get_drvdata(pdev);
 
 	pm_runtime_get_sync(data->dev);
-	data->resume_complete = true;
-	if (data->irq_disabled) {
-		enable_irq(data->irq_int);
-		data->irq_disabled = false;
-	}
+	dev_dbg(dev, "%s\n", __func__);
 
+	if (device_may_wakeup(dev)) {
+		dev_dbg(dev, "%s: disable irq wake\n", __func__);
+		disable_irq_wake(data->irq_int);
+	}
+	data->resume_complete = true;
 	pm_runtime_put_sync(data->dev);
 
 	if ((data->otg_fccm_reset) && (data->otg_changed))
@@ -3130,7 +3133,7 @@ static int max77759_charger_pm_resume(struct device *dev)
 #endif
 
 static const struct dev_pm_ops max77759_charger_pm_ops = {
-	SET_LATE_SYSTEM_SLEEP_PM_OPS(
+	SET_NOIRQ_SYSTEM_SLEEP_PM_OPS(
 		max77759_charger_pm_suspend,
 		max77759_charger_pm_resume)
 };

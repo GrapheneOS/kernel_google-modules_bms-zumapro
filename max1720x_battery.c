@@ -196,7 +196,6 @@ struct max1720x_chip {
 
 	bool init_complete;
 	bool resume_complete;
-	bool irq_disabled;
 	u16 health_status;
 	int fake_capacity;
 	int previous_qh;
@@ -2777,15 +2776,11 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 		return IRQ_NONE;
 
 	pm_runtime_get_sync(chip->dev);
-	if (irq != -1 && (!chip->init_complete || !chip->resume_complete)) {
-		if (chip->init_complete && !chip->irq_disabled) {
-			chip->irq_disabled = true;
-			disable_irq_nosync(chip->primary->irq);
-		}
+	if (!chip->init_complete || !chip->resume_complete) {
+		dev_warn(chip->dev, "%s: irq skipped, irq%d\n", __func__, irq);
 		pm_runtime_put_sync(chip->dev);
 		return IRQ_HANDLED;
 	}
-
 	pm_runtime_put_sync(chip->dev);
 
 	err = REGMAP_READ(&chip->regmap, MAX1720X_STATUS, &fg_status);
@@ -5571,6 +5566,44 @@ static void max17x0x_read_serial_number(struct max1720x_chip *chip)
 		chip->serial_number[0] = '\0';
 }
 
+static int max1720x_init_irq(struct max1720x_chip *chip)
+{
+	unsigned long irqf = IRQF_TRIGGER_LOW | IRQF_ONESHOT;
+	int ret, irqno;
+
+	chip->irq_shared = of_property_read_bool(chip->dev->of_node,
+						 "maxim,irqf-shared");
+	irqno = chip->primary->irq;
+	if (!irqno) {
+		int irq_gpio;
+
+		irq_gpio = of_get_named_gpio(chip->dev->of_node,
+					     "maxim,irq-gpio", 0);
+		if (irq_gpio >= 0) {
+			chip->primary->irq = gpio_to_irq(irq_gpio);
+			if (chip->primary->irq <= 0) {
+				chip->primary->irq = 0;
+				dev_warn(chip->dev, "fg irq not available\n");
+				return 0;
+			}
+		}
+	}
+
+	if (chip->irq_shared)
+		irqf |= IRQF_SHARED;
+
+	ret = request_threaded_irq(chip->primary->irq, NULL,
+				   max1720x_fg_irq_thread_fn, irqf,
+				   MAX1720X_I2C_DRIVER_NAME, chip);
+	dev_info(chip->dev, "FG irq handler registered at %d (%d)\n",
+			    chip->primary->irq, ret);
+
+	if (!ret)
+		device_init_wakeup(chip->dev, true);
+
+	return ret;
+}
+
 static void max1720x_init_work(struct work_struct *work)
 {
 	struct max1720x_chip *chip = container_of(work, struct max1720x_chip,
@@ -5603,6 +5636,13 @@ static void max1720x_init_work(struct work_struct *work)
 
 	/* serial number might not be stored in the FG */
 	max17x0x_read_serial_number(chip);
+
+	/* TODO: do not request the interrupt if the gauge is not present */
+	ret = max1720x_init_irq(chip);
+	if (ret < 0) {
+		dev_err(chip->dev, "cannot allocate irq\n");
+		return;
+	}
 
 	mutex_init(&chip->cap_estimate.batt_ce_lock);
 	chip->prev_charge_status = POWER_SUPPLY_STATUS_UNKNOWN;
@@ -5793,43 +5833,6 @@ static int max17x0x_regmap_init(struct max1720x_chip *chip)
 	return 0;
 }
 
-static int max1720x_init_irq(struct max1720x_chip *chip)
-{
-	unsigned long irqf = IRQF_TRIGGER_LOW | IRQF_ONESHOT;
-	int ret, irqno;
-
-	chip->irq_shared = of_property_read_bool(chip->dev->of_node,
-						 "maxim,irqf-shared");
-	irqno = chip->primary->irq;
-	if (!irqno) {
-		int irq_gpio;
-
-		irq_gpio = of_get_named_gpio(chip->dev->of_node,
-					     "maxim,irq-gpio", 0);
-		if (irq_gpio >= 0) {
-			chip->primary->irq = gpio_to_irq(irq_gpio);
-			if (chip->primary->irq <= 0) {
-				chip->primary->irq = 0;
-				dev_warn(chip->dev, "fg irq not avalaible\n");
-				return 0;
-			}
-		}
-	}
-
-	if (chip->irq_shared)
-		irqf |= IRQF_SHARED;
-
-	ret = request_threaded_irq(chip->primary->irq, NULL,
-				   max1720x_fg_irq_thread_fn, irqf,
-				   MAX1720X_I2C_DRIVER_NAME, chip);
-	dev_info(chip->dev, "FG irq handler registered at %d (%d)\n",
-			    chip->primary->irq, ret);
-	if (ret == 0)
-		enable_irq_wake(chip->primary->irq);
-
-	return ret;
-}
-
 /* possible race */
 void *max1720x_get_model_data(struct i2c_client *client)
 {
@@ -5899,13 +5902,6 @@ static int max1720x_probe(struct i2c_client *client,
 	if (chip->zero_irq == -1)
 		chip->zero_irq = of_property_read_bool(chip->dev->of_node,
 						       "maxim,zero-irq");
-
-	/* TODO: do not request the interrupt if the gauge is not present */
-	ret = max1720x_init_irq(chip);
-	if (ret < 0) {
-		dev_err(dev, "cannot allocate irq\n");
-		return ret;
-	}
 
 	psy_cfg.drv_data = chip;
 	psy_cfg.of_node = chip->dev->of_node;
@@ -6015,6 +6011,7 @@ static void max1720x_remove(struct i2c_client *client)
 	cancel_delayed_work(&chip->model_work);
 	cancel_delayed_work(&chip->rc_switch.switch_work);
 
+	device_init_wakeup(chip->dev, false);
 	if (chip->primary->irq)
 		free_irq(chip->primary->irq, chip);
 	power_supply_unregister(chip->psy);
@@ -6046,7 +6043,13 @@ static int max1720x_pm_suspend(struct device *dev)
 	struct max1720x_chip *chip = i2c_get_clientdata(client);
 
 	pm_runtime_get_sync(chip->dev);
+	dev_dbg(dev, "%s\n", __func__);
+
 	chip->resume_complete = false;
+	if (device_may_wakeup(dev)) {
+		dev_dbg(dev, "%s: enable irq wake\n", __func__);
+		enable_irq_wake(chip->primary->irq);
+	}
 	pm_runtime_put_sync(chip->dev);
 
 	return 0;
@@ -6058,13 +6061,14 @@ static int max1720x_pm_resume(struct device *dev)
 	struct max1720x_chip *chip = i2c_get_clientdata(client);
 
 	pm_runtime_get_sync(chip->dev);
-	chip->resume_complete = true;
-	if (chip->irq_disabled) {
-		enable_irq(chip->primary->irq);
-		chip->irq_disabled = false;
-	}
-	pm_runtime_put_sync(chip->dev);
+	dev_dbg(dev, "%s\n", __func__);
 
+	if (device_may_wakeup(dev)) {
+		dev_dbg(dev, "%s: disable irq wake\n", __func__);
+		disable_irq_wake(chip->primary->irq);
+	}
+	chip->resume_complete = true;
+	pm_runtime_put_sync(chip->dev);
 	return 0;
 }
 #endif
