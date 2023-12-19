@@ -2631,7 +2631,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->set_cmd_ccactivate_bit = P9412_COM_CCACTIVATE;
 		chgr->reg_set_fod_addr = P9221R5_FOD_REG;
 		chgr->reg_q_factor_addr = P9221R5_EPP_Q_FACTOR_REG;
-		chgr->reg_rf_value_addr = 0;
+		chgr->reg_rf_value_addr = RA9530_EPP_RF_REG;
 		chgr->reg_csp_addr = P9221R5_CHARGE_STAT_REG;
 		chgr->reg_light_load_addr = 0;
 		chgr->reg_mot_addr = 0;

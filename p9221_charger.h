@@ -584,6 +584,7 @@
 #define P9XXX_TX_CUR_PWR_REG			0xAC
 #define P9XXX_RX_CUR_PWR_REG			0xCE
 #define RA9530_CMFET_REG			0xF4
+#define RA9530_EPP_RF_REG			0x27C
 
 /* Features */
 typedef enum {
