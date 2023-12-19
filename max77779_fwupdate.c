@@ -853,7 +853,7 @@ static void firmware_update_work(struct work_struct* work)
 
 	ret = request_firmware(&fw_data, fwu->fw_name, fwu->dev);
 	if (ret) {
-		dev_err(fwu->dev, "fails on request_firmware %d\n", ret);
+		dev_warn(fwu->dev, "fails on request_firmware %d\n", ret);
 		goto firmware_update_work_cleanup;
 	}
 
@@ -1008,11 +1008,15 @@ static int max77779_fwupdate_probe(struct platform_device *pdev)
 	if (ret)
 		dev_err(fwu->dev, "error to set max77779_fwupdate\n");
 
-	INIT_DELAYED_WORK(&fwu->update_work, firmware_update_work);
-
 	ret = max77779_get_firmware_version(fwu, &fwu->v_cur);
 	if (ret)
 		dev_err(fwu->dev, "failed to read version information\n");
+
+	if (fwu->v_cur.major)
+		scnprintf(fwu->fw_name, MAX77779_FW_UPDATE_STRING_MAX, "%s_%d.bin",
+			  MAX77779_FIRMWARE_BINARY_PREFIX, (int)fwu->v_cur.major);
+
+	INIT_DELAYED_WORK(&fwu->update_work, firmware_update_work);
 
 	ret = device_create_file(fwu->dev, &dev_attr_update_firmware);
 	if (ret != 0) {
@@ -1029,6 +1033,9 @@ static int max77779_fwupdate_probe(struct platform_device *pdev)
 	debugfs_create_file("data", 0444, de, fwu, &debug_update_firmware_data_fops);
 
 	fwu->de = de;
+
+	schedule_delayed_work(&fwu->update_work, msecs_to_jiffies(
+			      FW_UPDATE_CONDITION_CHECK_INTERVAL_MS));
 
 	return ret;
 }
