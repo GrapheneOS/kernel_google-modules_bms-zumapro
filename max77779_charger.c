@@ -2335,6 +2335,10 @@ static int max77779_psy_set_property(struct power_supply *psy,
 		ret = max77779_set_regulation_voltage(data, pval->intval);
 		pr_debug("%s: charge_voltage=%d (%d)\n",
 			__func__, pval->intval, ret);
+		if (ret)
+			break;
+		if (max77779_is_online(data) && pval->intval >= data->chg_term_voltage * 1000)
+			ret = max77779_higher_headroom_enable(data, true);
 		break;
 	/* called from google_cpm when switching chargers */
 	case GBMS_PROP_CHARGING_ENABLED:
@@ -2342,10 +2346,6 @@ static int max77779_psy_set_property(struct power_supply *psy,
 						  "PSP_ENABLED");
 		pr_debug("%s: charging_enabled=%d (%d)\n",
 			__func__, pval->intval, ret);
-		if (ret)
-			break;
-		if (max77779_is_online(data) && pval->intval >= data->chg_term_voltage * 1000)
-			ret = max77779_higher_headroom_enable(data, true);
 		break;
 	/* called from google_charger on disconnect */
 	case GBMS_PROP_CHARGE_DISABLE:
