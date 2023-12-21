@@ -1563,6 +1563,8 @@ static bool max_m5_is_reg(struct device *dev, unsigned int reg)
 	case 0x80 ... 0xAF:	/* FG Model */
 		/* TODO: add a check on unlock */
 		return true;
+	case 0xEB:              /* CoTrim */
+		return true;
 	}
 
 	return false;
