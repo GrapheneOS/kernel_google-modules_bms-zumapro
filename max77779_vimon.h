@@ -32,6 +32,9 @@ struct max77779_vimon_data {
 	unsigned max_triggers;
 	enum max77779_vimon_state state;
 	char *buf;
+
+	/* debug interface, register to read or write */
+	u32 debug_reg_address;
 };
 
 int max77779_vimon_init(struct max77779_vimon_data *data);

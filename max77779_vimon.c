@@ -11,6 +11,7 @@
 #include <linux/mutex.h>
 #include <linux/regmap.h>
 
+#include "google_bms.h"
 #include "max77779.h"
 #include "max77779_vimon.h"
 
@@ -111,8 +112,6 @@ vimon_start_exit:
 
 	return ret;
 }
-
-
 
 static int max77779_vimon_stop(struct device *dev)
 {
@@ -325,10 +324,64 @@ static int max77779_vimon_debug_start(void *d, u64 *val)
 	return 0;
 }
 
-
 DEFINE_SIMPLE_ATTRIBUTE(debug_start_fops, max77779_vimon_debug_start,
 			NULL, "%02llx\n");
 
+static int max77779_vimon_debug_reg_read(void *d, u64 *val)
+{
+	struct max77779_vimon_data *data = d;
+	int ret, reg;
+
+	ret = regmap_read(data->regmap, data->debug_reg_address, &reg);
+
+	*val = reg & 0xffff;
+
+	return ret;
+}
+
+static int max77779_vimon_debug_reg_write(void *d, u64 val)
+{
+	struct max77779_vimon_data *data = d;
+
+	return regmap_write(data->regmap, data->debug_reg_address, val & 0xffff);
+}
+DEFINE_SIMPLE_ATTRIBUTE(debug_reg_rw_fops, max77779_vimon_debug_reg_read,
+			max77779_vimon_debug_reg_write, "%04llx\n");
+
+static ssize_t max77779_vimon_show_reg_all(struct file *filp, char __user *buf,
+						size_t count, loff_t *ppos)
+{
+	struct max77779_vimon_data *data = filp->private_data;
+	u32 reg_address;
+	char *tmp;
+	int ret = 0, len = 0;
+	int regread;
+
+	if (!data->regmap)
+		return -EIO;
+
+	tmp = kmalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!tmp)
+		return -ENOMEM;
+
+	for (reg_address = 0; reg_address <= 0x7F; reg_address++) {
+		ret = regmap_read(data->regmap, reg_address, &regread);
+		if (ret < 0)
+			continue;
+
+		len += scnprintf(tmp + len, PAGE_SIZE - len, "%02x: %04x\n", reg_address,
+				regread & 0xffff);
+	}
+
+	if (len > 0)
+		len = simple_read_from_buffer(buf, count, ppos, tmp, len);
+
+	kfree(tmp);
+
+	return len;
+}
+
+BATTERY_DEBUG_ATTRIBUTE(debug_vimon_all_reg_fops, max77779_vimon_show_reg_all, NULL);
 
 bool max77779_vimon_is_reg(struct device *dev, unsigned int reg)
 {
@@ -351,6 +404,10 @@ static int max77779_vimon_init_fs(struct max77779_vimon_data *data)
 		return -EINVAL;
 
 	debugfs_create_file("start", 0600, data->de, data, &debug_start_fops);
+
+	debugfs_create_u32("address", 0600, data->de, &data->debug_reg_address);
+	debugfs_create_file("data", 0600, data->de, data, &debug_reg_rw_fops);
+	debugfs_create_file("registers", 0444, data->de, data, &debug_vimon_all_reg_fops);
 
 	return 0;
 }
