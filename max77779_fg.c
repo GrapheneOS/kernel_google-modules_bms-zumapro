@@ -77,6 +77,7 @@ enum max77779_fg_command_bits {
 static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj);
 static int max77779_fg_set_next_update(struct max77779_fg_chip *chip);
 static int max77779_fg_monitor_log_data(struct max77779_fg_chip *chip, bool force_log);
+static int max77779_fg_update_cycle_count(struct max77779_fg_chip *chip);
 
 static struct mutex section_lock;
 
@@ -690,6 +691,8 @@ static void max77779_fg_restore_battery_cycle(struct max77779_fg_chip *chip)
 						      chip->eeprom_cycle);
 		if (ret < 0)
 			dev_warn(chip->dev, "fail to update cycles (%d)", ret);
+		else
+			max77779_fg_update_cycle_count(chip);
 	}
 }
 
@@ -3066,6 +3069,7 @@ static int max77779_fg_init_chip(struct max77779_fg_chip *chip)
 
 	/* triggers loading of the model in the irq handler on POR */
 	if (!chip->por) {
+		max77779_fg_update_cycle_count(chip);
 		ret = max77779_fg_init_model_data(chip);
 		if (ret < 0)
 			return ret;
@@ -3168,8 +3172,6 @@ static void max77779_fg_init_work(struct work_struct *work)
 	 * NOTE: will clear the POR bit and trigger model load if needed
 	 */
 	max77779_fg_irq_thread_fn(-1, chip);
-
-	max77779_fg_update_cycle_count(chip);
 
 	max77779_current_offset_check(chip);
 
