@@ -963,9 +963,13 @@ static int p9221_reset_wlc_dc(struct p9221_charger_data *charger)
 		charger->negotiation_complete = false;
 		p9221_write_fod(charger);
 	}
-	ret = p9xxx_chip_set_cmfet_reg(charger, P9412_CMFET_DEFAULT);
-	if (ret < 0 && ret != -ENOTSUPP)
-		dev_warn(&charger->client->dev, "Fail to set comm cap(%d)\n", ret);
+	if (charger->pdata->gpp_cmfet > 0) {
+		charger->chip_set_cmfet(charger);
+	} else {
+		ret = p9xxx_chip_set_cmfet_reg(charger, charger->wlc_default_comcap);
+		if (ret < 0 && ret != -ENOTSUPP)
+			dev_warn(&charger->client->dev, "Fail to set comm cap(%d)\n", ret);
+	}
 
 	if (charger->alignment == -1)
 		p9221_init_align(charger);
@@ -1439,7 +1443,7 @@ static void p9221_power_mitigation_work(struct work_struct *work)
 						"Fail to configure Vout to %d mV\n",
 						P9XXX_VOUT_5480MV);
 			}
-			ret = p9xxx_chip_set_cmfet_reg(charger, 0);
+			ret = p9xxx_chip_set_cmfet_reg(charger, charger->wlc_dd_comcap);
 			if (ret < 0 && ret != -ENOTSUPP)
 				dev_err(&charger->client->dev, "Fail to configure LL\n");
 			p9221_ll_bpp_cep(charger, charger->last_capacity);
@@ -2743,7 +2747,7 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 
 		p9221_set_switch_reg(charger, true);
 
-		ret = p9xxx_chip_set_cmfet_reg(charger, P9412_CMFET_2_COMM);
+		ret = p9xxx_chip_set_cmfet_reg(charger, charger->wlc_dc_comcap);
 		if (ret < 0 && ret != -ENOTSUPP)
 			dev_warn(&charger->client->dev, "Fail to set comm cap(%d)\n", ret);
 
@@ -3582,7 +3586,7 @@ static void p9xxx_check_ll_bpp_cep(struct p9221_charger_data *charger)
 	if (ret < 0 || (!charger->pdata->ll_vout_not_set && (vout_mv != P9XXX_VOUT_5480MV)))
 		is_ll_bpp = false;
 	ret = p9221_reg_read_8(charger, P9412_CMFET_L_REG, &val8);
-	if (ret < 0 || val8 != 0)
+	if (ret < 0 || val8 != charger->wlc_dd_comcap)
 		is_ll_bpp = false;
 
 	if (is_ll_bpp) {
@@ -7750,8 +7754,8 @@ int p9221_wlc_disable(struct p9221_charger_data *charger, int disable, u8 reason
 
 		ret = charger->chip_send_eop(charger, reason);
 
-		rc = charger->reg_write_8(charger, P9412_CMFET_L_REG, P9412_CMFET_DISABLE_ALL);
-		rc |= charger->reg_write_8(charger, P9412_HIVOUT_CMFET_REG, P9412_CMFET_DISABLE_ALL);
+		rc = p9xxx_chip_set_cmfet_reg(charger, charger->wlc_disable_comcap);
+		rc |= p9xxx_chip_set_hivout_cmfet_reg(charger, charger->wlc_disable_comcap);
 
 		pr_info("Disabled Rx communication channel(CMFET): 0xF4 & 0x11B (%d)\n", rc);
 		charger->send_eop = false;

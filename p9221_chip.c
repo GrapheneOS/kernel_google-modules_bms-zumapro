@@ -2671,9 +2671,14 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->reg_light_load_addr = 0;
 		chgr->reg_mot_addr = P9412_MOT_REG;
 		chgr->reg_cmfet_addr = P9412_CMFET_L_REG;
+		chgr->reg_hivout_cmfet_addr = P9412_HIVOUT_CMFET_REG;
 		chgr->reg_epp_tx_guarpwr_addr = P9221R5_EPP_TX_GUARANTEED_POWER_REG;
 		chgr->rtx_api_limit = P9412_I_API_Limit_1350MA;
 		chgr->reg_freq_limit_addr = 0;
+		chgr->wlc_dc_comcap = P9412_CMFET_2_COMM;
+		chgr->wlc_dd_comcap = P9412_CMFET_ENABLE_ALL;
+		chgr->wlc_default_comcap = P9412_CMFET_DEFAULT;
+		chgr->wlc_disable_comcap = P9412_CMFET_DISABLE_ALL;
 		break;
 	case RA9530_CHIP_ID:
 		chgr->reg_tx_id_addr = P9412_PROP_TX_ID_REG;
@@ -2698,6 +2703,10 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->low_neg_pwr_icl = RA9530_ILIM_500UA;
 		chgr->det_off_debounce = 1000;
 		chgr->reg_freq_limit_addr = 0;
+		chgr->wlc_dc_comcap = RA9530_CMFET_COM_A_B;
+		chgr->wlc_dd_comcap = RA9530_CMFET_ENABLE_ALL;
+		chgr->wlc_default_comcap = RA9530_CMFET_COM_1_2;
+		chgr->wlc_disable_comcap = RA9530_CMFET_DISABLE_ALL;
 		break;
 	case P9382A_CHIP_ID:
 		chgr->reg_tx_id_addr = P9382_PROP_TX_ID_REG;

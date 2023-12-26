@@ -522,6 +522,11 @@
 #define P9412_CMFET_DISABLE_ALL			(0xF0) /* CM-A/B-1/2: REG[7:4]=0b1111 */
 #define P9412_CMFET_DEFAULT			(0x30) /* REG[7:4]=0b0011 */
 #define P9412_CMFET_2_COMM			(0xC0) /* REG[7:4]=0b1100 */
+#define P9412_CMFET_ENABLE_ALL			(0x00)
+#define RA9530_CMFET_DISABLE_ALL		(0x00)
+#define RA9530_CMFET_COM_1_2			(0xC0)
+#define RA9530_CMFET_COM_A_B			(0x30)
+#define RA9530_CMFET_ENABLE_ALL			(0xF0)
 
 #define P9221_CRC8_POLYNOMIAL			0x07    /* (x^8) + x^2 + x + 1 */
 #define P9412_ADT_TYPE_AUTH			0x02
@@ -1006,6 +1011,10 @@ struct p9221_charger_data {
 	u32 				wlc_dc_voltage_now;
 	u32 				wlc_dc_current_now;
 	bool				wlc_dc_enabled;
+	u8				wlc_dc_comcap;
+	u8				wlc_default_comcap;
+	u8				wlc_dd_comcap;
+	u8				wlc_disable_comcap;
 	bool				chg_mode_off;
 	u32				de_hpp_neg_pwr;
 	u32				de_epp_neg_pwr;
@@ -1024,6 +1033,7 @@ struct p9221_charger_data {
 	u16				reg_light_load_addr;
 	u16				reg_mot_addr;
 	u16				reg_cmfet_addr;
+	u16				reg_hivout_cmfet_addr;
 	u16				reg_epp_tx_guarpwr_addr;
 	u16				reg_freq_limit_addr;
 
@@ -1174,6 +1184,8 @@ enum p9xxx_renego_state {
       -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_mot_addr, data))
 #define p9xxx_chip_set_cmfet_reg(chgr, data) (chgr->reg_cmfet_addr == 0 ? \
       -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_cmfet_addr, data))
+#define p9xxx_chip_set_hivout_cmfet_reg(chgr, data) (chgr->reg_hivout_cmfet_addr == 0 ? \
+      -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_hivout_cmfet_addr, data))
 #define p9xxx_chip_set_freq_limit(chgr, data) (chgr->reg_freq_limit_addr == 0 ? \
       -ENOTSUPP : chgr->reg_write_16(chgr, chgr->reg_freq_limit_addr, data))
 #define logbuffer_prlog(p, fmt, ...)     \
