@@ -740,7 +740,7 @@ bool gs201_setup_usecases(struct max77779_usecase_data *uc_data,
 
 	/*  wlc_rx thermal throttle -> spoof online */
 	if (uc_data->wlc_spoof_gpio == -EPROBE_DEFER)
-		uc_data->wlc_spoof_gpio = of_get_named_gpio(node, "max77779,wlc-spoof-gpio", 0);
+		uc_data->wlc_spoof_gpio = of_get_named_gpio(node, "max77779,wlc-spoof", 0);
 
 	/* OPTIONAL: wlc-spoof-vol */
 	ret = of_property_read_u32(node, "max77779,wlc-spoof-vbyp", &data);
