@@ -25,7 +25,7 @@ const struct regmap_config max77779_pmic_regmap_cfg = {
 	.reg_bits = 8,
 	.val_bits = 8,
 	.val_format_endian = REGMAP_ENDIAN_NATIVE,
-	.max_register = MAX77779_VGPI_CNFG,
+	.max_register = MAX77779_PMIC_GPIO_VGPI_CNFG,
 	.readable_reg = max77779_pmic_is_readable,
 	.volatile_reg = max77779_pmic_is_readable,
 };
@@ -153,7 +153,8 @@ static ssize_t max77779_pmic_show_reg_all(struct file *filp, char __user *buf,
 	if (!tmp)
 		return -ENOMEM;
 
-	for (reg_address = MAX77779_PMIC_ID; reg_address <= MAX77779_VGPI_CNFG; reg_address++) {
+	for (reg_address = MAX77779_PMIC_ID; reg_address <= MAX77779_PMIC_GPIO_VGPI_CNFG;
+	     reg_address++) {
 		ret = max77779_pmic_reg_read(info->regmap, reg_address, &reg);
 		if (ret < 0)
 			continue;
@@ -207,11 +208,11 @@ bool max77779_pmic_is_readable(struct device *dev, unsigned int reg)
 	case MAX77779_PMIC_EVENT_CNT_CFG ... MAX77779_PMIC_EVENT_CNT_UVLO1:
 	case MAX77779_PMIC_I2C_CNFG ... MAX77779_PMIC_SPMI_STS:
 	case MAX77779_PMIC_SWRESET ... MAX77779_PMIC_CONTROL_FG:
-	case MAX77779_FG_DEVICE_ID ... MAX77779_FG_FW_SUB_REV:
-	case MAX77779_FG_AP_DATAOUT1 ... MAX77779_FG_AP_DATAOUT_OPCODE:
-	case MAX77779_FG_AP_DATAIN0 ... MAX77779_FG_SysMsg:
-	case MAX77779_FG_COMMAND_HW:
-	case MAX77779_SGPIO_INT ... MAX77779_VGPI_CNFG:
+	case MAX77779_PMIC_RISCV_DEVICE_ID ... MAX77779_PMIC_RISCV_FW_SUB_REV:
+	case MAX77779_PMIC_RISCV_AP_DATAOUT1 ... MAX77779_PMIC_RISCV_AP_DATAOUT_OPCODE:
+	case MAX77779_PMIC_RISCV_AP_DATAIN0 ... MAX77779_PMIC_RISCV_SysMsg:
+	case MAX77779_PMIC_RISCV_COMMAND_HW:
+	case MAX77779_PMIC_GPIO_SGPIO_INT ... MAX77779_PMIC_GPIO_VGPI_CNFG:
 		return true;
 	default:
 		return false;

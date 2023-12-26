@@ -957,11 +957,11 @@ static int max77779_fg_get_fw_ver(struct max77779_fg_chip *chip)
 		return ret;
 	}
 
-	ret = max77779_external_pmic_reg_read(chip->pmic_dev, MAX77779_FG_FW_REV, &fw_rev);
+	ret = max77779_external_pmic_reg_read(chip->pmic_dev, MAX77779_PMIC_RISCV_FW_REV, &fw_rev);
 	if (ret < 0)
 		return ret;
 
-	ret = max77779_external_pmic_reg_read(chip->pmic_dev, MAX77779_FG_FW_SUB_REV, &fw_sub_rev);
+	ret = max77779_external_pmic_reg_read(chip->pmic_dev, MAX77779_PMIC_RISCV_FW_SUB_REV, &fw_sub_rev);
 	if (ret < 0)
 		return ret;
 
@@ -1596,7 +1596,7 @@ static int max77779_fg_full_reset(struct max77779_fg_chip *chip)
 		return ret;
 	}
 
-	ret = max77779_external_pmic_reg_write(chip->pmic_dev, MAX77779_FG_COMMAND_HW,
+	ret = max77779_external_pmic_reg_write(chip->pmic_dev, MAX77779_PMIC_RISCV_COMMAND_HW,
 					       CMD_HW_RESET);
 	dev_warn(chip->dev, "%s, ret=%d\n", __func__, ret);
 	if (ret == 0) {

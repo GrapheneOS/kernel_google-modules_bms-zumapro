@@ -8,7 +8,7 @@
 #ifndef MAX77779_REG_H_
 #define MAX77779_REG_H_
 
-#include "max77779_v0719_prelim_regs.h"
+#include "max77779_regs_1211.h"
 
 /* TODO: b/257309885 do we still need this? */
 #define MAX77779_CHG_CNFG_11_OTG_VBYP_5000MV	0x0

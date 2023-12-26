@@ -230,7 +230,7 @@ static int max77779_wait_cpu_reset(struct max77779_fwupdate *fwu)
 
 	while (cnt < FW_UPDATE_RETRY_CPU_RESET) {
 		msleep(FW_UPDATE_WAIT_INTERVAL_MS);
-		ret = max77779_external_pmic_reg_read(fwu->pmic, MAX77779_FG_AP_DATAIN0, &val);
+		ret = max77779_external_pmic_reg_read(fwu->pmic, MAX77779_PMIC_RISCV_AP_DATAIN0, &val);
 		if (ret == 0) {
 			if (val != MAX77779_RSP_CODE_UNEXPECTED) {
 				MARK_IN_PROGRESS();
@@ -258,7 +258,7 @@ static int max77779_wait_fw_update(struct max77779_fwupdate *fwu)
 		msleep(FW_UPDATE_WAIT_INTERVAL_MS);
 		cnt++;
 
-		ret = max77779_external_pmic_reg_read(fwu->pmic, MAX77779_FG_AP_DATAIN0, &val);
+		ret = max77779_external_pmic_reg_read(fwu->pmic, MAX77779_PMIC_RISCV_AP_DATAIN0, &val);
 		if (ret != 0 || val == MAX77779_RSP_CODE_NOT_READY) {
 			MARK_IN_PROGRESS();
 			continue;
@@ -369,10 +369,11 @@ static int max77779_trigger_interrupt(struct max77779_fwupdate *fwu,
 {
 	int ret;
 
-	ret = max77779_external_pmic_reg_write(fwu->pmic, MAX77779_FG_AP_DATAOUT_OPCODE, intr);
+	ret = max77779_external_pmic_reg_write(fwu->pmic, MAX77779_PMIC_RISCV_AP_DATAOUT_OPCODE,
+					       intr);
 	if (ret)
 		dev_err(fwu->dev, "failed to write pmic reg %02x (%d) in trigger_interrupt\n",
-			MAX77779_FG_AP_DATAOUT_OPCODE, ret);
+			MAX77779_PMIC_RISCV_AP_DATAOUT_OPCODE, ret);
 
 	return ret;
 }
@@ -383,17 +384,17 @@ static int max77779_get_firmware_version(struct max77779_fwupdate *fwu,
 	int ret;
 	uint8_t major, minor;
 
-	ret = max77779_external_pmic_reg_read(fwu->pmic, MAX77779_FG_FW_REV, &major);
+	ret = max77779_external_pmic_reg_read(fwu->pmic, MAX77779_PMIC_RISCV_FW_REV, &major);
 	if (ret) {
 		dev_err(fwu->dev, "failed to read pmic reg %02x (%d) in read firmware version\n",
-			MAX77779_FG_FW_REV, ret);
+			MAX77779_PMIC_RISCV_FW_REV, ret);
 		goto max77779_get_firmware_version_done;
 	}
 
-	ret = max77779_external_pmic_reg_read(fwu->pmic, MAX77779_FG_FW_SUB_REV, &minor);
+	ret = max77779_external_pmic_reg_read(fwu->pmic, MAX77779_PMIC_RISCV_FW_SUB_REV, &minor);
 	if (ret)
 		dev_err(fwu->dev, "failed to read pmic reg %02x (%d) in read firmware version\n",
-			MAX77779_FG_FW_SUB_REV, ret);
+			MAX77779_PMIC_RISCV_FW_SUB_REV, ret);
 
 	ver->major = major;
 	ver->minor = minor;
@@ -715,15 +716,15 @@ static int max77779_fwl_write(struct max77779_fwupdate *fwu, const u8 *fw_binary
 	*written += MAX77779_FW_IMG_SZ_PACKET;
 
 	fwu->crc_val = 0;
-	ret = max77779_external_pmic_reg_read(fwu->pmic, MAX77779_FG_AP_DATAIN0, &val);
+	ret = max77779_external_pmic_reg_read(fwu->pmic, MAX77779_PMIC_RISCV_AP_DATAIN0, &val);
 	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed to read crc information");
 	dev_info(fwu->dev, "RISCV lock status: %x\n", val);
 
-	ret = max77779_external_pmic_reg_read(fwu->pmic, MAX77779_FG_AP_DATAIN2, &val);
+	ret = max77779_external_pmic_reg_read(fwu->pmic, MAX77779_PMIC_RISCV_AP_DATAIN2, &val);
 	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed to read crc information");
 	fwu->crc_val = val;
 
-	ret = max77779_external_pmic_reg_read(fwu->pmic, MAX77779_FG_AP_DATAIN3, &val);
+	ret = max77779_external_pmic_reg_read(fwu->pmic, MAX77779_PMIC_RISCV_AP_DATAIN3, &val);
 	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed to read crc information");
 	fwu->crc_val |= (val << 8);
 
@@ -763,7 +764,7 @@ static int max77779_fwl_poll_complete(struct max77779_fwupdate *fwu)
 	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed to set MAX77779_CHGR_MODE_BUCK_ON");
 
 	/* b/310710147: risc-v is not operational state. requires reboot */
-	max77779_external_pmic_reg_write(fwu->pmic, MAX77779_FG_COMMAND_HW,
+	max77779_external_pmic_reg_write(fwu->pmic, MAX77779_PMIC_RISCV_COMMAND_HW,
 					 MAX77779_CMD_REBOOT_FG);
 	max77779_wait_riscv_reboot(fwu);
 
