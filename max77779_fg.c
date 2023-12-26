@@ -1599,8 +1599,11 @@ static int max77779_fg_full_reset(struct max77779_fg_chip *chip)
 	ret = max77779_external_pmic_reg_write(chip->pmic_dev, MAX77779_FG_COMMAND_HW,
 					       CMD_HW_RESET);
 	dev_warn(chip->dev, "%s, ret=%d\n", __func__, ret);
-	if (ret == 0)
+	if (ret == 0) {
 		msleep(MAX77779_FG_TPOR_MS);
+		/* check POR after reset */
+		max77779_fg_irq_thread_fn(-1, chip);
+	}
 
 	return ret;
 }
