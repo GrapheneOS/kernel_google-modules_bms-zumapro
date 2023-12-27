@@ -2280,6 +2280,7 @@ request_pwr:
 		goto err_exit;
 	}
 
+	chgr->negotiation_complete = false;
 	/* Request power from TX based on PropReqPwr (0xC5) by writing 0x02 to 0x4F */
 	ret = chgr->chip_set_cmd(chgr, PROP_REQ_PWR_CMD);
 	if (ret) {
@@ -2292,11 +2293,17 @@ request_pwr:
 	loop_cnt = max_wait_time / 50;
 	for (loops = loop_cnt ; loops ; loops--) {
 		usleep_range(50 * USEC_PER_MSEC, 60 * USEC_PER_MSEC);
+		ret = chgr->reg_read_8(chgr, P9412_PROP_CURR_PWR_REG, &prop_cur_pwr);
+		if (chgr->negotiation_complete && ret == 0 && prop_cur_pwr == req_pwr_val)
+			break;
 		if (!chgr->online)
 			chgr->prop_mode_en = false;
-		if (chgr->negotiation_complete)
-			break;
 	}
+	if (ret == 0 && prop_cur_pwr < req_pwr_val) {
+		dev_err(&chgr->client->dev, "%s: curr_pwr=%d\n", __func__, prop_cur_pwr);
+		chgr->negotiation_complete = false;
+	}
+
 
 err_exit:
         /* check status */
