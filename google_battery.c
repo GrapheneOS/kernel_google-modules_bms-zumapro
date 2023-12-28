@@ -308,7 +308,7 @@ struct swelling_data {
 struct bhi_weight bhi_w[] = {
 	[BHI_ALGO_ACHI] = {100, 0, 0},
 	[BHI_ALGO_ACHI_B] = {100, 0, 0},
-	[BHI_ALGO_ACHI_RAVG] = {100, 0, 0},
+	[BHI_ALGO_ACHI_RECAL] = {100, 0, 0},
 	[BHI_ALGO_ACHI_RAVG_B] = {100, 0, 0},
 	[BHI_ALGO_MIX_N_MATCH] = {90, 0, 10},
 	[BHI_ALGO_ACHI_FCR] = {100, 0, 0},
@@ -4152,7 +4152,7 @@ static int bhi_get_capacity_bound(int cycle_count, const u16 *cap_bound)
 
 static bool bhi_algo_has_bounds(int algo)
 {
-	return algo == BHI_ALGO_ACHI_B || algo == BHI_ALGO_ACHI_RAVG ||
+	return algo == BHI_ALGO_ACHI_B || algo == BHI_ALGO_ACHI_RECAL ||
 	       algo == BHI_ALGO_ACHI_RAVG_B;
 }
 
@@ -4295,7 +4295,7 @@ static int bhi_health_get_impedance(int algo, const struct bhi_data *bhi_data)
 	switch (algo) {
 	case BHI_ALGO_DISABLED:
 	case BHI_ALGO_CYCLE_COUNT:
-	case BHI_ALGO_ACHI_RAVG:
+	case BHI_ALGO_ACHI_RECAL:
 	case BHI_ALGO_ACHI_RAVG_B:
 	case BHI_ALGO_MIX_N_MATCH:
 		cur_impedance = batt_ravg_value(&bhi_data->res_state);
@@ -4418,7 +4418,7 @@ static int bhi_calc_health_index(int algo, struct health_data *health_data,
 		return bhi_cycle_count_index(health_data);
 	case BHI_ALGO_ACHI:
 	case BHI_ALGO_ACHI_B:
-	case BHI_ALGO_ACHI_RAVG:
+	case BHI_ALGO_ACHI_RECAL:
 	case BHI_ALGO_ACHI_RAVG_B:
 	case BHI_ALGO_MIX_N_MATCH:
 	case BHI_ALGO_ACHI_FCR:
@@ -4631,7 +4631,7 @@ static bool batt_bhi_need_recalibration(struct batt_drv *batt_drv)
 		return false;
 
 	/* recalibration enabled in algorithm 4 */
-	if (batt_drv->health_data.bhi_algo != BHI_ALGO_ACHI_RAVG)
+	if (batt_drv->health_data.bhi_algo != BHI_ALGO_ACHI_RECAL)
 		return false;
 
 	/* read full capacity value */
