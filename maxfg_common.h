@@ -14,8 +14,7 @@
 #include "gbms_power_supply.h"
 #include "google_bms.h"
 
-#define MAX1720X_GAUGE_TYPE	0
-#define MAX1730X_GAUGE_TYPE	1
+#define MAX1720X_GAUGE_TYPE	1
 #define MAX_M5_GAUGE_TYPE	2
 
 enum maxfg_reg_tags {

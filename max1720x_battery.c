@@ -38,7 +38,6 @@
 #define MAX17X0X_TPOR_MS 150
 
 #define MAX1720X_TRECALL_MS 5
-#define MAX1730X_TRECALL_MS 5
 #define MAX1720X_TICLR_MS 500
 #define MAX1720X_I2C_DRIVER_NAME "max_fg_irq"
 #define MAX1720X_DELAY_INIT_MS 1000
@@ -65,7 +64,6 @@
 #define BHI_IMPEDANCE_TIMERH		50 /* 7*24 / 3.2hr */
 
 #include "max1720x.h"
-#include "max1730x.h"
 #include "max_m5.h"
 
 enum max17xxx_register {
@@ -114,7 +112,7 @@ struct max1720x_chip {
 	struct i2c_client *primary;
 	struct i2c_client *secondary;
 
-	int gauge_type;	/* -1 not present, 0=max1720x, 1=max1730x */
+	int gauge_type;	/* -1 not present, 0=max1720x, 1=max_m5 */
 	struct maxfg_regmap regmap;
 	struct maxfg_regmap regmap_nvram;
 
@@ -418,13 +416,9 @@ static int max17x0x_cache_init(struct max17x0x_cache_data *cache,
 static int max17x0x_nvram_cache_init(struct max17x0x_cache_data *cache,
 				     int gauge_type)
 {
-	int ret;
+	int ret = 0;
 
-	if (gauge_type == MAX1730X_GAUGE_TYPE) {
-		ret = max17x0x_cache_init(cache,
-					  MAX1730X_NVRAM_START,
-					  MAX1730X_NVRAM_END);
-	} else {
+	if (gauge_type == MAX1720X_GAUGE_TYPE) {
 		ret = max17x0x_cache_init(cache,
 					  MAX1720X_NVRAM_START,
 					  MAX1720X_NVRAM_END);
@@ -514,53 +508,6 @@ static inline int capacity_uah_to_reg(int capacity, struct max1720x_chip *chip)
 
 /* log ----------------------------------------------------------------- */
 
-static void max1730x_read_log_write_status(struct max1720x_chip *chip,
-					   u16 *buffer)
-{
-	u16 i;
-	u16 data = 0;
-	const struct maxfg_reg *hsty;
-
-	hsty = maxfg_find_by_tag(&chip->regmap_nvram, MAXFG_TAG_HSTY);
-	if (!hsty)
-		return;
-
-	REGMAP_WRITE(&chip->regmap, MAX17XXX_COMMAND,
-		     MAX1730X_COMMAND_HISTORY_RECALL_WRITE_0);
-	msleep(MAX1730X_TRECALL_MS);
-	for (i = hsty->map[1]; i <= hsty->map[3]; i++) {
-		(void)REGMAP_READ(&chip->regmap_nvram, i, &data);
-		*buffer++ = data;
-	}
-}
-
-static void max1730x_read_log_valid_status(struct max1720x_chip *chip,
-					   u16 *buffer)
-{
-	u16 i;
-	u16 data = 0;
-	const struct maxfg_reg *hsty;
-
-	hsty = maxfg_find_by_tag(&chip->regmap_nvram, MAXFG_TAG_HSTY);
-
-	if (!hsty)
-		return;
-
-	REGMAP_WRITE(&chip->regmap, MAX17XXX_COMMAND,
-		     MAX1730X_COMMAND_HISTORY_RECALL_VALID_0);
-	msleep(MAX1730X_TRECALL_MS);
-	(void)REGMAP_READ(&chip->regmap_nvram, hsty->map[4], &data);
-	*buffer++ = data;
-
-	REGMAP_WRITE(&chip->regmap, MAX17XXX_COMMAND,
-		     MAX1730X_COMMAND_HISTORY_RECALL_VALID_1);
-	msleep(MAX1730X_TRECALL_MS);
-	for (i = hsty->map[0]; i <= hsty->map[2]; i++) {
-		(void)REGMAP_READ(&chip->regmap_nvram, i, &data);
-		*buffer++ = data;
-	}
-}
-
 static void max1720x_read_log_write_status(struct max1720x_chip *chip,
 					   u16 *buffer)
 {
@@ -635,15 +582,9 @@ static int get_battery_history_status(struct max1720x_chip *chip,
 		return -ENOMEM;
 	}
 
-	if (chip->gauge_type == MAX1730X_GAUGE_TYPE) {
-		max1730x_read_log_write_status(chip, write_status);
-		max1730x_read_log_valid_status(chip, valid_status);
-		nb_history_pages = MAX1730X_N_OF_HISTORY_PAGES;
-	} else {
-		max1720x_read_log_write_status(chip, write_status);
-		max1720x_read_log_valid_status(chip, valid_status);
-		nb_history_pages = MAX1720X_N_OF_HISTORY_PAGES;
-	}
+	max1720x_read_log_write_status(chip, write_status);
+	max1720x_read_log_valid_status(chip, valid_status);
+	nb_history_pages = MAX1720X_N_OF_HISTORY_PAGES;
 
 	/* Figure out the pages with valid history entry */
 	for (i = 0; i < nb_history_pages; i++) {
@@ -670,9 +611,7 @@ static void get_battery_history(struct max1720x_chip *chip,
 	int i, j, index = 0;
 	u16 data = 0;
 	const struct maxfg_reg *hsty;
-	u16 command_base = (chip->gauge_type == MAX1730X_GAUGE_TYPE)
-		? MAX1730X_READ_HISTORY_CMD_BASE
-		: MAX1720X_READ_HISTORY_CMD_BASE;
+	u16 command_base = MAX1720X_READ_HISTORY_CMD_BASE;
 
 	hsty = maxfg_find_by_tag(&chip->regmap_nvram, MAXFG_TAG_HSTY);
 	if (!hsty)
@@ -2351,18 +2290,6 @@ EXPORT_SYMBOL_GPL(max17x0x_sw_reset);
  */
 static int max1720x_full_reset(struct max1720x_chip *chip)
 {
-	if (chip->gauge_type == MAX1730X_GAUGE_TYPE) {
-		/*
-		 * a full (hw) reset on max1730x cause charge and discharge FET
-		 * to toggle and the device will lose power. Will need to
-		 * connect the device to a charger to get max1730x firmware to
-		 * start and max1730x to close the FETs. Never send a HW reset
-		 * to a 1730x while in system...
-		 */
-		dev_warn(chip->dev, "ignore full reset of fuel gauge\n");
-		return 0;
-	}
-
 	REGMAP_WRITE(&chip->regmap, MAX17XXX_COMMAND,
 		     MAX1720X_COMMAND_HARDWARE_RESET);
 
@@ -2676,8 +2603,7 @@ static int max17x0x_apply_regval_shadow(struct max1720x_chip *chip,
 {
 	u16 *regs;
 	int ret, i;
-	const char *propname = (chip->gauge_type == MAX1730X_GAUGE_TYPE) ?
-		 "maxim,n_regval_1730x" : "maxim,n_regval_1720x";
+	const char *propname = "maxim,n_regval_1720x";
 
 	if (!node || nb <= 0)
 		return 0;
@@ -2725,16 +2651,11 @@ static int max17x0x_read_dt_version(struct device_node *node,
 				    int gauge_type, u8 *reg, u8 *val)
 {
 	int ret;
-	const char *propname;
+	const char *propname = "maxim,n_regval_1720x_ver";
 	u8 version[2];
 
-	if (gauge_type == MAX1730X_GAUGE_TYPE) {
-		propname = "maxim,n_regval_1730x_ver";
-	} else if (gauge_type == MAX1720X_GAUGE_TYPE) {
-		propname = "maxim,n_regval_1720x_ver";
-	} else {
+	if (gauge_type != MAX1720X_GAUGE_TYPE)
 		return -ENOTSUPP;
-	}
 
 	ret = of_property_read_u8_array(node, propname,
 					version,
@@ -2752,16 +2673,11 @@ static int max17x0x_read_dt_version_por(struct device_node *node,
 					int gauge_type, u8 *reg, u8 *val)
 {
 	int ret;
-	const char *propname;
+	const char *propname = "maxim,n_regval_1720x_ver_por";
 	u8 version[2];
 
-	if (gauge_type == MAX1730X_GAUGE_TYPE) {
-		propname = "maxim,n_regval_1730x_ver_por";
-	} else if (gauge_type == MAX1720X_GAUGE_TYPE) {
-		propname = "maxim,n_regval_1720x_ver_por";
-	} else {
+	if (gauge_type != MAX1720X_GAUGE_TYPE)
 		return -ENOTSUPP;
-	}
 
 	ret = of_property_read_u8_array(node, propname,
 					version,
@@ -2778,7 +2694,7 @@ static int max17x0x_read_dt_version_por(struct device_node *node,
 static int max17x0x_handle_dt_shadow_config(struct max1720x_chip *chip)
 {
 	int ret, rc, glob_cnt;
-	const char *propname = NULL;
+	const char *propname = "maxim,n_regval_1720x";
 	struct max17x0x_cache_data nRAM_c;
 	struct max17x0x_cache_data nRAM_u;
 	int ver_idx = -1;
@@ -2787,11 +2703,6 @@ static int max17x0x_handle_dt_shadow_config(struct max1720x_chip *chip)
 	/* for devices that don't support max1720x_fg_reset() */
 	if (!chip->shadow_override || chip->gauge_type == -1)
 		return 0;
-
-	if (chip->gauge_type == MAX1730X_GAUGE_TYPE)
-		propname = "maxim,n_regval_1730x";
-	else
-		propname = "maxim,n_regval_1720x";
 
 	ret = max17x0x_nvram_cache_init(&nRAM_c, chip->gauge_type);
 	if (ret < 0)
@@ -2898,10 +2809,7 @@ static int max17x0x_apply_regval_register(struct max1720x_chip *chip,
 {
 	int cnt, ret = 0, idx, err;
 	u16 *regs, data;
-	const char *propname;
-
-	propname = (chip->gauge_type == MAX1730X_GAUGE_TYPE) ?
-		 "maxim,r_regval_1730x" : "maxim,r_regval_1720x";
+	const char *propname = "maxim,r_regval_1720x";
 
 	cnt =  of_property_count_elems_of_size(node, propname, sizeof(u16));
 	if (!node || cnt <= 0)
@@ -3798,35 +3706,6 @@ static u16 max1720x_read_rsense(const struct max1720x_chip *chip)
 	return rsense;
 }
 
-/*
- * The BCNT, QHQH and QHCA for 17202 modify these common registers
- * 0x18C, 0x18D, 0x18E, 0x18F, 0x1B2, 0x1B4 which will default to 0 after
- * the recovery procedure. The map changes the content of 0x1C4, 0x1C5 which
- * are not used (and should be 0 unless used by a future version of SW) as well
- * as 0x1CD, 0x1CE used for nManfctrName1/2 which might change. 0x1DF is the
- * INI checksum that will change with updates and cannot be used for this test.
- * The only register left is 0x1D7 (MAX1730X_NPROTCFG), that is the register
- * that the code will used to determine the corruption.
- */
-static int max1730x_check_prot(struct max1720x_chip *chip, u16 devname)
-{
-	int needs_recall = 0;
-	u16 nprotcfg;
-	int ret;
-
-	/* check protection registers */
-	ret = REGMAP_READ(&chip->regmap_nvram, MAX1730X_NPROTCFG, &nprotcfg);
-	if (ret < 0)
-		return -EIO;
-
-	if (devname == MAX1730X_GAUGE_PASS1)
-		needs_recall = (nprotcfg != MAX1730X_NPROTCFG_PASS1);
-	else /* pass2 */
-		needs_recall = (nprotcfg != MAX1730X_NPROTCFG_PASS2);
-
-	return needs_recall;
-}
-
 static int max17x0x_nvram_recall(struct max1720x_chip *chip)
 {
 	REGMAP_WRITE(&chip->regmap,
@@ -3834,88 +3713,6 @@ static int max17x0x_nvram_recall(struct max1720x_chip *chip)
 			MAX17XXX_COMMAND_NV_RECALL);
 	msleep(MAX17X0X_TPOR_MS);
 	return 0;
-}
-
-/* TODO: move to google/max1730x_battery.c, enable with build config */
-static int max1730x_fixups(struct max1720x_chip *chip)
-{
-	int ret;
-
-	struct device_node *node = chip->dev->of_node;
-	bool write_back = false, write_ndata = false;
-	const u16 val = 0x280B;
-	u16 ndata = 0, bak = 0;
-
-	/* b/123026365 */
-	if (of_property_read_bool(node, "maxim,enable-nv-check")) {
-		const u16 devname = (chip->devname >> 4);
-		int needs_recall;
-
-		needs_recall = max1730x_check_prot(chip, devname);
-		if (needs_recall < 0) {
-			dev_err(chip->dev, "error reading fg NV configuration\n");
-		} else if (needs_recall == 0) {
-			/* all good.. */
-		} else if (devname == MAX1730X_GAUGE_PASS1) {
-			dev_err(chip->dev, "***********************************************\n");
-			dev_err(chip->dev, "WARNING: need to restore FG NV configuration to\n");
-			dev_err(chip->dev, "default values. THE DEVICE WILL LOOSE POWER.\n");
-			dev_err(chip->dev, "*******************************************\n");
-			msleep(MSEC_PER_SEC);
-			REGMAP_WRITE(&chip->regmap, MAX17XXX_COMMAND,
-				     MAX1720X_COMMAND_HARDWARE_RESET);
-			msleep(MAX17X0X_TPOR_MS);
-		} else {
-			dev_err(chip->dev, "Restoring FG NV configuration to sane values\n");
-
-			if (!chip->needs_reset) {
-				ret = max17x0x_nvram_recall(chip);
-				if (ret == 0)
-					chip->needs_reset = true;
-			}
-
-			REGMAP_WRITE(&chip->regmap_nvram,
-					MAX1730X_NPROTCFG,
-					MAX1730X_NPROTCFG_PASS2);
-		}
-	} else {
-		dev_err(chip->dev, "nv-check disabled\n");
-	}
-
-	/* b/122605202 */
-	ret = REGMAP_READ(&chip->regmap_nvram, MAX1730X_NVPRTTH1, &ndata);
-	if (ret == 0)
-		ret = REGMAP_READ(&chip->regmap, MAX1730X_NVPRTTH1BAK, &bak);
-	if (ret < 0)
-		return -EIO;
-
-	if (ndata == MAX1730X_NVPRTTH1_CHARGING)
-		write_back = (bak != val);
-	else
-		write_ndata = (ndata != val);
-
-	if (write_back || write_ndata) {
-		ret = REGMAP_WRITE(&chip->regmap,
-				   MAX1730X_NVPRTTH1BAK, val);
-		if (ret == 0)
-			ret = REGMAP_WRITE(&chip->regmap_nvram,
-					   MAX1730X_NVPRTTH1, val);
-		if (ret == 0)
-			ret = REGMAP_WRITE(&chip->regmap,
-					   MAX1730X_NVPRTTH1BAK, val);
-	}
-
-	if (ret < 0)
-		dev_info(chip->dev, "failed to update 0x0D6=%x 0x1D0=%x to %x (%d)\n",
-			 bak, ndata, val, ret);
-	else if (write_back)
-		dev_info(chip->dev, "0x0D6=%x 0x1D0=%x updated to %x (%d)\n",
-			 bak, ndata, val, ret);
-	else if (write_ndata)
-		dev_info(chip->dev, "0x1D0=%x updated to %x (%d)\n",
-			ndata, val, ret);
-
-	return ret;
 }
 
 static int max17x0x_dump_param(struct max1720x_chip *chip)
@@ -4352,8 +4149,7 @@ static int max17201_init_fix_capacity(struct max1720x_chip *chip)
 	 * Set to force loading the model with corresponding algo-version.
 	 * MW A0+ MW-A0 should use MAX1720X_DA_VER_ORIG while and MW-A1 should
 	 * use MAX1720X_DA_VER_MWA1 for RC1 or MAX1720X_DA_VER_NONE for RC2.
-	 * MW-A2 should use MAX1720X_DA_VER_NONE for RC1 and RC2.
-	 * Not used for max1720x and max1730x.
+	 * MW-A2 should use MAX1720X_DA_VER_NONE for RC1 and RC2. Not used for max1720x.
 	 */
 	if (max_m5_check_devname(chip->devname) ) {
 		ret = of_property_read_u32(chip->dev->of_node,
@@ -4699,42 +4495,6 @@ static int max1720x_init_chip(struct max1720x_chip *chip)
 	return 0;
 }
 
-static int max1730x_decode_sn(char *serial_number,
-			      unsigned int max,
-			      const u16 *data)
-{
-	int tmp, count = 0;
-
-	if (data[0] != 0x4257)	/* "BW": DSY */
-		return -EINVAL;
-
-	count += scnprintf(serial_number + count, max - count, "%02X%02X%02X",
-			   data[3] & 0xFF,
-			   data[4] & 0xFF,
-			   data[5] & 0xFF);
-
-	tmp = (((((data[1] >> 9) & 0x3f) + 1980) * 10000) +
-		((data[1] >> 5) & 0xf) * 100 + (data[1] & 0x1F));
-	count += scnprintf(serial_number + count, max - count, "%d",
-			   tmp);
-
-	count += scnprintf(serial_number + count, max - count, "%c%c",
-			   data[0] >> 8, data[0] & 0xFF);
-
-	count += scnprintf(serial_number + count, max - count, "%c%c%c%c",
-			   data[7] >> 8,
-			   data[8] >> 8,
-			   data[9] >> 8,
-			   data[9] & 0xFF);
-
-	count += scnprintf(serial_number + count, max - count, "%c",
-			   data[2] & 0xFF);
-
-	count += scnprintf(serial_number + count, max - count, "%c%c",
-			   data[6] >> 8, data[6] & 0xFF);
-	return count;
-}
-
 static int max1720x_decode_sn(char *serial_number,
 			      unsigned int max,
 			      const u16 *data)
@@ -4933,11 +4693,7 @@ no_history:
 
 static int max1720x_init_history(struct max1720x_chip *chip)
 {
-	if (chip->gauge_type == MAX1730X_GAUGE_TYPE) {
-		chip->nb_history_pages = MAX1730X_N_OF_HISTORY_PAGES;
-		chip->history_page_size = MAX1730X_HISTORY_PAGE_SIZE;
-		chip->nb_history_flag_reg = MAX1730X_N_OF_HISTORY_FLAGS_REG;
-	} else if (chip->gauge_type == MAX1720X_GAUGE_TYPE) {
+	if (chip->gauge_type == MAX1720X_GAUGE_TYPE) {
 		chip->nb_history_pages = MAX1720X_N_OF_HISTORY_PAGES;
 		chip->history_page_size = MAX1720X_HISTORY_PAGE_SIZE;
 		chip->nb_history_flag_reg = MAX1720X_N_OF_HISTORY_FLAGS_REG;
@@ -5078,9 +4834,7 @@ static int max17x0x_storage_read(gbms_tag_t tag, void *buff, size_t size,
 		if (ret < 0)
 			return ret;
 
-		if (chip->gauge_type == MAX1730X_GAUGE_TYPE)
-			ret = max1730x_decode_sn(buff, size, data);
-		else if (chip->gauge_type == MAX1720X_GAUGE_TYPE)
+		if (chip->gauge_type == MAX1720X_GAUGE_TYPE)
 			ret = max1720x_decode_sn(buff, size, data);
 		break;
 
@@ -5371,7 +5125,6 @@ static void max1720x_init_work(struct work_struct *work)
 		batt_ce_dump_data(&chip->cap_estimate, chip->ce_log);
 }
 
-/* TODO: fix detection of 17301 for non samples looking at FW version too */
 static int max17xxx_read_gauge_type(struct max1720x_chip *chip)
 {
 	u8 reg = MAX1720X_DEVNAME;
@@ -5410,16 +5163,6 @@ static int max17xxx_read_gauge_type(struct max1720x_chip *chip)
 	if (ret)
 		return MAX_M5_GAUGE_TYPE;
 
-	switch (chip->devname >> 4) {
-	case 0x404: /* max1730x sample */
-	case 0x405: /* max1730x pass2 silicon initial samples */
-	case 0x406: /* max1730x pass2 silicon */
-		gauge_type = MAX1730X_GAUGE_TYPE;
-		break;
-	default:
-		break;
-	}
-
 	switch (chip->devname & 0x000F) {
 	case 0x1: /* max17201 or max17211 */
 	case 0x5: /* max17205 or max17215 */
@@ -5438,23 +5181,7 @@ static int max17x0x_regmap_init(struct max1720x_chip *chip)
 	int secondary_address = 0xb;
 	struct device *dev = chip->dev;
 
-	if (chip->gauge_type == MAX1730X_GAUGE_TYPE) {
-		/* redefine primary for max1730x */
-		chip->regmap.regmap = devm_regmap_init_i2c(chip->primary,
-						&max1730x_regmap_cfg);
-		if (IS_ERR(chip->regmap.regmap)) {
-			dev_err(chip->dev, "Failed to re-initialize regmap (%ld)\n",
-				IS_ERR_VALUE(chip->regmap.regmap));
-			return -EINVAL;
-		}
-
-		/* shadow override is not supported on early samples */
-		chip->shadow_override = (chip->devname >> 4) != 0x404;
-
-		chip->regmap.regtags.max = ARRAY_SIZE(max1730x);
-		chip->regmap.regtags.map = max1730x;
-		chip->fixups_fn = max1730x_fixups;
-	} else if (chip->gauge_type == MAX_M5_GAUGE_TYPE) {
+	if (chip->gauge_type == MAX_M5_GAUGE_TYPE) {
 		int ret;
 
 		ret = max_m5_regmap_init(&chip->regmap, chip->primary);
@@ -5498,31 +5225,16 @@ static int max17x0x_regmap_init(struct max1720x_chip *chip)
 
 	i2c_set_clientdata(chip->secondary, chip);
 
-	if (chip->gauge_type == MAX1730X_GAUGE_TYPE) {
-		chip->regmap_nvram.regmap =
-			devm_regmap_init_i2c(chip->secondary,
-					     &max1730x_regmap_nvram_cfg);
-		if (IS_ERR(chip->regmap_nvram.regmap)) {
-			dev_err(chip->dev, "Failed to initialize nvram regmap (%ld)\n",
-				PTR_ERR(chip->regmap_nvram.regmap));
-			return -EINVAL;
-		}
-
-		chip->regmap_nvram.regtags.max = ARRAY_SIZE(max1730x);
-		chip->regmap_nvram.regtags.map = max1730x;
-	} else {
-		chip->regmap_nvram.regmap =
-			devm_regmap_init_i2c(chip->secondary,
-					     &max1720x_regmap_nvram_cfg);
-		if (IS_ERR(chip->regmap_nvram.regmap)) {
-			dev_err(chip->dev, "Failed to initialize nvram regmap (%ld)\n",
-				PTR_ERR(chip->regmap_nvram.regmap));
-			return -EINVAL;
-		}
-
-		chip->regmap_nvram.regtags.max = ARRAY_SIZE(max1720x);
-		chip->regmap_nvram.regtags.map = max1720x;
+	chip->regmap_nvram.regmap = devm_regmap_init_i2c(chip->secondary,
+							 &max1720x_regmap_nvram_cfg);
+	if (IS_ERR(chip->regmap_nvram.regmap)) {
+		dev_err(chip->dev, "Failed to initialize nvram regmap (%ld)\n",
+			PTR_ERR(chip->regmap_nvram.regmap));
+		return -EINVAL;
 	}
+
+	chip->regmap_nvram.regtags.max = ARRAY_SIZE(max1720x);
+	chip->regmap_nvram.regtags.map = max1720x;
 
 	return 0;
 }
