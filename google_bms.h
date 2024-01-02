@@ -448,6 +448,7 @@ int gbms_msc_temp_idx(const struct gbms_chg_profile *profile, int temp);
 int gbms_msc_voltage_idx(const struct gbms_chg_profile *profile, int vbatt);
 int gbms_msc_round_fv_uv(const struct gbms_chg_profile *profile,
 			   int vtier, int fv_uv, int cc_ua, bool allow_higher_fv);
+int gbms_msc_get_last_voltage_idx(const struct gbms_chg_profile *profile, const int temp_idx);
 int gbms_msc_voltage_idx_merge_tiers(const struct gbms_chg_profile *profile,
 				     int vbatt, int temp_idx);
 

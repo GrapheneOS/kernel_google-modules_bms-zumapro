@@ -505,21 +505,34 @@ int gbms_msc_round_fv_uv(const struct gbms_chg_profile *profile,
 }
 EXPORT_SYMBOL_GPL(gbms_msc_round_fv_uv);
 
+/* Find last voltage tier with non zero current */
+int gbms_msc_get_last_voltage_idx(const struct gbms_chg_profile *profile, const int temp_idx)
+{
+	int vbatt_idx = profile->volt_nb_limits - 1;
+
+	while(vbatt_idx > 0 && !GBMS_CCCM_LIMITS(profile, temp_idx, vbatt_idx))
+		vbatt_idx--;
+
+	return vbatt_idx;
+}
+EXPORT_SYMBOL_GPL(gbms_msc_get_last_voltage_idx);
+
 /* skip tiers that have same c-rate */
 int gbms_msc_voltage_idx_merge_tiers(const struct gbms_chg_profile *profile,
 			  int vbatt, int temp_idx)
 {
 	int cc_max;
 	int vbatt_idx = 0;
+	const int vbatt_last_idx = gbms_msc_get_last_voltage_idx(profile, temp_idx);
 
 	if (!profile)
 		return 0;
 
-	while (vbatt_idx < profile->volt_nb_limits - 1 &&
+	while (vbatt_idx < vbatt_last_idx &&
 	       vbatt > profile->volt_limits[vbatt_idx])
 		vbatt_idx++;
 
-	if (vbatt_idx != profile->volt_nb_limits - 1) {
+	if (vbatt_idx != vbatt_last_idx) {
 		const int vt = profile->volt_limits[vbatt_idx];
 		const int headr = profile->fv_uv_resolution * 3;
 
@@ -531,7 +544,7 @@ int gbms_msc_voltage_idx_merge_tiers(const struct gbms_chg_profile *profile,
 		return vbatt_idx;
 
 	cc_max = GBMS_CCCM_LIMITS(profile, temp_idx, vbatt_idx);
-	while (vbatt_idx < profile->volt_nb_limits - 2 &&
+	while (vbatt_idx < vbatt_last_idx - 1 &&
 		cc_max == GBMS_CCCM_LIMITS(profile, temp_idx, vbatt_idx + 1))
 			vbatt_idx++;
 

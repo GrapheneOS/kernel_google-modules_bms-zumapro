@@ -4845,7 +4845,7 @@ static int msc_logic(struct batt_drv *batt_drv)
 			   batt_drv->vbatt_idx, vbatt_idx, vtier, fv_uv, vbatt, ibatt,
 			   batt_drv->checked_cv_cnt, batt_drv->checked_ov_cnt);
 
-	} else if (batt_drv->vbatt_idx == profile->volt_nb_limits - 1) {
+	} else if (batt_drv->vbatt_idx == gbms_msc_get_last_voltage_idx(profile, temp_idx)) {
 		const int chg_type = batt_drv->chg_state.f.chg_type;
 		const int vtier = profile->volt_limits[vbatt_idx];
 		int log_level;
@@ -4987,7 +4987,7 @@ static int msc_logic(struct batt_drv *batt_drv)
 
 	if (batt_drv->msc_last_votable)
 		gvotable_cast_int_vote(batt_drv->msc_last_votable, "BATT",
-				       vbatt_idx == profile->volt_nb_limits - 1, 1);
+				       vbatt_idx == gbms_msc_get_last_voltage_idx(profile, temp_idx), 1);
 	/*
 	 * book elapsed time to previous tier & msc_state
 	 * NOTE: temp_idx != -1 but batt_drv->msc_state could be -1
