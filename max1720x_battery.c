@@ -3386,6 +3386,52 @@ static ssize_t max1720x_set_custom_model(struct file *filp,
 BATTERY_DEBUG_ATTRIBUTE(debug_m5_custom_model_fops, max1720x_show_custom_model,
 			max1720x_set_custom_model);
 
+static ssize_t max1720x_show_model_reg(struct file *filp, char __user *buf,
+				       size_t count, loff_t *ppos)
+{
+	struct max1720x_chip *chip = (struct max1720x_chip *)filp->private_data;
+	const struct maxfg_regmap *map = &chip->regmap;
+	u32 reg_address;
+	unsigned int data;
+	char *tmp;
+	int len = 0, ret, rc;
+
+	if (!map->regmap) {
+		pr_err("Failed to read, no regmap\n");
+		return -EIO;
+	}
+
+	tmp = kmalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!tmp)
+		return -ENOMEM;
+
+	rc = max_m5_model_lock(map->regmap, false);
+	if (rc < 0)
+		pr_warn("unlock fail, rc=%d\n", rc);
+
+	for (reg_address = MAX_M5_FG_MODEL_START;
+	     reg_address < MAX_M5_FG_MODEL_START + MAX_M5_FG_MODEL_SIZE ; reg_address++) {
+		ret = regmap_read(map->regmap, reg_address, &data);
+		if (ret < 0)
+			continue;
+
+		len += scnprintf(tmp + len, PAGE_SIZE - len, "%02x: %04x\n", reg_address, data);
+	}
+
+	rc = max_m5_model_lock(map->regmap, true);
+	if (rc < 0)
+		pr_warn("lock fail, rc=%d\n", rc);
+
+	if (len > 0)
+		len = simple_read_from_buffer(buf, count, ppos, tmp, len);
+
+	kfree(tmp);
+
+	return len;
+}
+
+BATTERY_DEBUG_ATTRIBUTE(debug_model_reg_fops, max1720x_show_model_reg, NULL);
+
 
 static int debug_sync_model(void *data, u64 val)
 {
@@ -3678,9 +3724,12 @@ static int max17x0x_init_sysfs(struct max1720x_chip *chip)
 					chip->regmap_nvram.reglog,
 					&debug_reglog_writes_fops);
 
-	if (chip->gauge_type == MAX_M5_GAUGE_TYPE)
+	if (chip->gauge_type == MAX_M5_GAUGE_TYPE) {
 		debugfs_create_file("fg_model", 0444, de, chip,
 				    &debug_m5_custom_model_fops);
+		debugfs_create_file("model_registers", 0444, de, chip,
+				    &debug_model_reg_fops);
+	}
 	debugfs_create_bool("model_ok", 0444, de, &chip->model_ok);
 	debugfs_create_file("sync_model", 0400, de, chip,
 			    &debug_sync_model_fops);

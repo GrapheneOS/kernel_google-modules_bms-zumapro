@@ -133,7 +133,7 @@ static int max_m5_write_custom_model(struct regmap *regmap, u16 *model_data,
 				count * 2);
 }
 
-static int max_m5_model_lock(struct regmap *regmap, bool enabled)
+int max_m5_model_lock(struct regmap *regmap, bool enabled)
 {
 	u16 code[2] = {0x59, 0xC4};
 

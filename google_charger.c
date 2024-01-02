@@ -4850,7 +4850,8 @@ static int chg_therm_set_wlc_online(struct chg_drv *chg_drv)
 	if (!wlc_psy)
 		return PPS_PSY_OFFLINE;
 
-	ret = power_supply_get_property(wlc_psy, POWER_SUPPLY_PROP_ONLINE, &pval);
+	/* use wlc_present due to wlc_online report 1 during wlc_spoof */
+	ret = power_supply_get_property(wlc_psy, POWER_SUPPLY_PROP_PRESENT, &pval);
 	if (ret < 0 || pval.intval == PPS_PSY_OFFLINE) {
 		int dc_icl;
 
