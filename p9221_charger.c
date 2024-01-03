@@ -7867,6 +7867,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	}
 	i2c_set_clientdata(client, charger);
 	charger->dev = &client->dev;
+	charger->dev->init_name = "i2c-p9221";
 	charger->client = client;
 	charger->pdata = pdata;
 	charger->resume_complete = true;
