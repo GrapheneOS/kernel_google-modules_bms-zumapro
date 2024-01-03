@@ -2907,6 +2907,7 @@ static int max77759_charger_probe(struct i2c_client *client,
 		return -ENOMEM;
 
 	data->dev = dev;
+	data->dev->init_name = "i2c-max77759chrg";
 	data->regmap = regmap;
 	data->fship_dtls = -1;
 	data->wden = false; /* TODO: read from DT */
