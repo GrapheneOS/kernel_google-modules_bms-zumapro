@@ -2625,6 +2625,17 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 		    || !p9221_is_epp(charger))
 			return -EOPNOTSUPP;
 
+		/* prevent 3p charger for compat mode */
+		if (charger->mfg == 0) {
+			dev_warn(&charger->client->dev, "mfg not ready for HPP\n");
+			return -EAGAIN;
+		}
+
+		if (!charger->is_mfg_google) {
+			dev_warn(&charger->client->dev, "HPP not allowed, mfg: 0x%x\n", charger->mfg);
+			return -EOPNOTSUPP;
+		}
+
 		if (charger->last_capacity > WLC_HPP_SOC_LIMIT)
 			return -EOPNOTSUPP;
 		if (charger->last_capacity < 0) {

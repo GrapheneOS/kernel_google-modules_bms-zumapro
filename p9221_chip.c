@@ -1928,13 +1928,6 @@ static int p9412_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 		goto enable_capdiv;
 	}
 
-	ret = p9xxx_chip_get_tx_mfg_code(chgr, &chgr->mfg);
-	if (chgr->mfg != WLC_MFG_GOOGLE) {
-		dev_err(&chgr->client->dev,
-			"PROP_MODE: mfg code =%02x\n", chgr->mfg);
-		return 0;
-	}
-
 	/*
 	 * Step 0: clear data type buffer:
 	 * write 0 to 0x800 and 0x801
@@ -2132,12 +2125,6 @@ static int ra9530_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 	/* wait for PropModeStat interrupt/wait Vout raise to request power */
 	max_wait_time = chgr->de_wait_prop_irq_ms > 0 ?
 			chgr->de_wait_prop_irq_ms : chgr->pdata->wait_prop_irq_ms;
-
-	ret = p9xxx_chip_get_tx_mfg_code(chgr, &chgr->mfg);
-	if (chgr->mfg != WLC_MFG_GOOGLE) {
-		dev_err(&chgr->client->dev,"PROP_MODE: mfg code =%02x\n", chgr->mfg);
-		return 0;
-	}
 
 	/*
 	 * clear all interrupts:
