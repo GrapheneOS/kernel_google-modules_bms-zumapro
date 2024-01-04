@@ -6,6 +6,8 @@
 #ifndef MAX77779_SP_H_
 #define MAX77779_SP_H_
 
+#include <linux/regmap.h>
+
 #define RSBM_ADDR				0
 #define RSBR_ADDR				4
 #define SUFG_ADDR				8
@@ -33,4 +35,5 @@ bool max77779_sp_is_reg(struct device *dev, unsigned int reg);
 int max77779_sp_init(struct max77779_sp_data *data);
 void max77779_sp_remove(struct max77779_sp_data *data);
 
+extern const struct regmap_config max77779_sp_regmap_cfg;
 #endif

@@ -6,6 +6,8 @@
 #ifndef MAX77779_VIMON_H_
 #define MAX77779_VIMON_H_
 
+#include <linux/regmap.h>
+
 #define MAX77779_VIMON_SIZE 0xFF
 #define MAX77779_VIMON_DEFAULT_MAX_CNT 256
 #define MAX77779_VIMON_DEFAULT_MAX_TRIGGERS 1
@@ -35,4 +37,6 @@ struct max77779_vimon_data {
 int max77779_vimon_init(struct max77779_vimon_data *data);
 void max77779_vimon_remove(struct max77779_vimon_data *data);
 bool max77779_vimon_is_reg(struct device *dev, unsigned int reg);
+
+extern const struct regmap_config max77779_vimon_regmap_cfg;
 #endif

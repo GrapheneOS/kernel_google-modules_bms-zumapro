@@ -8,16 +8,6 @@
 
 #include "max77779_sp.h"
 
-static const struct regmap_config max77779_sp_regmap_cfg = {
-	.name = "max77779_scratch",
-	.reg_bits = 8,
-	.val_bits = 16,
-	.val_format_endian = REGMAP_ENDIAN_NATIVE,
-	.max_register = MAX77779_SP_SIZE,
-	.readable_reg = max77779_sp_is_reg,
-	.volatile_reg = max77779_sp_is_reg,
-};
-
 static const struct i2c_device_id max77779_sp_id[] = {
 	{"max77779_sp", 0},
 	{}
@@ -75,3 +65,4 @@ module_i2c_driver(max77779_scratch_i2c_driver);
 MODULE_DESCRIPTION("Maxim 77779 Scratch I2C Driver");
 MODULE_AUTHOR("Daniel Okazaki <dtokazaki@google.com>");
 MODULE_LICENSE("GPL");
+MODULE_IMPORT_NS(SP_MAX77779);

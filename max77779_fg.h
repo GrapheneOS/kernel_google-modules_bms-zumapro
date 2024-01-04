@@ -324,4 +324,7 @@ void max77779_fg_remove(struct max77779_fg_chip *chip);
 int max77779_fg_pm_suspend(struct device *dev);
 int max77779_fg_pm_resume(struct device *dev);
 #endif
+
+extern const struct regmap_config max77779_fg_regmap_cfg;
+extern const struct regmap_config max77779_fg_debug_regmap_cfg;
 #endif

@@ -8,6 +8,7 @@
 #define MAX77779_CHARGER_H_
 
 #include <linux/gpio.h>
+#include <linux/regmap.h>
 
 #include "max77779_usecase.h"
 
@@ -107,4 +108,5 @@ bool max77779_chg_is_reg(struct device *dev, unsigned int reg);
 int max77779_charger_pm_suspend(struct device *dev);
 int max77779_charger_pm_resume(struct device *dev);
 #endif
+extern const struct regmap_config max77779_chg_regmap_cfg;
 #endif

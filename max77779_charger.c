@@ -57,6 +57,17 @@
 
 #define WCIN_INLIM_VOTER				"WCIN_INLIM"
 
+const struct regmap_config max77779_chg_regmap_cfg = {
+	.name = "max77779_charger",
+	.reg_bits = 8,
+	.val_bits = 8,
+	.val_format_endian = REGMAP_ENDIAN_NATIVE,
+	.max_register = MAX77779_CHG_CUST_TM,
+	.readable_reg = max77779_chg_is_reg,
+	.volatile_reg = max77779_chg_is_reg,
+};
+EXPORT_SYMBOL_NS_GPL(max77779_chg_regmap_cfg, CHARGER_MAX77779);
+
 static int max77779_is_limited(struct max77779_chgr_data *data);
 static int max77779_wcin_current_now(struct max77779_chgr_data *data, int *iic);
 

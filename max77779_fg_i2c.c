@@ -5,26 +5,9 @@
 
 #include <linux/i2c.h>
 #include <linux/regmap.h>
+
 #include "max77779.h"
 #include "max77779_fg.h"
-
-const struct regmap_config max77779_fg_regmap_cfg = {
-	.reg_bits = 8,
-	.val_bits = 16,
-	.val_format_endian = REGMAP_ENDIAN_NATIVE,
-	.max_register = MAX77779_FG_USR,
-	.readable_reg = max77779_fg_is_reg,
-	.volatile_reg = max77779_fg_is_reg,
-};
-
-const struct regmap_config max77779_fg_debug_regmap_cfg = {
-	.reg_bits = 8,
-	.val_bits = 16,
-	.val_format_endian = REGMAP_ENDIAN_NATIVE,
-	.max_register = MAX77779_FG_NVM_nThermCfg,
-	.readable_reg = max77779_fg_dbg_is_reg,
-	.volatile_reg = max77779_fg_dbg_is_reg,
-};
 
 static const struct i2c_device_id max77779_fg_id[] = {
 	{"max77779_fg", 0},
@@ -170,3 +153,4 @@ module_i2c_driver(max77779_fg_i2c_driver);
 MODULE_DESCRIPTION("Maxim 77779 Fuel Gauge I2C Driver");
 MODULE_AUTHOR("Daniel Okazaki <dtokazaki@google.com>");
 MODULE_LICENSE("GPL");
+MODULE_IMPORT_NS(FG_MAX77779);

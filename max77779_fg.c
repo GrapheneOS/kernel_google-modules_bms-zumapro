@@ -65,6 +65,26 @@ static int max77779_fg_update_cycle_count(struct max77779_fg_chip *chip);
 
 static struct mutex section_lock;
 
+const struct regmap_config max77779_fg_regmap_cfg = {
+	.reg_bits = 8,
+	.val_bits = 16,
+	.val_format_endian = REGMAP_ENDIAN_NATIVE,
+	.max_register = MAX77779_FG_USR,
+	.readable_reg = max77779_fg_is_reg,
+	.volatile_reg = max77779_fg_is_reg,
+};
+EXPORT_SYMBOL_NS_GPL(max77779_fg_regmap_cfg, FG_MAX77779);
+
+const struct regmap_config max77779_fg_debug_regmap_cfg = {
+	.reg_bits = 8,
+	.val_bits = 16,
+	.val_format_endian = REGMAP_ENDIAN_NATIVE,
+	.max_register = MAX77779_FG_NVM_nThermCfg,
+	.readable_reg = max77779_fg_dbg_is_reg,
+	.volatile_reg = max77779_fg_dbg_is_reg,
+};
+EXPORT_SYMBOL_NS_GPL(max77779_fg_debug_regmap_cfg, FG_MAX77779);
+
 static bool max77779_fg_reglog_init(struct max77779_fg_chip *chip)
 {
 	chip->regmap.reglog = devm_kzalloc(chip->dev, sizeof(*chip->regmap.reglog), GFP_KERNEL);

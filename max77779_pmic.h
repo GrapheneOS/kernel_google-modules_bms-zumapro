@@ -8,6 +8,7 @@
 #define MAX77779_PMIC
 
 #include <linux/device.h>
+#include <linux/regmap.h>
 
 #include "max77779.h"
 
@@ -23,4 +24,6 @@ struct max77779_pmic_info {
 bool max77779_pmic_is_readable(struct device *dev, unsigned int reg);
 int max77779_pmic_init(struct max77779_pmic_info *info);
 void max77779_pmic_remove(struct max77779_pmic_info *info);
+
+extern const struct regmap_config max77779_pmic_regmap_cfg;
 #endif
