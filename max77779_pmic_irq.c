@@ -24,6 +24,7 @@ struct max77779_pmic_irq_info {
 	struct device		*core;
 	struct irq_domain	*domain;
 	struct mutex		lock;
+	int			irq;
 	unsigned int		mask;
 	unsigned int		mask_u;  /* pending updates */
 	unsigned int		trig_type;
@@ -105,6 +106,13 @@ static int max77779_pmic_set_irq_type(struct irq_data *d, unsigned int type)
 	return 0;
 }
 
+static int max77779_pmic_irq_set_wake(struct irq_data *d, unsigned int on)
+{
+	struct max77779_pmic_irq_info *info = irq_data_get_irq_chip_data(d);
+
+	return irq_set_irq_wake(info->irq, on);
+}
+
 static void max77779_pmic_bus_lock(struct irq_data *d)
 {
 	struct max77779_pmic_irq_info *info = irq_data_get_irq_chip_data(d);
@@ -156,6 +164,7 @@ static struct irq_chip max77779_pmic_irq_chip = {
 	.irq_mask = max77779_pmic_irq_mask,
 	.irq_unmask = max77779_pmic_irq_unmask,
 	.irq_set_type = max77779_pmic_set_irq_type,
+	.irq_set_wake = max77779_pmic_irq_set_wake,
 	.irq_bus_lock = max77779_pmic_bus_lock,
 	.irq_bus_sync_unlock = max77779_pmic_bus_sync_unlock,
 };
@@ -166,7 +175,6 @@ static int max77779_pmic_irq_probe(struct platform_device *pdev)
 	struct max77779_pmic_irq_info *info;
 	int irq_gpio;
 	int i;
-	int pmic_irq;
 	int err;
 
 	if (!dev->of_node)
@@ -198,15 +206,11 @@ static int max77779_pmic_irq_probe(struct platform_device *pdev)
 		return err;
 	}
 
-	pmic_irq = gpio_to_irq(irq_gpio);
-	if (pmic_irq < 0) {
-		dev_err(dev, "Error getting irq\n");
+	info->irq = gpio_to_irq(irq_gpio);
+	if (info->irq < 0) {
+		dev_err(dev, "Error getting irq (%d)\n", info->irq);
 		return err;
 	}
-
-	err = enable_irq_wake(pmic_irq);
-	if (err < 0)
-		dev_warn(dev, "Unable to make irq wakeable.\n");
 
 	/* mask and clear all interrupts */
 	err =  max77779_external_pmic_reg_write(info->core, MAX77779_PMIC_INTB_MASK, 0xff);
@@ -241,7 +245,7 @@ static int max77779_pmic_irq_probe(struct platform_device *pdev)
 				handle_simple_irq);
 	}
 
-	err = devm_request_threaded_irq(info->dev, pmic_irq, NULL,
+	err = devm_request_threaded_irq(info->dev, info->irq, NULL,
 			max77779_pmic_irq_handler,
 			IRQF_TRIGGER_LOW | IRQF_ONESHOT,
 			"max77779_pmic_irq", info);

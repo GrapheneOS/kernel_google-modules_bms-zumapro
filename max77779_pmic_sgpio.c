@@ -8,6 +8,7 @@
 #include <linux/gpio.h>
 #include <linux/gpio/driver.h>
 #include <linux/interrupt.h>
+#include <linux/irq.h>
 #include <linux/module.h>
 #include <linux/mod_devicetable.h>
 #include <linux/of.h>
@@ -211,6 +212,14 @@ static int max77779_pmic_sgpio_set_irq_type(struct irq_data *d,
 	return 0;
 }
 
+static int max77779_pmic_sgpio_irq_set_wake(struct irq_data *d, unsigned int on)
+{
+	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
+	struct max77779_pmic_sgpio_info *info = gpiochip_get_data(gc);
+
+	return irq_set_irq_wake(info->irq, on);
+}
+
 static void max77779_pmic_sgpio_bus_lock(struct irq_data *d)
 {
 	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
@@ -355,6 +364,7 @@ static struct irq_chip max77779_pmic_sgpio_irq_chip = {
 	.irq_mask = max77779_pmic_sgpio_irq_mask,
 	.irq_unmask = max77779_pmic_sgpio_irq_unmask,
 	.irq_set_type = max77779_pmic_sgpio_set_irq_type,
+	.irq_set_wake = max77779_pmic_sgpio_irq_set_wake,
 	.irq_bus_lock = max77779_pmic_sgpio_bus_lock,
 	.irq_bus_sync_unlock = max77779_pmic_sgpio_bus_sync_unlock
 };
