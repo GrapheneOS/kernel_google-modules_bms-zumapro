@@ -114,6 +114,28 @@ int maxfg_reg_read(struct maxfg_regmap *map, enum maxfg_reg_tags tag, u16 *val)
 	return rtn;
 }
 
+static int maxfg_reg_read_addr(struct maxfg_regmap *map, enum maxfg_reg_tags tag,
+			       u16 *val, u16 *addr)
+{
+	const struct maxfg_reg *reg;
+	unsigned int tmp;
+	int rtn;
+
+	reg = maxfg_find_by_tag(map, tag);
+	if (!reg)
+		return -EINVAL;
+
+	*addr = reg->reg;
+
+	rtn = regmap_read(map->regmap, reg->reg, &tmp);
+	if (rtn)
+		pr_err("Failed to read %x\n", reg->reg);
+	else
+		*val = tmp;
+
+	return rtn;
+}
+
 #define REG_HALF_HIGH(reg)     ((reg >> 8) & 0x00FF)
 #define REG_HALF_LOW(reg)      (reg & 0x00FF)
 int maxfg_collect_history_data(void *buff, size_t size, bool is_por, u16 designcap,
@@ -431,89 +453,93 @@ int maxfg_reg_log_data(struct maxfg_regmap *map, struct maxfg_regmap *map_debug,
 {
 	u16 vfsoc, avcap, repcap, fullcap, fullcaprep, fullcapnom, qh0, qh, dqacc, dpacc, fstat;
 	u16 qresidual, rcomp0, cycles, learncfg, tempco, filtercfg, mixcap, vfremcap, vcell, ibat;
+	u16 vfsoc_addr, avcap_addr, repcap_addr, fullcap_addr, fullcaprep_addr, fullcapnom_addr;
+	u16 qh0_addr, qh_addr, dqacc_addr, dpacc_addr, fstat_addr, qresidual_addr, rcomp0_addr;
+	u16 cycles_addr, learncfg_addr, tempco_addr, filtercfg_addr, mixcap_addr, vfremcap_addr;
+	u16 vcell_addr, ibat_addr;
 	int ret, len;
 
-	ret = maxfg_reg_read(map, MAXFG_TAG_vfsoc, &vfsoc);
+	ret = maxfg_reg_read_addr(map, MAXFG_TAG_vfsoc, &vfsoc, &vfsoc_addr);
 	if (ret < 0)
 		return ret;
 
-	ret = maxfg_reg_read(map, MAXFG_TAG_avcap, &avcap);
+	ret = maxfg_reg_read_addr(map, MAXFG_TAG_avcap, &avcap, &avcap_addr);
 	if (ret < 0)
 		return ret;
 
-	ret = maxfg_reg_read(map, MAXFG_TAG_repcap, &repcap);
+	ret = maxfg_reg_read_addr(map, MAXFG_TAG_repcap, &repcap, &repcap_addr);
 	if (ret < 0)
 		return ret;
 
-	ret = maxfg_reg_read(map, MAXFG_TAG_fulcap, &fullcap);
+	ret = maxfg_reg_read_addr(map, MAXFG_TAG_fulcap, &fullcap, &fullcap_addr);
 	if (ret < 0)
 		return ret;
 
-	ret = maxfg_reg_read(map, MAXFG_TAG_fcrep, &fullcaprep);
+	ret = maxfg_reg_read_addr(map, MAXFG_TAG_fcrep, &fullcaprep, &fullcaprep_addr);
 	if (ret < 0)
 		return ret;
 
-	ret = maxfg_reg_read(map, MAXFG_TAG_fcnom, &fullcapnom);
+	ret = maxfg_reg_read_addr(map, MAXFG_TAG_fcnom, &fullcapnom, &fullcapnom_addr);
 	if (ret < 0)
 		return ret;
 
-	ret = maxfg_reg_read(map, MAXFG_TAG_qh0, &qh0);
+	ret = maxfg_reg_read_addr(map, MAXFG_TAG_qh0, &qh0, &qh0_addr);
 	if (ret < 0)
 		return ret;
 
-	ret = maxfg_reg_read(map, MAXFG_TAG_qh, &qh);
+	ret = maxfg_reg_read_addr(map, MAXFG_TAG_qh, &qh, &qh_addr);
 	if (ret < 0)
 		return ret;
 
-	ret = maxfg_reg_read(map, MAXFG_TAG_dqacc, &dqacc);
+	ret = maxfg_reg_read_addr(map, MAXFG_TAG_dqacc, &dqacc, &dqacc_addr);
 	if (ret < 0)
 		return ret;
 
-	ret = maxfg_reg_read(map, MAXFG_TAG_dpacc, &dpacc);
+	ret = maxfg_reg_read_addr(map, MAXFG_TAG_dpacc, &dpacc, &dpacc_addr);
 	if (ret < 0)
 		return ret;
 
-	ret = maxfg_reg_read(map, MAXFG_TAG_qresd, &qresidual);
+	ret = maxfg_reg_read_addr(map, MAXFG_TAG_qresd, &qresidual, &qresidual_addr);
 	if (ret < 0)
 		return ret;
 
-	ret = maxfg_reg_read(map, MAXFG_TAG_fstat, &fstat);
+	ret = maxfg_reg_read_addr(map, MAXFG_TAG_fstat, &fstat, &fstat_addr);
 	if (ret < 0)
 		return ret;
 
-	ret = maxfg_reg_read(map, MAXFG_TAG_learn, &learncfg);
+	ret = maxfg_reg_read_addr(map, MAXFG_TAG_learn, &learncfg, &learncfg_addr);
 	if (ret < 0)
 		return ret;
 
-	ret = maxfg_reg_read(map_debug, MAXFG_TAG_tempco, &tempco);
+	ret = maxfg_reg_read_addr(map_debug, MAXFG_TAG_tempco, &tempco, &tempco_addr);
 	if (ret < 0)
 		return ret;
 
-	ret = maxfg_reg_read(map_debug, MAXFG_TAG_filcfg, &filtercfg);
+	ret = maxfg_reg_read_addr(map_debug, MAXFG_TAG_filcfg, &filtercfg, &filtercfg_addr);
 	if (ret < 0)
 		return ret;
 
-	ret = maxfg_reg_read(map, MAXFG_TAG_mcap, &mixcap);
+	ret = maxfg_reg_read_addr(map, MAXFG_TAG_mcap, &mixcap, &mixcap_addr);
 	if (ret < 0)
 		return ret;
 
-	ret = maxfg_reg_read(map, MAXFG_TAG_vfcap, &vfremcap);
+	ret = maxfg_reg_read_addr(map, MAXFG_TAG_vfcap, &vfremcap, &vfremcap_addr);
 	if (ret < 0)
 		return ret;
 
-	ret = maxfg_reg_read(map, MAXFG_TAG_vcel, &vcell);
+	ret = maxfg_reg_read_addr(map, MAXFG_TAG_vcel, &vcell, &vcell_addr);
 	if (ret < 0)
 		return ret;
 
-	ret = maxfg_reg_read(map, MAXFG_TAG_curr, &ibat);
+	ret = maxfg_reg_read_addr(map, MAXFG_TAG_curr, &ibat, &ibat_addr);
 	if (ret < 0)
 		return ret;
 
-	ret = maxfg_reg_read(map_debug, MAXFG_TAG_rcomp0, &rcomp0);
+	ret = maxfg_reg_read_addr(map_debug, MAXFG_TAG_rcomp0, &rcomp0, &rcomp0_addr);
 	if (ret < 0)
 		return ret;
 
-	ret = maxfg_reg_read(map, MAXFG_TAG_cycles, &cycles);
+	ret = maxfg_reg_read_addr(map, MAXFG_TAG_cycles, &cycles, &cycles_addr);
 	if (ret < 0)
 		return ret;
 
@@ -521,16 +547,13 @@ int maxfg_reg_log_data(struct maxfg_regmap *map, struct maxfg_regmap *map_debug,
 			" %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
 			" %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
 			" %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X",
-			MAXFG_TAG_vfsoc, vfsoc, MAXFG_TAG_avcap, avcap,
-			MAXFG_TAG_repcap, repcap, MAXFG_TAG_fulcap, fullcap,
-			MAXFG_TAG_fcrep, fullcaprep, MAXFG_TAG_fcnom, fullcapnom,
-			MAXFG_TAG_qh0, qh0, MAXFG_TAG_qh, qh, MAXFG_TAG_dqacc, dqacc,
-			MAXFG_TAG_dpacc, dpacc, MAXFG_TAG_qresd, qresidual,
-			MAXFG_TAG_fstat, fstat, MAXFG_TAG_learn, learncfg,
-			MAXFG_TAG_tempco, tempco, MAXFG_TAG_filcfg, filtercfg,
-			MAXFG_TAG_mcap, mixcap, MAXFG_TAG_vfcap, vfremcap,
-			MAXFG_TAG_vcel, vcell, MAXFG_TAG_curr, ibat,
-			MAXFG_TAG_rcomp0, rcomp0, MAXFG_TAG_cycles, cycles);
+			vfsoc_addr, vfsoc, avcap_addr, avcap, repcap_addr, repcap,
+			fullcap_addr, fullcap, fullcaprep_addr, fullcaprep,
+			fullcapnom_addr, fullcapnom, qh0_addr, qh0, qh_addr, qh, dqacc_addr, dqacc,
+			dpacc_addr, dpacc, qresidual_addr, qresidual, fstat_addr, fstat,
+			learncfg_addr, learncfg, tempco_addr, tempco, filtercfg_addr, filtercfg,
+			mixcap_addr, mixcap, vfremcap_addr, vfremcap, vcell_addr, vcell,
+			ibat_addr , ibat, rcomp0_addr, rcomp0, cycles_addr, cycles);
 
 	return len;
 }
