@@ -2496,6 +2496,8 @@ static void chg_work(struct work_struct *work)
 			gvotable_cast_bool_vote(chg_drv->msc_chg_disable_votable,
 						MSC_CHG_VOTER, true);
 
+			gvotable_cast_int_vote(chg_drv->msc_last_votable, "BATT", 0, 1);
+
 			if (!chg_drv->bd_state.triggered) {
 				mutex_lock(&chg_drv->bd_lock);
 				bd_reset(&chg_drv->bd_state);

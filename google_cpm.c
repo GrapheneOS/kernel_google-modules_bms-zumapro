@@ -237,6 +237,7 @@ struct gcpm_drv  {
 	u32 taper_step_fv_margin;		/* countdown steps before dc_done */
 	u32 taper_step_cc_step;		/* countdown steps before dc_done */
 	int taper_step;			/* actual countdown */
+	bool taper_step_used;		/* taper step was actually used */
 
 	/* policy: soc% based limits for DC charging */
 	u32 dc_limit_soc_high;		/* DC will not start over high */
@@ -1393,6 +1394,7 @@ static int gcpm_chg_select_logic(struct gcpm_drv *gcpm)
 		if (!dc_done) {
 			mod_delayed_work(system_wq, &gcpm->select_work, interval);
 			gcpm->taper_step -= 1;
+			gcpm->taper_step_used = true;
 		}
 
 		if (dc_done)
@@ -1401,7 +1403,7 @@ static int gcpm_chg_select_logic(struct gcpm_drv *gcpm)
 		else
 			pr_debug("%s: taper_step=%d done=%d\n", __func__,
 				 gcpm->taper_step, dc_done);
-	} else if (gcpm->taper_step != 0) {
+	} else if (gcpm->taper_step_used && gcpm->taper_step != 0) {
 		const int vbatt_high = gcpm->dc_limit_vbatt_high;
 
 		/* reset dc_state after taper step */
@@ -2052,6 +2054,7 @@ static int gcpm_psy_set_property(struct power_supply *psy,
 			/* reset to the default charger, and clear taper */
 			gcpm->dc_index = GCPM_DEFAULT_CHARGER;
 			gcpm_taper_ctl(gcpm, 0);
+			gcpm->taper_step_used = false;
 
 			/*
 			 * no-op if dc was NOT running, set online the charger
