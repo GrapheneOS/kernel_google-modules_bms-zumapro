@@ -2688,8 +2688,6 @@ static int max77779_fg_init_model_data(struct max77779_fg_chip *chip)
 		return 0;
 	}
 
-	max77779_fg_restore_battery_cycle(chip);
-
 	/* TODO add retries */
 	ret = max77779_model_read_state(chip->model_data);
 	if (ret < 0) {
@@ -2782,6 +2780,8 @@ static int max77779_fg_init_chip(struct max77779_fg_chip *chip)
 
 	MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_FG_INT_MASK,
 				 MAX77779_FG_FG_INT_MASK_dSOCi_m_CLEAR);
+
+	max77779_fg_restore_battery_cycle(chip);
 
 	/* triggers loading of the model in the irq handler on POR */
 	if (!chip->por) {
