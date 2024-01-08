@@ -3006,10 +3006,14 @@ static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 			 __func__, offset, value, charger->det_status, charger->online);
 		break;
 	case P9XXX_GPIO_RTX_STATE:
+		if (!charger->pdata->has_rtx_gpio) {
+			ret = -ENOTSUPP;
+			break;
+		}
 		mutex_lock(&charger->rtx_gpio_lock);
 		prev_state = charger->rtx_gpio_state;
 
-		if (!charger->pdata->has_rtx_gpio || prev_state == RTX_RETRY) {
+		if (prev_state == RTX_RETRY) {
 			mutex_unlock(&charger->rtx_gpio_lock);
 			break;
 		}
@@ -3022,6 +3026,10 @@ static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 		mutex_unlock(&charger->rtx_gpio_lock);
 		break;
 	case P9XXX_GPIO_RTX_SUPP:
+		if (!charger->pdata->has_rtx_gpio) {
+			ret = -ENOTSUPP;
+			break;
+		}
 		mutex_lock(&charger->rtx_gpio_lock);
 
 		if (value == 0) {

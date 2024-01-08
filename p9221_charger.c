@@ -5496,6 +5496,7 @@ static int p9xxx_rtx_mode_en(struct p9221_charger_data *charger, bool enable)
 /* requires mutex_lock(&charger->rtx_lock) when p9382_set_rtx() called */
 static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 {
+	const bool rtx_gpio_retry = p9xxx_rtx_gpio_is_state(charger, RTX_RETRY);
 	int ret = 0, tx_icl = -1;
 
 	if ((enable && charger->ben_state) || (!enable && !charger->ben_state)) {
@@ -5512,7 +5513,9 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 		if (ret < 0)
 			goto error;
 
-		ret = p9382_disable_dcin_en(charger, false);
+		if (!rtx_gpio_retry)
+			ret = p9382_disable_dcin_en(charger, false);
+
 		if (ret)
 			dev_err(&charger->client->dev,
 				"fail to enable dcin, ret=%d\n", ret);
@@ -6241,7 +6244,7 @@ static void p9xxx_reset_rtx_for_ocp(struct p9221_charger_data *charger)
 
 	if (charger->pdata->ben_gpio > 0)
 		ext_bst_on = gpio_get_value_cansleep(charger->pdata->ben_gpio);
-	if (ext_bst_on)
+	if (ext_bst_on && !rtx_gpio_retry)
 		return;
 
 	if (charger->rtx_reset_cnt || rtx_gpio_retry) {
