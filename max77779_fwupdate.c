@@ -126,6 +126,7 @@ struct max77779_fwupdate {
 	struct platform_device *batt;
 
 	bool can_update;
+	bool force_update;
 
 	struct max77779_version_info v_cur;
 	struct max77779_version_info v_new;
@@ -157,6 +158,7 @@ static int max77779_fwupdate_init(struct max77779_fwupdate *fwu)
 	if (!dev)
 		return -EINVAL;
 
+	fwu->force_update = false;
 	fwu->minimum_voltage = MAX77779_FW_UPDATE_MIN_VOLTAGE;
 
 	fwu->debug_image.data = NULL;
@@ -599,13 +601,16 @@ static int max77779_transfer_binary_data(struct max77779_fwupdate *fwu,
 /* TODO: b/303731272 condtion check */
 static int max77779_can_update(struct max77779_fwupdate *fwu, struct max77779_version_info* target)
 {
+	/* compatibility check: major version should match */
+	if (target->major != fwu->v_cur.major)
+		return -EINVAL;
+
 	/* Is this device ellgabie to update firmware? */
 	if (!fwu->can_update)
 		return -EACCES;
 
 	/* check version */
-	if (target->major < fwu->v_cur.major ||
-	    (target->major == fwu->v_cur.major && target->minor <= fwu->v_cur.minor))
+	if (target->minor <= fwu->v_cur.minor && !fwu->force_update)
 		return -EINVAL;
 
 	return 0;
@@ -862,6 +867,7 @@ static void firmware_update_work(struct work_struct* work)
 
 firmware_update_work_cleanup:
 	release_firmware(fw_data);
+	fwu->force_update = false;
 }
 
 /*
@@ -882,12 +888,14 @@ static ssize_t trigger_update_firmware(struct device *dev,
 		return -EACCES;
 	}
 
+
+	fwu->force_update = true;
+
 	if (count > 1)
 		strncpy(fwu->fw_name, firmware_name, MAX77779_FW_UPDATE_STRING_MAX - 1);
 	else
-		scnprintf(fwu->fw_name, MAX77779_FW_UPDATE_STRING_MAX, "%s_%d_%d.bin",
-			  MAX77779_FIRMWARE_BINARY_PREFIX, (int)fwu->minimum.major,
-			  (int)fwu->minimum.minor);
+		scnprintf(fwu->fw_name, MAX77779_FW_UPDATE_STRING_MAX, "%s_%d.bin",
+			  MAX77779_FIRMWARE_BINARY_PREFIX, (int)fwu->minimum.major);
 
 	schedule_delayed_work(&fwu->update_work,
 			      msecs_to_jiffies(FW_UPDATE_TIMER_CHECK_INTERVAL_MS));
@@ -897,17 +905,30 @@ static ssize_t trigger_update_firmware(struct device *dev,
 
 static DEVICE_ATTR(update_firmware, 0220, NULL, trigger_update_firmware);
 
-static int debug_enable_update(void *data, u64 val)
+
+static ssize_t enable_update_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	struct max77779_fwupdate *fwu = data;
+	struct max77779_fwupdate *fwu = dev_get_drvdata(dev);
+	if (!fwu)
+		return -EAGAIN;
 
-	if (fwu)
-		fwu->can_update = val != 0;
-
-	return 0;
+	return scnprintf(buf, PAGE_SIZE, "%d\n", fwu->can_update);
 }
 
-DEFINE_SIMPLE_ATTRIBUTE(debug_enable_update_fops, NULL, debug_enable_update, "%llu\n");
+static ssize_t enable_update_store(struct device *dev, struct device_attribute *attr,
+				   const char *buf, size_t count)
+{
+	struct max77779_fwupdate *fwu = dev_get_drvdata(dev);
+	if (!fwu)
+		return -EAGAIN;
+
+	if (kstrtobool(buf, &fwu->can_update))
+		return -EINVAL;
+
+	return count;
+}
+
+static DEVICE_ATTR_RW(enable_update);
 
 /*
  * Using the same pattern as FW_LOADER
@@ -1014,11 +1035,16 @@ static int max77779_fwupdate_probe(struct platform_device *pdev)
 		return ret;
 	}
 
+	ret = device_create_file(fwu->dev, &dev_attr_enable_update);
+	if (ret != 0) {
+		pr_err("Failed to create enable_update files, ret=%d\n", ret);
+		return ret;
+	}
+
 	de = debugfs_create_dir("max77779_fwupdate", 0);
 	if (!de)
 		return 0;
 
-	debugfs_create_file("enable_update", 0400, de, fwu, &debug_enable_update_fops);
 	debugfs_create_file("loading", 0400, de, fwu, &debug_update_firmware_loading_fops);
 	debugfs_create_file("data", 0444, de, fwu, &debug_update_firmware_data_fops);
 
