@@ -68,6 +68,7 @@ struct gbms_chg_profile {
 	u32 aacr_nb_limits;
 
 	bool debug_chg_profile;
+	bool enable_switch_chg_profile;
 };
 
 #define WLC_BPP_THRESHOLD_UV	7000000

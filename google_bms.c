@@ -425,6 +425,10 @@ int gbms_init_chg_profile_internal(struct gbms_chg_profile *profile,
 	if (ret < 0)
 		profile->cv_otv_margin = GBMS_DEFAULT_CV_OTV_MARGIN;
 
+	/* for particular hw stage */
+	profile->enable_switch_chg_profile = of_property_read_bool(node,
+					     "google,enable-switch-chg-profile");
+
 	/* sanity on voltages (should warn?) */
 	for (vi = 0; vi < profile->volt_nb_limits; vi++)
 		profile->volt_limits[vi] = profile->volt_limits[vi] /

@@ -6324,49 +6324,6 @@ static ssize_t debug_get_blf_state(struct file *filp, char __user *buf,
 }
 BATTERY_DEBUG_ATTRIBUTE(debug_blf_state_fops, debug_get_blf_state, 0);
 
-static int debug_chg_profile_switch_read(void *data, u64 *val)
-{
-	struct batt_drv *batt_drv = data;
-
-	*val = batt_drv->chg_profile.debug_chg_profile;
-	return 0;
-}
-
-static int debug_chg_profile_switch_write(void *data, u64 val)
-{
-	struct batt_drv *batt_drv = data;
-	struct device_node *node;
-	int ret;
-
-	if (batt_drv->chg_profile.debug_chg_profile == !!val)
-		return 0;
-
-	if (val)
-		node = of_find_node_by_name(batt_drv->device->of_node,
-					    "google_debug_chg_profile");
-	else
-		node = batt_drv->device->of_node;
-
-	if (!node)
-		return 0;
-
-	batt_drv->chg_profile.cccm_limits = 0;
-	ret = batt_init_chg_profile(batt_drv, node);
-	if (ret < 0)
-		return ret;
-
-	pr_info("update debug_chg_profile:%d -> %d\n",
-		batt_drv->chg_profile.debug_chg_profile, (int)val);
-
-	batt_drv->chg_profile.debug_chg_profile = val;
-
-	return 0;
-}
-
-DEFINE_SIMPLE_ATTRIBUTE(debug_chg_profile_switch_fops,
-			debug_chg_profile_switch_read,
-			debug_chg_profile_switch_write, "%llu\n");
-
 static ssize_t debug_get_bhi_status(struct file *filp, char __user *buf,
 				   size_t count, loff_t *ppos)
 {
@@ -6440,6 +6397,63 @@ static ssize_t debug_set_first_usage_date(struct file *filp,
 }
 
 BATTERY_DEBUG_ATTRIBUTE(debug_first_usage_date_fops, 0, debug_set_first_usage_date);
+
+static ssize_t chg_profile_switch_show(struct device *dev,
+				       struct device_attribute *attr,
+				       char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	int len;
+
+	len = scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->chg_profile.debug_chg_profile);
+
+	return len;
+}
+
+static ssize_t chg_profile_switch_store(struct device *dev,
+					 struct device_attribute *attr,
+					 const char *buf, size_t count)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv =(struct batt_drv *) power_supply_get_drvdata(psy);
+	struct device_node *node;
+	int val, ret;
+
+	if (!batt_drv->chg_profile.enable_switch_chg_profile)
+		return count;
+
+	ret = kstrtoint(buf, 0, &val);
+	if (ret < 0)
+		return ret;
+
+	if (batt_drv->chg_profile.debug_chg_profile == !!val)
+		return count;
+
+	if (val)
+		node = of_find_node_by_name(batt_drv->device->of_node,
+					    "google_debug_chg_profile");
+	else
+		node = batt_drv->device->of_node;
+
+	if (!node)
+		return count;
+
+	batt_drv->chg_profile.cccm_limits = 0;
+	ret = batt_init_chg_profile(batt_drv, node);
+	if (ret < 0)
+		return ret;
+
+	pr_info("update debug_chg_profile:%d -> %d\n",
+		batt_drv->chg_profile.debug_chg_profile, (int)val);
+
+	batt_drv->chg_profile.debug_chg_profile = val;
+
+	return count;
+}
+
+static const DEVICE_ATTR_RW(chg_profile_switch);
+
 
 /* TODO: add writes to restart pairing (i.e. provide key) */
 static ssize_t batt_pairing_state_show(struct device *dev,
@@ -8730,6 +8744,10 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create temp_filter_enable\n");
 
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_chg_profile_switch);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create chg_profile_switch\n");
+
 	return 0;
 
 }
@@ -8845,10 +8863,6 @@ static int batt_init_debugfs(struct batt_drv *batt_drv)
 
 	/* drain test */
 	debugfs_create_u32("restrict_level_critical", 0644, de, &batt_drv->restrict_level_critical);
-
-	/* charging profile */
-	debugfs_create_file("chg_profile_switch", 0600, de, batt_drv,
-			    &debug_chg_profile_switch_fops);
 
 	return 0;
 }
