@@ -332,15 +332,24 @@ int max77779_fg_nregister_write(const struct maxfg_regmap *map,
  * special reg_read for firmware update
  * - it will not change the lock status
  */
-int max77779_external_fg_reg_read(struct i2c_client *client,
-				  unsigned int reg, unsigned int *val)
+int max77779_external_fg_reg_read(struct device *dev, uint16_t reg, uint16_t *val)
 {
-	struct max77779_fg_chip *chip = i2c_get_clientdata(client);
+	struct max77779_fg_chip *chip = dev_get_drvdata(dev);
+	unsigned int tmp = 0;
+	int ret;
 
 	if (!chip || !chip->regmap.regmap)
 		return -EAGAIN;
 
-	return regmap_read(chip->regmap.regmap, reg, val);
+	tmp = *val;
+
+	ret = regmap_read(chip->regmap.regmap, reg, &tmp);
+	if (ret < 0)
+		return ret;
+
+	*val = tmp & 0xFFFF;
+
+	return ret;
 }
 EXPORT_SYMBOL_GPL(max77779_external_fg_reg_read);
 
@@ -348,10 +357,9 @@ EXPORT_SYMBOL_GPL(max77779_external_fg_reg_read);
  * special reg_write for firmware update
  * - it will not change the lock status
  */
-int max77779_external_fg_reg_write(struct i2c_client *client,
-				   unsigned int reg, unsigned int val)
+int max77779_external_fg_reg_write(struct device *dev, uint16_t reg, uint16_t val)
 {
-	struct max77779_fg_chip *chip = i2c_get_clientdata(client);
+	struct max77779_fg_chip *chip = dev_get_drvdata(dev);
 
 	if (!chip || !chip->regmap.regmap)
 		return -EAGAIN;
@@ -1631,7 +1639,7 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 	u16 fg_status, fg_int_sts, fg_int_sts_clr;
 	int err = 0;
 
-	if (!chip || (irq != -1 && irq != chip->primary->irq)) {
+	if (!chip || (irq != -1 && irq != chip->irq)) {
 		WARN_ON_ONCE(1);
 		return IRQ_NONE;
 	}
@@ -1640,7 +1648,7 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 	if (irq != -1 && (!chip->init_complete || !chip->resume_complete)) {
 		if (chip->init_complete && !chip->irq_disabled) {
 			chip->irq_disabled = true;
-			disable_irq_nosync(chip->primary->irq);
+			disable_irq_nosync(chip->irq);
 		}
 		pm_runtime_put_sync(chip->dev);
 		return IRQ_HANDLED;
@@ -1807,8 +1815,8 @@ static int debug_fg_reset(void *data, u64 val)
 DEFINE_SIMPLE_ATTRIBUTE(debug_fg_reset_fops, NULL, debug_fg_reset, "%llu\n");
 
 
-int max77779_fg_enable_firmware_update(struct i2c_client *client, bool enable) {
-	struct max77779_fg_chip *chip = i2c_get_clientdata(client);
+int max77779_fg_enable_firmware_update(struct device *dev, bool enable) {
+	struct max77779_fg_chip *chip = dev_get_drvdata(dev);
 	int ret = -EAGAIN;
 
 	if (!chip)
@@ -2956,9 +2964,9 @@ bool max77779_fg_is_reg(struct device *dev, unsigned int reg)
 }
 EXPORT_SYMBOL_GPL(max77779_fg_is_reg);
 
-void *max77779_get_model_data(struct i2c_client *client)
+void *max77779_get_model_data(struct device *dev)
 {
-	struct max77779_fg_chip *chip = i2c_get_clientdata(client);
+	struct max77779_fg_chip *chip = dev_get_drvdata(dev);
 
 	return chip ? chip->model_data : NULL;
 }
@@ -3172,7 +3180,7 @@ int max77779_fg_pm_resume(struct device *dev)
 	pm_runtime_get_sync(chip->dev);
 	chip->resume_complete = true;
 	if (chip->irq_disabled) {
-		enable_irq(chip->primary->irq);
+		enable_irq(chip->irq);
 		chip->irq_disabled = false;
 	}
 

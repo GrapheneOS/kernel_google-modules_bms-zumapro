@@ -40,26 +40,23 @@ int max77779_external_pmic_reg_read(struct device *dev, uint8_t reg, uint8_t *va
 int max77779_external_pmic_reg_write(struct device *dev, uint8_t reg, uint8_t val);
 int max77779_external_pmic_reg_update(struct device *dev, uint8_t reg, uint8_t msk, uint8_t val);
 
-int max77779_external_fg_reg_read(struct i2c_client *client,
-				  unsigned int reg, unsigned int *val);
-int max77779_external_fg_reg_write(struct i2c_client *client,
-				   unsigned int reg, unsigned int val);
+int max77779_external_fg_reg_read(struct device *dev, uint16_t reg, uint16_t *val);
+int max77779_external_fg_reg_write(struct device *dev, uint16_t reg, uint16_t val);
 
 int max77779_external_vimon_reg_read(struct device *dev, uint16_t reg, void *val, int len);
 int max77779_external_vimon_reg_write(struct device *dev, uint16_t reg, const void *val, int len);
 
-int max77779_fg_enable_firmware_update(struct i2c_client *client, bool enable);
+int max77779_fg_enable_firmware_update(struct device *dev, bool enable);
 
-static inline int max77779_read_batt_conn(struct i2c_client *client, int *temp)
+static inline int max77779_read_batt_conn(struct device *dev, int *temp)
 {
 	return -ENODEV;
 }
-static inline int max77779_read_usb_temp(struct i2c_client *client, int *temp)
+static inline int max77779_read_usb_temp(struct device *dev, int *temp)
 {
 	return -ENODEV;
 }
-static inline int max77779_read_batt_id(struct i2c_client *client,
-					unsigned int *id)
+static inline int max77779_read_batt_id(struct device *dev, unsigned int *id)
 {
 	return -ENODEV;
 }

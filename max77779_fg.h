@@ -312,7 +312,7 @@ ssize_t max77779_gmsr_state_cstr(char *buf, int max);
 
 /** ------------------------------------------------------------------------ */
 
-void *max77779_get_model_data(struct i2c_client *client);
+void *max77779_get_model_data(struct device *dev);
 
 int max77779_fg_init(struct max77779_fg_chip *chip);
 bool max77779_fg_dbg_is_reg(struct device *dev, unsigned int reg);
