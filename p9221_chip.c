@@ -2377,6 +2377,9 @@ static bool ra9530_chip_is_calibrated(struct p9221_charger_data *chgr)
 	u8 val;
 	int ret;
 
+	if (!p9221_is_epp(chgr))
+		return chgr->cc_vout_ready;
+
 	ret = chgr->reg_read_8(chgr, P9412_EPP_CAL_STATE_REG, &val);
 
 	if (ret)
