@@ -1212,8 +1212,6 @@ static int max77779_fg_get_property(struct power_supply *psy,
 
 		if (chip->fake_battery != -1) {
 			val->intval = chip->fake_battery;
-		} else if (chip->gauge_type == -1) {
-			val->intval = 0;
 		} else {
 
 			err = REGMAP_READ(map, MAX77779_FG_FG_INT_STS, &data);
@@ -1637,9 +1635,6 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 		WARN_ON_ONCE(1);
 		return IRQ_NONE;
 	}
-
-	if (chip->gauge_type == -1)
-		return IRQ_NONE;
 
 	pm_runtime_get_sync(chip->dev);
 	if (irq != -1 && (!chip->init_complete || !chip->resume_complete)) {
@@ -2866,20 +2861,17 @@ static void max77779_fg_init_work(struct work_struct *work)
 						     init_work.work);
 	int ret = 0;
 
-	if (chip->gauge_type != -1) {
+	/* these don't require nvm storage */
+	ret = gbms_storage_register(&max77779_fg_prop_dsc, "max77779fg", chip);
+	if (ret == -EBUSY)
+		ret = 0;
 
-		/* these don't require nvm storage */
-		ret = gbms_storage_register(&max77779_fg_prop_dsc, "max77779fg", chip);
-		if (ret == -EBUSY)
-			ret = 0;
-
-		if (ret == 0)
-			ret = max77779_fg_init_chip(chip);
-		if (ret == -EPROBE_DEFER) {
-			schedule_delayed_work(&chip->init_work,
-				msecs_to_jiffies(MAX77779_FG_DELAY_INIT_MS));
-			return;
-		}
+	if (ret == 0)
+		ret = max77779_fg_init_chip(chip);
+	if (ret == -EPROBE_DEFER) {
+		schedule_delayed_work(&chip->init_work,
+			msecs_to_jiffies(MAX77779_FG_DELAY_INIT_MS));
+		return;
 	}
 
 	/* serial number might not be stored in the FG */
@@ -2905,65 +2897,6 @@ static void max77779_fg_init_work(struct work_struct *work)
 	max77779_current_offset_check(chip);
 
 	dev_info(chip->dev, "init_work done\n");
-}
-
-/* TODO: fix detection of 17301 for non samples looking at FW version too */
-static int max77779_read_gauge_type(struct max77779_fg_chip *chip)
-{
-	u8 reg = MAX77779_FG_DevName;
-	struct i2c_msg xfer[2];
-	uint8_t buf[2] = { };
-	int ret, gauge_type;
-
-	/* some maxim IF-PMIC corrupt reads w/o Rs b/152373060 */
-	xfer[0].addr = chip->primary->addr;
-	xfer[0].flags = 0;
-	xfer[0].len = 1;
-	xfer[0].buf = &reg;
-
-	xfer[1].addr = chip->primary->addr;
-	xfer[1].flags = I2C_M_RD;
-	xfer[1].len = 2;
-	xfer[1].buf = buf;
-
-	ret = i2c_transfer(chip->primary->adapter, xfer, 2);
-	if (ret != 2)
-		return -EIO;
-
-	/* it might need devname later */
-	chip->devname = buf[1] << 8 | buf[0];
-	dev_info(chip->dev, "chip devname:0x%X\n", chip->devname);
-
-	ret = of_property_read_u32(chip->dev->of_node, "max77779,gauge-type",
-				   &gauge_type);
-	if (ret == 0) {
-		dev_warn(chip->dev, "forced gauge type to %d\n", gauge_type);
-		return gauge_type;
-	}
-	/* TODO b/283488733 add max77779 devname support */
-	ret = max77779_check_devname(chip->devname);
-	if (ret)
-		return MAX_M5_GAUGE_TYPE;
-
-	switch (chip->devname >> 4) {
-	case 0x404: /* max1730x sample */
-	case 0x405: /* max1730x pass2 silicon initial samples */
-	case 0x406: /* max1730x pass2 silicon */
-		gauge_type = MAX1730X_GAUGE_TYPE;
-		break;
-	default:
-		break;
-	}
-
-	switch (chip->devname & 0x000F) {
-	case 0x1: /* max17201 or max17211 */
-	case 0x5: /* max17205 or max17215 */
-	default:
-		gauge_type = MAX1720X_GAUGE_TYPE;
-		break;
-	}
-
-	return gauge_type;
 }
 
 bool max77779_fg_dbg_is_reg(struct device *dev, unsigned int reg)
@@ -3066,11 +2999,6 @@ int max77779_fg_init(struct max77779_fg_chip *chip)
 	chip->batt_id_defer_cnt = DEFAULT_BATTERY_ID_RETRIES;
 
 	mutex_init(&section_lock);
-
-	/* NOTE: < 0 not available, it could be a bare MLB */
-	chip->gauge_type = max77779_read_gauge_type(chip);
-	if (chip->gauge_type < 0)
-		chip->gauge_type = -1;
 
 	ret = of_property_read_u32(dev->of_node, "max77779,status-charge-threshold-ma",
 				   &data32);

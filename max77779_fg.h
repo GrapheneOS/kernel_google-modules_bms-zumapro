@@ -84,7 +84,6 @@ struct max77779_fg_chip {
 
 	int irq;
 
-	int gauge_type;	/* -1 not present, 0=max1720x, 1=max1730x */
 	struct maxfg_regmap regmap;
 	struct maxfg_regmap regmap_debug;
 	struct power_supply *psy;
