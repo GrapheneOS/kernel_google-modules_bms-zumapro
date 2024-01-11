@@ -373,9 +373,93 @@ static ssize_t max77779_vimon_show_reg_all(struct file *filp, char __user *buf,
 
 BATTERY_DEBUG_ATTRIBUTE(debug_vimon_all_reg_fops, max77779_vimon_show_reg_all, NULL);
 
+static ssize_t max77779_vimon_show_buff_all(struct file *filp, char __user *buf,
+					    size_t count, loff_t *ppos)
+{
+	struct max77779_vimon_data *data = filp->private_data;
+	char *tmp;
+	uint16_t *vals;
+	int ret;
+	int len = 0;
+	int i;
+	const size_t last_readback_size = MAX77779_VIMON_LAST_PAGE_SIZE *
+					  MAX77779_VIMON_BYTES_PER_ENTRY;
+	const size_t readback_size = MAX77779_VIMON_PAGE_SIZE * MAX77779_VIMON_BYTES_PER_ENTRY;
+	int readback_cnt;
+
+	if (!data->regmap)
+		return -EIO;
+
+	tmp = kmalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!tmp)
+		return -ENOMEM;
+
+	vals = kcalloc(MAX77779_VIMON_PAGE_SIZE, sizeof(uint16_t), GFP_KERNEL);
+
+	mutex_lock(&data->vimon_lock);
+	ret = regmap_write(data->regmap, MAX77779_BVIM_PAGE_CTRL, data->debug_buffer_page);
+	if (ret < 0)
+		goto vimon_show_buff_exit;
+
+	if (data->debug_buffer_page < MAX77779_VIMON_PAGE_CNT - 1) {
+		ret = regmap_raw_read(data->regmap, MAX77779_VIMON_OFFSET_BASE, vals,
+				      readback_size);
+		readback_cnt = MAX77779_VIMON_PAGE_SIZE;
+	} else {
+		ret = regmap_raw_read(data->regmap, MAX77779_VIMON_OFFSET_BASE, vals,
+				      last_readback_size);
+		readback_cnt = MAX77779_VIMON_LAST_PAGE_SIZE;
+	}
+
+	if (ret < 0)
+		goto vimon_show_buff_exit;
+
+	for (i = 0; i < readback_cnt; i++)
+		len += scnprintf(tmp + len, PAGE_SIZE - len, "%02x: %04x\n",
+				 data->debug_buffer_page * MAX77779_VIMON_PAGE_SIZE + i, vals[i]);
+
+	if (len > 0)
+		len = simple_read_from_buffer(buf, count, ppos, tmp, strlen(tmp));
+
+	ret = len;
+
+vimon_show_buff_exit:
+	mutex_unlock(&data->vimon_lock);
+
+	kfree(tmp);
+	kfree(vals);
+
+	return ret;
+}
+
+BATTERY_DEBUG_ATTRIBUTE(debug_vimon_all_buff_fops, max77779_vimon_show_buff_all, NULL);
+
+static int max77779_vimon_debug_buff_page_read(void *d, u64 *val)
+{
+	struct max77779_vimon_data *data = d;
+
+	*val = data->debug_buffer_page;
+
+	return 0;
+}
+
+static int max77779_vimon_debug_buff_page_write(void *d, u64 val)
+{
+	struct max77779_vimon_data *data = d;
+
+	if (val >= MAX77779_VIMON_PAGE_CNT)
+		return -EINVAL;
+
+	data->debug_buffer_page = (u8)val;
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(debug_buff_page_rw_fops, max77779_vimon_debug_buff_page_read,
+			max77779_vimon_debug_buff_page_write, "%llu\n");
+
 bool max77779_vimon_is_reg(struct device *dev, unsigned int reg)
 {
-	return (reg >= 0 && reg < MAX77779_VIMON_SIZE);
+	return (reg >= 0 && reg <= MAX77779_VIMON_SIZE);
 }
 EXPORT_SYMBOL_GPL(max77779_vimon_is_reg);
 
@@ -398,6 +482,8 @@ static int max77779_vimon_init_fs(struct max77779_vimon_data *data)
 	debugfs_create_u32("address", 0600, data->de, &data->debug_reg_address);
 	debugfs_create_file("data", 0600, data->de, data, &debug_reg_rw_fops);
 	debugfs_create_file("registers", 0444, data->de, data, &debug_vimon_all_reg_fops);
+	debugfs_create_file("buffer", 0444, data->de, data, &debug_vimon_all_buff_fops);
+	debugfs_create_file("buffer_page", 0600, data->de, data, &debug_buff_page_rw_fops);
 
 	return 0;
 }
