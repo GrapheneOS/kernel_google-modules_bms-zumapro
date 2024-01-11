@@ -5,9 +5,18 @@
 
 #include <linux/i2c.h>
 #include <linux/regmap.h>
-
 #include "max77779.h"
 #include "max77779_charger.h"
+
+static const struct regmap_config max77779_chg_i2c_regmap_cfg = {
+	.name = "max77779_charger",
+	.reg_bits = 8,
+	.val_bits = 8,
+	.val_format_endian = REGMAP_ENDIAN_NATIVE,
+	.max_register = MAX77779_CHG_CUST_TM,
+	.readable_reg = max77779_chg_is_reg,
+	.volatile_reg = max77779_chg_is_reg,
+};
 
 static const struct i2c_device_id max77779_id[] = {
 	{"max77779_charger", 0},
@@ -25,7 +34,7 @@ static int max77779_charger_i2c_probe(struct i2c_client *client, const struct i2
 	if (client->irq < 0)
 		return -EPROBE_DEFER;
 
-	regmap = devm_regmap_init_i2c(client, &max77779_chg_regmap_cfg);
+	regmap = devm_regmap_init_i2c(client, &max77779_chg_i2c_regmap_cfg);
 	if (IS_ERR(regmap)) {
 		dev_err(dev, "Failed to initialize regmap\n");
 		return -EINVAL;
@@ -83,4 +92,3 @@ module_i2c_driver(max77779_charger_i2c_driver);
 MODULE_DESCRIPTION("Maxim 77779 Charger I2C Driver");
 MODULE_AUTHOR("Daniel Okazaki <dtokazaki@google.com>");
 MODULE_LICENSE("GPL");
-MODULE_IMPORT_NS(CHARGER_MAX77779);

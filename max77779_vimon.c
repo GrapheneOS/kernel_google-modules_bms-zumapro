@@ -15,16 +15,6 @@
 #include "max77779.h"
 #include "max77779_vimon.h"
 
-const struct regmap_config max77779_vimon_regmap_cfg = {
-	.reg_bits = 8,
-	.val_bits = 16,
-	.val_format_endian = REGMAP_ENDIAN_NATIVE,
-	.max_register = MAX77779_VIMON_SIZE,
-	.readable_reg = max77779_vimon_is_reg,
-	.volatile_reg = max77779_vimon_is_reg,
-};
-EXPORT_SYMBOL_NS_GPL(max77779_vimon_regmap_cfg, VIMON_MAX77779);
-
 static int max77779_vimon_reg_read(struct device *dev,
 		unsigned int reg, unsigned int *val)
 {

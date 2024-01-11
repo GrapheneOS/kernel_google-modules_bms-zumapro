@@ -16,17 +16,6 @@
 #include "gbms_storage.h"
 #include "max77779_sp.h"
 
-const struct regmap_config max77779_sp_regmap_cfg = {
-	.name = "max77779_scratch",
-	.reg_bits = 8,
-	.val_bits = 16,
-	.val_format_endian = REGMAP_ENDIAN_NATIVE,
-	.max_register = MAX77779_SP_SIZE,
-	.readable_reg = max77779_sp_is_reg,
-	.volatile_reg = max77779_sp_is_reg,
-};
-EXPORT_SYMBOL_NS_GPL(max77779_sp_regmap_cfg, SP_MAX77779);
-
 /* hold lock on &data->page_lock */
 static int max77779_sp_rd(uint8_t *buff, int addr, size_t count, struct regmap *regmap)
 {

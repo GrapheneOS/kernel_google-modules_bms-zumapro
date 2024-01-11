@@ -15,15 +15,6 @@
 #include "max77779_pmic.h"
 #include "max77779_i2cm.h"
 
-const struct regmap_config max77779_i2cm_regmap_cfg = {
-	.name = "max77779_i2cm_regmap_cfg",
-	.reg_bits = 8,
-	.val_bits = 8,
-	.val_format_endian = REGMAP_ENDIAN_NATIVE,
-	.max_register = I2CM_MAX_REGISTER,
-};
-EXPORT_SYMBOL_NS_GPL(max77779_i2cm_regmap_cfg, I2CM_MAX77779);
-
 static int max77779_i2cm_done(struct max77779_i2cm_info *info,
 		unsigned int *status)
 {

@@ -5,7 +5,6 @@
 
 #ifndef MAX77779_I2CM_H_
 #define MAX77779_I2CM_H_
-#include <linux/regmap.h>
 
 #include "max77779_regs.h"
 
@@ -76,5 +75,4 @@ struct max77779_i2cm_info {
 int max77779_i2cm_init(struct max77779_i2cm_info *info);
 void max77779_i2cm_remove(struct max77779_i2cm_info *info);
 
-extern const struct regmap_config max77779_i2cm_regmap_cfg;
 #endif

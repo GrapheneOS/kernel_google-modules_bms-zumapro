@@ -20,17 +20,6 @@
 
 #define MAX77779_PMIC_ID_VAL	0x79
 
-const struct regmap_config max77779_pmic_regmap_cfg = {
-	.name = "max77779_pmic",
-	.reg_bits = 8,
-	.val_bits = 8,
-	.val_format_endian = REGMAP_ENDIAN_NATIVE,
-	.max_register = MAX77779_PMIC_GPIO_VGPI_CNFG,
-	.readable_reg = max77779_pmic_is_readable,
-	.volatile_reg = max77779_pmic_is_readable,
-};
-EXPORT_SYMBOL_NS_GPL(max77779_pmic_regmap_cfg, PMIC_MAX77779);
-
 static inline int max77779_pmic_reg_read(struct regmap *regmap, uint8_t reg, uint8_t *val)
 {
 	int ret, ival;

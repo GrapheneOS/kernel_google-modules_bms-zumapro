@@ -8,6 +8,14 @@
 #include "max77779.h"
 #include "max77779_i2cm.h"
 
+static const struct regmap_config max77779_i2cm_regmap_cfg = {
+	.name = "max77779_i2cm_regmap_cfg",
+	.reg_bits = 8,
+	.val_bits = 8,
+	.val_format_endian = REGMAP_ENDIAN_NATIVE,
+	.max_register = I2CM_MAX_REGISTER,
+};
+
 static const struct i2c_device_id id[] = {
 	{ "max77779_i2cm", 0 },
 	{ }
@@ -73,4 +81,3 @@ module_i2c_driver(max77779_i2cm_driver);
 MODULE_DESCRIPTION("Maxim 77779 I2CM I2C Driver");
 MODULE_AUTHOR("Daniel Okazaki <dtokazaki@google.com>");
 MODULE_LICENSE("GPL");
-MODULE_IMPORT_NS(I2CM_MAX77779);

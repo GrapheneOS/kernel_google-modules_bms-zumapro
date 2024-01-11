@@ -8,6 +8,15 @@
 
 #include "max77779_vimon.h"
 
+static const struct regmap_config max77779_vimon_regmap_cfg = {
+	.reg_bits = 8,
+	.val_bits = 16,
+	.val_format_endian = REGMAP_ENDIAN_NATIVE,
+	.max_register = MAX77779_VIMON_SIZE,
+	.readable_reg = max77779_vimon_is_reg,
+	.volatile_reg = max77779_vimon_is_reg,
+};
+
 static const struct i2c_device_id max77779_vimon_id[] = {
 	{"max77779_vimon", 0},
 	{}
@@ -71,4 +80,3 @@ module_i2c_driver(max77779_vimon_i2c_driver);
 MODULE_DESCRIPTION("Maxim 77779 Vimon I2C Driver");
 MODULE_AUTHOR("Daniel Okazaki <dtokazaki@google.com>");
 MODULE_LICENSE("GPL");
-MODULE_IMPORT_NS(VIMON_MAX77779);
