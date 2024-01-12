@@ -5027,6 +5027,9 @@ static int msc_logic(struct batt_drv *batt_drv)
 		batt_drv->cc_max_pullback = 0;
 	} else if (batt_drv->cc_max_pullback > 0) {
 		batt_drv->cc_max = batt_drv->cc_max_pullback;
+	} else {
+		batt_drv->cc_max = GBMS_CCCM_LIMITS(profile, temp_idx, vbatt_idx);
+		batt_drv->cc_max_pullback = 0;
 	}
 
 	batt_prlog(batt_prlog_level(changed),
