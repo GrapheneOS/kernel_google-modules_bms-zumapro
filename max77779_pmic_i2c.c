@@ -12,7 +12,7 @@ static const struct regmap_config max77779_pmic_regmap_cfg = {
 	.reg_bits = 8,
 	.val_bits = 8,
 	.val_format_endian = REGMAP_ENDIAN_NATIVE,
-	.max_register = MAX77779_VGPI_CNFG,
+	.max_register = MAX77779_PMIC_GPIO_VGPI_CNFG,
 	.readable_reg = max77779_pmic_is_readable,
 	.volatile_reg = max77779_pmic_is_readable,
 };
