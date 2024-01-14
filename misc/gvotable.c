@@ -4,8 +4,9 @@
  */
 
 #include <linux/init.h>
-#include <linux/list.h>
 #include <linux/kernel.h>
+#include <linux/list.h>
+#include <linux/lockdep_types.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/string.h>
@@ -87,6 +88,11 @@ struct gvotable_election {
 
 	/* some int-type votables must not have the force_int_* debugfs entry */
 	bool	disable_force_int_entry;
+
+	/* for lockdep */
+	struct lock_class_key cb_lock_key;
+	struct lock_class_key re_lock_key;
+
 };
 
 #define gvotable_lock_result(el) mutex_lock(&(el)->re_lock)
@@ -99,10 +105,12 @@ static void gvotable_lock_election(struct gvotable_election *el)
 	int ret;
 
 	ret = mutex_trylock(&el->cb_lock);
-	if (WARN(ret == 0 && el->owner == get_current(),
-		 "%s cannot call this function from the callback\n",
-		 el->has_name ? el->name : "<>"))
+	if (!ret) {
+		WARN(el->owner == get_current(),
+		     "%s cannot call this function from the callback\n",
+		     el->has_name ? el->name : "<>");
 		mutex_lock(&el->cb_lock);
+	}
 
 	el->owner = get_current();
 	gvotable_lock_result(el);
@@ -233,7 +241,7 @@ static u32 gvotable_internal_hash(const char *str)
 static void gvotable_internal_update_reason(struct gvotable_election *el,
 					    const char *new_reason)
 {
-	strscpy(el->reason, new_reason, GVOTABLE_MAX_REASON_LEN);
+	strlcpy(el->reason, new_reason, GVOTABLE_MAX_REASON_LEN);
 }
 
 static void gvotable_internal_copy_result(struct gvotable_election *el,
@@ -487,6 +495,13 @@ gvotable_create_election(const char *name, int vote_size,
 
 	mutex_init(&slot->el->re_lock);
 	mutex_init(&slot->el->cb_lock);
+
+	lockdep_register_key(&slot->el->re_lock_key);
+	lockdep_register_key(&slot->el->cb_lock_key);
+
+	lockdep_set_class(&slot->el->re_lock, &slot->el->re_lock_key);
+	lockdep_set_class(&slot->el->cb_lock, &slot->el->cb_lock_key);
+
 	INIT_LIST_HEAD(&slot->el->votes);
 	slot->el->callback	= callback_fn;
 	slot->el->auto_callback	= true;
@@ -509,7 +524,7 @@ gvotable_create_election(const char *name, int vote_size,
 	if (name) {
 		slot->el->has_name = true;
 		slot->el->hash     = gvotable_internal_hash(name);
-		strscpy(slot->el->name, name, MAX_NAME_LEN);
+		strlcpy(slot->el->name, name, MAX_NAME_LEN);
 
 		gvotable_debugfs_create_el(slot);
 	}
@@ -671,7 +686,7 @@ int gvotable_election_set_name(struct gvotable_election *el, const char *name)
 
 	el->has_name = true;
 	el->hash = gvotable_internal_hash(name);
-	strscpy(el->name, name, MAX_NAME_LEN);
+	strlcpy(el->name, name, MAX_NAME_LEN);
 
 	/* el->has_name ==> find internal will now find the election */
 	slot = gvotable_find_internal(name);
@@ -851,7 +866,7 @@ static int gvotable_get_current_reason_unlocked(struct gvotable_election *el,
 	else if (el->result_is_valid)
 		r = el->reason;
 
-	return r ? strscpy(reason, r, max_len) : -EAGAIN;
+	return r ? strlcpy(reason, r, max_len) : -EAGAIN;
 }
 
 /* Retrieve current reason for election result. */
@@ -1108,7 +1123,7 @@ int gvotable_cast_vote(struct gvotable_election *el, const char *reason,
 		}
 
 		ballot->reason_hash = gvotable_internal_hash(reason);
-		strscpy(ballot->reason, reason, GVOTABLE_MAX_REASON_LEN);
+		strlcpy(ballot->reason, reason, GVOTABLE_MAX_REASON_LEN);
 		if (el->use_alloc)
 			ballot->vote_size = el->vote_size;
 		el->num_voters++;
