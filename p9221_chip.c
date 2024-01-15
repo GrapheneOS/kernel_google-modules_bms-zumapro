@@ -3012,7 +3012,7 @@ static int p9xxx_gpio_get(struct gpio_chip *chip, unsigned int offset)
 static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int value)
 {
 	struct p9221_charger_data *charger = gpiochip_get_data(chip);
-	int ret = 0;
+	int ret = 0, vout_mv;
 	int prev_state;
 	u8 mode;
 
@@ -3032,6 +3032,10 @@ static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 			break;
 		/* No need if DD is triggered */
 		if (charger->trigger_power_mitigation)
+			break;
+		/* If Vout is already > 5.2V, no change is required */
+		ret = charger->chip_get_vout_max(charger, &vout_mv);
+		if (ret == 0 && vout_mv > P9412_BPP_WLC_OTG_VOUT)
 			break;
 		/* b/174068520: set vout to 5.2 for BPP_WLC_RX+OTG */
 		if (value)

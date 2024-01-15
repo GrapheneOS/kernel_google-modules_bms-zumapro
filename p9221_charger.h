@@ -689,9 +689,6 @@ struct p9221_fod_data {
 };
 
 struct p9221_charger_platform_data {
-	bool				dc_init_done;
-	bool				tx_init_done;
-	bool				rx_init_done;
 	int				irq_gpio;
 	int				irq_int;
 	u64				irq_flag;
