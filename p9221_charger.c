@@ -5022,7 +5022,8 @@ static enum p9382_rtx_state p9xxx_get_rtx_status(struct p9221_charger_data *char
 	if (!charger->pdata->has_rtx || rtx_err & RTX_CHRG_NOTSUP_BIT)
 		return RTX_NOTSUPPORTED;
 
-	if (charger->pdata->ben_gpio > 0)
+	/* external boost is on but not for rtx */
+	if (charger->pdata->ben_gpio > 0 && !charger->pdata->rtx_wait_ben)
 		ext_bst_on = gpio_get_value_cansleep(charger->pdata->ben_gpio);
 
 	if (p9221_is_online(charger))
