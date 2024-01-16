@@ -536,6 +536,11 @@ stats_update_unlock:
 
 static void dd_stats_update(struct chg_drv *chg_drv)
 {
+	if (!chg_drv->bd_state.dd_triggered) {
+		chg_drv->dd_stats_last_update = get_boot_sec();
+		return;
+	}
+
 	chg_stats_update(chg_drv, &chg_drv->dd_stats, &chg_drv->dd_stats_last_update);
 }
 
@@ -1208,18 +1213,32 @@ static bool chg_work_check_usb_state(struct chg_drv *chg_drv)
 	return usb_online > 0 || usb_present == 1;
 }
 
+static bool chg_work_check_ext_state(struct power_supply *ext_psy)
+{
+	int ext_online, ext_present;
+
+	if (!ext_psy)
+		return false;
+
+	ext_online = GPSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_ONLINE);
+	ext_present = GPSY_GET_PROP(ext_psy, POWER_SUPPLY_PROP_PRESENT);
+
+	return ext_online == 1 || ext_present == 1;
+}
+
 /* not executed when battery is NOT present */
 static int chg_work_roundtrip(struct chg_drv *chg_drv,
 			      union gbms_charger_state *chg_state)
 {
 	struct power_supply *chg_psy = chg_drv->chg_psy;
 	struct power_supply *wlc_psy = chg_drv->wlc_psy;
+	struct power_supply *ext_psy = chg_drv->ext_psy;
 	union gbms_charger_state batt_chg_state;
 	const int upperbd = chg_drv->charge_stop_level;
 	const int lowerbd = chg_drv->charge_start_level;
 	int fv_uv = -1, cc_max = -1;
 	int update_interval, rc;
-	bool wlc_on = 0, usb_on = 0;
+	bool wlc_on, usb_on, ext_on;
 
 	rc = gbms_read_charger_state(chg_state, chg_psy);
 	if (rc < 0)
@@ -1257,7 +1276,9 @@ static int chg_work_roundtrip(struct chg_drv *chg_drv,
 	 */
 	wlc_on = chg_work_check_wlc_state(wlc_psy);
 	usb_on = chg_work_check_usb_state(chg_drv);
-	if ((wlc_on || usb_on) && batt_chg_state.f.chg_status == POWER_SUPPLY_STATUS_DISCHARGING) {
+	ext_on = chg_work_check_ext_state(ext_psy);
+	if ((wlc_on || usb_on || ext_on) &&
+	    batt_chg_state.f.chg_status == POWER_SUPPLY_STATUS_DISCHARGING) {
 		if (!chg_drv->debug_input_suspend)
 			batt_chg_state.f.chg_status = POWER_SUPPLY_STATUS_NOT_CHARGING;
 		batt_chg_state.f.flags = gbms_gen_chg_flags(chg_state->f.chg_status,
@@ -2089,8 +2110,7 @@ static void bd_dd_run_defender(struct chg_drv *chg_drv, int soc, int *disable_ch
 						(soc >= upperbd));
 
 	/* Start DD stats */
-	if (bd_state->dd_state == DOCK_DEFEND_ACTIVE)
-		dd_stats_update(chg_drv);
+	dd_stats_update(chg_drv);
 
 	/* need icl_ramp_work when disable_pwrsrc 1 -> 0 */
 	if (!*disable_pwrsrc && chg_drv->disable_pwrsrc) {
@@ -2462,9 +2482,7 @@ static void chg_work(struct work_struct *work)
 		 * Update DD stats last time if DD is active.
 		 * NOTE: *** Ensure this is done before disconnect indication to google_battery
 		 */
-		if (chg_drv->dd_stats.vtier_idx == GBMS_STATS_BD_TI_DOCK &&
-		    chg_drv->bd_state.dd_state == DOCK_DEFEND_ACTIVE)
-			dd_stats_update(chg_drv);
+		dd_stats_update(chg_drv);
 
 		/* reset dock_defend */
 		if (chg_drv->bd_state.dd_triggered) {
@@ -2565,9 +2583,7 @@ static void chg_work(struct work_struct *work)
 	}
 
 	/* Book dd stats to correct charging type if DD active */
-	if (chg_drv->dd_stats.vtier_idx == GBMS_STATS_BD_TI_DOCK &&
-	    chg_drv->bd_state.dd_state == DOCK_DEFEND_ACTIVE)
-			dd_stats_update(chg_drv);
+	dd_stats_update(chg_drv);
 
 	/*
 	 * chg_drv->disable_pwrsrc -> chg_drv->disable_charging
@@ -3374,10 +3390,8 @@ static ssize_t set_dd_settings(struct device *dev, struct device_attribute *attr
 		chg_drv->bd_state.dd_settings = val;
 
 		/* Update DD stats tier. Book stats till now to DOCK tier */
-		if (DOCK_DEFEND_USER_CLEARED == chg_drv->bd_state.dd_settings) {
+		if (DOCK_DEFEND_USER_CLEARED == chg_drv->bd_state.dd_settings)
 			dd_stats_update(chg_drv);
-			chg_drv->dd_stats.vtier_idx = GBMS_STATS_BD_TI_DOCK_CLEARED;
-		}
 
 		if (chg_drv->bat_psy)
 			power_supply_changed(chg_drv->bat_psy);
