@@ -10,6 +10,7 @@
 #define RSBR_ADDR				4
 #define SUFG_ADDR				8
 #define RSOC_ADDR				10
+#define FWHI_ADDR				12
 #define RS_TAG_LENGTH				4
 #define SU_TAG_LENGTH				1
 #define RSOC_TAG_LENGTH				2
@@ -17,6 +18,8 @@
 #define RS_TAG_OFFSET_LENGTH			1
 #define RS_TAG_OFFSET_DATA			2
 #define OPCODE_USER_SPACE_R_RES_LEN 32
+#define FWHI_TAG_LENGTH				4
+
 
 #define MAX77779_SP_DATA		0x80
 #define MAX77779_SP_SIZE 		0x255

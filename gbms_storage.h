@@ -89,6 +89,7 @@ enum gbms_tags {
 	GBMS_TAG_THAS = 0x54484153,
 
 	/* User Space Read/Write scratch */
+	GBMS_TAG_FWHI = 0x46574849, /* Installed firmware history */
 	GBMS_TAG_RS32 = 0x52533332,
 	GBMS_TAG_RSBM = 0x5253424d,
 	GBMS_TAG_RSBR = 0x52534252,

@@ -68,6 +68,10 @@
 
 #define MARK_IN_PROGRESS() do {} while (0);
 
+#define MAX77779_FW_HIST_OFFSET_TAG 16
+#define MAX77779_FW_HIST_VER_MASK   0xFFFF
+
+
 enum max77779_fwupdate_fg_lock {
 	FG_ST_LOCK_ALL_SECTION = 0x0e,
 	FG_ST_UNLOCK_ALL_SECTION = 0x00,
@@ -148,6 +152,44 @@ struct max77779_fwupdate {
 
 	struct max77779_fwupdate_custom_data debug_image;
 };
+
+
+static int get_firmware_update_tag(const struct max77779_fwupdate *fwu, int* ver_tag)
+{
+	int ret;
+	uint32_t fw_tag, cur_ver;
+
+	ret = gbms_storage_read(GBMS_TAG_FWHI, &fw_tag, sizeof(fw_tag));
+	if (ret < 0) {
+		dev_err(fwu->dev, "failed to read GBMS_TAG_FWHI (%d)\n", ret);
+		return ret;
+	}
+
+	cur_ver = (fwu->v_cur.major << 8) | fwu->v_cur.minor;
+
+	/* set tag version as '0' if there is no saved history */
+	*ver_tag = 0;
+	if ((fw_tag & MAX77779_FW_HIST_VER_MASK) == cur_ver)
+		*ver_tag = (fw_tag >> MAX77779_FW_HIST_OFFSET_TAG);
+
+	return ret;
+}
+
+static int set_firmware_update_tag(const struct max77779_fwupdate *fwu, int tag)
+{
+	int ret;
+	uint32_t fw_tag;
+
+	fw_tag = (tag << MAX77779_FW_HIST_OFFSET_TAG);
+	fw_tag |= (fwu->v_cur.major << 8) | fwu->v_cur.minor;
+
+	ret= gbms_storage_write(GBMS_TAG_FWHI, &fw_tag, sizeof(fw_tag));
+
+	if (ret < 0)
+		dev_err(fwu->dev, "failed to write GBMS_TAG_FWHI (%d)\n", ret);
+
+	return ret;
+}
 
 static int max77779_fwupdate_init(struct max77779_fwupdate *fwu)
 {
@@ -779,6 +821,14 @@ static int max77779_fwl_poll_complete(struct max77779_fwupdate *fwu)
 
 	fwu->op_st = FGST_NORMAL;
 
+	if (fwu->v_cur.major != fwu->v_new.major || fwu->v_cur.minor != fwu->v_new.minor) {
+		/* new version of firmware was installed: update GBMS_TAG_FWHI */
+		fwu->v_cur = fwu->v_new;
+
+		ret = set_firmware_update_tag(fwu, 0);
+		MAX77779_ABORT_ON_ERROR(ret, __func__, "failed on updating GBMS_TAG_FWHI\n");
+	}
+
 	return ret;
 }
 
@@ -857,7 +907,7 @@ static void firmware_update_work(struct work_struct* work)
 
 	ret = max77779_can_update(fwu, &target_version);
 	if (ret) {
-		dev_err(fwu->dev, "can not update firmware %d\n", ret);
+		dev_info(fwu->dev, "can not update firmware %d\n", ret);
 		goto firmware_update_work_cleanup;
 	}
 
@@ -871,13 +921,14 @@ firmware_update_work_cleanup:
 }
 
 /*
- * expects firmware_name doesn't contain newline, for example
- *  - echo -n "firmware_xxxx.bin" > update_firmware
+ * trigger firmware update with override version tag
+ *  - echo xxx > update_firmware
  */
 static ssize_t trigger_update_firmware(struct device *dev,
 				       struct device_attribute *attr,
-				       const char *firmware_name, size_t count)
+				       const char *override_tag, size_t count)
 {
+	int current_ver, target_ver;
 	struct max77779_fwupdate *fwu = dev_get_drvdata(dev);
 
 	if (!fwu)
@@ -888,15 +939,32 @@ static ssize_t trigger_update_firmware(struct device *dev,
 		return -EACCES;
 	}
 
+	if (kstrtoint(override_tag, 10, &target_ver)) {
+		dev_err(fwu->dev, "incorrect input: expects override_tag(number)\n");
+		return -EINVAL;
+	}
 
+	if (get_firmware_update_tag(fwu, &current_ver) < 0) {
+		dev_err(fwu->dev, "can't access GBMS_TAG_FWHI: update will be aborted\n");
+		return -EACCES;
+	}
+
+	if (target_ver <= current_ver) {
+		dev_info(fwu->dev, "ver %d already installed: update request will be skipped",
+			target_ver);
+		return count;
+	}
+
+	if (set_firmware_update_tag(fwu, target_ver) < 0) {
+		dev_err(fwu->dev, "can't update GBMS_TAG_FWHI: update will be aborted\n");
+		return -EACCES;
+	}
+
+	scnprintf(fwu->fw_name, MAX77779_FW_UPDATE_STRING_MAX, "%s_%d.bin",
+		  MAX77779_FIRMWARE_BINARY_PREFIX, (int)fwu->v_cur.major);
 	fwu->force_update = true;
 
-	if (count > 1)
-		strncpy(fwu->fw_name, firmware_name, MAX77779_FW_UPDATE_STRING_MAX - 1);
-	else
-		scnprintf(fwu->fw_name, MAX77779_FW_UPDATE_STRING_MAX, "%s_%d.bin",
-			  MAX77779_FIRMWARE_BINARY_PREFIX, (int)fwu->minimum.major);
-
+	dev_info(fwu->dev, "will schedule firmware update for [%s]\n", fwu->fw_name);
 	schedule_delayed_work(&fwu->update_work,
 			      msecs_to_jiffies(FW_UPDATE_TIMER_CHECK_INTERVAL_MS));
 
