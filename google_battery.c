@@ -3735,6 +3735,8 @@ static bool msc_logic_health(struct batt_drv *batt_drv)
 
 done_exit:
 	if (rest_state == CHG_HEALTH_ACTIVE || rest_state == CHG_HEALTH_DONE) {
+		int last_voltage_idx = gbms_msc_get_last_voltage_idx(profile, batt_drv->temp_idx);
+
 		/* cc_max in ua: capacity in mAh, rest_rate in deciPct */
 		cc_max = capacity_ma * rest->rest_rate * 10;
 
@@ -3744,7 +3746,7 @@ done_exit:
 		 * NOTE this might need to be adjusted for the actual charge
 		 * tiers that have nonzero charging current
 		 */
-		fv_uv = profile->volt_limits[profile->volt_nb_limits - 1];
+		fv_uv = profile->volt_limits[last_voltage_idx];
 
 		/* TODO: make sure that we wakeup when we are close to ttf */
 	} else if (rest_state == CHG_HEALTH_ENABLED) {
