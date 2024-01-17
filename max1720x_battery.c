@@ -1486,8 +1486,9 @@ static int max1720x_update_cycle_count(struct max1720x_chip *chip)
 	if (err < 0)
 		return err;
 
-	if (max_m5_recal_state(chip->model_data))
-		reg_cycle += max_m5_recal_cycle(chip->model_data);
+	if (chip->gauge_type == MAX_M5_GAUGE_TYPE)
+		if (max_m5_recal_state(chip->model_data))
+			reg_cycle += max_m5_recal_cycle(chip->model_data);
 
 	cycle_count = reg_to_cycles((u32)reg_cycle, chip->gauge_type);
 	if ((chip->cycle_count == -1) ||
@@ -2052,7 +2053,8 @@ static int max1720x_get_property(struct power_supply *psy,
 		val->intval = chip->batt_id;
 		break;
 	case GBMS_PROP_RECAL_FG:
-		val->intval = max_m5_recal_state(chip->model_data);
+		if (chip->gauge_type == MAX_M5_GAUGE_TYPE)
+			val->intval = max_m5_recal_state(chip->model_data);
 		break;
 	default:
 		err = -EINVAL;
@@ -2560,8 +2562,10 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 			pr_debug("Force power_supply_change in storm\n");
 		} else {
 			max1720x_monitor_log_data(chip, false);
-			max_m5_check_recal_state(chip->model_data, chip->bhi_recalibration_algo,
-						 chip->eeprom_cycle);
+			if (chip->gauge_type == MAX_M5_GAUGE_TYPE)
+				max_m5_check_recal_state(chip->model_data,
+							 chip->bhi_recalibration_algo,
+							 chip->eeprom_cycle);
 			max1720x_update_cycle_count(chip);
 		}
 
