@@ -282,12 +282,14 @@ static int gbms_cache_read(gbms_tag_t tag, void *data, size_t count)
 	if (slot->offline)
 		return -ENODEV;
 
-	if (slot->dsc->fetch && addr != GBMS_STORAGE_ADDR_INVALID)
+	if (slot->dsc->fetch && addr != GBMS_STORAGE_ADDR_INVALID) {
 		ret = slot->dsc->fetch(data, addr, count, slot->ptr);
-	else if (!slot->dsc->read)
+	} else if (!slot->dsc->read) {
+		pr_err("%s: no read desc for %s\n", __func__, slot->name);
 		ret = -EACCES;
-	else
+	} else {
 		ret = slot->dsc->read(tag, data, count, slot->ptr);
+	}
 
 	return ret;
 }
@@ -383,12 +385,14 @@ static int gbms_cache_write(gbms_tag_t tag, const void *data, size_t count)
 	if (slot->offline)
 		return -ENODEV;
 
-	if (slot->dsc->store && addr != GBMS_STORAGE_ADDR_INVALID)
+	if (slot->dsc->store && addr != GBMS_STORAGE_ADDR_INVALID) {
 		ret = slot->dsc->store(data, addr, count, slot->ptr);
-	else if (!slot->dsc->write)
+	} else if (!slot->dsc->write) {
 		ret = -EACCES;
-	else
+		pr_err("%s: no write desc for %s\n", __func__, slot->name);
+	} else {
 		ret = slot->dsc->write(tag, data, count, slot->ptr);
+	}
 
 	return ret;
 }

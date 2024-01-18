@@ -2941,20 +2941,24 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 		return IRQ_NONE;
 	}
 
-	if (chip->gauge_type == -1)
+	if (chip->gauge_type == -1) {
+		dev_warn_ratelimited(chip->dev, "%s gauge not inited\n", __func__);
 		return IRQ_NONE;
+	}
 
 	pm_runtime_get_sync(chip->dev);
 	if (!chip->init_complete || !chip->resume_complete) {
-		dev_warn(chip->dev, "%s: irq skipped, irq%d\n", __func__, irq);
+		dev_warn_ratelimited(chip->dev, "%s: irq skipped, irq%d\n", __func__, irq);
 		pm_runtime_put_sync(chip->dev);
 		return IRQ_HANDLED;
 	}
 	pm_runtime_put_sync(chip->dev);
 
 	err = REGMAP_READ(&chip->regmap, MAX1720X_STATUS, &fg_status);
-	if (err)
+	if (err) {
+		dev_err_ratelimited(chip->dev, "%s i2c error reading status, IRQ_NONE\n", __func__);
 		return IRQ_NONE;
+	}
 
 	/* disable storm check and spurius with shared interrupts */
 	if (!chip->irq_shared) {
@@ -2984,6 +2988,8 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 		 * Disable rate limiting for when interrupt is shared.
 		 * NOTE: this might need to be re-evaluated at some later point
 		 */
+		dev_err_ratelimited(chip->dev, "fg_status == 0\n");
+
 		return IRQ_NONE;
 	}
 
@@ -5935,8 +5941,12 @@ static int max1720x_init_irq(struct max1720x_chip *chip)
 	dev_info(chip->dev, "FG irq handler registered at %d (%d)\n",
 			    chip->primary->irq, ret);
 
-	if (!ret)
+	if (!ret) {
 		device_init_wakeup(chip->dev, true);
+		ret = enable_irq_wake(chip->primary->irq);
+		if (ret)
+			dev_err(chip->dev, "Error enabling irq wake ret:%d\n", ret);
+	}
 
 	return ret;
 }
@@ -6348,6 +6358,7 @@ static int max1720x_remove(struct i2c_client *client)
 	cancel_delayed_work(&chip->model_work);
 	cancel_delayed_work(&chip->rc_switch.switch_work);
 
+	disable_irq_wake(chip->primary->irq);
 	device_init_wakeup(chip->dev, false);
 	if (chip->primary->irq)
 		free_irq(chip->primary->irq, chip);
@@ -6385,10 +6396,6 @@ static int max1720x_pm_suspend(struct device *dev)
 	dev_dbg(dev, "%s\n", __func__);
 
 	chip->resume_complete = false;
-	if (device_may_wakeup(dev)) {
-		dev_dbg(dev, "%s: enable irq wake\n", __func__);
-		enable_irq_wake(chip->primary->irq);
-	}
 	pm_runtime_put_sync(chip->dev);
 
 	return 0;
@@ -6402,10 +6409,6 @@ static int max1720x_pm_resume(struct device *dev)
 	pm_runtime_get_sync(chip->dev);
 	dev_dbg(dev, "%s\n", __func__);
 
-	if (device_may_wakeup(dev)) {
-		dev_dbg(dev, "%s: disable irq wake\n", __func__);
-		disable_irq_wake(chip->primary->irq);
-	}
 	chip->resume_complete = true;
 	pm_runtime_put_sync(chip->dev);
 	return 0;
