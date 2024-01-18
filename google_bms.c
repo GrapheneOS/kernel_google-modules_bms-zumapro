@@ -499,6 +499,7 @@ int gbms_msc_round_fv_uv(const struct gbms_chg_profile *profile,
 	if (fv_max != 0 && fv_uv > fv_max)
 		fv_uv = fv_max;
 
+	fv_uv += profile->fv_uv_resolution / 2;
 	result = fv_uv - (fv_uv % profile->fv_uv_resolution);
 
 	if (fv_max != 0)

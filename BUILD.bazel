@@ -8,6 +8,7 @@ filegroup(
         "*.h",
     ]),
     visibility = [
+        "//private/devices/google:__subpackages__",
         "//private/google-modules/power/mitigation:__subpackages__",
         "//private/google-modules/power/reset:__subpackages__",
     ],
