@@ -32,7 +32,7 @@ static int max77779_sp_rd(uint8_t *buff, int addr, size_t count, struct regmap *
 		return ret;
 
 	if (count > 2) {
-		ret = regmap_bulk_read(regmap, base, buff, count);
+		ret = regmap_raw_read(regmap, base, buff, count);
 	} else if (count) {
 		unsigned tmp = 0;
 
@@ -71,7 +71,7 @@ static int max77779_sp_wr(const uint8_t *buff, int addr, size_t count, struct re
 		return ret;
 
 	if (count > 2)
-		return regmap_bulk_write(regmap, base, buff, count);
+		return regmap_raw_write(regmap, base, buff, count);
 
 	if (count == 1) {
 		/* one or two bytes, unaligned TODO: 2 bytes unaligned */
