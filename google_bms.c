@@ -141,7 +141,7 @@ struct device_node *gbms_batt_id_node(struct device_node *config_node)
 EXPORT_SYMBOL_GPL(gbms_batt_id_node);
 
 /* convert C rates to current. Caller can account for tolerances reducing
- * battery_capacity. fv_uv_resolution is used to create discrete steps.
+ * battery_capacity. cc_ua_resolution is used to create discrete steps.
  * NOTE: the call covert C rates to chanrge currents IN PLACE, ie you cannot
  * call this twice.
  */
@@ -150,7 +150,7 @@ void gbms_init_chg_table(struct gbms_chg_profile *profile,
 {
 	u32 ccm;
 	int vi, ti, ret;
-	const int fv_uv_step = profile->fv_uv_resolution;
+	const int cc_ua_step = profile->cc_ua_resolution;
 	u32 cccm_array_size = (profile->temp_nb_limits - 1)
 			       * profile->volt_nb_limits;
 
@@ -169,9 +169,9 @@ void gbms_init_chg_table(struct gbms_chg_profile *profile,
 			ccm *= capacity_ma * 10;
 
 			/* round to the nearest resolution */
-			if (fv_uv_step)
-				ccm = DIV_ROUND_CLOSEST(ccm, fv_uv_step)
-					* fv_uv_step;
+			if (cc_ua_step)
+				ccm = DIV_ROUND_CLOSEST(ccm, cc_ua_step)
+					* cc_ua_step;
 
 			GBMS_CCCM_LIMITS_SET(profile, ti, vi) = ccm;
 		}
@@ -377,6 +377,12 @@ int gbms_init_chg_profile_internal(struct gbms_chg_profile *profile,
 				   &profile->fv_uv_resolution);
 	if (ret < 0)
 		profile->fv_uv_resolution = GBMS_DEFAULT_FV_UV_RESOLUTION;
+
+	/* FCC limit resolution */
+	ret = of_property_read_u32(node, "google,chg-cc-ua-resolution",
+				   &profile->cc_ua_resolution);
+	if (ret < 0)
+		profile->cc_ua_resolution = profile->fv_uv_resolution;
 
 	/* how close to tier voltage is close enough */
 	ret = of_property_read_u32(node, "google,cv-range-accuracy",

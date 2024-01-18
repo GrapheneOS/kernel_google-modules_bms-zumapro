@@ -62,6 +62,8 @@ struct gbms_chg_profile {
 	/* experimental */
 	u32 cv_otv_margin;
 
+	u32 cc_ua_resolution;
+
 	/* AACR feature */
 	u32 reference_cycles[GBMS_AACR_DATA_MAX];
 	u32 reference_fade10[GBMS_AACR_DATA_MAX];
