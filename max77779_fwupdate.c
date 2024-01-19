@@ -1118,9 +1118,6 @@ static int max77779_fwupdate_probe(struct platform_device *pdev)
 
 	fwu->de = de;
 
-	schedule_delayed_work(&fwu->update_work, msecs_to_jiffies(
-			      FW_UPDATE_CONDITION_CHECK_INTERVAL_MS));
-
 	return ret;
 }
 
