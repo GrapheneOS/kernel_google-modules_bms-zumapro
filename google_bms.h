@@ -244,6 +244,8 @@ struct batt_ttf_stats {
 	struct ttf_tier_stat tier_stats[GBMS_STATS_TIER_COUNT];
 
 	struct logbuffer *ttf_log;
+
+	struct mutex ttf_lock;
 };
 
 /*
@@ -536,8 +538,7 @@ int gbms_cycle_count_cstr_bc(char *buff, size_t size,
 int ttf_soc_cstr(char *buff, int size, const struct ttf_soc_stats *soc_stats,
 		 int start, int end);
 
-int ttf_soc_estimate(ktime_t *res,
-		     const struct batt_ttf_stats *stats,
+int ttf_soc_estimate(ktime_t *res, struct batt_ttf_stats *stats,
 		     const struct gbms_charging_event *ce_data,
 		     qnum_t soc, qnum_t last);
 
