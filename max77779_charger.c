@@ -1178,8 +1178,8 @@ static int max77779_set_regulation_voltage(struct max77779_chgr_data *data,
 {
 	u8 value;
 
-	if (voltage_uv >= 4500000)
-		value = 0x32;
+	if (voltage_uv >= 4550000)
+		value = 0x37;
 	else if (voltage_uv < 4000000)
 		value = 0x38 + (voltage_uv - 3800000) / 100000;
 	else
