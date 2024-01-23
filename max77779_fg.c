@@ -860,6 +860,18 @@ static int batt_ce_init(struct gbatt_capacity_estimation *cap_esti,
 	return 0;
 }
 
+static int max77779_fg_resume_check(struct max77779_fg_chip *chip)
+{
+	int ret = 0;
+
+	pm_runtime_get_sync(chip->dev);
+	if (!chip->init_complete || !chip->resume_complete || chip->irq_disabled)
+		ret = -EAGAIN;
+	pm_runtime_put_sync(chip->dev);
+
+	return ret;
+}
+
 /* call holding chip->model_lock */
 static int max77779_fg_check_impedance(struct max77779_fg_chip *chip, u16 *th)
 {
@@ -1105,13 +1117,10 @@ static int max77779_fg_get_property(struct power_supply *psy,
 
 	mutex_lock(&chip->model_lock);
 
-	pm_runtime_get_sync(chip->dev);
-	if (!chip->init_complete || !chip->resume_complete) {
-		pm_runtime_put_sync(chip->dev);
+	if (max77779_fg_resume_check(chip)) {
 		mutex_unlock(&chip->model_lock);
 		return -EAGAIN;
 	}
-	pm_runtime_put_sync(chip->dev);
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_STATUS:
@@ -1355,13 +1364,10 @@ static int max77779_fg_set_property(struct power_supply *psy,
 	int rc = 0;
 
 	mutex_lock(&chip->model_lock);
-	pm_runtime_get_sync(chip->dev);
-	if (!chip->init_complete || !chip->resume_complete) {
-		pm_runtime_put_sync(chip->dev);
+	if (max77779_fg_resume_check(chip)) {
 		mutex_unlock(&chip->model_lock);
 		return -EAGAIN;
 	}
-	pm_runtime_put_sync(chip->dev);
 	mutex_unlock(&chip->model_lock);
 
 	switch (psp) {
@@ -1624,28 +1630,25 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 		return IRQ_NONE;
 	}
 
-	pm_runtime_get_sync(chip->dev);
-	if (irq != -1 && (!chip->init_complete || !chip->resume_complete)) {
-		if (chip->init_complete && !chip->irq_disabled) {
-			chip->irq_disabled = true;
-			disable_irq_nosync(chip->irq);
-		}
-		pm_runtime_put_sync(chip->dev);
+	if (irq != -1 && max77779_fg_resume_check(chip)) {
+		dev_warn_ratelimited(chip->dev, "%s: irq skipped, irq%d\n", __func__, irq);
 		return IRQ_HANDLED;
 	}
 
-	pm_runtime_put_sync(chip->dev);
-
 	err = REGMAP_READ(&chip->regmap, MAX77779_FG_Status, &fg_status);
-	if (err)
+	if (err) {
+		dev_err_ratelimited(chip->dev, "%s i2c error reading status, IRQ_NONE\n", __func__);
 		return IRQ_NONE;
-
+	}
 	err = REGMAP_READ(&chip->regmap, MAX77779_FG_FG_INT_STS, &fg_int_sts);
-	if (err)
+	if (err) {
+		dev_err_ratelimited(chip->dev, "%s i2c error reading INT status, IRQ_NONE\n", __func__);
 		return IRQ_NONE;
-
-	if (fg_status == 0 && fg_int_sts == 0)
+	}
+	if (fg_status == 0 && fg_int_sts == 0) {
+		dev_err_ratelimited(chip->dev, "fg_status == 0 and fg_int_sts == 0\n");
 		return IRQ_NONE;
+	}
 
 	dev_dbg(chip->dev, "FG_Status:%04x, FG_INT_STS:%04x\n", fg_status, fg_int_sts);
 
@@ -1804,26 +1807,24 @@ int max77779_fg_enable_firmware_update(struct device *dev, bool enable) {
 
 	mutex_lock(&chip->model_lock);
 
-	pm_runtime_get_sync(chip->dev);
-	if (!chip->init_complete || !chip->resume_complete)
+	if (max77779_fg_resume_check(chip))
 		goto max77779_fg_enable_firmware_update_exit;
 
 	/* enable/disable irq for firmware update */
 	if (enable && !chip->irq_disabled) {
 		chip->irq_disabled = true;
-		disable_irq_wake(chip->primary->irq);
-		disable_irq(chip->primary->irq);
+		disable_irq_wake(chip->irq);
+		disable_irq(chip->irq);
 	} else if (!enable && chip->irq_disabled) {
 		chip->irq_disabled = false;
-		enable_irq(chip->primary->irq);
-		enable_irq_wake(chip->primary->irq);
+		enable_irq(chip->irq);
+		enable_irq_wake(chip->irq);
 	}
 
 	chip->fw_update_mode = enable;
 	ret = 0;
 
 max77779_fg_enable_firmware_update_exit:
-	pm_runtime_put_sync(chip->dev);
 	mutex_unlock(&chip->model_lock);
 
 	return ret;
@@ -2872,6 +2873,23 @@ static void max77779_fg_init_work(struct work_struct *work)
 	chip->init_complete = true;
 	chip->bhi_acim = 0;
 
+	ret = devm_request_threaded_irq(chip->dev, chip->irq, NULL,
+					max77779_fg_irq_thread_fn,
+					IRQF_TRIGGER_LOW |
+					IRQF_SHARED |
+					IRQF_ONESHOT,
+					MAX77779_FG_I2C_DRIVER_NAME,
+					chip);
+	dev_info(chip->dev, "FG irq handler registered at %d (%d)\n",
+			chip->irq, ret);
+
+	if (ret == 0) {
+		device_init_wakeup(chip->dev, true);
+		ret = enable_irq_wake(chip->irq);
+		if (ret)
+			dev_err(chip->dev, "Error enabling irq wake ret:%d\n", ret);
+	}
+
 	max77779_fg_init_sysfs(chip);
 
 	/*
@@ -2983,6 +3001,11 @@ int max77779_fg_init(struct max77779_fg_chip *chip)
 	int ret = 0;
 	u32 data32;
 
+	if (!chip->irq) {
+		dev_err(dev, "cannot allocate irq\n");
+		return -1;
+	}
+
 	chip->fake_battery = of_property_read_bool(dev->of_node, "max77779,no-battery") ? 0 : -1;
 	chip->batt_id_defer_cnt = DEFAULT_BATTERY_ID_RETRIES;
 
@@ -3011,24 +3034,6 @@ int max77779_fg_init(struct max77779_fg_chip *chip)
 	if (ret < 0)
 		dev_warn(chip->dev, "Unable to mask all interrupts (%d)\n", ret);
 
-	if (chip->irq) {
-		ret = devm_request_threaded_irq(chip->dev, chip->irq, NULL,
-						max77779_fg_irq_thread_fn,
-						IRQF_TRIGGER_LOW |
-						IRQF_SHARED |
-						IRQF_ONESHOT,
-						MAX77779_FG_I2C_DRIVER_NAME,
-						chip);
-		dev_info(chip->dev, "FG irq handler registered at %d (%d)\n",
-			 chip->irq, ret);
-
-		if (ret == 0)
-			enable_irq_wake(chip->irq);
-	} else {
-		dev_err(dev, "cannot allocate irq\n");
-		return ret;
-	}
-
 	psy_cfg.drv_data = chip;
 	psy_cfg.of_node = chip->dev->of_node;
 
@@ -3045,7 +3050,7 @@ int max77779_fg_init(struct max77779_fg_chip *chip)
 		ret = PTR_ERR(chip->ce_log);
 		dev_err(dev, "failed to obtain logbuffer, ret=%d\n", ret);
 		chip->ce_log = NULL;
-		goto power_supply_unregister;
+		goto irq_unregister;
 	}
 
 	scnprintf(monitor_name, sizeof(monitor_name), "%s_%s",
@@ -3055,7 +3060,7 @@ int max77779_fg_init(struct max77779_fg_chip *chip)
 		ret = PTR_ERR(chip->monitor_log);
 		dev_err(dev, "failed to obtain logbuffer, ret=%d\n", ret);
 		chip->monitor_log = NULL;
-		goto power_supply_unregister;
+		goto irq_unregister;
 	}
 
 	/* POWER_SUPPLY_PROP_TEMP and model load need the version info */
@@ -3078,7 +3083,7 @@ int max77779_fg_init(struct max77779_fg_chip *chip)
 	if (IS_ERR(chip->psy)) {
 		dev_err(dev, "Couldn't register as power supply\n");
 		ret = PTR_ERR(chip->psy);
-		goto irq_unregister;
+		goto power_supply_unregister;
 	}
 
 	ret = sysfs_create_group(&chip->psy->dev.kobj, &max77779_fg_attr_grp);
@@ -3132,6 +3137,8 @@ void max77779_fg_remove(struct max77779_fg_chip *chip)
 	cancel_delayed_work(&chip->init_work);
 	cancel_delayed_work(&chip->model_work);
 
+	disable_irq_wake(chip->irq);
+	device_init_wakeup(chip->dev, false);
 	if (chip->irq)
 		free_irq(chip->irq, chip);
 
@@ -3146,7 +3153,9 @@ int max77779_fg_pm_suspend(struct device *dev)
 	struct max77779_fg_chip *chip = dev_get_drvdata(dev);
 
 	pm_runtime_get_sync(chip->dev);
+	dev_dbg(chip->dev, "%s\n", __func__);
 	chip->resume_complete = false;
+
 	pm_runtime_put_sync(chip->dev);
 
 	return 0;
@@ -3158,11 +3167,8 @@ int max77779_fg_pm_resume(struct device *dev)
 	struct max77779_fg_chip *chip = dev_get_drvdata(dev);
 
 	pm_runtime_get_sync(chip->dev);
+	dev_dbg(chip->dev, "%s\n", __func__);
 	chip->resume_complete = true;
-	if (chip->irq_disabled) {
-		enable_irq(chip->irq);
-		chip->irq_disabled = false;
-	}
 
 	pm_runtime_put_sync(chip->dev);
 

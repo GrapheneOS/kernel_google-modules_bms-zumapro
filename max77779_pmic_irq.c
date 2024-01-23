@@ -212,6 +212,8 @@ static int max77779_pmic_irq_probe(struct platform_device *pdev)
 		return err;
 	}
 
+	device_init_wakeup(dev, true);
+
 	/* mask and clear all interrupts */
 	err =  max77779_external_pmic_reg_write(info->core, MAX77779_PMIC_INTB_MASK, 0xff);
 	if (err) {
@@ -259,6 +261,7 @@ static int max77779_pmic_irq_probe(struct platform_device *pdev)
 
 static int max77779_pmic_irq_remove(struct platform_device *pdev)
 {
+	device_init_wakeup(&pdev->dev, false);
 	return 0;
 }
 

@@ -69,7 +69,6 @@ struct max77779_chgr_data {
 
 	int irq_gpio;
 	int irq_int;
-	bool irq_disabled;
 	bool disable_internal_irq_handler;
 
 	struct device *pmic_dev;

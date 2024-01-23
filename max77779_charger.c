@@ -2952,16 +2952,15 @@ static irqreturn_t max77779_chgr_irq(int irq, void *d)
 	int ret;
 
 	if (max77779_resume_check(data)) {
-		if (data->init_complete && !data->irq_disabled) {
-			data->irq_disabled = true;
-			disable_irq_nosync(data->irq_int);
-		}
+		dev_warn_ratelimited(data->dev, "%s: irq skipped, irq%d\n", __func__, irq);
 		return IRQ_HANDLED;
 	}
 
 	ret = max77779_readn(data->regmap, MAX77779_CHG_INT, chg_int, 2);
-	if (ret < 0)
+	if (ret < 0) {
+		dev_err_ratelimited(data->dev, "%s i2c error reading INT, IRQ_NONE\n", __func__);
 		return IRQ_NONE;
+	}
 
 	if ((chg_int[0] & ~max77779_int_mask[0]) == 0 &&
 	    (chg_int[1] & ~max77779_int_mask[1]) == 0)
@@ -2975,9 +2974,10 @@ static irqreturn_t max77779_chgr_irq(int irq, void *d)
 
 	ret = max77779_writen(data->regmap, MAX77779_CHG_INT, /* NOTYPO */
                               chg_int_clr, 2);
-	if (ret < 0)
+	if (ret < 0) {
+		dev_err_ratelimited(data->dev, "%s i2c error writing INT, IRQ_NONE\n", __func__);
 		return IRQ_NONE;
-
+	}
 	pr_debug("max77779_chgr_irq INT : %02x %02x\n", chg_int[0], chg_int[1]);
 
 	/* No need to monitor wcin_inlim when on USB */
@@ -2997,8 +2997,11 @@ static irqreturn_t max77779_chgr_irq(int irq, void *d)
 		atomic_inc(&data->insel_cnt);
 
 		ret = max77779_higher_headroom_enable(data, false); /* reset on plug/unplug */
-		if (ret)
+		if (ret) {
+			dev_err_ratelimited(data->dev, "%s error disabling higher headroom,"
+					    "ret:%d\n", __func__, ret);
 			return IRQ_NONE;
+		}
 	}
 
 	if (chg_int[1] & MAX77779_CHG_INT2_CHG_STA_TO_I_MASK) {
@@ -3129,10 +3132,7 @@ static irqreturn_t max77779_chg_irq_handler(int irq, void *ptr)
 	u16 irq_handled = 0;
 
 	if (max77779_resume_check(data)) {
-		if (data->init_complete && !data->irq_disabled) {
-			data->irq_disabled = true;
-			disable_irq_nosync(data->irq_int);
-		}
+		dev_warn_ratelimited(data->dev, "%s: irq skipped, irq%d\n", __func__, irq);
 		return IRQ_HANDLED;
 	}
 
@@ -3444,30 +3444,6 @@ int max77779_charger_init(struct max77779_chgr_data *data)
 	gs201_setup_usecases(&data->uc_data, NULL);
 	INIT_DELAYED_WORK(&data->mode_rerun_work, max77779_mode_rerun_work);
 
-	/* Init by probe */
-	if (data->irq_int) {
-		ret = devm_request_threaded_irq(data->dev, data->irq_int, NULL,
-						max77779_chg_irq_handler,
-						IRQF_TRIGGER_LOW |
-						IRQF_SHARED |
-						IRQF_ONESHOT,
-						"max77779_charger",
-						data);
-		if (ret == 0) {
-			enable_irq_wake(data->irq_int);
-
-			/* might cause the isr to be called */
-			max77779_chg_irq_handler(-1, data);
-			ret = max77779_writen(data->regmap, MAX77779_CHG_INT_MASK, /* NOTYPO */
-					      max77779_int_mask,
-					      sizeof(max77779_int_mask));
-			if (ret < 0)
-				dev_warn(dev, "cannot set irq_mask (%d)\n", ret);
-
-			data->irq_disabled = false;
-		}
-	}
-
 	ret = dbg_init_fs(data);
 	if (ret < 0)
 		dev_warn(dev, "Failed to initialize debug fs\n");
@@ -3568,6 +3544,31 @@ int max77779_charger_init(struct max77779_chgr_data *data)
 	if (ret < 0)
 		dev_warn(dev, "Couldn't register dc power supply (%d)\n", ret);
 
+	/* Init last by probe */
+	if (data->irq_int) {
+		ret = devm_request_threaded_irq(data->dev, data->irq_int, NULL,
+						max77779_chg_irq_handler,
+						IRQF_TRIGGER_LOW |
+						IRQF_SHARED |
+						IRQF_ONESHOT,
+						"max77779_charger",
+						data);
+		if (ret == 0) {
+			/* might cause the isr to be called */
+			max77779_chg_irq_handler(-1, data);
+			ret = max77779_writen(data->regmap, MAX77779_CHG_INT_MASK, /* NOTYPO */
+					      max77779_int_mask,
+					      sizeof(max77779_int_mask));
+			if (ret < 0)
+				dev_warn(dev, "cannot set irq_mask (%d)\n", ret);
+
+			device_init_wakeup(data->dev, true);
+			ret = enable_irq_wake(data->irq_int);
+			if (ret)
+				dev_err(data->dev, "Error enabling irq wake ret:%d\n", ret);
+		}
+	}
+
 	dev_info(dev, "registered as %s\n", max77779_psy_desc.name);
 	return 0;
 }
@@ -3577,6 +3578,8 @@ void max77779_charger_remove(struct max77779_chgr_data *data)
 {
 	if (data->de)
 		debugfs_remove(data->de);
+	disable_irq_wake(data->irq_int);
+	device_init_wakeup(data->dev, false);
 	wakeup_source_unregister(data->usecase_wake_lock);
 }
 EXPORT_SYMBOL_GPL(max77779_charger_remove);
@@ -3587,7 +3590,9 @@ int max77779_charger_pm_suspend(struct device *dev)
 	struct max77779_chgr_data *data = dev_get_drvdata(dev);
 
 	pm_runtime_get_sync(data->dev);
+	dev_dbg(data->dev, "%s\n", __func__);
 	data->resume_complete = false;
+
 	pm_runtime_put_sync(data->dev);
 
 	return 0;
@@ -3599,11 +3604,8 @@ int max77779_charger_pm_resume(struct device *dev)
 	struct max77779_chgr_data *data = dev_get_drvdata(dev);
 
 	pm_runtime_get_sync(data->dev);
+	dev_dbg(data->dev, "%s\n", __func__);
 	data->resume_complete = true;
-	if (data->irq_disabled) {
-		enable_irq(data->irq_int);
-		data->irq_disabled = false;
-	}
 
 	pm_runtime_put_sync(data->dev);
 

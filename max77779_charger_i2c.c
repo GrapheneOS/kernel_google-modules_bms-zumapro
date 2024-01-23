@@ -68,7 +68,7 @@ static const struct of_device_id max77779_charger_i2c_of_match_table[] = {
 MODULE_DEVICE_TABLE(of, max77779_charger_i2c_of_match_table);
 
 static const struct dev_pm_ops max77779_charger_pm_ops = {
-	SET_LATE_SYSTEM_SLEEP_PM_OPS(
+	SET_NOIRQ_SYSTEM_SLEEP_PM_OPS(
 		max77779_charger_pm_suspend,
 		max77779_charger_pm_resume)
 };
