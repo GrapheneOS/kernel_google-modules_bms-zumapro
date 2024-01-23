@@ -219,6 +219,9 @@ struct max1720x_chip {
 	struct wakeup_source *get_prop_ws;
 
 	int timerh_base;
+
+	/* Current Offset */
+	bool current_offset_done;
 };
 
 #define MAX1720_EMPTY_VOLTAGE(profile, temp, cycle) \
@@ -1768,6 +1771,28 @@ static void max1720x_update_timer_base(struct max1720x_chip *chip)
 	}
 
 	dev_info(chip->dev, "timerh_base: %#X\n", chip->timerh_base);
+}
+
+static int max1720x_current_offset_fix(struct max1720x_chip *chip)
+{
+	u16 cotrim, coff;
+	int ret = 0;
+
+	if (chip->current_offset_done || chip->gauge_type != MAX_M5_GAUGE_TYPE)
+		return ret;
+
+	ret = REGMAP_READ(&chip->regmap, MAX_M5_COTRIM, &cotrim);
+	if (ret < 0)
+		return ret;
+
+	coff = ((-1) * (s16)cotrim + 1) / 2; /* round up */
+	ret = REGMAP_WRITE(&chip->regmap, MAX_M5_COFF, coff);
+	if (ret < 0)
+		return ret;
+
+	dev_info(chip->dev, "%s: CoTrim:%#x, set COff:%#x\n", __func__, cotrim, coff);
+
+	return ret;
 }
 
 static int max1720x_get_property(struct power_supply *psy,
@@ -3532,6 +3557,25 @@ static int debug_gmsr_reset(void *data, u64 val)
 
 DEFINE_SIMPLE_ATTRIBUTE(debug_reset_gmsr_fops, NULL, debug_gmsr_reset, "%llu\n");
 
+static int debug_current_offset(void *data, u64 val)
+{
+	struct max1720x_chip *chip = data;
+	int ret = 0;
+
+	if (!val || chip->current_offset_done)
+		return ret;
+
+	ret = max1720x_current_offset_fix(chip);
+	if (ret < 0)
+		dev_info(chip->dev, "%s: current_offset fail (ret=%d)\n", __func__, ret);
+	else
+		chip->current_offset_done = true;
+
+	return ret;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(debug_current_offset_fops, NULL, debug_current_offset, "%llu\n");
+
 /*
  * TODO: add the building blocks of google capacity
  *
@@ -3663,6 +3707,7 @@ static int max17x0x_init_sysfs(struct max1720x_chip *chip)
 	if (chip->gauge_type == MAX_M5_GAUGE_TYPE) {
 		debugfs_create_file("cnhs_reset", 0400, de, chip, &debug_reset_cnhs_fops);
 		debugfs_create_file("gmsr_reset", 0400, de, chip, &debug_reset_gmsr_fops);
+		debugfs_create_file("current_offset", 0444, de, chip, &debug_current_offset_fops);
 		debugfs_create_u32("bhi_target_capacity", 0644, de, &chip->bhi_target_capacity);
 		debugfs_create_u32("bhi_recalibration_algo", 0644, de,
 				   &chip->bhi_recalibration_algo);
