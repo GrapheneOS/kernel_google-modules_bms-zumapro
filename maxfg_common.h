@@ -11,11 +11,15 @@
 #include <linux/cdev.h>
 #include <linux/device.h>
 #include <linux/regmap.h>
+#include <linux/circ_buf.h>
 #include "gbms_power_supply.h"
 #include "google_bms.h"
 
 #define MAX1720X_GAUGE_TYPE	1
 #define MAX_M5_GAUGE_TYPE	2
+
+#define MAX_FG_LEARN_PARAM_MAX_HIST 32
+#define MAX_FG_CAPTURE_CONFIG_NAME_MAX 32
 
 enum maxfg_reg_tags {
 	MAXFG_TAG_avgc,
@@ -201,6 +205,30 @@ struct maxfg_regmap {
 	struct maxfg_reglog *reglog;
 };
 
+struct maxfg_capture_regs {
+	enum maxfg_reg_tags *tag;
+	int reg_cnt;
+	struct maxfg_regmap *regmap;
+};
+
+struct maxfg_capture_config {
+	char name[MAX_FG_CAPTURE_CONFIG_NAME_MAX];
+	struct maxfg_capture_regs normal;
+	struct maxfg_capture_regs debug;
+	int data_size;
+};
+
+struct maxfg_capture_buf {
+	struct maxfg_capture_config config;
+
+	int slots;
+	struct circ_buf cb;
+	struct mutex cb_wr_lock;
+	struct mutex cb_rd_lock;
+
+	void* latest_entry;
+};
+
 static inline int maxfg_regmap_read(const struct maxfg_regmap *map,
 				    unsigned int reg,
 				    u16 *val,
@@ -302,4 +330,23 @@ void batt_ce_store_data(struct maxfg_regmap *map, struct gbatt_capacity_estimati
 void batt_ce_stop_estimation(struct gbatt_capacity_estimation *cap_esti, int reason);
 int maxfg_health_write_ai(u16 act_impedance, u16 act_timerh);
 int maxfg_reg_log_data(struct maxfg_regmap *map, struct maxfg_regmap *map_debug, char *buf);
+
+void maxfg_init_fg_learn_capture_config(struct maxfg_capture_config *config,
+					struct maxfg_regmap *regmap,
+					struct maxfg_regmap *debug_regmap);
+
+int maxfg_alloc_capture_buf(struct maxfg_capture_buf *buf, int slots);
+void maxfg_clear_capture_buf(struct maxfg_capture_buf *buf);
+void maxfg_free_capture_buf(struct maxfg_capture_buf *buf);
+
+int maxfg_capture_registers(struct maxfg_capture_buf *buf);
+
+int maxfg_show_captured_buffer(struct maxfg_capture_buf *buf,
+			       char *str_buf, int buf_len);
+int maxfg_capture_to_cstr(struct maxfg_capture_config *config, u16 *reg_val,
+			  char *str_buf, int buf_len);
+
+bool maxfg_ce_relaxed(struct maxfg_regmap *regmap, const u16 relax_mask,
+		      const u16 *prev_val);
+
 #endif  // MAXFG_COMMON_H_

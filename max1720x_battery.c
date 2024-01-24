@@ -223,6 +223,9 @@ struct max1720x_chip {
 
 	/* Current Offset */
 	bool current_offset_done;
+
+	/* buffer for recording learning history */
+	struct maxfg_capture_buf cb_lh;
 };
 
 #define MAX1720_EMPTY_VOLTAGE(profile, temp, cycle) \
@@ -937,6 +940,34 @@ static ssize_t rc_switch_enable_show(struct device *dev,
 }
 
 static const DEVICE_ATTR_RW(rc_switch_enable);
+
+static ssize_t fg_learning_events_show(struct device *dev,
+				       struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct max1720x_chip *chip = power_supply_get_drvdata(psy);
+
+	return maxfg_show_captured_buffer(&chip->cb_lh, buf, PAGE_SIZE);
+}
+static ssize_t fg_learning_events_store(struct device *dev,
+					struct device_attribute *attr,
+					const char *buf, size_t count)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct max1720x_chip *chip = power_supply_get_drvdata(psy);
+	int value, ret;
+
+	ret = kstrtoint(buf, 0, &value);
+	if (ret < 0)
+		return ret;
+
+	if (value == 0)
+		maxfg_clear_capture_buf(&chip->cb_lh);
+
+	return count;
+}
+
+static DEVICE_ATTR_RW(fg_learning_events);
 
 /* lsb 1/256, race with max1720x_model_work()  */
 static int max1720x_get_capacity_raw(struct max1720x_chip *chip, u16 *data)
@@ -1813,6 +1844,50 @@ static int max1720x_current_offset_fix(struct max1720x_chip *chip)
 	return ret;
 }
 
+static int max1720x_monitor_log_learning(struct max1720x_chip *chip, bool force)
+{
+	bool log_it, seed = !chip->cb_lh.latest_entry;
+	char* buf;
+	int ret;
+
+	/* do noting if no changes on dpacc/dqacc or relaxation */
+	log_it = force || seed ||
+		 maxfg_ce_relaxed(&chip->regmap, MAX_M5_FSTAT_RELDT | MAX_M5_FSTAT_RELDT2,
+				  (u16*)chip->cb_lh.latest_entry);
+	if (!log_it)
+		return 0;
+
+	ret = maxfg_capture_registers(&chip->cb_lh);
+	if (ret < 0) {
+		dev_err(chip->dev, "cannot read learning parameters (%d)\n", ret);
+		return ret;
+	}
+
+	/* no need to log at boot */
+	if (seed)
+		return 0;
+
+	buf = kmalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!buf) {
+		dev_err(chip->dev, "no memory for log string buffer\n");
+		return -ENOMEM;
+	}
+
+	ret = maxfg_capture_to_cstr(&chip->cb_lh.config,
+				    (u16 *)chip->cb_lh.latest_entry,
+				    buf, PAGE_SIZE);
+	if (ret > 0)
+		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
+				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+				      "learn %s", buf);
+
+	kfree(buf);
+
+	kobject_uevent(&chip->dev->kobj, KOBJ_CHANGE);
+
+	return 0;
+}
+
 static int max1720x_get_property(struct power_supply *psy,
 				 enum power_supply_property psp,
 				 union power_supply_propval *val)
@@ -1850,6 +1925,9 @@ static int max1720x_get_property(struct power_supply *psy,
 		if (err == POWER_SUPPLY_STATUS_FULL)
 			batt_ce_start(&chip->cap_estimate,
 				      chip->cap_estimate.cap_tsettle);
+		/* check for relaxation event and log it */
+		max1720x_monitor_log_learning(chip, false);
+
 		/* return data ok */
 		err = 0;
 		break;
@@ -2599,6 +2677,7 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 							 chip->bhi_recalibration_algo,
 							 chip->eeprom_cycle);
 			max1720x_update_cycle_count(chip);
+			max1720x_monitor_log_learning(chip, false);
 		}
 
 		storm = false;
@@ -3300,6 +3379,17 @@ static int debug_fake_battery_set(void *data, u64 val)
 DEFINE_SIMPLE_ATTRIBUTE(debug_fake_battery_fops, NULL,
 			debug_fake_battery_set, "%llu\n");
 
+
+static int max1720x_log_learn_set(void *data, u64 val)
+{
+	struct max1720x_chip *chip = (struct max1720x_chip *)data;
+
+       max1720x_monitor_log_learning(chip, true);
+       return 0;
+}
+DEFINE_SIMPLE_ATTRIBUTE(debug_log_learn_fops, NULL, max1720x_log_learn_set, "%llu\n");
+
+
 static void max17x0x_reglog_dump(struct maxfg_reglog *regs,
 				 size_t size,
 				 char *buff)
@@ -3749,6 +3839,7 @@ static int max17x0x_init_sysfs(struct max1720x_chip *chip)
 	debugfs_create_file("fake_battery", 0400, de, chip, &debug_fake_battery_fops);
 	debugfs_create_file("batt_id", 0600, de, chip, &debug_batt_id_fops);
 	debugfs_create_file("force_psy_update", 0600, de, chip, &debug_force_psy_update_fops);
+	debugfs_create_file("log_learn", 0400, de, chip, &debug_log_learn_fops);
 
 	if (chip->regmap.reglog)
 		debugfs_create_file("regmap_writes", 0440, de,
@@ -5382,6 +5473,30 @@ void *max1720x_get_model_data(struct i2c_client *client)
 	return chip ? chip->model_data : NULL;
 }
 
+static int max1720x_init_fg_capture(struct max1720x_chip *chip)
+{
+	int ret;
+	struct device *dev = &chip->psy->dev;
+
+	/* config for FG Learning */
+	maxfg_init_fg_learn_capture_config(&chip->cb_lh.config,
+					   &chip->regmap, &chip->regmap);
+
+	ret = maxfg_alloc_capture_buf(&chip->cb_lh, MAX_FG_LEARN_PARAM_MAX_HIST);
+	if (ret < 0) {
+		dev_err(dev, "Can not configure FG learning capture(%d)\n", ret);
+		return ret;
+	}
+
+	ret = device_create_file(dev, &dev_attr_fg_learning_events);
+	if (ret) {
+		dev_err(dev, "Failed to create fg_learning_events attribute\n");
+		return ret;
+	}
+
+	return 0;
+}
+
 static int max1720x_probe(struct i2c_client *client,
 			  const struct i2c_device_id *id)
 {
@@ -5522,6 +5637,10 @@ static int max1720x_probe(struct i2c_client *client,
 
 	max17x0x_init_sysfs(chip);
 
+	ret = max1720x_init_fg_capture(chip);
+	if (ret < 0)
+		dev_err(dev, "Can not configure FG learning capture(%d)\n", ret);
+
 	INIT_DELAYED_WORK(&chip->cap_estimate.settle_timer,
 			  batt_ce_capacityfiltered_work);
 	INIT_DELAYED_WORK(&chip->init_work, max1720x_init_work);
@@ -5566,6 +5685,7 @@ static void max1720x_remove(struct i2c_client *client)
 	if (chip->secondary)
 		i2c_unregister_device(chip->secondary);
 
+	maxfg_free_capture_buf(&chip->cb_lh);
 	wakeup_source_unregister(chip->get_prop_ws);
 }
 

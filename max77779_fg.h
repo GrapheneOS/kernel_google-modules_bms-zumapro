@@ -164,6 +164,9 @@ struct max77779_fg_chip {
 	int ml_cnt;
 	/* total number of model loading failures since boot */
 	int ml_fails;
+
+	/* buffer for recording learning history */
+	struct maxfg_capture_buf cb_lh;
 };
 
 /** ------------------------------------------------------------------------ */

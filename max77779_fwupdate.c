@@ -1052,7 +1052,7 @@ perform_firmware_update_cleanup:
 	__pm_relax(fwu->fwupdate_wake_lock);
 	update_running_state(fwu, false);
 
-	kobject_uevent(&fwu->dev->kobj, KOBJ_CHANGE);
+	kobject_uevent(&fwu->fg->kobj, KOBJ_CHANGE);
 
 	return ret;
 }

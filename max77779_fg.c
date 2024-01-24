@@ -1134,6 +1134,51 @@ static int max77779_fg_monitor_log_data(struct max77779_fg_chip *chip, bool forc
 	return ret;
 }
 
+static int max77779_fg_monitor_log_learning(struct max77779_fg_chip *chip, bool force)
+{
+	bool log_it, seed = !chip->cb_lh.latest_entry;
+	char* buf;
+	int ret;
+
+	/* do noting if no changes on dpacc/dqacc or relaxation */
+	log_it = force || seed ||
+		 maxfg_ce_relaxed(&chip->regmap, MAX77779_FG_FStat_RelDt_MASK |
+				  MAX77779_FG_FStat_RelDt2_MASK, (u16*)chip->cb_lh.latest_entry);
+	if (!log_it)
+		return 0;
+
+	ret = maxfg_capture_registers(&chip->cb_lh);
+	if (ret < 0) {
+		dev_err(chip->dev, "cannot read learning parameters (%d)\n", ret);
+		return ret;
+	}
+
+	/* no need to log at boot */
+	if (seed)
+		return 0;
+
+	buf = kmalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!buf) {
+		dev_err(chip->dev, "no memory for log string buffer\n");
+		return -ENOMEM;
+	}
+
+	ret = maxfg_capture_to_cstr(&chip->cb_lh.config,
+				    (u16 *)chip->cb_lh.latest_entry,
+				    buf, PAGE_SIZE);
+	if (ret > 0)
+		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
+				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+				      "learn %s", buf);
+
+	kfree(buf);
+
+	kobject_uevent(&chip->dev->kobj, KOBJ_CHANGE);
+
+	return 0;
+}
+
+
 static int max77779_fg_get_property(struct power_supply *psy,
 				    enum power_supply_property psp,
 				    union power_supply_propval *val)
@@ -1167,6 +1212,9 @@ static int max77779_fg_get_property(struct power_supply *psy,
 		if (err == POWER_SUPPLY_STATUS_FULL)
 			batt_ce_start(&chip->cap_estimate,
 				      chip->cap_estimate.cap_tsettle);
+		/* check for relaxation event and log it */
+		max77779_fg_monitor_log_learning(chip, false);
+
 		/* return data ok */
 		err = 0;
 		break;
@@ -1766,6 +1814,7 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 		max77779_fg_monitor_log_data(chip, false);
 		max77779_fg_update_cycle_count(chip);
 		max77779_fg_check_logging_event(chip);
+		max77779_fg_monitor_log_learning(chip, false);
 	}
 
 	if (chip->psy)
@@ -1931,6 +1980,16 @@ static int debug_ce_start(void *data, u64 val)
 }
 
 DEFINE_SIMPLE_ATTRIBUTE(debug_ce_start_fops, NULL, debug_ce_start, "%llu\n");
+
+static int max77779_log_learn_set(void *data, u64 val)
+{
+	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)data;
+
+	max77779_fg_monitor_log_learning(chip, true);
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(debug_log_learn_fops, NULL, max77779_log_learn_set, "%llu\n");
 
 /* Model reload will be disabled if the node is not found */
 static int max77779_fg_init_model(struct max77779_fg_chip *chip)
@@ -2429,6 +2488,7 @@ static int fg_fw_update_get(void* data, u64* val) {
 
 DEFINE_SIMPLE_ATTRIBUTE(debug_fw_update_fops, fg_fw_update_get, fg_fw_update_set, "%llu\n");
 
+
 static ssize_t act_impedance_store(struct device *dev,
 				   struct device_attribute *attr,
 				   const char *buf, size_t count) {
@@ -2475,6 +2535,35 @@ static ssize_t fg_logging_events_show(struct device *dev,
 
 static DEVICE_ATTR_RO(fg_logging_events);
 
+static ssize_t fg_learning_events_show(struct device *dev,
+				       struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct max77779_fg_chip *chip = power_supply_get_drvdata(psy);
+
+	return maxfg_show_captured_buffer(&chip->cb_lh, buf, PAGE_SIZE);
+}
+
+static ssize_t fg_learning_events_store(struct device *dev,
+					struct device_attribute *attr,
+					const char *buf, size_t count)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct max77779_fg_chip *chip = power_supply_get_drvdata(psy);
+	int value, ret = 0;
+
+	ret = kstrtoint(buf, 0, &value);
+	if (ret < 0)
+		return ret;
+
+	if (value == 0)
+		maxfg_clear_capture_buf(&chip->cb_lh);
+
+	return count;
+}
+
+static DEVICE_ATTR_RW(fg_learning_events);
+
 static int max77779_fg_init_sysfs(struct max77779_fg_chip *chip)
 {
 	struct dentry *de;
@@ -2489,6 +2578,8 @@ static int max77779_fg_init_sysfs(struct max77779_fg_chip *chip)
 	debugfs_create_file("fake_battery", 0400, de, chip, &debug_fake_battery_fops);
 	debugfs_create_file("batt_id", 0600, de, chip, &debug_batt_id_fops);
 	debugfs_create_file("force_psy_update", 0600, de, chip, &debug_force_psy_update_fops);
+	debugfs_create_file("log_learn", 0400, de, chip, &debug_log_learn_fops);
+
 
 	if (chip->regmap.reglog)
 		debugfs_create_file("regmap_writes", 0440, de,
@@ -3083,12 +3174,22 @@ static struct attribute *max77779_fg_attrs[] = {
 	&dev_attr_gmsr.attr,
 	&dev_attr_model_state.attr,
 	&dev_attr_fg_logging_events.attr,
+	&dev_attr_fg_learning_events.attr,
 	NULL,
 };
 
 static const struct attribute_group max77779_fg_attr_grp = {
 	.attrs = max77779_fg_attrs,
 };
+
+static int max77779_init_fg_capture(struct max77779_fg_chip *chip)
+{
+	/* config for FG Learning */
+	maxfg_init_fg_learn_capture_config(&chip->cb_lh.config,
+					   &chip->regmap, &chip->regmap_debug);
+
+	return maxfg_alloc_capture_buf(&chip->cb_lh, MAX_FG_LEARN_PARAM_MAX_HIST);
+}
 
 /*
  * Initialization requirements
@@ -3214,6 +3315,10 @@ int max77779_fg_init(struct max77779_fg_chip *chip)
 	if (ret < 0)
 		chip->bhi_fcn_count = BHI_CAP_FCN_COUNT;
 
+	ret = max77779_init_fg_capture(chip);
+	if (ret < 0)
+		dev_err(dev, "Can not configure FG learning capture(%d)\n", ret);
+
 	/* use VFSOC until it can confirm that FG Model is running */
 	chip->reg_prop_capacity_raw = MAX77779_FG_VFSOC;
 
@@ -3254,6 +3359,8 @@ void max77779_fg_remove(struct max77779_fg_chip *chip)
 
 	if (chip->psy)
 		power_supply_unregister(chip->psy);
+
+	maxfg_free_capture_buf(&chip->cb_lh);
 }
 EXPORT_SYMBOL_GPL(max77779_fg_remove);
 
