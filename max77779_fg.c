@@ -865,7 +865,7 @@ static int max77779_fg_resume_check(struct max77779_fg_chip *chip)
 	int ret = 0;
 
 	pm_runtime_get_sync(chip->dev);
-	if (!chip->init_complete || !chip->resume_complete || chip->irq_disabled)
+	if (!chip->init_complete || !chip->resume_complete)
 		ret = -EAGAIN;
 	pm_runtime_put_sync(chip->dev);
 
@@ -1786,13 +1786,19 @@ DEFINE_SIMPLE_ATTRIBUTE(irq_none_cnt_fops, get_irq_none_cnt,
 static int debug_fg_reset(void *data, u64 val)
 {
 	struct max77779_fg_chip *chip = data;
-	int ret;
+	int ret = 0;
 
-	if (val == 1)
-		ret = max77779_fg_full_reset(chip);
-	else
+	mutex_lock(&chip->model_lock);
+	/* irq_disabled set by firmware update */
+	if (chip->irq_disabled)
+		ret = -EBUSY;
+	else if (val != 1)
 		ret = -EINVAL;
 
+	mutex_unlock(&chip->model_lock);
+
+	if (ret == 0)
+		ret = max77779_fg_full_reset(chip);
 	return ret;
 }
 
