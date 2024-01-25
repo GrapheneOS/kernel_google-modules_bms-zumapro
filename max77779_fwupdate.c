@@ -151,6 +151,8 @@ struct max77779_fwupdate {
 	struct max77779_version_info minimum;
 
 	struct max77779_fwupdate_custom_data debug_image;
+
+	struct wakeup_source *fwupdate_wake_lock;
 };
 
 
@@ -860,6 +862,8 @@ static inline int perform_firmware_update(struct max77779_fwupdate *fwu, const c
 	u32 written = 0;
 	int ret;
 
+	__pm_stay_awake(fwu->fwupdate_wake_lock);
+
 	ret = max77779_fwl_prepare(fwu, data, count);
 	if (ret)
 		goto perform_firmware_update_cleanup;
@@ -872,6 +876,13 @@ static inline int perform_firmware_update(struct max77779_fwupdate *fwu, const c
 
 perform_firmware_update_cleanup:
 	max77779_fwl_cleanup(fwu);
+
+	/* force reboot RISC-V for the case of update failure*/
+	if (ret)
+		max77779_external_pmic_reg_write(fwu->pmic, MAX77779_PMIC_RISCV_COMMAND_HW,
+						 MAX77779_CMD_REBOOT_FG);
+
+	__pm_relax(fwu->fwupdate_wake_lock);
 
 	return ret;
 }
@@ -1109,6 +1120,12 @@ static int max77779_fwupdate_probe(struct platform_device *pdev)
 		return ret;
 	}
 
+	fwu->fwupdate_wake_lock = wakeup_source_register(NULL, "max77779-fwupdate");
+	if (!fwu->fwupdate_wake_lock) {
+		dev_err(fwu->dev, "failed to register wakeup source\n");
+		return -ENODEV;
+	}
+
 	de = debugfs_create_dir("max77779_fwupdate", 0);
 	if (!de)
 		return 0;
@@ -1129,6 +1146,9 @@ static int max77779_fwupdate_remove(struct platform_device *pdev)
 
 	if (fwu->debug_image.data)
 		kfree(fwu->debug_image.data);
+
+	if (fwu->fwupdate_wake_lock)
+		wakeup_source_unregister(fwu->fwupdate_wake_lock);
 
 	if (fwu->de)
 		debugfs_remove(fwu->de);
