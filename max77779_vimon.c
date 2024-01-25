@@ -61,16 +61,13 @@ int max77779_external_vimon_reg_write(struct device *dev, uint16_t reg, const vo
 }
 EXPORT_SYMBOL_GPL(max77779_external_vimon_reg_write);
 
-static int max77779_vimon_start(struct device *dev)
+static int max77779_vimon_start(struct max77779_vimon_data *data, uint16_t config)
 {
-	struct max77779_vimon_data *data = dev_get_drvdata(dev);
 	int ret;
 
 	mutex_lock(&data->vimon_lock);
 
-	ret = max77779_vimon_reg_update(data, MAX77779_BVIM_bvim_cfg,
-					MAX77779_BVIM_bvim_cfg_cnt_run_MASK,
-					MAX77779_BVIM_bvim_cfg_cnt_run_MASK);
+	ret = max77779_vimon_reg_update(data, MAX77779_BVIM_bvim_cfg, config, config);
 	if (ret)
 		goto vimon_start_exit;
 
@@ -209,7 +206,7 @@ static int max77779_vimon_debug_start(void *d, u64 *val)
 	struct max77779_vimon_data *data = d;
 	int ret;
 
-	ret = max77779_vimon_start(data->dev);
+	ret = max77779_vimon_start(data, MAX77779_BVIM_bvim_cfg_cnt_run_MASK);
 	if (ret)
 		return ret;
 
