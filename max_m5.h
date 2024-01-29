@@ -51,6 +51,9 @@
 #define MAX_M5_RECAL_MAX_ROUNDS	3
 
 #define MAX_M5_RETRY_TIMES 	3
+
+#define MAX_M5_COTRIM	0xEB
+
 /** ------------------------------------------------------------------------ */
 
 /*
