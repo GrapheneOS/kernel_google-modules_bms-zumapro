@@ -7533,6 +7533,9 @@ static int p9221_charger_probe(struct i2c_client *client,
 		return ret;
 	}
 	device_init_wakeup(charger->dev, true);
+	ret = enable_irq_wake(charger->pdata->irq_int);
+	if (ret)
+		dev_err(&client->dev, "Error enabling irq wake ret:%d\n", ret);
 
 	/*
 	 * We will receive a VRECTON after enabling IRQ if the device is
@@ -7692,6 +7695,7 @@ static int p9221_charger_remove(struct i2c_client *client)
 	alarm_try_to_cancel(&charger->auth_dc_icl_alarm);
 	del_timer_sync(&charger->vrect_timer);
 	del_timer_sync(&charger->align_timer);
+	disable_irq_wake(charger->pdata->irq_int);
 	device_init_wakeup(charger->dev, false);
 	cancel_delayed_work_sync(&charger->notifier_work);
 	power_supply_unreg_notifier(&charger->nb);
@@ -7743,10 +7747,6 @@ static int p9221_pm_suspend(struct device *dev)
 	dev_dbg(dev, "%s\n", __func__);
 
 	charger->resume_complete = false;
-	if (device_may_wakeup(dev)) {
-		dev_dbg(dev, "%s: enable irq wake\n", __func__);
-		enable_irq_wake(charger->pdata->irq_int);
-	}
 	pm_runtime_put_sync(charger->dev);
 
 	return 0;
@@ -7760,10 +7760,6 @@ static int p9221_pm_resume(struct device *dev)
 	pm_runtime_get_sync(charger->dev);
 	dev_dbg(dev, "%s\n", __func__);
 
-	if (device_may_wakeup(dev)) {
-		dev_dbg(dev, "%s: disable irq wake\n", __func__);
-		disable_irq_wake(charger->pdata->irq_int);
-	}
 	charger->resume_complete = true;
 	pm_runtime_put_sync(charger->dev);
 
