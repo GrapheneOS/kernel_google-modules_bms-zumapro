@@ -8119,7 +8119,7 @@ static int p9221_charger_probe(struct i2c_client *client,
 	device_init_wakeup(charger->dev, true);
 	ret = enable_irq_wake(charger->pdata->irq_int);
 	if (ret)
-		dev_err(charger->dev, "Error enabling irq wake ret:%d\n", ret);
+		dev_err(&client->dev, "Error enabling irq wake ret:%d\n", ret);
 
 	/*
 	 * We will receive a VRECTON after enabling IRQ if the device is

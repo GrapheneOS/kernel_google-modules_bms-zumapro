@@ -339,8 +339,10 @@ static irqreturn_t max777x9_pmic_irq(int irq, void *ptr)
 		return IRQ_NONE;
 	}
 
-	if (intsrc == 0)
+	if (intsrc == 0) {
+		dev_err_ratelimited(data->dev, "%s intsrc 0\n", __func__);
 		return IRQ_NONE;
+	}
 
 	/* just clear for max77729f */
 	pr_debug("irq=%d INTSRC:%x\n", irq, intsrc);
