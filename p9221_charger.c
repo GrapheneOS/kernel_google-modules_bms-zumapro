@@ -53,7 +53,7 @@
 #define RTX_BEN_DISABLED	0
 #define RTX_BEN_ON		1
 #define RTX_BEN_ENABLED		2
-#define RTX_BOOST_ENABLED	9
+#define FACTORY_BOOST_ENABLED	9
 
 #define REENABLE_RTX_DELAY	3000
 #define P9XXX_CHK_RP_DELAY_MS	200
@@ -5378,7 +5378,7 @@ static int p9382_ben_cfg(struct p9221_charger_data *charger, int cfg)
 		charger->ben_state = cfg;
 		p9382_rtx_enable(charger, true);
 		break;
-	case RTX_BOOST_ENABLED:
+	case FACTORY_BOOST_ENABLED:
 		charger->ben_state = cfg;
 		break;
 	default:
@@ -5548,6 +5548,11 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 
 	if ((enable && charger->ben_state) || (!enable && !charger->ben_state)) {
 		logbuffer_prlog(charger->rtx_log, "RTx is %s\n", enable ? "enabled" : "disabled");
+		return 0;
+	}
+
+	if (charger->ben_state == FACTORY_BOOST_ENABLED) {
+		logbuffer_prlog(charger->rtx_log, "RTx not allowed due to factory mode\n");
 		return 0;
 	}
 
@@ -6772,7 +6777,7 @@ static irqreturn_t p9221_irq_thread(int irq, void *irq_data)
 		goto out;
 	}
 
-	if (charger->ben_state == RTX_BOOST_ENABLED)
+	if (charger->ben_state == FACTORY_BOOST_ENABLED)
 		goto out;
 
 	/* todo interrupt handling for rx */
