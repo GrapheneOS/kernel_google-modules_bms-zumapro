@@ -111,7 +111,6 @@ static int gdbatt_resume_check(struct dual_fg_drv *dual_fg_drv) {
 
 static enum power_supply_property gdbatt_fg_props[] = {
 	POWER_SUPPLY_PROP_STATUS,
-	POWER_SUPPLY_PROP_HEALTH,
 	POWER_SUPPLY_PROP_CAPACITY,		/* replace with _RAW */
 	POWER_SUPPLY_PROP_CHARGE_COUNTER,
 	POWER_SUPPLY_PROP_CHARGE_FULL,
@@ -595,19 +594,19 @@ static int gdbatt_get_property(struct power_supply *psy,
 
 	mutex_lock(&dual_fg_drv->fg_lock);
 
-		err = power_supply_get_property(dual_fg_drv->first_fg_psy, psp, &fg_1);
-		if (err != 0) {
-			pr_debug("error %d reading first fg prop %d\n", err, psp);
-			mutex_unlock(&dual_fg_drv->fg_lock);
-			return err;
-		}
+	err = power_supply_get_property(dual_fg_drv->first_fg_psy, psp, &fg_1);
+	if (err != 0) {
+		pr_debug("error %d reading first fg prop %d\n", err, psp);
+		mutex_unlock(&dual_fg_drv->fg_lock);
+		return err;
+	}
 
-		err = power_supply_get_property(dual_fg_drv->second_fg_psy, psp, &fg_2);
-		if (err != 0) {
-			pr_debug("error %d reading second fg prop %d\n", err, psp);
-			mutex_unlock(&dual_fg_drv->fg_lock);
-			return err;
-		}
+	err = power_supply_get_property(dual_fg_drv->second_fg_psy, psp, &fg_2);
+	if (err != 0) {
+		pr_debug("error %d reading second fg prop %d\n", err, psp);
+		mutex_unlock(&dual_fg_drv->fg_lock);
+		return err;
+	}
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_CHARGE_COUNTER:

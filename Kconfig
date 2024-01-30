@@ -90,6 +90,48 @@ config CHARGER_MAX77759
 	help
 	  Say Y to enable support for the Maxim MAX77759 battery charger.
 
+config CHARGER_MAX77779
+	tristate "Maxim MAX77779 battery charger driver"
+	depends on OF
+	help
+	  Say Y to enable support for the Maxim MAX77779 battery charger.
+choice
+	default CHARGER_MAX77779_I2C
+	prompt "MAX77779 Charger Bus module"
+config CHARGER_MAX77779_I2C
+	bool "I2C"
+	depends on I2C
+	select REGMAP_I2C
+endchoice
+
+config FG_MAX77779
+	tristate "Maxim MAX77779 battery fuel gauge driver"
+	depends on OF
+	help
+	  Say Y to enable support for the Maxim MAX77779 battery fg.
+choice
+	default FG_MAX77779_I2C
+	prompt "MAX77779 FG Bus module"
+config FG_MAX77779_I2C
+	bool "I2C"
+	depends on I2C
+	select REGMAP_I2C
+endchoice
+
+config VIMON_MAX77779
+	tristate "Maxim MAX77779 VIMON driver"
+	depends on OF
+	help
+	  Say Y to enable support for the Maxim MAX77779 VIMON.
+choice
+	default VIMON_MAX77779_I2C
+	prompt "MAX77779 Vimon Bus module"
+config VIMON_MAX77779_I2C
+	bool "I2C"
+	depends on I2C
+	select REGMAP_I2C
+endchoice
+
 config PMIC_MAX77729
 	tristate "Maxim MAX77729 PMIC driver"
 	depends on I2C && OF
@@ -119,3 +161,76 @@ config MAXQ_MAX77759
 	depends on I2C && PMIC_MAX77729
 	help
 	  Say Y to enable support for MAX77759 MAXQ support.
+
+config LN8411
+	tristate "LN8411 Direct charger"
+	depends on I2C && OF
+	help
+	  Say Y to enable support for the LN8411 direct charger.
+
+config MAX77779_I2CM
+	tristate "Maxim 77779 I2C Bridge Bus"
+	depends on OF
+	help
+	  Bus to bridge I2C to Maxim 77779
+choice
+	default MAX77779_I2CM_I2C
+	prompt "MAX77779 I2CM Bus module"
+config MAX77779_I2CM_I2C
+	bool "I2C"
+	depends on I2C
+	select REGMAP_I2C
+endchoice
+
+config MAX77779_PMIC
+	tristate "Maxim 77779 PMIC"
+	depends on OF
+	help
+	  Handle IRQs for Sequoia
+choice
+	default MAX77779_PMIC_I2C
+	prompt "MAX77779 PMIC Bus module"
+config MAX77779_PMIC_I2C
+	bool "I2C"
+	depends on I2C
+	select REGMAP_I2C
+endchoice
+
+config MAX77779_PMIC_IRQ
+	tristate "Maxim 77779 PMIC IRQ"
+	depends on OF && MAX77779_PMIC
+	help
+	  Handle IRQs for Sequoia
+
+config MAX77779_PMIC_PINCTRL
+	tristate "Maxim 77779 PMIC PINCTRL"
+	depends on OF && MAX77779_PMIC
+	help
+	  Handle PINCTRL for Sequoia
+
+config MAX77779_PMIC_SGPIO
+	tristate "Maxim 77779 PMIC SGPIO"
+	depends on OF && MAX77779_PMIC
+	help
+	  Handle GPIOS for Sequoia
+
+config MAX77779_SP
+	tristate "Maxim 77779 Scratchpad"
+	depends on OF
+	help
+	  Handle Scratchpad for Sequoia
+choice
+	default MAX77779_SP_I2C
+	prompt "MAX77779 Scratchpad Bus module"
+config MAX77779_SP_I2C
+	bool "I2C"
+	depends on I2C
+	select REGMAP_I2C
+endchoice
+
+config FWUPDATE_MAX77779
+	tristate "Maxim 77779 Firmware Update"
+	depends on I2C && OF
+	select FW_LOADER
+	help
+	  Handle firmware update for Sequoia

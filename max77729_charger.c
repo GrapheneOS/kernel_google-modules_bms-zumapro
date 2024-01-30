@@ -41,6 +41,9 @@ struct max77729_chgr_data {
 	struct gvotable_election *dc_suspend_votable;
 	struct gvotable_election *dc_icl_votable;
 
+	/* input_uv is the input voltage limit */
+	int input_uv;
+
 	bool input_suspend;
 	bool online;
 
@@ -819,6 +822,9 @@ static int max77729_psy_get_property(struct power_supply *psy,
 								 &pval->intval);
 			break;
 		case POWER_SUPPLY_PROP_VOLTAGE_MAX:
+			pval->intval = data->input_uv;
+			ret = 0;
+			break;
 		case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
 			ret = max77729_get_charge_voltage_max_uv(data,
 								 &pval->intval);
@@ -884,6 +890,8 @@ static int max77729_psy_set_property(struct power_supply *psy,
 			pr_info("charge_current=%d (%d)\n", pval->intval, ret);
 			break;
 		case POWER_SUPPLY_PROP_VOLTAGE_MAX:
+			data->input_uv = pval->intval;
+			break;
 		case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
 			ret = max77729_set_charge_voltage_max_uv(data,
 								 pval->intval);
@@ -917,7 +925,7 @@ static int max77729_psy_property_is_writable(struct power_supply *psy,
 		case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
 		case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
 		case POWER_SUPPLY_PROP_CURRENT_MAX:	/* ILIM */
-		case POWER_SUPPLY_PROP_VOLTAGE_MAX:	/* same as CHARGE_* */
+		case POWER_SUPPLY_PROP_VOLTAGE_MAX:	/* input voltage limit */
 		case GBMS_PROP_CHARGE_DISABLE:  /* ext */
 		case GBMS_PROP_TAPER_CONTROL:
 		case POWER_SUPPLY_PROP_ONLINE:

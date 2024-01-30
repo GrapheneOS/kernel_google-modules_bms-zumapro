@@ -76,6 +76,7 @@ enum gbms_tags {
 	GBMS_TAG_DINF = 0x44494e46,
 	GBMS_TAG_DSNM = 0x44534e4d,
 	GBMS_TAG_DXAC = 0x44584143,
+	GBMS_TAG_FGST = 0x46475354,
 	GBMS_TAG_GCFE = 0x47434645,
 	GBMS_TAG_GMSR = 0x474d5352,
 	GBMS_TAG_HCNT = 0x48434e54,
@@ -88,9 +89,11 @@ enum gbms_tags {
 	GBMS_TAG_THAS = 0x54484153,
 
 	/* User Space Read/Write scratch */
+	GBMS_TAG_FWHI = 0x46574849, /* Installed firmware history */
 	GBMS_TAG_RS32 = 0x52533332,
 	GBMS_TAG_RSBM = 0x5253424d,
 	GBMS_TAG_RSBR = 0x52534252,
+	GBMS_TAG_RSOC = 0x52534F43, /* save soc */
 	GBMS_TAG_SUFG = 0x53554647, /* shutdown by user_request flag */
 
 	/* Reboot scratch */
@@ -109,7 +112,6 @@ enum gbms_tags {
 	GBMS_TAG_SNUM = 0x534e554d,
 
 	GBMS_TAG_STRD = 0x53545244, /* LOTRV1: Swelling data */
-	GBMS_TAG_RSOC = 0x52534F43,
 };
 
 /*

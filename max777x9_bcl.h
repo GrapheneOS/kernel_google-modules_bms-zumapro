@@ -9,7 +9,7 @@
 
 #include <linux/i2c.h>
 
-int max77759_external_reg_read(struct i2c_client *client, uint8_t reg, uint8_t *val);
-int max77759_external_reg_write(struct i2c_client *client, uint8_t reg, uint8_t val);
+int max77759_external_reg_read(struct device *dev, uint8_t reg, uint8_t *val);
+int max77759_external_reg_write(struct device *dev, uint8_t reg, uint8_t val);
 
 #endif

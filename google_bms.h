@@ -20,6 +20,7 @@
 #include <linux/minmax.h>
 #include <linux/types.h>
 #include <linux/usb/pd.h>
+#include <misc/gvotable.h>
 #include <misc/logbuffer.h>
 #include "gbms_power_supply.h"
 #include "qmath.h"
@@ -29,7 +30,7 @@ struct device_node;
 
 #define get_boot_sec() div_u64(ktime_to_ns(ktime_get_boottime()), NSEC_PER_SEC)
 #define GBMS_CHG_TEMP_NB_LIMITS_MAX 10
-#define GBMS_CHG_VOLT_NB_LIMITS_MAX 5
+#define GBMS_CHG_VOLT_NB_LIMITS_MAX 10
 #define GBMS_CHG_ALG_BUF_SZ 500
 #define GBMS_CHG_TOPOFF_NB_LIMITS_MAX 6
 #define GBMS_AACR_DATA_MAX 10
@@ -65,6 +66,9 @@ struct gbms_chg_profile {
 	u32 reference_cycles[GBMS_AACR_DATA_MAX];
 	u32 reference_fade10[GBMS_AACR_DATA_MAX];
 	u32 aacr_nb_limits;
+
+	bool debug_chg_profile;
+	bool enable_switch_chg_profile;
 };
 
 #define WLC_BPP_THRESHOLD_UV	7000000
@@ -141,6 +145,7 @@ enum gbms_msc_states_t {
 	MSC_RSTC,	/* in taper */
 	MSC_NEXT,	/* in taper */
 	MSC_NYET,	/* in taper */
+	MSC_DONE,
 	MSC_HEALTH,
 	MSC_HEALTH_PAUSE,
 	MSC_HEALTH_ALWAYS_ON,
@@ -404,13 +409,14 @@ struct gbms_charging_event {
 	(((ti) >= 0 && (vi) >= 0) ? profile->cccm_limits[((ti) * profile->volt_nb_limits) + (vi)] : 0)
 
 /* newgen charging */
-#define GBMS_CS_FLAG_BUCK_EN	BIT(0)
-#define GBMS_CS_FLAG_DONE	BIT(1)
-#define GBMS_CS_FLAG_CC		BIT(2)
-#define GBMS_CS_FLAG_CV		BIT(3)
-#define GBMS_CS_FLAG_ILIM	BIT(4)
-#define GBMS_CS_FLAG_CCLVL	BIT(5)
-#define GBMS_CS_FLAG_DIRECT_CHG	BIT(6)
+#define GBMS_CS_FLAG_BUCK_EN		BIT(0)
+#define GBMS_CS_FLAG_DONE		BIT(1)
+#define GBMS_CS_FLAG_CC			BIT(2)
+#define GBMS_CS_FLAG_CV			BIT(3)
+#define GBMS_CS_FLAG_ILIM		BIT(4)
+#define GBMS_CS_FLAG_CCLVL		BIT(5)
+#define GBMS_CS_FLAG_DIRECT_CHG		BIT(6)
+#define GBMS_CS_FLAG_INPUT_SUSPEND	BIT(7)
 
 union gbms_charger_state {
 	uint64_t v;
@@ -424,6 +430,7 @@ union gbms_charger_state {
 	} f;
 };
 
+struct device_node *gbms_batt_id_node(struct device_node *node);
 int gbms_init_chg_profile_internal(struct gbms_chg_profile *profile,
 			  struct device_node *node, const char *owner_name);
 #define gbms_init_chg_profile(p, n) \
@@ -441,7 +448,10 @@ void gbms_dump_raw_profile(char *buff, size_t len, const struct gbms_chg_profile
 int gbms_msc_temp_idx(const struct gbms_chg_profile *profile, int temp);
 int gbms_msc_voltage_idx(const struct gbms_chg_profile *profile, int vbatt);
 int gbms_msc_round_fv_uv(const struct gbms_chg_profile *profile,
-			   int vtier, int fv_uv, int cc_ua);
+			   int vtier, int fv_uv, int cc_ua, bool allow_higher_fv);
+int gbms_msc_get_last_voltage_idx(const struct gbms_chg_profile *profile, const int temp_idx);
+int gbms_msc_voltage_idx_merge_tiers(const struct gbms_chg_profile *profile,
+				     int vbatt, int temp_idx);
 
 /* newgen charging: charger flags  */
 uint8_t gbms_gen_chg_flags(int chg_status, int chg_type);
@@ -455,7 +465,13 @@ int gbms_aacr_fade10(const struct gbms_chg_profile *profile, int cycles);
 __printf(5,6)
 void gbms_logbuffer_prlog(struct logbuffer *log, int level, int debug_no_logbuffer,
 			  int debug_printk_prlog, const char *f, ...);
+#define GBMS_DEV_LOGBUFFER(log, dev, level, debug_no_logbuffer, debug_printk_prlog, fmt, ...) { \
+	gbms_logbuffer_prlog(log, level, debug_no_logbuffer, debug_printk_prlog, \
+	"%s %s: " fmt, dev_driver_string(dev), dev_name(dev), ##__VA_ARGS__); \
+}
 
+void gbms_logbuffer_devlog(struct logbuffer *log, struct device *dev, int level, int debug_no_logbuffer,
+			  int debug_printk_prlog, const char *f, ...);
 /* debug/print */
 const char *gbms_chg_type_s(int chg_type);
 const char *gbms_chg_status_s(int chg_status);
@@ -470,6 +486,7 @@ const char *gbms_chg_ev_adapter_s(int adapter);
 #define VOTABLE_FAN_LEVEL	"FAN_LEVEL"
 #define VOTABLE_DEAD_BATTERY	"DEAD_BATTERY"
 #define VOTABLE_TEMP_DRYRUN	"MSC_TEMP_DRYRUN"
+#define VOTABLE_MSC_LAST	"MSC_LAST"
 #define VOTABLE_MDIS		"CHG_MDIS"
 #define VOTABLE_THERMAL_LVL	"CHG_THERM_LVL"
 
@@ -479,9 +496,20 @@ const char *gbms_chg_ev_adapter_s(int adapter);
 #define VOTABLE_CHARGING_POLICY	"CHARGING_POLICY"
 #define VOTABLE_CHARGING_UISOC	"CHARGING_UISOC"
 
+#define VOTABLE_HDA_TZ		"HDA_TZ"
+
 #define VOTABLE_DC_CHG_AVAIL	"DC_AVAIL"
 #define REASON_DC_DRV		"DC_DRV"
 #define REASON_MDIS		"MDIS"
+#define REASON_THERM		"THERMAL_DAEMON_VOTER"
+
+#define VOTABLE_FORCE_5V	"FORCE_5V"
+
+#define HDA_TZ_WLC_NONE		(0)
+#define HDA_TZ_WLC_ADAPTER	(1)
+#define HDA_TZ_WLC_EPP_1P	(10)
+#define HDA_TZ_WLC_EPP_3P	(20)
+#define HDA_TZ_WLC_NOT_ALIGN	(30)
 
 #define FAN_LVL_UNKNOWN		-1
 #define FAN_LVL_NOT_CARE	0
@@ -602,11 +630,11 @@ enum gbms_charger_modes {
 enum bhi_algo {
 	BHI_ALGO_DISABLED = 0,
 
-	BHI_ALGO_CYCLE_COUNT	= 1, /* bare, just use cycle count */
-	BHI_ALGO_ACHI		= 2, /* cap avg from history, no resistance */
-	BHI_ALGO_ACHI_B		= 3, /* same as ACHI + bounds check */
-	BHI_ALGO_ACHI_RAVG	= 4, /* same as ACHI and google_resistance */
-	BHI_ALGO_ACHI_RAVG_B	= 5, /* same as ACHI_RAVG + bounds check */
+	BHI_ALGO_CYCLE_COUNT	=  1, /* bare, just use cycle count */
+	BHI_ALGO_ACHI		=  2, /* average of FCN from history */
+	BHI_ALGO_ACHI_B		=  3, /* same as ACHI + bounds check */
+	BHI_ALGO_ACHI_RECAL	=  4, /* same as ACHI_B + recalibration */
+	BHI_ALGO_ACHI_RAVG_B	=  5, /* same as ACHI_RAVG + bounds check */
 
 	/* TODO:
 	 * BHI_ALGO_ACHI_QRES	 = 4,  cap avg from history, qual resistance
@@ -615,10 +643,11 @@ enum bhi_algo {
 	 * BHI_ALGO_GCAP_RAVG_B	= 41,  same as GCAP_RAVG + bounds check
 	 */
 
-	BHI_ALGO_MIX_N_MATCH 	= 6,
-	BHI_ALGO_DEBUG		= 7,
-	BHI_ALGO_INDI		= 8, /* individual conditions check */
-	BHI_ALGO_DTOOL		= 9,
+	BHI_ALGO_MIX_N_MATCH 	=  6, /* mix weight of cycle, impedance, swelling */
+	BHI_ALGO_DEBUG		=  7, /* debug/test */
+	BHI_ALGO_INDI		=  8, /* age criteria for Battery Service Test API b/253642456 */
+	BHI_ALGO_DTOOL		=  9, /* diagnostics for Cavalry b/304878620 */
+	BHI_ALGO_ACHI_FCR	= 10, /* average of FCR from history b/310501655*/
 	BHI_ALGO_MAX,
 };
 
@@ -637,12 +666,25 @@ enum bhi_status {
 	BH_NEEDS_REPLACEMENT,
 	BH_FAILED,
 	BH_NOT_AVAILABLE,
+	BH_INCONSISTENT,
 };
 
 struct bhi_weight {
 	int w_ci;
 	int w_ii;
 	int w_sd;
+};
+
+enum bhi_fg_recalibration_mode {
+	REC_MODE_RESET = 0,
+	REC_MODE_BEST_TIME,
+	REC_MODE_IMMEDIATE,
+	REC_MODE_RESTART,
+};
+
+enum bhi_fg_recalibration_state {
+	REC_STATE_OK = 0,
+	REC_STATE_SCHEDULED,
 };
 
 /* Charging Speed */
@@ -674,21 +716,6 @@ enum csi_status {
 	CSI_STATUS_NotCharging = 100,	// There will be a more specific reason
 	CSI_STATUS_Charging = 200,	// All good
 };
-
-/*
- * The patch introducing tcpm_update_sink_capabilities() was reverted in
- * android-mainline (See aosp/1911031). While we wait for such patch to be
- * sent upstream let's stub out tcpm_update_sink_capabilities() here.
- * TODO(b/215766959): revert this hack.
- */
-struct tcpm_port;
-static inline int tcpm_update_sink_capabilities(struct tcpm_port *port,
-				const u32 *pdo,
-				unsigned int nr_pdo,
-				unsigned int operating_snk_mw)
-{
-	return 0;
-}
 
 #define CSI_TYPE_MASK_UNKNOWN		(1 << 0)
 #define CSI_TYPE_MASK_NONE		(1 << 1)
@@ -758,5 +785,33 @@ static const struct file_operations name ## _fops = {	\
 	.write	= name ## _store,			\
 }
 
+/*
+ * The patch introducing tcpm_update_sink_capabilities() was reverted in
+ * android-mainline (See aosp/1911031). While we wait for such patch to be
+ * sent upstream let's stub out tcpm_update_sink_capabilities() here.
+ * TODO(b/215766959): revert this hack.
+ */
+struct tcpm_port;
+static inline int tcpm_update_sink_capabilities(struct tcpm_port *port,
+				const u32 *pdo,
+				unsigned int nr_pdo,
+				unsigned int operating_snk_mw)
+{
+	return 0;
+}
+
+/* trend point types */
+#define GBMS_TP_TRENDPOINTS   'T'
+#define GBMS_TP_LOWER_BOUND   'L'
+#define GBMS_TP_UPPER_BOUND   'U'
+#define GBMS_TP_LOWER_TRIGGER 'F'
+#define GBMS_TP_UPPER_TRIGGER 'C'
+
+/* trend point types */
+#define GBMS_TP_TRENDPOINTS   'T'
+#define GBMS_TP_LOWER_BOUND   'L'
+#define GBMS_TP_UPPER_BOUND   'U'
+#define GBMS_TP_LOWER_TRIGGER 'F'
+#define GBMS_TP_UPPER_TRIGGER 'C'
 
 #endif  /* __GOOGLE_BMS_H_ */

@@ -49,6 +49,7 @@ struct pca9468_platform_data {
 	unsigned int	sc_clk_dither_rate;
 	unsigned int	sc_clk_dither_limit;
 	bool		sc_clk_dither_en;
+	int		ta_max_cur_mult;
 
 #ifdef CONFIG_THERMAL
 	const char *usb_tz_name;
@@ -205,6 +206,10 @@ struct pca9468_charger {
 	unsigned int		ta_vol;
 	unsigned int		ta_objpos;
 
+	/* need for APDO switch test */
+	unsigned int		prev_ta_cur;
+	unsigned int		prev_ta_vol;
+
 	/* same as pps_data */
 	unsigned int		ta_max_cur;
 	unsigned int		ta_max_vol;
@@ -273,7 +278,7 @@ struct pca9468_charger {
 
 	struct gvotable_election *dc_avail;
 /* Google Integration END */
-
+	bool			ftm_mode; /* factory test, will ignore usb pps */
 };
 
 /* Direct Charging State */
@@ -289,6 +294,7 @@ enum {
 	DC_STATE_CHARGING_DONE,	/* Charging Done */
 	DC_STATE_ADJUST_TAVOL,	/* Adjust TA voltage, new TA current < 1000mA */
 	DC_STATE_ADJUST_TACUR,	/* Adjust TA current, new TA current < 1000mA */
+	DC_STATE_ERROR,		/* Error encountered, no charging */
 	DC_STATE_MAX,
 };
 
@@ -341,6 +347,8 @@ int pca9468_usbpd_setup(struct pca9468_charger *pca9468);
 int pca9468_send_pd_message(struct pca9468_charger *pca9468, unsigned int msg_type);
 int pca9468_get_apdo_max_power(struct pca9468_charger *pca9468,
 			       unsigned int ta_max_vol, unsigned int ta_max_cur);
+int pca9468_get_apdo_index(struct pca9468_charger *pca9468, unsigned int *ta_max_vol,
+			   unsigned int *ta_max_cur, unsigned int *ta_objpos);
 int pca9468_send_rx_voltage(struct pca9468_charger *pca9468, unsigned int msg_type);
 int pca9468_get_rx_max_power(struct pca9468_charger *pca9468);
 int pca9468_set_ta_type(struct pca9468_charger *pca9468, int pps_index);

@@ -45,6 +45,9 @@
 #define GBMS_DEFAULT_CV_TIER_SWITCH_CNT 3
 #define GBMS_DEFAULT_CV_OTV_MARGIN      0
 
+#define GBMS_STORAGE_READ_DELAY_MS	1000
+#define GBMS_STORAGE_READ_RETRIES	20
+
 /* same as POWER_SUPPLY_CHARGE_TYPE_TEXT */
 static const char *psy_chgt_str[] = {
 	[POWER_SUPPLY_CHARGE_TYPE_UNKNOWN]	= "Unknown",
@@ -92,15 +95,50 @@ const char *gbms_chg_ev_adapter_s(int adapter)
 }
 EXPORT_SYMBOL_GPL(gbms_chg_ev_adapter_s);
 
+/* Convert gbms_msc_states_t to letter code */
 static const char *gbms_get_code(const int index)
 {
 	const static char *codes[] = {"n", "s", "d", "l", "v", "vo", "p", "f",
 				      "t", "dl", "st", "tc", "r", "w", "rs",
-				      "n", "ny", "h", "hp", "ha"};
+				      "n", "ny", "do", "h", "hp", "ha"};
 	const int len = ARRAY_SIZE(codes);
 
 	return (index >= 0 && index < len) ? codes[index] : "?";
 }
+
+struct device_node *gbms_batt_id_node(struct device_node *config_node)
+{
+	struct device_node *child_node;
+	int retry_cnt = GBMS_STORAGE_READ_RETRIES;
+	int ret = 0;
+	u32 batt_id, gbatt_id;
+
+	do {
+		ret = gbms_storage_read(GBMS_TAG_BRID, &batt_id, sizeof(batt_id));
+		if (ret != -EPROBE_DEFER)
+			break;
+
+		msleep(GBMS_STORAGE_READ_DELAY_MS);
+	} while (ret < 0 && retry_cnt-- > 0);
+
+	if (ret < 0) {
+		pr_warn("Failed to get batt_id (%d)\n", ret);
+		return config_node;
+	}
+
+	for_each_child_of_node(config_node, child_node) {
+		ret = of_property_read_u32(child_node, "google,batt-id",
+					   &gbatt_id);
+		if (ret != 0)
+			continue;
+
+		if (batt_id == gbatt_id)
+			return child_node;
+	}
+
+	return config_node;
+}
+EXPORT_SYMBOL_GPL(gbms_batt_id_node);
 
 /* convert C rates to current. Caller can account for tolerances reducing
  * battery_capacity. fv_uv_resolution is used to create discrete steps.
@@ -153,7 +191,7 @@ static int gbms_read_cccm_limits(struct gbms_chg_profile *profile,
 	if (profile->temp_nb_limits <= 0) {
 		ret = profile->temp_nb_limits;
 		gbms_err(profile, "cannot read chg-temp-limits, ret=%d\n", ret);
-		return ret;
+		return -EINVAL;
 	}
 	if (profile->temp_nb_limits > GBMS_CHG_TEMP_NB_LIMITS_MAX) {
 		gbms_err(profile, "chg-temp-nb-limits exceeds driver max: %d\n",
@@ -170,21 +208,31 @@ static int gbms_read_cccm_limits(struct gbms_chg_profile *profile,
 	}
 
 	profile->volt_nb_limits =
-	    of_property_count_elems_of_size(node, "google,chg-cv-limits",
+	    of_property_count_elems_of_size(gbms_batt_id_node(node), "google,chg-cv-limits",
 					    sizeof(u32));
+	/* google,chg-cv-limits does not exist in the child_node */
+	if (profile->volt_nb_limits <= 0)
+		profile->volt_nb_limits =
+		    of_property_count_elems_of_size(node, "google,chg-cv-limits",
+						    sizeof(u32));
 	if (profile->volt_nb_limits <= 0) {
 		ret = profile->volt_nb_limits;
 		gbms_err(profile, "cannot read chg-cv-limits, ret=%d\n", ret);
-		return ret;
+		return -EINVAL;
 	}
 	if (profile->volt_nb_limits > GBMS_CHG_VOLT_NB_LIMITS_MAX) {
 		gbms_err(profile, "chg-cv-nb-limits exceeds driver max: %d\n",
 		       GBMS_CHG_VOLT_NB_LIMITS_MAX);
 		return -EINVAL;
 	}
-	ret = of_property_read_u32_array(node, "google,chg-cv-limits",
+	ret = of_property_read_u32_array(gbms_batt_id_node(node), "google,chg-cv-limits",
 					 (u32 *)profile->volt_limits,
 					 profile->volt_nb_limits);
+	/* google,chg-cv-limits does not exist in the child_node */
+	if (ret < 0)
+		ret = of_property_read_u32_array(node, "google,chg-cv-limits",
+						 (u32 *)profile->volt_limits,
+						 profile->volt_nb_limits);
 	if (ret < 0) {
 		gbms_err(profile, "cannot read chg-cv-limits table, ret=%d\n",
 			 ret);
@@ -377,6 +425,10 @@ int gbms_init_chg_profile_internal(struct gbms_chg_profile *profile,
 	if (ret < 0)
 		profile->cv_otv_margin = GBMS_DEFAULT_CV_OTV_MARGIN;
 
+	/* for particular hw stage */
+	profile->enable_switch_chg_profile = of_property_read_bool(node,
+					     "google,enable-switch-chg-profile");
+
 	/* sanity on voltages (should warn?) */
 	for (vi = 0; vi < profile->volt_nb_limits; vi++)
 		profile->volt_limits[vi] = profile->volt_limits[vi] /
@@ -429,9 +481,9 @@ EXPORT_SYMBOL_GPL(gbms_dump_raw_profile);
  * the vbat will not over the otv threshold.
  */
 int gbms_msc_round_fv_uv(const struct gbms_chg_profile *profile,
-			   int vtier, int fv_uv, int cc_ua)
+			   int vtier, int fv_uv, int cc_ua, bool allow_higher_fv)
 {
-	int result, fv_uv_orig = fv_uv;
+	int result;
 	const unsigned int fv_uv_max = (vtier / 1000) * profile->fv_uv_margin_dpct;
 	const unsigned int dc_fv_uv_max = vtier + (cc_ua / 1000) * profile->fv_dc_ratio;
 	const unsigned int last_fv = profile->volt_limits[profile->volt_nb_limits - 1];
@@ -439,7 +491,7 @@ int gbms_msc_round_fv_uv(const struct gbms_chg_profile *profile,
 
 	if (cc_ua == 0)
 		fv_max = fv_uv_max;
-	else if (dc_fv_uv_max >= last_fv)
+	else if (!allow_higher_fv && dc_fv_uv_max >= last_fv)
 		fv_max = last_fv - profile->fv_uv_resolution;
 	else
 		fv_max = dc_fv_uv_max;
@@ -451,12 +503,59 @@ int gbms_msc_round_fv_uv(const struct gbms_chg_profile *profile,
 	result = fv_uv - (fv_uv % profile->fv_uv_resolution);
 
 	if (fv_max != 0)
-		gbms_info(profile, "MSC_ROUND: fv_uv=%d vtier=%d fv_uv_max=%d -> %d\n",
-			  fv_uv_orig, vtier, fv_max, result);
+		gbms_info(profile, "MSC_ROUND: fv_uv=%d vtier=%d dc_fv_uv_max=%d fv_max=%d -> %d\n",
+			  fv_uv, vtier, dc_fv_uv_max, fv_max, result);
 
 	return result;
 }
 EXPORT_SYMBOL_GPL(gbms_msc_round_fv_uv);
+
+/* Find last voltage tier with non zero current */
+int gbms_msc_get_last_voltage_idx(const struct gbms_chg_profile *profile, const int temp_idx)
+{
+	int vbatt_idx = profile->volt_nb_limits - 1;
+
+	while(vbatt_idx > 0 && !GBMS_CCCM_LIMITS(profile, temp_idx, vbatt_idx))
+		vbatt_idx--;
+
+	return vbatt_idx;
+}
+EXPORT_SYMBOL_GPL(gbms_msc_get_last_voltage_idx);
+
+/* skip tiers that have same c-rate */
+int gbms_msc_voltage_idx_merge_tiers(const struct gbms_chg_profile *profile,
+			  int vbatt, int temp_idx)
+{
+	int cc_max;
+	int vbatt_idx = 0;
+	const int vbatt_last_idx = gbms_msc_get_last_voltage_idx(profile, temp_idx);
+
+	if (!profile)
+		return 0;
+
+	while (vbatt_idx < vbatt_last_idx &&
+	       vbatt > profile->volt_limits[vbatt_idx])
+		vbatt_idx++;
+
+	if (vbatt_idx != vbatt_last_idx) {
+		const int vt = profile->volt_limits[vbatt_idx];
+		const int headr = profile->fv_uv_resolution * 3;
+
+		if ((vt - vbatt) < headr)
+			vbatt_idx += 1;
+	}
+
+	if (temp_idx < 0 || temp_idx >= profile->temp_nb_limits)
+		return vbatt_idx;
+
+	cc_max = GBMS_CCCM_LIMITS(profile, temp_idx, vbatt_idx);
+	while (vbatt_idx < vbatt_last_idx - 1 &&
+		cc_max == GBMS_CCCM_LIMITS(profile, temp_idx, vbatt_idx + 1))
+			vbatt_idx++;
+
+	return vbatt_idx;
+}
+EXPORT_SYMBOL_GPL(gbms_msc_voltage_idx_merge_tiers);
 
 /* charge profile idx based on the battery temperature
  * TODO: return -1 when temperature is lower than profile->temp_limits[0] or
@@ -717,14 +816,35 @@ void gbms_logbuffer_prlog(struct logbuffer *log, int level, int debug_no_logbuff
 }
 EXPORT_SYMBOL_GPL(gbms_logbuffer_prlog);
 
+void gbms_logbuffer_devlog(struct logbuffer *log, struct device *dev, int level, int debug_no_logbuffer,
+			  int debug_printk_prlog, const char *f, ...)
+{
+	struct va_format vaf;
+	va_list args;
+
+	va_start(args, f);
+
+	vaf.fmt = f;
+	vaf.va = &args;
+
+	if (!debug_no_logbuffer)
+		logbuffer_vlog(log, f, args);
+
+	if (level <= debug_printk_prlog)
+		dev_printk_emit(level, dev, "%s %s: %pV", dev_driver_string(dev), dev_name(dev), &vaf);
+
+	va_end(args);
+}
+EXPORT_SYMBOL_GPL(gbms_logbuffer_devlog);
+
 bool chg_state_is_disconnected(const union gbms_charger_state *chg_state)
 {
-	return ((chg_state->f.flags & GBMS_CS_FLAG_BUCK_EN) == 0) &&
+	return (((chg_state->f.flags & GBMS_CS_FLAG_BUCK_EN) == 0) &&
 	       (chg_state->f.chg_status == POWER_SUPPLY_STATUS_DISCHARGING ||
-	       chg_state->f.chg_status == POWER_SUPPLY_STATUS_UNKNOWN);
+	       chg_state->f.chg_status == POWER_SUPPLY_STATUS_UNKNOWN)) ||
+	       (chg_state->f.flags & GBMS_CS_FLAG_INPUT_SUSPEND);
 }
 EXPORT_SYMBOL_GPL(chg_state_is_disconnected);
-
 
 /* Tier stats common routines */
 void gbms_tier_stats_init(struct gbms_ce_tier_stats *stats, int8_t idx)
@@ -835,9 +955,9 @@ int gbms_tier_stats_cstr(char *buff, int size,
 	int j, len = 0;
 
 	if (elap) {
-		temp_avg = tier_stat->temp_sum / elap;
-		ibatt_avg = tier_stat->ibatt_sum / elap;
-		icl_avg = tier_stat->icl_sum / elap;
+		temp_avg = div_s64(tier_stat->temp_sum, elap);
+		ibatt_avg = div_s64(tier_stat->ibatt_sum, elap);
+		icl_avg = div_s64(tier_stat->icl_sum, elap);
 	} else {
 		temp_avg = 0;
 		ibatt_avg = 0;
@@ -915,4 +1035,3 @@ void gbms_log_cstr_handler(struct logbuffer *log, char *buf, int len)
 	}
 }
 EXPORT_SYMBOL_GPL(gbms_log_cstr_handler);
-

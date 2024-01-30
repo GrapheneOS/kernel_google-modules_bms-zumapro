@@ -49,7 +49,7 @@ struct gbms_cache_entry {
 
 #define GBMS_PROVIDER_NAME_MAX	32
 
-#define GBMS_PROVIDERS_MAX	5
+#define GBMS_PROVIDERS_MAX	6
 static spinlock_t providers_lock;
 static bool gbms_storage_init_done;
 
@@ -57,7 +57,7 @@ static int gbms_providers_count;
 static struct gbms_storage_provider gbms_providers[GBMS_PROVIDERS_MAX];
 static struct dentry *rootdir;
 
-/* 1 << 5 = 64 entries */
+/* 1 << 5 = 32 entries */
 #define GBMS_HASHTABLE_SIZE	5
 DECLARE_HASHTABLE(gbms_cache, GBMS_HASHTABLE_SIZE);
 static struct gen_pool *gbms_cache_pool;
@@ -566,7 +566,7 @@ static int gbms_storage_show_cache(struct seq_file *m, void *data)
 			   slot->name, tag2cstr(tname, ce->tag));
 
 		if (ce->count != 0)
-			seq_printf(m, "[%lu:%lu]", ce->addr, ce->count);
+			seq_printf(m, "[%zu:%zu]", ce->addr, ce->count);
 		seq_printf(m, "\n");
 	}
 
@@ -613,7 +613,8 @@ static void gbms_show_storage_provider(struct seq_file *m,
 			if (ret < 0)
 				continue;
 
-			seq_printf(m, "[%lu,%lu] ", addr, count);
+			seq_printf(m, "[%zu,%zu] ", addr, count);
+
 		}
 	}
 }
@@ -706,15 +707,19 @@ static ssize_t debug_read_tag_data(struct file *filp,
 				   size_t count, loff_t *ppos)
 {
 	struct gbms_cache_entry *ce = filp->private_data;
-	char *buf;
+	char *buf, tmp[8];
 	int ret;
 
 	if (!ce->count)
 		return -ENODATA;
 
-	buf = kzalloc(sizeof(char) * ce->count, GFP_KERNEL);
-	if (!buf)
-		return -ENOMEM;
+	if (ce->count < sizeof(tmp)) {
+		buf = tmp;
+	} else {
+		buf = kzalloc(sizeof(char) * ce->count, GFP_KERNEL);
+		if (!buf)
+			return -ENOMEM;
+	}
 
 	ret = gbms_storage_read(ce->tag, buf, ce->count);
 	if (ret < 0)
@@ -723,7 +728,8 @@ static ssize_t debug_read_tag_data(struct file *filp,
 	ret = simple_read_from_buffer(user_buf, count, ppos, buf, ce->count);
 
 rtag_free_mem:
-	kfree(buf);
+	if (buf != tmp)
+		kfree(buf);
 
 	return ret;
 }
@@ -733,15 +739,19 @@ static ssize_t debug_write_tag_data(struct file *filp,
 				    size_t count, loff_t *ppos)
 {
 	struct gbms_cache_entry *ce = filp->private_data;
-	char *buf;
+	char *buf, tmp[8];
 	int ret;
 
 	if (!ce->count)
 		return -ENODATA;
 
-	buf = kzalloc(sizeof(char) * ce->count, GFP_KERNEL);
-	if (!buf)
-		return -ENOMEM;
+	if (ce->count < sizeof(tmp)) {
+		buf = tmp;
+	} else {
+		buf = kzalloc(sizeof(char) * ce->count, GFP_KERNEL);
+		if (!buf)
+			return -ENOMEM;
+	}
 
 	ret = simple_write_to_buffer(buf, ce->count, ppos, user_buf, count);
 	if (!ret) {
@@ -752,7 +762,8 @@ static ssize_t debug_write_tag_data(struct file *filp,
 	ret = gbms_storage_write(ce->tag, buf, ce->count);
 
 wtag_free_mem:
-	kfree(buf);
+	if (buf != tmp)
+		kfree(buf);
 
 	return (ret < 0) ? ret : count;
 }
@@ -807,7 +818,7 @@ static ssize_t debug_export_tag(struct file *filp,
 	gbms_tag_cstr_t name = { 0 };
 	struct dentry *de;
 	gbms_tag_t tag;
-	char temp[32];
+	char temp[32] = {0};
 	int ret;
 
 	if (!rootdir)
@@ -1100,7 +1111,7 @@ enum gbee_status {
 	GBEE_STATUS_OK,
 };
 
-#define GBEE_POLL_RETRIES	15
+#define GBEE_POLL_RETRIES	100
 #define GBEE_POLL_INTERVAL_MS	200
 
 /* only one battery eeprom for now */
@@ -1222,7 +1233,7 @@ static int __init gbms_storage_init(void)
 
 	gbms_cache_pool = gen_pool_create(pe_size, -1);
 	if (gbms_cache_pool) {
-		size_t mem_size = (1 << GBMS_HASHTABLE_SIZE) * pe_size;
+		size_t mem_size = (1 << GBMS_HASHTABLE_SIZE) * (1 << pe_size);
 
 		gbms_cache_mem = kzalloc(mem_size, GFP_KERNEL);
 		if (!gbms_cache_mem) {

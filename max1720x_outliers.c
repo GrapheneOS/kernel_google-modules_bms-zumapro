@@ -40,7 +40,7 @@ enum {
 };
 
 /* 1 = success, 0 compare error, < 0 error */
-static int max1720x_update_compare(struct max17x0x_regmap *map, int reg,
+static int max1720x_update_compare(struct maxfg_regmap *map, int reg,
 				   u16 data0, u16 data1)
 {
 	u16 data[2] = {data0, data1};
@@ -60,7 +60,7 @@ static int max1720x_update_compare(struct max17x0x_regmap *map, int reg,
 }
 
 /* 0 not updated, 1 updated, doesn't return IO errors */
-static int max1720x_update_capacity(struct max17x0x_regmap *map,
+static int max1720x_update_capacity(struct maxfg_regmap *map,
 				    u16 mixcap, u16 repcap,
 				    u16 fullcaprep)
 {
@@ -139,7 +139,7 @@ static int max1720x_capacity_check(int fullcapnom, int cycle_count,
 /* 1 changed, 0 no changes, < 0 error*/
 
 int max1720x_fixup_dxacc(struct max1720x_drift_data *ddata,
-			 struct max17x0x_regmap *map,
+			 struct maxfg_regmap *map,
 			 int cycle_count,
 			 int plugged,
 			 int lsb)
@@ -339,7 +339,7 @@ static bool max1720x_comp_check(u16 *new_rcomp0, u16 *new_tempco,
 
 /* fix rcomp0 and tempco */
 int max1720x_fixup_comp(struct max1720x_drift_data *ddata,
-			struct max17x0x_regmap *map,
+			struct maxfg_regmap *map,
 			int plugged)
 {
 	u16 new_rcomp0, new_tempco, data[2] = { 0 };

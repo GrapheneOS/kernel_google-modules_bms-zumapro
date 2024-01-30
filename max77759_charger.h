@@ -4,12 +4,12 @@
  *
  */
 
-#include "gs101_usecase.h"
-
 #ifndef MAX77759_CHARGER_H_
 #define MAX77759_CHARGER_H_
 
+#include "max77759_usecase.h"
 #include "max777x9_bcl.h"
+
 struct max77759_chgr_data {
 	struct device *dev;
 
@@ -30,11 +30,11 @@ struct max77759_chgr_data {
 	bool charge_done;
 	bool chgin_input_suspend;
 	bool wcin_input_suspend;
+	bool wlc_spoof;
 	bool thm2_sts;
 
 	int irq_gpio;
 	int irq_int;
-	bool irq_disabled;
 
 	struct i2c_client *fg_i2c_client;
 	struct i2c_client *pmic_i2c_client;
@@ -71,4 +71,5 @@ struct max77759_chgr_data {
 	int chg_term_voltage;
 	int chg_term_volt_debounce;
 };
+
 #endif
