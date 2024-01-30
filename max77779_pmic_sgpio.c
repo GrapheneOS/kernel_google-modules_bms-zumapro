@@ -45,6 +45,9 @@ struct max77779_pmic_sgpio_info {
 
 	unsigned int		trig_type_u;
 	unsigned int		trig_type[MAX77779_SGPIO_NUM_GPIOS];
+
+	unsigned int		wake_u;
+	unsigned int		wake;
 };
 
 static int max77779_pmic_sgpio_get_direction(struct gpio_chip *gc,
@@ -217,7 +220,11 @@ static int max77779_pmic_sgpio_irq_set_wake(struct irq_data *d, unsigned int on)
 	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
 	struct max77779_pmic_sgpio_info *info = gpiochip_get_data(gc);
 
-	return irq_set_irq_wake(info->irq, on);
+	info->wake_u |= BIT(d->hwirq);
+	info->wake &= ~BIT(d->hwirq);
+	info->wake |= on << d->hwirq;
+
+	return 0;
 }
 
 static void max77779_pmic_sgpio_bus_lock(struct irq_data *d)
@@ -281,6 +288,13 @@ static void max77779_pmic_sgpio_bus_sync_unlock(struct irq_data *d)
 
 		info->mask_u &= ~BIT(id);
 	}
+
+	while (info->wake_u) {
+		id = __ffs(info->wake_u);
+		irq_set_irq_wake(info->irq, !!(info->wake & BIT(id)));
+		info->wake_u &= ~BIT(id);
+	}
+
 
 unlock_out:
 	mutex_unlock(&info->lock);

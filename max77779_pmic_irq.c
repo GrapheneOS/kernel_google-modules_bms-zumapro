@@ -28,6 +28,9 @@ struct max77779_pmic_irq_info {
 	unsigned int		mask;
 	unsigned int		mask_u;  /* pending updates */
 	unsigned int		trig_type;
+
+	unsigned int		wake_u;
+	unsigned int		wake;
 };
 
 static irqreturn_t max77779_pmic_irq_handler(int irq, void *ptr)
@@ -110,7 +113,11 @@ static int max77779_pmic_irq_set_wake(struct irq_data *d, unsigned int on)
 {
 	struct max77779_pmic_irq_info *info = irq_data_get_irq_chip_data(d);
 
-	return irq_set_irq_wake(info->irq, on);
+	info->wake_u |= BIT(d->hwirq);
+	info->wake &= ~BIT(d->hwirq);
+	info->wake |= on << d->hwirq;
+
+	return 0;
 }
 
 static void max77779_pmic_bus_lock(struct irq_data *d)
@@ -125,6 +132,7 @@ static void max77779_pmic_bus_sync_unlock(struct irq_data *d)
 	struct max77779_pmic_irq_info *info = irq_data_get_irq_chip_data(d);
 	struct device *core = info->core;
 	uint8_t offset, value, intb_mask;
+	unsigned int id;
 	int err;
 
 	if (!info->mask_u)
@@ -151,6 +159,12 @@ static void max77779_pmic_bus_sync_unlock(struct irq_data *d)
 	if (err < 0) {
 		dev_err(info->dev, "Unable to write interrupt mask (%d)\n", err);
 		goto unlock_out;
+	}
+
+	while (info->wake_u) {
+		id = __ffs(info->wake_u);
+		irq_set_irq_wake(info->irq, !!(info->wake & BIT(id)));
+		info->wake_u &= ~BIT(id);
 	}
 
  unlock_out:
