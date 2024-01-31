@@ -55,7 +55,7 @@ static void max77779_sp_i2c_remove(struct i2c_client *client)
 }
 
 static const struct of_device_id max77779_scratch_of_match_table[] = {
-	{ .compatible = "maxim,max77779sp_i2c"},
+	{ .compatible = "maxim,max77779sp-i2c"},
 	{},
 };
 MODULE_DEVICE_TABLE(of, max77779_scratch_of_match_table);

@@ -60,7 +60,7 @@ static void max77779_i2cm_i2c_remove(struct i2c_client *client)
 
 #if IS_ENABLED(CONFIG_OF)
 static const struct of_device_id max77779_i2cm_match_table[] = {
-	{ .compatible = "maxim,max77779i2cm_i2c",},
+	{ .compatible = "maxim,max77779i2cm-i2c",},
 	{ },
 };
 #endif

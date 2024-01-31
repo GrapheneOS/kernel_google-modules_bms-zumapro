@@ -62,6 +62,8 @@ struct gbms_chg_profile {
 	/* experimental */
 	u32 cv_otv_margin;
 
+	u32 cc_ua_resolution;
+
 	/* AACR feature */
 	u32 reference_cycles[GBMS_AACR_DATA_MAX];
 	u32 reference_fade10[GBMS_AACR_DATA_MAX];
@@ -244,6 +246,8 @@ struct batt_ttf_stats {
 	struct ttf_tier_stat tier_stats[GBMS_STATS_TIER_COUNT];
 
 	struct logbuffer *ttf_log;
+
+	struct mutex ttf_lock;
 };
 
 /*
@@ -536,8 +540,7 @@ int gbms_cycle_count_cstr_bc(char *buff, size_t size,
 int ttf_soc_cstr(char *buff, int size, const struct ttf_soc_stats *soc_stats,
 		 int start, int end);
 
-int ttf_soc_estimate(ktime_t *res,
-		     const struct batt_ttf_stats *stats,
+int ttf_soc_estimate(ktime_t *res, struct batt_ttf_stats *stats,
 		     const struct gbms_charging_event *ce_data,
 		     qnum_t soc, qnum_t last);
 

@@ -354,19 +354,26 @@ static int ttf_elap(ktime_t *estimate, const struct batt_ttf_stats *stats,
  * NOTE: prediction is based stats and corrected with the ce_data
  * NOTE: usually called with soc > ce_data->last_soc
  */
-int ttf_soc_estimate(ktime_t *res, const struct batt_ttf_stats *stats,
+int ttf_soc_estimate(ktime_t *res, struct batt_ttf_stats *stats,
 		     const struct gbms_charging_event *ce_data,
 		     qnum_t soc, qnum_t last)
 {
-	const int ssoc_in = ce_data->charging_stats.ssoc_in;
+	int ssoc_in;
 	ktime_t elap, estimate = 0;
 	int i = 0, ratio, frac, max_ratio = 0;
 
-	if (last > qnum_rconst(100) || last < soc)
+	mutex_lock(&stats->ttf_lock);
+
+	ssoc_in = ce_data->charging_stats.ssoc_in;
+
+	if (last > qnum_rconst(100) || last < soc) {
+		mutex_unlock(&stats->ttf_lock);
 		return -EINVAL;
+	}
 
 	if (last == soc) {
 		*res = 0;
+		mutex_unlock(&stats->ttf_lock);
 		return 0;
 	}
 
@@ -392,8 +399,10 @@ int ttf_soc_estimate(ktime_t *res, const struct batt_ttf_stats *stats,
 		} else {
 			/* future (and soc before ssoc_in) */
 			ratio = ttf_elap(&elap, stats, ce_data, i);
-			if (ratio < 0)
+			if (ratio < 0) {
+				mutex_unlock(&stats->ttf_lock);
 				return ratio;
+			}
 			if (ratio > max_ratio)
 				max_ratio = ratio;
 		}
@@ -412,6 +421,9 @@ int ttf_soc_estimate(ktime_t *res, const struct batt_ttf_stats *stats,
 	}
 
 	*res = ktime_divns(estimate, 100);
+
+	mutex_unlock(&stats->ttf_lock);
+
 	return max_ratio;
 }
 
@@ -1005,6 +1017,7 @@ int ttf_stats_init(struct batt_ttf_stats *stats, struct device *device,
 
 	memset(stats, 0, sizeof(*stats));
 	stats->ttf_fake = -1;
+	mutex_init(&stats->ttf_lock);
 
 	/* reference adapter */
 	ret = of_property_read_u32(device->of_node, "google,ttf-adapter",

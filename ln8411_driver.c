@@ -4278,6 +4278,16 @@ static int ln8411_hw_init(struct ln8411_charger *ln8411)
 
 	dev_dbg(ln8411->dev, "%s: disable alarms\n", __func__);
 	ret = regmap_clear_bits(ln8411->regmap, LN8411_ALARM_CTRL, 0x1c);
+	if (ret)
+		goto error_done;
+
+	if (ln8411->pdata->si_fet_ovp_drive) {
+		dev_dbg(ln8411->dev, "%s: set safety switch to 10V\n", __func__);
+		/* Set Safety switch drive for 10V Si FET */
+		ret = regmap_set_bits(ln8411->regmap, LN8411_OVPGATE_CTRL_0, LN8411_OVPFETDR_V_CFG);
+		if (ret)
+			goto error_done;
+	}
 
 	ret = ln8411_set_lion_ctrl(ln8411, LN8411_LION_CTRL_LOCK);
 	if (ret)
@@ -5088,6 +5098,9 @@ static int of_ln8411_dt(struct device *dev,
 	if (ret)
 		pdata->iin_cc_comp_offset = LN8411_IIN_CC_COMP_OFFSET;
 	dev_info(dev, "ln8411,iin_cc_comp_offset is %u\n", pdata->iin_cc_comp_offset);
+
+	pdata->si_fet_ovp_drive = of_property_read_bool(np_ln8411, "ln8411,si-fet-ovp-drive");
+	dev_info(dev, "ln8411,si-fet-ovp-drive is %d\n", pdata->si_fet_ovp_drive);
 
 #if IS_ENABLED(CONFIG_THERMAL)
 	/* USBC thermal zone */

@@ -2654,14 +2654,17 @@ static irqreturn_t max77759_chgr_irq(int irq, void *client)
 	int ret;
 
 	if (max77759_resume_check(data)) {
-		dev_warn(data->dev, "%s: irq skipped, irq:%d\n", __func__, irq);
+		dev_warn_ratelimited(data->dev, "%s: irq skipped, irq:%d\n", __func__, irq);
 		return IRQ_HANDLED;
 	}
 
 	ret = max77759_readn(data->regmap, MAX77759_CHG_INT, chg_int,
 			     sizeof(chg_int));
-	if (ret < 0)
+	if (ret < 0) {
+		dev_err_ratelimited(data->dev, "%s i2c error reading CHG INT, ret:%d\n",
+				    __func__, ret);
 		return IRQ_NONE;
+	}
 
 	if ((chg_int[0] & ~max77759_int_mask[0]) == 0 &&
 	    (chg_int[1] & ~max77759_int_mask[1]) == 0)
@@ -2674,8 +2677,11 @@ static irqreturn_t max77759_chgr_irq(int irq, void *client)
 
 	ret = max77759_writen(data->regmap, MAX77759_CHG_INT, /* NOTYPO */
                               chg_int_clr, sizeof(chg_int_clr));
-	if (ret < 0)
+	if (ret < 0) {
+		dev_err_ratelimited(data->dev, "%s i2c error writing CHG INT, ret:%d\n",
+				    __func__, ret);
 		return IRQ_NONE;
+	}
 
 	pr_debug("INT : %02x %02x\n", chg_int[0], chg_int[1]);
 
@@ -2692,8 +2698,11 @@ static irqreturn_t max77759_chgr_irq(int irq, void *client)
 		atomic_inc(&data->insel_cnt);
 
 		ret = max77759_higher_headroom_enable(data, false); /* reset on plug/unplug */
-		if (ret)
+		if (ret) {
+			dev_err_ratelimited(data->dev, "%s error disabling higher headroom,"
+					    "ret:%d\n", __func__, ret);
 			return IRQ_NONE;
+		}
 	}
 
 	/* TODO: make this an interrupt controller */
@@ -3060,6 +3069,9 @@ static int max77759_charger_probe(struct i2c_client *client,
 
 			data->irq_int = client->irq;
 			device_init_wakeup(dev, true);
+			ret = enable_irq_wake(client->irq);
+			if (ret)
+				dev_err(data->dev, "Error enabling irq wake ret:%d\n", ret);
 		}
 	}
 
@@ -3073,7 +3085,7 @@ static void max77759_charger_remove(struct i2c_client *client)
 
 	if (data->de)
 		debugfs_remove(data->de);
-
+	disable_irq_wake(client->irq);
 	device_init_wakeup(data->dev, false);
 	wakeup_source_unregister(data->usecase_wake_lock);
 	wakeup_source_unregister(data->otg_fccm_wake_lock);
@@ -3102,10 +3114,6 @@ static int max77759_charger_pm_suspend(struct device *dev)
 	dev_dbg(dev, "%s\n", __func__);
 
 	data->resume_complete = false;
-	if (device_may_wakeup(dev)) {
-		dev_dbg(dev, "%s: enable irq wake\n", __func__);
-		enable_irq_wake(data->irq_int);
-	}
 	pm_runtime_put_sync(data->dev);
 
 	return 0;
@@ -3119,10 +3127,6 @@ static int max77759_charger_pm_resume(struct device *dev)
 	pm_runtime_get_sync(data->dev);
 	dev_dbg(dev, "%s\n", __func__);
 
-	if (device_may_wakeup(dev)) {
-		dev_dbg(dev, "%s: disable irq wake\n", __func__);
-		disable_irq_wake(data->irq_int);
-	}
 	data->resume_complete = true;
 	pm_runtime_put_sync(data->dev);
 

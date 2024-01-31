@@ -39,6 +39,7 @@ struct ln8411_platform_data {
 	s32		iin_cc_comp_offset;
 	u32		ta_max_vol_2_1;
 	u32		ta_max_vol_4_1;
+	bool		si_fet_ovp_drive;
 
 	/* irdrop */
 	s32		irdrop_limits[3];

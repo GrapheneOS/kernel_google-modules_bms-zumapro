@@ -4103,7 +4103,7 @@ static int bhi_cap_data_update(struct bhi_data *bhi_data, struct batt_drv *batt_
 	int rc, rc_fcr;
 	const int fade_rate = GPSY_GET_INT_PROP(fg_psy, GBMS_PROP_CAPACITY_FADE_RATE, &rc);
 	const int fade_rate_fcr =
-		GPSY_GET_INT_PROP(fg_psy, GBMS_PROP_CAPACITY_FADE_RATE_FCR, &rc_fcr);
+			GPSY_GET_INT_PROP(fg_psy, GBMS_PROP_CAPACITY_FADE_RATE_FCR, &rc_fcr);
 	const int designcap = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN);
 
 	/* GBMS_PROP_CAPACITY_FADE_RATE is in percent */
