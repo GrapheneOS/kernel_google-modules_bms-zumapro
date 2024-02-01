@@ -3459,10 +3459,6 @@ int max77779_charger_init(struct max77779_chgr_data *data)
 		return -EINVAL;
 	}
 
-	/* CHARGER_MODE needs this (initialized to -EPROBE_DEFER) */
-	gs201_setup_usecases(&data->uc_data, NULL);
-	INIT_DELAYED_WORK(&data->mode_rerun_work, max77779_mode_rerun_work);
-
 	ret = dbg_init_fs(data);
 	if (ret < 0)
 		dev_warn(dev, "Failed to initialize debug fs\n");
@@ -3553,6 +3549,10 @@ int max77779_charger_init(struct max77779_chgr_data *data)
 	ret = devm_gpiochip_add_data(dev, &data->gpio, data);
 	dev_dbg(dev, "%d GPIOs registered ret: %d\n", data->gpio.ngpio, ret);
 #endif
+
+	/* CHARGER_MODE needs this (initialized to -EPROBE_DEFER) */
+	gs201_setup_usecases(&data->uc_data, NULL);
+	INIT_DELAYED_WORK(&data->mode_rerun_work, max77779_mode_rerun_work);
 
 	/* other drivers (ex tcpci) need this. */
 	ret = max77779_setup_votables(data);
