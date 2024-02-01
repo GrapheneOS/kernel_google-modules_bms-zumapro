@@ -2915,6 +2915,7 @@ static void max77779_fg_init_work(struct work_struct *work)
 bool max77779_fg_dbg_is_reg(struct device *dev, unsigned int reg)
 {
 	switch (reg) {
+		case 0x8C ... 0x8F:
 		case 0x9C ... 0x9F:
 		case 0xA0 ... 0xA7:
 		case 0xA9:
@@ -2925,6 +2926,7 @@ bool max77779_fg_dbg_is_reg(struct device *dev, unsigned int reg)
 		case 0xC0:
 		case 0xC6:
 		case 0xC8 ... 0xCA:
+		case 0xD6: /* nProtMiscTh */
 			return true;
 	}
 	return false;
@@ -2949,6 +2951,8 @@ bool max77779_fg_is_reg(struct device *dev, unsigned int reg)
 	case 0x45 ... 0x48:
 	case 0x4C ... 0x4E:
 	case 0x52 ... 0x54:
+	case 0x62 ... 0x63:
+	case 0x6C: /* CurrentOffsetCal */
 	case 0x6F: /* secure update result */
 	case 0x80 ... 0x9F: /* Model */
 	case 0xA0: /* CGain */
@@ -2957,6 +2961,7 @@ bool max77779_fg_is_reg(struct device *dev, unsigned int reg)
 	case 0xB0:
 	case 0xB2:
 	case 0xB4:
+	case 0xBA:
 	case 0xBE ... 0xBF:
 	case 0xD0 ... 0xDB:
 	case 0xE0 ... 0xE1: /* FG_Func*/
