@@ -139,6 +139,7 @@ static int max77779_update_custom_model(struct max77779_model_data *model_data)
 			   model_data->custom_model_size);
 		dump_model(model_data->dev, MAX77779_FG_MODEL_START, data,
 			   model_data->custom_model_size);
+		ret = -ERANGE;
 	}
 
 error_exit:
