@@ -45,6 +45,7 @@ struct max77779_chgr_data {
 
 	struct delayed_work cop_enable_work;
 	uint32_t cop_warn;
+	uint32_t cc_max;
 
 	/* wcin inlim tracking */
 	struct delayed_work wcin_inlim_work;

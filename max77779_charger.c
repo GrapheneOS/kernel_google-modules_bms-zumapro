@@ -2375,9 +2375,22 @@ static int max77779_psy_set_property(struct power_supply *psy,
 		break;
 	/* Charge current is set to 0 to EOC */
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
-		ret = max77779_set_charger_current_max_ua(data, pval->intval);
-		pr_debug("%s: charge_current=%d (%d)\n",
-			__func__, pval->intval, ret);
+	{
+		u8 reg;
+
+		ret = max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_00, &reg);
+		if (ret)
+			break;
+
+		if ((pval->intval > 0 && !_max77779_chg_cnfg_00_cp_en_get(reg)
+		   && !_max77779_chg_cnfg_00_mode_get(reg))
+		   || pval->intval != data->cc_max) {
+			ret = max77779_set_charger_current_max_ua(data, pval->intval);
+			data->cc_max = pval->intval;
+			pr_debug("%s: charge_current=%d (%d)\n",
+				 __func__, pval->intval, ret);
+		   }
+	}
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
 		if (data->uc_data.input_uv != pval->intval)

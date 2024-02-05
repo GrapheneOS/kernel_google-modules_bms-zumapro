@@ -2120,8 +2120,8 @@ static int gcpm_psy_set_property(struct power_supply *psy,
 	 * either routed to the main-charger directly or voted on GCPM_FCC.
 	 */
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
-		ta_check = gcpm->cc_max != pval->intval;
-		route = ta_check && !gcpm_chg_is_cp_active(gcpm);
+				ta_check = gcpm->cc_max != pval->intval;
+		route = !gcpm_chg_is_cp_active(gcpm);
 
 		if (!pval->intval)
 			gcpm->cop_current_offset = 0;
@@ -2187,7 +2187,7 @@ static int gcpm_psy_set_property(struct power_supply *psy,
 	chg_psy = gcpm_chg_get_active(gcpm);
 	if (chg_psy) {
 		/* replace the pval with dc_iin limit when DC is selected */
-		ret = power_supply_set_property(chg_psy, psp, pval);
+				ret = power_supply_set_property(chg_psy, psp, pval);
 		if (ret < 0 && ret != -EAGAIN) {
 			pr_err("cannot route prop=%d to %d:%s (%d)\n", psp,
 				gcpm->chg_psy_active, gcpm_psy_name(chg_psy),
