@@ -189,6 +189,7 @@ struct max1720x_chip {
 	bool model_state_valid;	/* state read from persistent */
 	int model_reload;
 	bool model_ok;		/* model is running */
+	bool cycle_reg_ok;	/* restore cycle count from storage complete */
 
 	/* history */
 	struct mutex history_lock;
@@ -1499,51 +1500,58 @@ static void max1720x_handle_update_filtercfg(struct max1720x_chip *chip,
 
 #define EEPROM_CC_OVERFLOW_BIT	BIT(15)
 #define MAXIM_CYCLE_COUNT_RESET 655
-static void max1720x_restore_battery_cycle(struct max1720x_chip *chip)
+static int max1720x_restore_battery_cycle(struct max1720x_chip *chip)
 {
-	int ret = 0;
+	int ret;
 	u16 eeprom_cycle, reg_cycle;
 
 	if (chip->gauge_type != MAX_M5_GAUGE_TYPE)
-		return;
+		return -EINVAL;
 
 	ret = REGMAP_READ(&chip->regmap, MAX1720X_CYCLES, &reg_cycle);
 	if (ret < 0) {
-		dev_info(chip->dev, "Fail to read reg %#x (%d)",
-				MAX1720X_CYCLES, ret);
-		return;
+		dev_info(chip->dev, "Fail to read reg %#x (%d)", MAX1720X_CYCLES, ret);
+		return ret;
 	}
 
-	ret = gbms_storage_read(GBMS_TAG_CNHS, &chip->eeprom_cycle,
-				sizeof(chip->eeprom_cycle));
+	ret = gbms_storage_read(GBMS_TAG_CNHS, &eeprom_cycle, sizeof(eeprom_cycle));
 	if (ret < 0) {
 		dev_info(chip->dev, "Fail to read eeprom cycle count (%d)", ret);
-		return;
+		return ret;
 	}
 
-	if (chip->eeprom_cycle == 0xFFFF) { /* empty storage */
+	if (eeprom_cycle == 0xFFFF) { /* empty storage */
 		reg_cycle /= 2;	/* save half value to record over 655 cycles case */
 		ret = gbms_storage_write(GBMS_TAG_CNHS, &reg_cycle, sizeof(reg_cycle));
 		if (ret < 0)
 			dev_info(chip->dev, "Fail to write eeprom cycle (%d)", ret);
 		else
 			chip->eeprom_cycle = reg_cycle;
-		return;
+
+		chip->cycle_reg_ok = true;
+		return 0;
 	}
 
-	if (chip->eeprom_cycle & EEPROM_CC_OVERFLOW_BIT)
+	if (eeprom_cycle & EEPROM_CC_OVERFLOW_BIT)
 		chip->cycle_count_offset = MAXIM_CYCLE_COUNT_RESET;
 
-	eeprom_cycle = (chip->eeprom_cycle & 0x7FFF) << 1;
-	dev_info(chip->dev, "reg_cycle:%d, eeprom_cycle:%d, update:%c",
-		 reg_cycle, eeprom_cycle, eeprom_cycle > reg_cycle ? 'Y' : 'N');
+	chip->eeprom_cycle = eeprom_cycle;
+	eeprom_cycle = eeprom_cycle << 1;
+	dev_info(chip->dev, "reg_cycle:%d, eeprom_cycle:%d, cycle_count_offset:%d, update:%c",
+		 reg_cycle, eeprom_cycle, chip->cycle_count_offset,
+		 eeprom_cycle > reg_cycle ? 'Y' : 'N');
 	if (eeprom_cycle > reg_cycle) {
 		ret = REGMAP_WRITE_VERIFY(&chip->regmap, MAX1720X_CYCLES, eeprom_cycle);
-		if (ret < 0)
-			dev_warn(chip->dev, "fail to update cycles (%d)", ret);
-		else
-			max1720x_update_cycle_count(chip);
+		if (ret < 0) {
+			dev_err(chip->dev, "fail to update cycles (%d)", ret);
+			return ret;
+		}
 	}
+
+	chip->cycle_reg_ok = true;
+	max1720x_update_cycle_count(chip);
+
+	return 0;
 }
 
 static u16 max1720x_save_battery_cycle(const struct max1720x_chip *chip,
@@ -1598,8 +1606,7 @@ static int max1720x_get_cycle_count_offset(struct max1720x_chip *chip)
 	 * in others. it might be written in terms of storage.
 	 */
 	if (chip->gauge_type == MAX_M5_GAUGE_TYPE) {
-		if (chip->eeprom_cycle & EEPROM_CC_OVERFLOW_BIT)
-			offset = MAXIM_CYCLE_COUNT_RESET;
+		offset = MAXIM_CYCLE_COUNT_RESET;
 	} else {
 		int i, history_count;
 		struct max1720x_history hi;
@@ -1650,29 +1657,38 @@ static int max1720x_update_cycle_count(struct max1720x_chip *chip)
 	if (chip->por)
 		return -ECANCELED;
 
+	/* if cycle reg hasn't been restored from storage, restore it before update cycle count */
+	if (!chip->cycle_reg_ok && max_m5_recal_state(chip->model_data) == RE_CAL_STATE_IDLE) {
+		err = max1720x_restore_battery_cycle(chip);
+		if (err < 0)
+			dev_err(chip->dev, "%s cannot restore cycle count (%d)\n", __func__, err);
+
+		return err;
+	}
+
 	err = REGMAP_READ(&chip->regmap, MAX1720X_CYCLES, &reg_cycle);
 	if (err < 0)
 		return err;
 
-	if (chip->gauge_type == MAX_M5_GAUGE_TYPE)
-		if (max_m5_recal_state(chip->model_data))
+	if (chip->gauge_type == MAX_M5_GAUGE_TYPE && max_m5_recal_state(chip->model_data))
 			reg_cycle += max_m5_recal_cycle(chip->model_data);
 
-	cycle_count = reg_to_cycles((u32)reg_cycle, chip->gauge_type);
-	if ((chip->cycle_count == -1) ||
-	    ((cycle_count + chip->cycle_count_offset) < chip->cycle_count))
-		chip->cycle_count_offset =
-			max1720x_get_cycle_count_offset(chip);
+	cycle_count = reg_to_cycles((u32)reg_cycle, chip->gauge_type) + chip->cycle_count_offset;
+	if (cycle_count < chip->cycle_count) {
+		chip->cycle_count_offset = max1720x_get_cycle_count_offset(chip);
+		chip->model_next_update = -1;
+		dev_info(chip->dev, "cycle count last:%d, now:%d => cycle_count_offset:%d\n",
+			 chip->cycle_count, cycle_count, chip->cycle_count_offset);
+	}
 
 	chip->eeprom_cycle = max1720x_save_battery_cycle(chip, reg_cycle);
 
-	chip->cycle_count = cycle_count + chip->cycle_count_offset;
+	chip->cycle_count = cycle_count;
 
 	if (chip->model_ok && reg_cycle >= chip->model_next_update) {
 		err = max1720x_set_next_update(chip);
 		if (err < 0)
-			dev_err(chip->dev, "%s cannot set next update (%d)\n",
-				 __func__, err);
+			dev_err(chip->dev, "%s cannot set next update (%d)\n", __func__, err);
 	}
 
 	return chip->cycle_count;
@@ -3008,6 +3024,7 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 
 		mutex_lock(&chip->model_lock);
 		chip->por = true;
+		chip->cycle_reg_ok = false;
 		if (no_battery) {
 			fg_status_clr &= ~MAX1720X_STATUS_POR;
 		} else {
@@ -4582,15 +4599,20 @@ static void max1720x_model_work(struct work_struct *work)
 		if (rc == 0) {
 			rc = max1720x_clear_por(chip);
 
-			dev_info(chip->dev, "Model OK, Clear Power-On Reset (%d)\n",
-				 rc);
-
+			dev_info(chip->dev, "Model OK, Clear Power-On Reset (%d)\n", rc);
 			/* TODO: keep trying to clear POR if the above fail */
-			if (max_m5_recal_state(chip->model_data) == RE_CAL_STATE_IDLE)
-				max1720x_restore_battery_cycle(chip);
+
+			if (max_m5_recal_state(chip->model_data) == RE_CAL_STATE_IDLE) {
+				rc = max1720x_restore_battery_cycle(chip);
+				if (rc < 0)
+					dev_err(chip->dev, "%s cannot restore cycle count (%d)\n",
+						__func__, rc);
+			} else { /* if recal is ongoing, no need to restore cycle */
+				chip->cycle_reg_ok = true;
+			}
 
 			rc = REGMAP_READ(&chip->regmap, MAX1720X_CYCLES, &reg_cycle);
-			if (rc == 0 && reg_cycle >= 0) {
+			if (rc == 0) {
 				chip->model_reload = MAX_M5_LOAD_MODEL_IDLE;
 				chip->model_ok = true;
 				new_model = true;
@@ -5195,11 +5217,12 @@ static int max1720x_init_chip(struct max1720x_chip *chip)
 				   MAX1720X_STATUS_BI, 0x0);
 	}
 
-	max1720x_restore_battery_cycle(chip);
+	ret = max1720x_restore_battery_cycle(chip);
+	if (ret < 0)
+		dev_err(chip->dev, "%s cannot restore cycle count (%d)\n", __func__, ret);
 
 	/* max_m5 triggers loading of the model in the irq handler on POR */
 	if (!chip->por && chip->gauge_type == MAX_M5_GAUGE_TYPE) {
-		max1720x_update_cycle_count(chip);
 		ret = max1720x_init_max_m5(chip);
 		if (ret < 0)
 			return ret;
