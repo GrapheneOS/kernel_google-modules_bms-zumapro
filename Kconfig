@@ -50,6 +50,12 @@ config GOOGLE_DOCK
           Say Y here to choose the Google Dock.
           The driver handles dock driver and called by google charger.
 
+config GOOGLE_CCD
+        tristate "Google Charger Combine Driver"
+        help
+          Say Y here to choose the Charger Combine Driver.
+          The driver handles multiple chargers and called by google charger.
+
 config USB_OVERHEAT_MITIGATION
 	tristate "Google USB Overheat Mitigation"
 	help
@@ -234,3 +240,11 @@ config FWUPDATE_MAX77779
 	select FW_LOADER
 	help
 	  Handle firmware update for Sequoia
+
+config CHARGER_RT9471
+	tristate "Richtek RT9470/RT9470D/RT9471/RT9471D battery charger driver"
+	depends on I2C
+	help
+	  Say Y to enable support for Richtek RT9470, RT9470D,
+	  RT9471 and RT9471D battery chargers.
+	  RT9470D and RT9471D support BC1.2, but not RT9470 and RT9471

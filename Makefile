@@ -9,6 +9,7 @@ GBMS_MODULES =	GOOGLE_BMS \
 		GOOGLE_BEE \
 		GOOGLE_DUAL_BATT_GAUGE \
 		GOOGLE_DOCK \
+		GOOGLE_CCD \
 		USB_OVERHEAT_MITIGATION \
 		PMIC_MAX77729 \
 		UIC_MAX77729 \
@@ -38,7 +39,8 @@ GBMS_MODULES =	GOOGLE_BMS \
 		FG_MAX77779_I2C \
 		VIMON_MAX77779 \
 		VIMON_MAX77779_I2C \
-		FWUPDATE_MAX77779
+		FWUPDATE_MAX77779 \
+		CHARGER_RT9471
 
 obj-$(CONFIG_GOOGLE_BMS)	+= google-bms.o
 google-bms-objs += google_bms.o
@@ -72,6 +74,9 @@ google-cpm-objs += google_dc_pps.o
 
 # google_dock
 obj-$(CONFIG_GOOGLE_DOCK)	+= google_dock.o
+
+# google_ccd
+obj-$(CONFIG_GOOGLE_CCD)	+= google_ccd.o
 
 # max7729f drivers for the single SSID
 obj-$(CONFIG_PMIC_MAX77729)	+= max77729-pmic.o
@@ -176,6 +181,9 @@ ln8411-objs += google_dc_pps.o
 obj-$(CONFIG_FWUPDATE_MAX77779) += max77779-fwupdate.o
 max77779-fwupdate-objs += max77779_fwupdate.o
 
+# RT9471 Charger
+obj-$(CONFIG_CHARGER_RT9471) += rt9471_charger.o
+
 # prevent warnings
 WENUMS=-Wno-enum-conversion -Wno-switch
 
@@ -195,6 +203,7 @@ CFLAGS_google_bms.o += -Wno-enum-conversion
 CFLAGS_google_cpm.o += $(WENUMS)
 CFLAGS_google_dual_batt_gauge.o += $(WENUMS)
 CFLAGS_google_dock.o += $(WENUMS)
+CFLAGS_google_ccd.o += $(WENUMS)
 CFLAGS_p9221_charger.o += $(WENUMS)
 CFLAGS_max77779_sp.o += -Wno-unused-function $(WENUMS)
 CFLAGS_ln8411_driver.o += $(WENUMS)

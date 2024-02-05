@@ -15,55 +15,33 @@
 #include "max77779.h"
 #include "max77779_vimon.h"
 
-static int max77779_vimon_reg_read(struct device *dev,
-		unsigned int reg, unsigned int *val)
+static inline int max77779_vimon_reg_read(struct max77779_vimon_data *data, unsigned int reg,
+					  unsigned int *val)
 {
-	int err;
-	struct max77779_vimon_data *data = dev_get_drvdata(dev);
-
-	if (!data) {
-		dev_err(dev, "error to max77779_vimon_reg_read data is null\n");
-		return -EINVAL;
-	}
-
-	err = regmap_read(data->regmap, reg, val);
-	if (err)
-		dev_err(dev, "error reading %#02x err = %d\n", reg, err);
-
-	return err;
+	return regmap_read(data->regmap, reg, val);
 }
 
-static int max77779_vimon_reg_write(struct device *dev,
-		unsigned int reg, unsigned int val)
+static inline int max77779_vimon_reg_write(struct max77779_vimon_data *data, unsigned int reg,
+					   unsigned int val)
 {
-	struct max77779_vimon_data *data = dev_get_drvdata(dev);
-	int err;
-
-	err = regmap_write(data->regmap, reg, val);
-	if (err)
-		dev_err(dev, "error writing %#02x err = %d\n", reg, err);
-	return err;
+	return regmap_write(data->regmap, reg, val);
 }
 
-static int max77779_vimon_reg_update(struct device *dev, unsigned int reg,
-		unsigned int mask, unsigned int val)
+static inline int max77779_vimon_reg_update(struct max77779_vimon_data *data, unsigned int reg,
+					    unsigned int mask, unsigned int val)
 {
-	struct max77779_vimon_data *data = dev_get_drvdata(dev);
-	int err;
-
-	err = regmap_update_bits(data->regmap, reg, mask, val);
-	if (err)
-		dev_err(dev, "error updating %#02x err = %d\n",
-				reg, err);
-	return err;
+	return regmap_update_bits(data->regmap, reg, mask, val);
 }
 
 int max77779_external_vimon_reg_read(struct device *dev, uint16_t reg, void *val, int len)
 {
-	struct max77779_vimon_data *data = dev_get_drvdata(dev);
+	struct max77779_vimon_data *data;
+	if (!dev)
+		return -ENODEV;
 
+	data = dev_get_drvdata(dev);
 	if (!data || !data->regmap)
-		return -EAGAIN;
+		return -ENODEV;
 
 	return regmap_raw_read(data->regmap, reg, val, len);
 }
@@ -71,10 +49,13 @@ EXPORT_SYMBOL_GPL(max77779_external_vimon_reg_read);
 
 int max77779_external_vimon_reg_write(struct device *dev, uint16_t reg, const void *val, int len)
 {
-	struct max77779_vimon_data *data = dev_get_drvdata(dev);
+	struct max77779_vimon_data *data;
+	if (!dev)
+		return -ENODEV;
 
+	data = dev_get_drvdata(dev);
 	if (!data || !data->regmap)
-		return -EAGAIN;
+		return -ENODEV;
 
 	return regmap_raw_write(data->regmap, reg, val, len);
 }
@@ -87,13 +68,14 @@ static int max77779_vimon_start(struct device *dev)
 
 	mutex_lock(&data->vimon_lock);
 
-	ret = max77779_vimon_reg_update(dev, MAX77779_BVIM_bvim_cfg,
+	ret = max77779_vimon_reg_update(data, MAX77779_BVIM_bvim_cfg,
 					MAX77779_BVIM_bvim_cfg_cnt_run_MASK,
 					MAX77779_BVIM_bvim_cfg_cnt_run_MASK);
 	if (ret)
 		goto vimon_start_exit;
-	ret = max77779_vimon_reg_write(dev, MAX77779_BVIM_CTRL,
-					MAX77779_BVIM_CTRL_BVIMON_TRIG_MASK);
+
+	ret = max77779_vimon_reg_write(data, MAX77779_BVIM_CTRL,
+				       MAX77779_BVIM_CTRL_BVIMON_TRIG_MASK);
 	if (ret == 0)
 		data->state = MAX77779_VIMON_RUNNING;
 
@@ -103,91 +85,19 @@ vimon_start_exit:
 	return ret;
 }
 
-static int max77779_vimon_stop(struct device *dev)
+static int max77779_vimon_stop(struct max77779_vimon_data *data)
 {
-	return max77779_vimon_reg_write(dev, MAX77779_BVIM_CTRL, 0);
+	return max77779_vimon_reg_write(data, MAX77779_BVIM_CTRL, 0);
 }
 
-static int max77779_vimon_set_config(struct device *dev, uint16_t mask)
+static int max77779_vimon_set_config(struct max77779_vimon_data *data, uint16_t mask)
 {
-	return max77779_vimon_reg_write(dev, MAX77779_BVIM_bvim_cfg, mask);
+	return max77779_vimon_reg_write(data, MAX77779_BVIM_bvim_cfg, mask);
 }
 
-static int max77779_vimon_clear_config(struct device *dev, uint16_t mask)
+static int max77779_vimon_clear_config(struct max77779_vimon_data *data, uint16_t mask)
 {
-	return max77779_vimon_reg_write(dev, MAX77779_BVIM_bvim_cfg, 0);
-}
-
-/* TODO: b/299357412 applying math operation */
-static int max77779_vimon_set_math_operation(struct device *dev, bool enable)
-{
-	return -ENOSYS;
-}
-
-/* TODO: b/299357412 hold lock on &data->vimon_lock */
-static int max77779_vimon_rd(uint8_t *buff, size_t addr, size_t count,
-			struct regmap *regmap)
-{
-	return -ENOSYS;
-}
-
-static int max7779_vimon_handle_data(struct max77779_vimon_data *data)
-{
-	unsigned bvim_rfap, rsc, bvim_osc, smpl_start_add;
-	int ret;
-
-	/* TODO: b/299357412 reduce the scope of critical section */
-
-	mutex_lock(&data->vimon_lock);
-
-	/* read Ready First Pointer */
-	ret = max77779_vimon_reg_read(data->dev, MAX77779_BVIM_bvim_rfap, &bvim_rfap);
-	if (ret) {
-		dev_err(data->dev, "Failed to read BVIM rfap (%d).\n", ret);
-		goto vimon_handle_data_exit;
-	}
-	/* read Ready Sample Count */
-	ret = max77779_vimon_reg_read(data->dev, MAX77779_BVIM_bvim_rs, &rsc);
-	if (ret) {
-		dev_err(data->dev, "Failed to read BVIM rsc (%d).\n", ret);
-		goto vimon_handle_data_exit;
-	}
-	rsc = _max77779_bvim_bvim_rs_rsc_get(rsc);
-
-	/* Read data */
-
-	/* TODO: b/299161645 Handle wrapped case*/
-	ret = max77779_vimon_rd(data->buf, bvim_rfap, rsc, data->regmap);
-	if (ret) {
-		dev_err(data->dev, "Failed to read BVIM rsc (%d).\n", ret);
-		goto vimon_handle_data_exit;
-	}
-
-	/* Read Ongoing Sample Count */
-	ret = max77779_vimon_reg_read(data->dev, MAX77779_BVIM_bvim_sts, &bvim_osc);
-	if (ret) {
-		dev_err(data->dev, "Failed to read BVIM sts (%d).\n", ret);
-		goto vimon_handle_data_exit;
-	}
-	bvim_osc = _max77779_bvim_bvim_sts_bvim_osc_get(bvim_osc);
-
-	/* TODO: b/299161568 check for overflow */
-
-	/* Read Sample Start Address Pointer */
-	ret = max77779_vimon_reg_read(data->dev, MAX77779_BVIM_smpl_math, &smpl_start_add);
-	if (ret) {
-		dev_err(data->dev, "Failed to read BVIM smpl_math (%d).\n", ret);
-		goto vimon_handle_data_exit;
-	}
-	smpl_start_add = _max77779_bvim_smpl_math_smpl_start_add_get(smpl_start_add);
-
-	/* TODO: b/299161568 check for overflow */
-
-
-vimon_handle_data_exit:
-	mutex_unlock(&data->vimon_lock);
-
-	return ret;
+	return max77779_vimon_reg_write(data, MAX77779_BVIM_bvim_cfg, 0);
 }
 
 /*
@@ -199,8 +109,8 @@ vimon_handle_data_exit:
  *   page2: [0x100:0x17F]
  *   page3: [0x180:0x1EF]
  */
-static ssize_t max77779_vimon_access_buffer(struct max77779_vimon_data *data,
-				size_t offset, size_t len, uint8_t *buffer, bool toread)
+static ssize_t max77779_vimon_access_buffer(struct max77779_vimon_data *data, size_t offset,
+					    size_t len, uint8_t *buffer, bool toread)
 {
 	unsigned int target_addr;
 	int ret = -1;
@@ -226,7 +136,6 @@ static ssize_t max77779_vimon_access_buffer(struct max77779_vimon_data *data,
 		sz = MAX77779_VIMON_BUFFER_SIZE - (offset & 0xFF);
 		if (sz > len) sz = len;
 		target_addr = MAX77779_VIMON_OFFSET_BASE + (offset & 0xFF);
-
 
 		ret = regmap_write(data->regmap, MAX77779_SP_PAGE_CTRL, page);
 		if (ret < 0)
@@ -254,17 +163,13 @@ static ssize_t max77779_vimon_access_buffer(struct max77779_vimon_data *data,
 	return offset - start;
 }
 
-static ssize_t bvim_cfg_show(struct device *dev,
-				struct device_attribute *attr,
-				char *buf)
+static ssize_t bvim_cfg_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	int ret = -1;
 	unsigned int val=-1;
 	struct max77779_vimon_data *data = dev_get_drvdata(dev);
 
-	ret = max77779_vimon_reg_read(data->dev,
-					MAX77779_BVIM_bvim_cfg,
-					&val);
+	ret = max77779_vimon_reg_read(data, MAX77779_BVIM_bvim_cfg, &val);
 
 	if (ret <0)
 		return ret;
@@ -272,9 +177,8 @@ static ssize_t bvim_cfg_show(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%d\n", val);
 }
 
-static ssize_t bvim_cfg_store(struct device *dev,
-				struct device_attribute *attr,
-				const char* buf, size_t count)
+static ssize_t bvim_cfg_store(struct device *dev, struct device_attribute *attr, const char* buf,
+			      size_t count)
 {
 	int ret = -1;
 	unsigned int val = -1;
@@ -284,9 +188,7 @@ static ssize_t bvim_cfg_store(struct device *dev,
 	if (ret <0)
 		return ret;
 
-        ret = max77779_vimon_reg_write(data->dev,
-                                        MAX77779_BVIM_bvim_cfg,
-                                        val);
+        ret = max77779_vimon_reg_write(data, MAX77779_BVIM_bvim_cfg, val);
         return (ret < 0) ? ret : count;
 }
 
@@ -314,8 +216,7 @@ static int max77779_vimon_debug_start(void *d, u64 *val)
 	return 0;
 }
 
-DEFINE_SIMPLE_ATTRIBUTE(debug_start_fops, max77779_vimon_debug_start,
-			NULL, "%02llx\n");
+DEFINE_SIMPLE_ATTRIBUTE(debug_start_fops, max77779_vimon_debug_start, NULL, "%02llx\n");
 
 static int max77779_vimon_debug_reg_read(void *d, u64 *val)
 {
@@ -338,8 +239,8 @@ static int max77779_vimon_debug_reg_write(void *d, u64 val)
 DEFINE_SIMPLE_ATTRIBUTE(debug_reg_rw_fops, max77779_vimon_debug_reg_read,
 			max77779_vimon_debug_reg_write, "%04llx\n");
 
-static ssize_t max77779_vimon_show_reg_all(struct file *filp, char __user *buf,
-						size_t count, loff_t *ppos)
+static ssize_t max77779_vimon_show_reg_all(struct file *filp, char __user *buf, size_t count,
+					   loff_t *ppos)
 {
 	struct max77779_vimon_data *data = filp->private_data;
 	u32 reg_address;
@@ -553,7 +454,7 @@ int max77779_vimon_init(struct max77779_vimon_data *data)
 		   MAX77779_BVIM_bvim_cfg_batoiolo2_stop_MASK |
 		   MAX77779_BVIM_bvim_cfg_batoiolo1_stop_MASK;
 
-	ret = max77779_vimon_set_config(dev, cfg_mask);
+	ret = max77779_vimon_set_config(data, cfg_mask);
 	if (ret) {
 		dev_err(dev, "Failed to configure vimon\n");
 		return ret;

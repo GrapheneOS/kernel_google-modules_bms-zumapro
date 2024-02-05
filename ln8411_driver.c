@@ -4307,12 +4307,16 @@ static int ln8411_hw_init(struct ln8411_charger *ln8411)
 	if (ret)
 		goto error_done;
 
+
 	if (ln8411->chip_info.chip_rev == 1) {
-		dev_dbg(ln8411->dev, "%s: pmid2out ovp to 13%%\n", __func__);
+		dev_dbg(ln8411->dev, "%s: pmid2out ovp to 13 for A1%%\n", __func__);
 		ret = regmap_update_bits(ln8411->regmap, LN8411_PMID2OUT_OVP, 0x9f, 0x4);
-		if (ret)
-			goto error_done;
+	} else {
+		dev_dbg(ln8411->dev, "%s: pmid2out ovp to 16%% for B0 and above\n", __func__);
+		ret = regmap_update_bits(ln8411->regmap, LN8411_PMID2OUT_OVP, 0x9f, 0x5);
 	}
+	if (ret)
+		goto error_done;
 
 	dev_dbg(ln8411->dev, "%s: clear int flags\n", __func__);
 	ret = regmap_set_bits(ln8411->regmap, LN8411_INT_MASK_2, LN8411_PAUSE_INT_UPDATE);

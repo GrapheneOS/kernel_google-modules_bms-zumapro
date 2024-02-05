@@ -9472,6 +9472,41 @@ static int point_full_ui_soc_cb(struct gvotable_election *el,
 	return 0;
 }
 
+static int batt_update_hist_work(struct batt_drv *batt_drv)
+{
+	int ret = 0;
+
+	if (batt_drv->blf_state == BATT_LFCOLLECT_ENABLED) {
+
+		ret = google_battery_init_hist_work(batt_drv);
+
+		if (batt_drv->blf_state == BATT_LFCOLLECT_COLLECT) {
+			ret = batt_history_data_work(batt_drv);
+			if (ret < 0) {
+				pr_err("BHI: cannot prime history (%d)\n", ret);
+			} else {
+				mutex_lock(&batt_drv->chg_lock);
+				ret = batt_bhi_stats_update_all(batt_drv);
+				if (ret < 0)
+					pr_err("BHI: cannot init stats (%d)\n", ret);
+				mutex_unlock(&batt_drv->chg_lock);
+			}
+		}
+	}
+
+	if (batt_drv->blf_state == BATT_LFCOLLECT_COLLECT) {
+		ret = batt_history_data_work(batt_drv);
+		if (ret == -ENOENT) {
+			batt_drv->blf_state = BATT_LFCOLLECT_NOT_AVAILABLE;
+			pr_info("MSC_HIST Battery data collection disabled\n");
+		}  else if (ret < 0) {
+			pr_debug("MSC_HIST cannot collect battery data %d\n", ret);
+		}
+	}
+
+	return ret;
+}
+
 /*
  * poll the battery, run SOC%, dead battery, critical.
  * scheduled from psy_changed and from timer
@@ -9704,33 +9739,10 @@ reschedule:
 	if (notify_psy_changed)
 		power_supply_changed(batt_drv->psy);
 
-	if (batt_drv->blf_state == BATT_LFCOLLECT_ENABLED) {
-
-		ret = google_battery_init_hist_work(batt_drv);
+	if (batt_drv->blf_state != BATT_LFCOLLECT_NOT_AVAILABLE) {
+		ret = batt_update_hist_work(batt_drv);
 		if (ret == -EAGAIN)
 			update_interval = BATT_WORK_DEBOUNCE_RETRY_MS;
-
-		if (batt_drv->blf_state == BATT_LFCOLLECT_COLLECT) {
-			ret = batt_history_data_work(batt_drv);
-			if (ret < 0)
-				pr_err("BHI: cannot prime history (%d)\n", ret);
-
-			mutex_lock(&batt_drv->chg_lock);
-			ret = batt_bhi_stats_update_all(batt_drv);
-			if (ret < 0)
-				pr_err("BHI: cannot init stats (%d)\n", ret);
-			mutex_unlock(&batt_drv->chg_lock);
-		}
-	}
-
-	if (batt_drv->blf_state == BATT_LFCOLLECT_COLLECT) {
-		ret = batt_history_data_work(batt_drv);
-		if (ret == -ENOENT) {
-			batt_drv->blf_state = BATT_LFCOLLECT_NOT_AVAILABLE;
-			pr_info("MSC_HIST Battery data collection disabled\n");
-		}  else if (ret < 0) {
-			pr_debug("MSC_HIST cannot collect battery data %d\n", ret);
-		}
 	}
 
 	if (update_interval) {
@@ -10943,10 +10955,6 @@ static void google_battery_init_work(struct work_struct *work)
 	if (ret == -EBUSY)
 		ret = 0;
 
-	/* use delta cycle count != 0 to enable collecting history */
-	if (batt_drv->hist_delta_cycle_cnt)
-		batt_drv->blf_state = BATT_LFCOLLECT_ENABLED;
-
 	/* google_battery expose history via a standard device */
 	batt_drv->history = gbms_storage_create_device("battery_history",
 						       GBMS_TAG_HIST);
@@ -10962,6 +10970,12 @@ static void google_battery_init_work(struct work_struct *work)
 		ret = batt_bhi_data_load(batt_drv);
 		if (ret < 0)
 			dev_err(batt_drv->device, "BHI: invalid data, starting fresh (%d)\n", ret);
+	}
+
+	/* use delta cycle count != 0 to enable collecting history */
+	if (batt_drv->hist_delta_cycle_cnt) {
+		batt_drv->blf_state = BATT_LFCOLLECT_ENABLED;
+		batt_update_hist_work(batt_drv);
 	}
 
 	/* power metrics */

@@ -57,6 +57,44 @@
 
 #define WCIN_INLIM_VOTER				"WCIN_INLIM"
 
+/*
+ * int[0]
+ *  CHG_INT_AICL_I	(0x1 << 7)
+ *  CHG_INT_CHGIN_I	(0x1 << 6)
+ *  CHG_INT_WCIN_I	(0x1 << 5)
+ *  CHG_INT_CHG_I	(0x1 << 4)
+ *  CHG_INT_BAT_I	(0x1 << 3)
+ *  CHG_INT_INLIM_I	(0x1 << 2)
+ *  CHG_INT_THM2_I	(0x1 << 1)
+ *  CHG_INT_BYP_I	(0x1 << 0)
+ *
+ * int[1]
+ *  CHG_INT2_INSEL_I		(0x1 << 7)
+ *  CHG_INT2_COP_LIMIT_WD_I	(0x1 << 6)
+ *  CHG_INT2_COP_ALERT_I	(0x1 << 5)
+ *  CHG_INT2_COP_WARN_I		(0x1 << 4)
+ *  CHG_INT2_CHG_STA_CC_I	(0x1 << 3)
+ *  CHG_INT2_CHG_STA_CV_I	(0x1 << 2)
+ *  CHG_INT2_CHG_STA_TO_I	(0x1 << 1)
+ *  CHG_INT2_CHG_STA_DONE_I	(0x1 << 0)
+ *
+ *
+ * these 3 cause unnecessary chatter at EOC due to the interaction between
+ * the CV and the IIN loop:
+ *   MAX77779_CHG_INT2_MASK_CHG_STA_CC_M |
+ *   MAX77779_CHG_INT2_MASK_CHG_STA_CV_M |
+ *   MAX77779_CHG_INT_MASK_CHG_M
+ */
+static u8 max77779_int_mask[MAX77779_CHG_INT_COUNT] = {
+	~(MAX77779_CHG_INT_CHGIN_I_MASK |
+	  MAX77779_CHG_INT_WCIN_I_MASK |
+	  MAX77779_CHG_INT_BAT_I_MASK |
+	  MAX77779_CHG_INT_THM2_I_MASK),
+	(u8)~(MAX77779_CHG_INT2_INSEL_I_MASK |
+	  MAX77779_CHG_INT2_CHG_STA_TO_I_MASK |
+	  MAX77779_CHG_INT2_CHG_STA_DONE_I_MASK)
+};
+
 static int max77779_is_limited(struct max77779_chgr_data *data);
 static int max77779_wcin_current_now(struct max77779_chgr_data *data, int *iic);
 
@@ -1637,6 +1675,21 @@ static int max77779_wlc_spoof_callback(struct gvotable_election *el,
 	return 0;
 }
 
+static void max77779_inlim_irq_en(struct max77779_chgr_data *data, bool en)
+{
+	int ret;
+
+	if (en)
+		max77779_int_mask[0] &= ~MAX77779_CHG_INT_INLIM_I_MASK;
+	else
+		max77779_int_mask[0] |= MAX77779_CHG_INT_INLIM_I_MASK;
+	ret = max77779_writen(data->regmap, MAX77779_CHG_INT_MASK,
+					max77779_int_mask,
+					sizeof(max77779_int_mask));
+	if (ret < 0)
+		pr_err("%s: cannot set irq_mask (%d)\n", __func__, ret);
+}
+
 static void max77779_wcin_inlim_work(struct work_struct *work)
 {
 	struct max77779_chgr_data *data = container_of(work, struct max77779_chgr_data,
@@ -1673,6 +1726,8 @@ static void max77779_wcin_inlim_work(struct work_struct *work)
 	data->wcin_soft_icl = wcin_soft_icl;
 
 done:
+	max77779_inlim_irq_en(data, true);
+
 	mutex_unlock(&data->wcin_inlim_lock);
 	schedule_delayed_work(&data->wcin_inlim_work, msecs_to_jiffies(data->wcin_inlim_t));
 }
@@ -1683,6 +1738,7 @@ static void max77779_wcin_inlim_work_en(struct max77779_chgr_data *data, bool en
 	if (en) {
 		schedule_delayed_work(&data->wcin_inlim_work, 0);
 	} else {
+		max77779_inlim_irq_en(data, false);
 		cancel_delayed_work(&data->wcin_inlim_work);
 		data->wcin_soft_icl = 0;
 		if (data->dc_icl_votable)
@@ -2904,45 +2960,6 @@ static bool max77779_chg_is_protected(uint8_t reg)
 	}
 }
 
-/*
- * int[0]
- *  CHG_INT_AICL_I	(0x1 << 7)
- *  CHG_INT_CHGIN_I	(0x1 << 6)
- *  CHG_INT_WCIN_I	(0x1 << 5)
- *  CHG_INT_CHG_I	(0x1 << 4)
- *  CHG_INT_BAT_I	(0x1 << 3)
- *  CHG_INT_INLIM_I	(0x1 << 2)
- *  CHG_INT_THM2_I	(0x1 << 1)
- *  CHG_INT_BYP_I	(0x1 << 0)
- *
- * int[1]
- *  CHG_INT2_INSEL_I		(0x1 << 7)
- *  CHG_INT2_COP_LIMIT_WD_I	(0x1 << 6)
- *  CHG_INT2_COP_ALERT_I	(0x1 << 5)
- *  CHG_INT2_COP_WARN_I		(0x1 << 4)
- *  CHG_INT2_CHG_STA_CC_I	(0x1 << 3)
- *  CHG_INT2_CHG_STA_CV_I	(0x1 << 2)
- *  CHG_INT2_CHG_STA_TO_I	(0x1 << 1)
- *  CHG_INT2_CHG_STA_DONE_I	(0x1 << 0)
- *
- *
- * these 3 cause unnecessary chatter at EOC due to the interaction between
- * the CV and the IIN loop:
- *   MAX77779_CHG_INT2_MASK_CHG_STA_CC_M |
- *   MAX77779_CHG_INT2_MASK_CHG_STA_CV_M |
- *   MAX77779_CHG_INT_MASK_CHG_M
- */
-static u8 max77779_int_mask[MAX77779_CHG_INT_COUNT] = {
-	~(MAX77779_CHG_INT_CHGIN_I_MASK |
-	  MAX77779_CHG_INT_WCIN_I_MASK |
-	  MAX77779_CHG_INT_BAT_I_MASK |
-	  MAX77779_CHG_INT_INLIM_I_MASK |
-	  MAX77779_CHG_INT_THM2_I_MASK),
-	(u8)~(MAX77779_CHG_INT2_INSEL_I_MASK |
-	  MAX77779_CHG_INT2_CHG_STA_TO_I_MASK |
-	  MAX77779_CHG_INT2_CHG_STA_DONE_I_MASK)
-};
-
 static irqreturn_t max77779_chgr_irq(int irq, void *d)
 {
 	struct max77779_chgr_data *data = d;
@@ -3023,6 +3040,8 @@ static irqreturn_t max77779_chgr_irq(int irq, void *d)
 
 		pr_debug("%s: INLIM limited: %d\n", __func__, inlim);
 		data->wcin_inlim_flag = inlim;
+
+		max77779_inlim_irq_en(data, false);
 	}
 
 	if (chg_int[1] & MAX77779_CHG_INT2_CHG_STA_CC_I_MASK)
@@ -3440,10 +3459,6 @@ int max77779_charger_init(struct max77779_chgr_data *data)
 		return -EINVAL;
 	}
 
-	/* CHARGER_MODE needs this (initialized to -EPROBE_DEFER) */
-	gs201_setup_usecases(&data->uc_data, NULL);
-	INIT_DELAYED_WORK(&data->mode_rerun_work, max77779_mode_rerun_work);
-
 	ret = dbg_init_fs(data);
 	if (ret < 0)
 		dev_warn(dev, "Failed to initialize debug fs\n");
@@ -3534,6 +3549,10 @@ int max77779_charger_init(struct max77779_chgr_data *data)
 	ret = devm_gpiochip_add_data(dev, &data->gpio, data);
 	dev_dbg(dev, "%d GPIOs registered ret: %d\n", data->gpio.ngpio, ret);
 #endif
+
+	/* CHARGER_MODE needs this (initialized to -EPROBE_DEFER) */
+	gs201_setup_usecases(&data->uc_data, NULL);
+	INIT_DELAYED_WORK(&data->mode_rerun_work, max77779_mode_rerun_work);
 
 	/* other drivers (ex tcpci) need this. */
 	ret = max77779_setup_votables(data);

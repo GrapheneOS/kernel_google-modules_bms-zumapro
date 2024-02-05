@@ -26,8 +26,8 @@
 #define FW_UPDATE_RETRY_CPU_RESET             100
 #define FW_UPDATE_RETRY_FW_UPDATE             1000
 #define FW_UPDATE_RETRY_RISCV_REBOOT          20
-#define FW_UPDATE_WAIT_INTERVAL_MS            250
-#define FW_UPDATE_WAIT_LOAD_BIN_MS            100
+#define FW_UPDATE_WAIT_INTERVAL_MS            50
+#define FW_UPDATE_WAIT_LOAD_BIN_MS            50
 #define FW_UPDATE_TIMER_CHECK_INTERVAL_MS     1000
 #define FW_UPDATE_CONDITION_CHECK_INTERVAL_MS (60 * 1000)
 
@@ -45,6 +45,15 @@
 #define MAX77779_FG_SECUPDATE_STATUS_REG 0x6F
 #define MAX77779_FG_BOOT_CHECK_SUCCESS 0x82
 #define MAX77779_FG_SECUPDATE_STATUS_SUCCESS 0x03
+
+/* PMIC.0x62 can be set 0xFF if previous firmware update fails */
+#define MAX77779_FW_INVALID_FW_VER 0xFF
+
+#define MAX77779_REV_PASS_1_5 0x1
+#define MAX77779_REV_PASS_2_0 0x2
+
+#define MAX77779_REV_PASS_1_5_FIRMWARE 2
+#define MAX77779_REV_PASS_2_0_FIRMWARE 3
 
 /* vimon's memory mapped to 0x80 */
 #define MAX77779_VIMON_MEM_BASE_ADDR 0x80
@@ -80,6 +89,7 @@ enum max77779_fwupdate_fg_lock {
 enum max77779_fg_operation_status {
 	FGST_NOT_CACHED = 0x01,
 	FGST_FWUPDATE = 0x02,
+	FGST_BASEFW = 0x03,
 	FGST_ERR_READTAG = 0x10,
 	FGST_NORMAL = 0xff,
 };
@@ -256,6 +266,10 @@ static int max77779_fwupdate_init(struct max77779_fwupdate *fwu)
 			return -EPROBE_DEFER;
 	}
 
+	val = gbms_storage_read(GBMS_TAG_FGST, &fwu->op_st, sizeof(fwu->op_st));
+	if (val ==  -EPROBE_DEFER )
+		return val;
+
 	if (of_property_read_u32(dev->of_node, "fwu,enabled", &val) == 0)
 		fwu->can_update = val;
 
@@ -363,7 +377,8 @@ static int check_boot_completed(struct max77779_fwupdate *fwu)
 		return ret;
 	}
 
-	if ((val & 0xff) != MAX77779_FG_BOOT_CHECK_SUCCESS) {
+	/* b/323382370 */
+	if ((val & MAX77779_FG_BOOT_CHECK_SUCCESS) != MAX77779_FG_BOOT_CHECK_SUCCESS) {
 		dev_err(fwu->dev, "Boot NOT completed successfully: %04x\n", val);
 		return -EIO;
 	}
@@ -481,7 +496,6 @@ static int max77779_copy_to_vimon_mem(struct max77779_fwupdate *fwu,
 				      const size_t data_len)
 {
 	int ret;
-	size_t idx;
 
 	ret = max77779_external_vimon_reg_write(fwu->vimon, MAX77779_BVIM_PAGE_CTRL,
 						(u8*)&page, 2);
@@ -499,22 +513,6 @@ static int max77779_copy_to_vimon_mem(struct max77779_fwupdate *fwu,
 		goto max77779_copy_to_vimon_mem_done;
 	}
 
-	/* check data whether it's actually written to vimon's memory */
-	ret = max77779_external_vimon_reg_read(fwu->vimon, MAX77779_VIMON_MEM_BASE_ADDR,
-					       fwu->scratch_buffer, data_len);
-	if (ret) {
-		dev_err(fwu->dev, "failed to read data from vimon's memory page %x (%d)\n",
-			page, ret);
-		goto max77779_copy_to_vimon_mem_done;
-	}
-
-	for (idx=0; idx<data_len; idx+=2) {
-		if (*(u16*)&data[idx] != *(u16*)&fwu->scratch_buffer[idx]) {
-			dev_err(fwu->dev, "data mismatch at page %x offset %zu\n", page, idx);
-			break;
-		}
-	}
-
 max77779_copy_to_vimon_mem_done:
 	return ret;
 }
@@ -526,20 +524,6 @@ static int max77779_load_fw_binary(struct max77779_fwupdate *fwu,
 	int ret;
 	size_t cp_len;
 	ssize_t remains = (ssize_t)data_len;
-
-	/* clear all vimon's memory */
-	for (page = 0; page < 4; page++) {
-		if (page == 3)
-			cp_len = MAX77779_VIMON_PG3_SIZE;
-		else
-			cp_len = MAX77779_VIMON_PG_SIZE;
-
-		ret = max77779_copy_to_vimon_mem(fwu, page, fwu->zero_filled_buffer, cp_len);
-		if (ret) {
-			dev_err(fwu->dev, "failed load binary in erase data\n");
-			goto max77779_load_fw_binary_done;
-		}
-	}
 
 	/* copy firmware binary to vimon's memory */
 	for (page = 0; (page < 4) && remains > 0; page++) {
@@ -670,6 +654,36 @@ static int max77779_can_update(struct max77779_fwupdate *fwu, struct max77779_ve
 	/* check version */
 	if (target->minor <= fwu->v_cur.minor && !fwu->force_update)
 		return -EINVAL;
+
+	return 0;
+}
+
+static inline int max77779_set_firmwarename(struct max77779_fwupdate *fwu)
+{
+	uint8_t val;
+	int ret, fw_ver;
+
+	fw_ver = fwu->v_cur.major;
+
+	/* b/322967969 version value can be 0xFF */
+	if (fw_ver == MAX77779_FW_INVALID_FW_VER) {
+		ret = max77779_external_pmic_reg_read(fwu->pmic, MAX77779_PMIC_REVISION, &val);
+		if (ret) {
+			dev_err(fwu->dev, "faild to read pmic reg %02x (%d)\n",
+				MAX77779_PMIC_REVISION, ret);
+			return ret;
+		}
+
+		if (val == MAX77779_REV_PASS_1_5)
+			fw_ver = MAX77779_REV_PASS_1_5_FIRMWARE;
+		else if (val == MAX77779_REV_PASS_2_0)
+			fw_ver = MAX77779_REV_PASS_2_0_FIRMWARE;
+		else
+			return -EINVAL;
+	}
+
+	scnprintf(fwu->fw_name, MAX77779_FW_UPDATE_STRING_MAX, "%s_%d.bin",
+		  MAX77779_FIRMWARE_BINARY_PREFIX, fw_ver);
 
 	return 0;
 }
@@ -862,13 +876,8 @@ static void max77779_fwl_cleanup(struct max77779_fwupdate *fwu)
 	ret = max77779_fg_enable_firmware_update(fwu->fg, false);
 	if (ret)
 		dev_err(fwu->dev, "failed to set max77779_fg_enable_firmware_update (%d)\n", ret);
-
-	if (fwu->op_st == FGST_NORMAL) {
-		ret = gbms_storage_write(GBMS_TAG_FGST, &fwu->op_st, sizeof(fwu->op_st));
-		if (ret != sizeof(fwu->op_st))
-			dev_err(fwu->dev, "failed to update eeprom:GBMS_TAG_FGST (%d)\n", ret);
-	}
 }
+
 static inline int update_running_state(struct max77779_fwupdate *fwu, bool running)
 {
 	bool ret = false;
@@ -886,7 +895,7 @@ static inline int perform_firmware_update(struct max77779_fwupdate *fwu, const c
 					  const size_t count)
 {
 	u32 written = 0;
-	int ret;
+	int ret, ret_st;
 
 	/* if previous update is not completed yet, stop at here */
 	if (!update_running_state(fwu, true))
@@ -908,9 +917,15 @@ perform_firmware_update_cleanup:
 	max77779_fwl_cleanup(fwu);
 
 	/* force reboot RISC-V for the case of update failure*/
-	if (ret)
+	if (ret) {
 		max77779_external_pmic_reg_write(fwu->pmic, MAX77779_PMIC_RISCV_COMMAND_HW,
 						 MAX77779_CMD_REBOOT_FG);
+		fwu->op_st = FGST_BASEFW;
+	}
+
+	ret_st = gbms_storage_write(GBMS_TAG_FGST, &fwu->op_st, sizeof(fwu->op_st));
+	if (ret_st != sizeof(fwu->op_st))
+		dev_err(fwu->dev, "failed to update eeprom:GBMS_TAG_FGST (%d)\n", ret_st);
 
 	__pm_relax(fwu->fwupdate_wake_lock);
 	update_running_state(fwu, false);
@@ -997,13 +1012,16 @@ static ssize_t trigger_update_firmware(struct device *dev,
 		return count;
 	}
 
+	if (max77779_set_firmwarename(fwu) < 0) {
+		dev_err(fwu->dev, "can't set proper firmware file\n");
+		return -EINVAL;
+	}
+
 	if (set_firmware_update_tag(fwu, target_ver) < 0) {
 		dev_err(fwu->dev, "can't update GBMS_TAG_FWHI: update will be aborted\n");
 		return -EACCES;
 	}
 
-	scnprintf(fwu->fw_name, MAX77779_FW_UPDATE_STRING_MAX, "%s_%d.bin",
-		  MAX77779_FIRMWARE_BINARY_PREFIX, (int)fwu->v_cur.major);
 	fwu->force_update = true;
 
 	dev_info(fwu->dev, "will schedule firmware update for [%s]\n", fwu->fw_name);
@@ -1200,16 +1218,18 @@ static int max77779_fwupdate_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, fwu);
 
 	ret = max77779_fwupdate_init(fwu);
-	if (ret)
+	if (ret) {
 		dev_err(fwu->dev, "error to set max77779_fwupdate\n");
+		return ret;
+	}
 
 	ret = max77779_get_firmware_version(fwu, &fwu->v_cur);
 	if (ret)
 		dev_err(fwu->dev, "failed to read version information\n");
 
-	if (fwu->v_cur.major)
-		scnprintf(fwu->fw_name, MAX77779_FW_UPDATE_STRING_MAX, "%s_%d.bin",
-			  MAX77779_FIRMWARE_BINARY_PREFIX, (int)fwu->v_cur.major);
+	ret = max77779_set_firmwarename(fwu);
+	if (ret)
+		dev_err(fwu->dev, "failed to set proper firmware file\n");
 
 	INIT_DELAYED_WORK(&fwu->update_work, firmware_update_work);
 
@@ -1251,6 +1271,13 @@ static int max77779_fwupdate_probe(struct platform_device *pdev)
 	debugfs_create_file("data", 0444, de, fwu, &debug_update_firmware_data_fops);
 
 	fwu->de = de;
+
+	/* the chip is running with base firmware: need to be updated */
+	if (fwu->op_st == FGST_BASEFW) {
+		fwu->force_update = true;
+		schedule_delayed_work(&fwu->update_work, msecs_to_jiffies(
+				      FW_UPDATE_CONDITION_CHECK_INTERVAL_MS));
+	}
 
 	return ret;
 }

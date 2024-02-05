@@ -31,7 +31,6 @@
 #define DD_VOTER				"DD_VOTER"
 #define AUTH_DC_ICL_VOTER			"AUTH_VOTER"
 #define CPOUT_EN_VOTER				"CPOUT_EN_VOTER"
-#define LL_BPP_CEP_VOTER			"LL_BPP_CEP_VOTER"
 #define P9221_RAMP_VOTER			"WLC_RAMP_VOTER"
 #define P9221_HPP_VOTER				"EPP_HPP_VOTER"
 #define P9221_ALIGN_VOTER			"WLC_ALIGN_VOTER"
@@ -50,7 +49,6 @@
 #define P9XXX_CDMODE_ENABLE_ICL_UA		200000
 #define P9XXX_PROPMODE_ENABLE_ICL_UA		125000
 #define P9221_AUTH_DC_ICL_UA_500		500000
-#define P9221_LL_BPP_CHG_TERM_UA		200000
 #define P9221_EPP_THRESHOLD_UV			7000000
 #define P9221_MAX_VOUT_SET_MV_DEFAULT		9000
 #define P9221_VOUT_SET_MIN_MV			3500
@@ -835,6 +833,7 @@ struct p9221_charger_data {
 	struct power_supply		*dc_psy;
 	struct power_supply		*batt_psy;
 	struct gvotable_election	*dc_icl_votable;
+	struct gvotable_election	*msc_last_votable;
 	struct gvotable_election	*dc_suspend_votable;
 	struct gvotable_election	*tx_icl_votable;
 	struct gvotable_election	*disable_dcin_en_votable;
