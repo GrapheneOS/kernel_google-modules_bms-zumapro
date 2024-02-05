@@ -1425,7 +1425,7 @@ bool gs101_setup_usecases(struct max77759_usecase_data *uc_data,
 		uc_data->cpout_en = of_get_named_gpio(node, "max77759,cpout-en", 0);
 	/*  wlc_rx thermal throttle -> spoof online */
 	if (uc_data->wlc_spoof_gpio == -EPROBE_DEFER)
-	    uc_data->wlc_spoof_gpio = of_get_named_gpio(node, "max77759,wlc-spoof-gpio", 0);
+	    uc_data->wlc_spoof_gpio = of_get_named_gpio(node, "max77759,wlc-spoof", 0);
 	/* to 5.2V in p9412 */
 	if (uc_data->cpout_ctl == -EPROBE_DEFER)
 		uc_data->cpout_ctl = of_get_named_gpio(node, "max77759,cpout-ctl", 0);
