@@ -1194,7 +1194,7 @@ static void p9221_wcin_inlim(struct p9221_charger_data *charger)
 	else
 		gpio_set_value_cansleep(charger->pdata->wcin_inlim_en_gpio, false);
 
-	dev_info(charger->dev, "wcin inlim check: online=%d, msc_last=%d, epp=%d\n",
+	dev_dbg(charger->dev, "wcin inlim check: online=%d, msc_last=%d, epp=%d\n",
 		 charger->online, msc_last, p9221_is_epp(charger));
 }
 
@@ -7130,6 +7130,16 @@ static int p9221_parse_dt(struct device *dev,
 		pdata->irq_det_int = gpio_to_irq(pdata->irq_det_gpio);
 		dev_info(dev, "det gpio:%d, det gpio_irq:%d\n",
 			 pdata->irq_det_gpio, pdata->irq_det_int);
+	}
+
+	ret = of_get_named_gpio(node, "google,wcin_inlim_en", 0);
+	pdata->wcin_inlim_en_gpio = ret;
+	if (ret == -EPROBE_DEFER)
+		return ret;
+	if (ret > 0) {
+		pdata->wcin_inlim_en_gpio = ret;
+		dev_info(dev, "WCIN_INLIM_EN gpio: %d\n", pdata->wcin_inlim_en_gpio);
+		gpio_direction_output(pdata->wcin_inlim_en_gpio, 0);
 	}
 
 	/* Optional VOUT max */

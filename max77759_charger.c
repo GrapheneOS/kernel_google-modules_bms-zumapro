@@ -57,6 +57,62 @@
 #define CHGR_CHG_CNFG_12_VREG_4P6V			0x1
 #define CHGR_CHG_CNFG_12_VREG_4P7V			0x2
 
+#define WCIN_INLIM_T					(5000)
+#define WCIN_INLIM_HEADROOM_MA				(200000)
+#define WCIN_INLIM_STEP_MA				(50000)
+#define MAX77759_GPIO_WCIN_INLIM_EN			0
+#define MAX77759_NUM_GPIOS				1
+
+#define WCIN_INLIM_VOTER				"WCIN_INLIM"
+
+/*
+ * int[0]
+ *  CHG_INT_AICL_I	(0x1 << 7)
+ *  CHG_INT_CHGIN_I	(0x1 << 6)
+ *  CHG_INT_WCIN_I	(0x1 << 5)
+ *  CHG_INT_CHG_I	(0x1 << 4)
+ *  CHG_INT_BAT_I	(0x1 << 3)
+ *  CHG_INT_INLIM_I	(0x1 << 2)
+ *  CHG_INT_THM2_I	(0x1 << 1)
+ *  CHG_INT_BYP_I	(0x1 << 0)
+ *
+ * int[1]
+ *  CHG_INT2_INSEL_I		(0x1 << 7)
+ *  CHG_INT2_SYS_UVLO1_I	(0x1 << 6)
+ *  CHG_INT2_SYS_UVLO2_I	(0x1 << 5)
+ *  CHG_INT2_BAT_OILO_I		(0x1 << 4)
+ *  CHG_INT2_CHG_STA_CC_I	(0x1 << 3)
+ *  CHG_INT2_CHG_STA_CV_I	(0x1 << 2)
+ *  CHG_INT2_CHG_STA_TO_I	(0x1 << 1)
+ *  CHG_INT2_CHG_STA_DONE_I	(0x1 << 0)
+ *
+ * these 3 cause unnecessary chatter at EOC due to the interaction between
+ * the CV and the IIN loop:
+ *   MAX77759_CHG_INT2_MASK_CHG_STA_CC_M |
+ *   MAX77759_CHG_INT2_MASK_CHG_STA_CV_M |
+ *   MAX77759_CHG_INT_MASK_CHG_M
+ *
+ * TODO: MAX77759_CHG_INT_MASK_AICL_M needs to be throttled
+ * if system keeps going in and out of AICL regulation.
+ * No evidenvce of this happening so far.
+ */
+static u8 max77759_int_mask[MAX77759_CHG_INT_COUNT] = {
+	(u8)~(MAX77759_CHG_INT_MASK_AICL_M |
+	  MAX77759_CHG_INT_MASK_CHGIN_M |
+	  MAX77759_CHG_INT_MASK_WCIN_M |
+	  MAX77759_CHG_INT_MASK_BAT_M |
+	  MAX77759_CHG_INT_INLIM_I_MASK |
+	  MAX77759_CHG_INT_MASK_THM2_M_MASK),
+	(u8)~(MAX77759_CHG_INT2_MASK_INSEL_M |
+	  MAX77759_CHG_INT2_MASK_SYS_UVLO1_M |
+	  MAX77759_CHG_INT2_MASK_SYS_UVLO2_M |
+	  MAX77759_CHG_INT2_MASK_CHG_STA_TO_M |
+	  MAX77759_CHG_INT2_MASK_CHG_STA_DONE_M),
+};
+
+static int max77759_is_limited(struct max77759_chgr_data *data);
+static int max77759_wcin_current_now(struct max77759_chgr_data *data, int *iic);
+
 static inline int max77759_reg_read(struct regmap *regmap, uint8_t reg,
 				    uint8_t *val)
 {
@@ -1541,18 +1597,18 @@ static int max77759_dcicl_callback(struct gvotable_election *el,
 				   void *value)
 {
 	struct max77759_chgr_data *data = gvotable_get_data(el);
-	int dc_icl = (long)value;
-	const bool suspend = dc_icl == 0;
+	const bool suspend = (long)value == 0;
 	int ret;
 
 	pr_debug("%s: DC_ICL reason=%s, value=%ld suspend=%d\n",
 		 __func__, reason ? reason : "", (long)value, suspend);
 
+	data->dc_icl = (long)value;
 	/* doesn't trigger a CHARGER_MODE */
-	ret = max77759_wcin_set_ilim_max_ua(data, dc_icl);
+	ret = max77759_wcin_set_ilim_max_ua(data, data->dc_icl);
 	if (ret < 0)
 		dev_err(data->dev, "cannot set dc_icl=%d (%d)\n",
-			dc_icl, ret);
+			data->dc_icl, ret);
 
 	/* will trigger a CHARGER_MODE callback */
 	if (suspend && strcmp(reason, REASON_MDIS) == 0)
@@ -1565,6 +1621,115 @@ static int max77759_dcicl_callback(struct gvotable_election *el,
 
 	return 0;
 }
+
+static void max77759_wcin_inlim_work(struct work_struct *work)
+{
+	struct max77759_chgr_data *data = container_of(work, struct max77759_chgr_data,
+						       wcin_inlim_work.work);
+	int iwcin, wcin_soft_icl, dc_icl_prev, ret;
+	char reason[GVOTABLE_MAX_REASON_LEN];
+
+	mutex_lock(&data->wcin_inlim_lock);
+	if (max77759_wcin_current_now(data, &iwcin))
+		goto done;
+
+	if (!data->dc_icl_votable) {
+		dev_err(data->dev, "Could not get votable: DC_ICL\n");
+		return;
+	}
+
+	 dc_icl_prev = data->dc_icl;
+	 gvotable_get_current_reason(data->dc_icl_votable, reason, GVOTABLE_MAX_REASON_LEN);
+
+	if (!data->wcin_soft_icl)
+		wcin_soft_icl = iwcin + data->wcin_inlim_headroom;
+		/* soft icl < hard icl */
+	else if (data->wcin_inlim_flag && !strcmp(reason, WCIN_INLIM_VOTER))
+		wcin_soft_icl = data->wcin_soft_icl + data->wcin_inlim_step;
+	else if (data->wcin_soft_icl > iwcin + data->wcin_inlim_headroom)
+		wcin_soft_icl = iwcin + data->wcin_inlim_headroom;
+	else
+		wcin_soft_icl = data->wcin_soft_icl;
+
+	gvotable_cast_int_vote(data->dc_icl_votable, WCIN_INLIM_VOTER, wcin_soft_icl, true);
+	dev_dbg(data->dev, "%s: iwcin: %d, soft_icl: %d->%d, prev_dc_icl: %d, limited: %d\n",
+		__func__, iwcin, data->wcin_soft_icl, wcin_soft_icl, dc_icl_prev,
+		data->wcin_inlim_flag);
+	data->wcin_soft_icl = wcin_soft_icl;
+
+done:
+	mutex_unlock(&data->wcin_inlim_lock);
+
+	max77759_int_mask[0] &= ~MAX77759_CHG_INT_INLIM_I_MASK;
+	ret = max77759_writen(data->regmap, MAX77759_CHG_INT_MASK,
+					max77759_int_mask,
+					sizeof(max77759_int_mask));
+	if (ret < 0)
+		dev_err(data->dev, "cannot set irq_mask (%d)\n", ret);
+	schedule_delayed_work(&data->wcin_inlim_work, msecs_to_jiffies(data->wcin_inlim_period));
+}
+
+static void max77759_wcin_inlim_work_en(struct max77759_chgr_data *data, bool en)
+{
+	mutex_lock(&data->wcin_inlim_lock);
+	dev_info(data->dev, "%s: en: %d\n", __func__, en);
+	if (en) {
+		schedule_delayed_work(&data->wcin_inlim_work, 0);
+	} else {
+		cancel_delayed_work(&data->wcin_inlim_work);
+		data->wcin_soft_icl = 0;
+		if (data->dc_icl_votable)
+			gvotable_cast_int_vote(data->dc_icl_votable, WCIN_INLIM_VOTER,
+						data->wcin_soft_icl, false);
+	}
+	mutex_unlock(&data->wcin_inlim_lock);
+}
+
+#if IS_ENABLED(CONFIG_GPIOLIB)
+static int max77759_gpio_get_direction(struct gpio_chip *chip, unsigned int offset)
+{
+	return GPIOF_DIR_OUT;
+}
+
+static int max77759_gpio_get(struct gpio_chip *chip, unsigned int offset)
+{
+	return 0;
+}
+
+static void max77759_gpio_set(struct gpio_chip *chip, unsigned int offset, int value)
+{
+	struct max77759_chgr_data *data = gpiochip_get_data(chip);
+	int ret = 0;
+
+	switch (offset) {
+	case MAX77759_GPIO_WCIN_INLIM_EN:
+		data->wcin_inlim_en = !!value;
+		max77759_wcin_inlim_work_en(data, data->wcin_inlim_en);
+		break;
+
+	default:
+		ret = -EINVAL;
+		break;
+	}
+
+	if (ret < 0)
+		dev_err(data->dev, "GPIO %d: value=%d ret:%d\n", offset, value, ret);
+	else
+		dev_dbg(data->dev, "GPIO %d: value=%d ret:%d\n", offset, value, ret);
+}
+
+static void max77759_gpio_init(struct max77759_chgr_data *data)
+{
+	data->gpio.owner = THIS_MODULE;
+	data->gpio.label = "max77759_gpio";
+	data->gpio.get_direction = max77759_gpio_get_direction;
+	data->gpio.get = max77759_gpio_get;
+	data->gpio.set = max77759_gpio_set;
+	data->gpio.base = -1;
+	data->gpio.ngpio = MAX77759_NUM_GPIOS;
+	data->gpio.can_sleep = true;
+}
+#endif
 
 /*************************
  * WCIN PSY REGISTRATION   *
@@ -2555,6 +2720,11 @@ static int dbg_init_fs(struct max77759_chgr_data *data)
 	debugfs_create_file("data", 0600, data->de, data, &debug_reg_rw_fops);
 	/* dump all registers */
 	debugfs_create_file("registers", 0444, data->de, data, &debug_all_reg_fops);
+
+	debugfs_create_u32("inlim_period", 0600, data->de, &data->wcin_inlim_period);
+	debugfs_create_u32("inlim_headroom", 0600, data->de, &data->wcin_inlim_headroom);
+	debugfs_create_u32("inlim_step", 0600, data->de, &data->wcin_inlim_step);
+
 	return 0;
 }
 
@@ -2601,49 +2771,6 @@ static void max77759_aicl_changed(struct max77759_chgr_data *data)
 	gvotable_cast_long_vote(data->aicl_active_el, "BMS_VOTER", aicl_active, aicl_active);
 }
 
-/*
- * int[0]
- *  CHG_INT_AICL_I	(0x1 << 7)
- *  CHG_INT_CHGIN_I	(0x1 << 6)
- *  CHG_INT_WCIN_I	(0x1 << 5)
- *  CHG_INT_CHG_I	(0x1 << 4)
- *  CHG_INT_BAT_I	(0x1 << 3)
- *  CHG_INT_INLIM_I	(0x1 << 2)
- *  CHG_INT_THM2_I	(0x1 << 1)
- *  CHG_INT_BYP_I	(0x1 << 0)
- *
- * int[1]
- *  CHG_INT2_INSEL_I		(0x1 << 7)
- *  CHG_INT2_SYS_UVLO1_I	(0x1 << 6)
- *  CHG_INT2_SYS_UVLO2_I	(0x1 << 5)
- *  CHG_INT2_BAT_OILO_I		(0x1 << 4)
- *  CHG_INT2_CHG_STA_CC_I	(0x1 << 3)
- *  CHG_INT2_CHG_STA_CV_I	(0x1 << 2)
- *  CHG_INT2_CHG_STA_TO_I	(0x1 << 1)
- *  CHG_INT2_CHG_STA_DONE_I	(0x1 << 0)
- *
- * these 3 cause unnecessary chatter at EOC due to the interaction between
- * the CV and the IIN loop:
- *   MAX77759_CHG_INT2_MASK_CHG_STA_CC_M |
- *   MAX77759_CHG_INT2_MASK_CHG_STA_CV_M |
- *   MAX77759_CHG_INT_MASK_CHG_M
- *
- * TODO: MAX77759_CHG_INT_MASK_AICL_M needs to be throttled
- * if system keeps going in and out of AICL regulation.
- * No evidenvce of this happening so far.
- */
-static u8 max77759_int_mask[MAX77759_CHG_INT_COUNT] = {
-	(u8)~(MAX77759_CHG_INT_MASK_AICL_M |
-	  MAX77759_CHG_INT_MASK_CHGIN_M |
-	  MAX77759_CHG_INT_MASK_WCIN_M |
-	  MAX77759_CHG_INT_MASK_BAT_M |
-	  MAX77759_CHG_INT_MASK_THM2_M_MASK),
-	(u8)~(MAX77759_CHG_INT2_MASK_INSEL_M |
-	  MAX77759_CHG_INT2_MASK_SYS_UVLO1_M |
-	  MAX77759_CHG_INT2_MASK_SYS_UVLO2_M |
-	  MAX77759_CHG_INT2_MASK_CHG_STA_TO_M |
-	  MAX77759_CHG_INT2_MASK_CHG_STA_DONE_M),
-};
 
 static irqreturn_t max77759_chgr_irq(int irq, void *client)
 {
@@ -2685,6 +2812,14 @@ static irqreturn_t max77759_chgr_irq(int irq, void *client)
 
 	pr_debug("INT : %02x %02x\n", chg_int[0], chg_int[1]);
 
+	/* No need to monitor wcin_inlim when on USB */
+	if (chg_int[0] & MAX77759_CHG_INT_CHGIN_I_MASK) {
+		if (max77759_chgin_is_online(data))
+			max77759_wcin_inlim_work_en(data, false);
+		else if (data->wcin_inlim_en)
+			max77759_wcin_inlim_work_en(data, true);
+	}
+
 	/* always broadcast battery events */
 	broadcast = chg_int[0] & MAX77759_CHG_INT_MASK_BAT_M;
 
@@ -2718,6 +2853,20 @@ static irqreturn_t max77759_chgr_irq(int irq, void *client)
 			atomic_inc(&data->early_topoff_cnt);
 		}
 
+	}
+
+	if (chg_int[0] & MAX77759_CHG_INT_INLIM_I_MASK) {
+		int inlim = max77759_is_limited(data);
+
+		pr_debug("%s: INLIM limited: %d\n", __func__, inlim);
+		data->wcin_inlim_flag = inlim;
+
+		max77759_int_mask[0] |= MAX77759_CHG_INT_INLIM_I_MASK;
+		ret = max77759_writen(data->regmap, MAX77759_CHG_INT_MASK,
+					      max77759_int_mask,
+					      sizeof(max77759_int_mask));
+		if (ret < 0)
+			pr_err("%s: cannot set irq_mask (%d)\n", __func__, ret);
 	}
 
 	if (chg_int[1] & MAX77759_CHG_INT2_MASK_CHG_STA_CC_M)
@@ -2921,9 +3070,12 @@ static int max77759_charger_probe(struct i2c_client *client,
 	data->fship_dtls = -1;
 	data->wden = false; /* TODO: read from DT */
 	mutex_init(&data->io_lock);
+	mutex_init(&data->wcin_inlim_lock);
 	atomic_set(&data->insel_cnt, 0);
 	atomic_set(&data->early_topoff_cnt, 0);
 	i2c_set_clientdata(client, data);
+
+	INIT_DELAYED_WORK(&data->wcin_inlim_work, max77759_wcin_inlim_work);
 
 	data->usecase_wake_lock = wakeup_source_register(NULL, "max77759-usecase");
 	if (!data->usecase_wake_lock) {
@@ -3033,6 +3185,33 @@ static int max77759_charger_probe(struct i2c_client *client,
 		data->uc_data.dcin_is_dock = true;
 	else
 		data->uc_data.dcin_is_dock = false;
+
+	ret = of_property_read_u32(dev->of_node, "max77759,wcin-inlim-period",
+				   &data->wcin_inlim_period);
+	if (ret < 0)
+		data->wcin_inlim_period = WCIN_INLIM_T;
+
+	ret = of_property_read_u32(dev->of_node, "max77759,wcin-inlim-headroom",
+				   &data->wcin_inlim_headroom);
+	if (ret < 0)
+		data->wcin_inlim_headroom = WCIN_INLIM_HEADROOM_MA;
+
+	ret = of_property_read_u32(dev->of_node, "max77759,wcin_inlim_step",
+				   &data->wcin_inlim_step);
+	if (ret < 0)
+		data->wcin_inlim_step = WCIN_INLIM_STEP_MA;
+
+#if IS_ENABLED(CONFIG_GPIOLIB)
+	max77759_gpio_init(data);
+	data->gpio.parent = &client->dev;
+	data->gpio.of_node = of_find_node_by_name(client->dev.of_node,
+							    data->gpio.label);
+	if (!data->gpio.of_node)
+		dev_err(&client->dev, "Failed to find %s DT node\n", data->gpio.label);
+
+	ret = devm_gpiochip_add_data(&client->dev, &data->gpio, data);
+	dev_info(&client->dev, "%d GPIOs registered ret: %d\n", data->gpio.ngpio, ret);
+#endif
 
 	data->init_complete = 1;
 	data->resume_complete = 1;

@@ -27,6 +27,21 @@ struct max77759_chgr_data {
 	struct gvotable_election *dc_icl_votable;
 	struct gvotable_election *dc_suspend_votable;
 
+	/* wcin inlim tracking */
+	struct delayed_work wcin_inlim_work;
+	uint32_t wcin_inlim_period;
+	uint32_t wcin_inlim_flag;
+	uint32_t wcin_inlim_headroom;
+	uint32_t wcin_inlim_step;
+	uint32_t wcin_soft_icl;
+	uint32_t wcin_inlim_en;
+	uint32_t dc_icl;
+	struct mutex wcin_inlim_lock;
+
+#if IS_ENABLED(CONFIG_GPIOLIB)
+	struct gpio_chip gpio;
+#endif
+
 	bool charge_done;
 	bool chgin_input_suspend;
 	bool wcin_input_suspend;
