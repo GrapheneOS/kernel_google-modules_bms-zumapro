@@ -428,6 +428,8 @@ static ssize_t model_state_show(struct device *dev,
 			 chip->model_next_update);
 	len += max77779_model_state_cstr(&buf[len], PAGE_SIZE - len,
 				       chip->model_data);
+	len += scnprintf(&buf[len], PAGE_SIZE - len, "ATT: %d FAIL: %d\n", chip->ml_cnt,
+			 chip->ml_fails);
 	mutex_unlock(&chip->model_lock);
 
 	return len;
@@ -2633,6 +2635,8 @@ static int max77779_fg_model_load(struct max77779_fg_chip *chip)
 	if (!chip->fw_rev && !chip->fw_sub_rev)
 		max77779_fg_get_fw_ver(chip);
 
+	/* chip->model_lock is already locked by the caller */
+	chip->ml_cnt++;
 	/*
 	 * failure on the gauge: retry as long as model_reload > IDLE
 	 * pass current firmware revision to model load procedure
@@ -2640,6 +2644,9 @@ static int max77779_fg_model_load(struct max77779_fg_chip *chip)
 	ret = max77779_load_gauge_model(chip->model_data, chip->fw_rev, chip->fw_sub_rev);
 	if (ret < 0) {
 		dev_err(chip->dev, "Load Model Failed ret=%d\n", ret);
+		logbuffer_log(chip->ce_log, "max77779 Load Model Failed ret=%d\n", ret);
+		chip->ml_fails++;
+
 		return -EAGAIN;
 	}
 
@@ -2655,7 +2662,7 @@ static void max77779_fg_model_work(struct work_struct *work)
 						     model_work.work);
 	bool new_model = false;
 	u16 reg_cycle;
-	int rc;
+	int rc = -EAGAIN;
 
 	if (!chip->model_data)
 		return;
@@ -2700,6 +2707,13 @@ static void max77779_fg_model_work(struct work_struct *work)
 	}
 
 	mutex_unlock(&chip->model_lock);
+
+	/*
+	 * notify event only when no more model loading activities
+	 * for rc == -EAGAIN, FG may try to load model again
+	 */
+	if (rc != -EAGAIN)
+		kobject_uevent(&chip->dev->kobj, KOBJ_CHANGE);
 }
 
 static int read_chip_property_u32(const struct max77779_fg_chip *chip,

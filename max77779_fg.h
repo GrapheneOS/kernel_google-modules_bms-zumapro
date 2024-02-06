@@ -159,6 +159,11 @@ struct max77779_fg_chip {
 	/* firmware revision */
 	int fw_rev;
 	int fw_sub_rev;
+
+	/* total number of model loading attempts counter since boot */
+	int ml_cnt;
+	/* total number of model loading failures since boot */
+	int ml_fails;
 };
 
 /** ------------------------------------------------------------------------ */
