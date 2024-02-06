@@ -65,6 +65,8 @@
 
 #define MAX77779_FW_UPDATE_STRING_MAX 32
 
+#define MAX77779_FW_UPDATE_RETRY_MAX 10
+
 #define MAX77779_GET_DATA_FRAME_SIZE(filelen) \
 	(filelen - MAX77779_FW_IMG_SZ_HEADER - 3*MAX77779_FW_IMG_SZ_PACKET)
 
@@ -125,14 +127,35 @@ enum max77779_fwupdate_status {
 	MAX77779_FWU_TIMER_ERR,
 };
 
+enum max77779_fwupdate_err_code {
+	MAX77779_FWU_ERR_NONE = 0,
+	MAX77779_FWU_ERR_PREPARE,
+	MAX77779_FWU_ERR_DATA_TRANSFER,
+	MAX77779_FWU_ERR_POST_STATUS_CHECK,
+};
+
 struct max77779_version_info {
 	u8 major;
 	u8 minor;
 };
 
+/* saved as GBMS_TAG_FWSF */
+struct max77779_fwupdate_stats {
+	s16 count;
+	s8  success;
+	s8  fail;
+}__attribute__((packed));
+
 struct max77779_fwupdate_custom_data {
 	ssize_t size;
 	char*  data;
+};
+
+struct max77779_fwupdate_info {
+	int new_tag;
+	int retry_cnt;
+	bool force_update;
+	bool reboot_on_failure;
 };
 
 struct max77779_fwupdate {
@@ -149,16 +172,14 @@ struct max77779_fwupdate {
 	struct platform_device *batt;
 
 	bool can_update;
-	bool force_update;
 	bool running_update;
-	int new_tag;
+	struct max77779_fwupdate_info update_info;
 
 	struct max77779_version_info v_cur;
 	struct max77779_version_info v_new;
 
 	char fw_name[MAX77779_FW_UPDATE_STRING_MAX];
 
-	u32 restrict_level_critical;
 	size_t data_frame_size;
 	u32 crc_val;
 
@@ -175,6 +196,10 @@ struct max77779_fwupdate {
 
 	struct wakeup_source *fwupdate_wake_lock;
 	struct mutex status_lock;
+
+	struct max77779_fwupdate_stats stats;
+
+	struct logbuffer *lb;
 };
 
 /* Defined at max77779_fg.c */
@@ -217,6 +242,57 @@ static int set_firmware_update_tag(const struct max77779_fwupdate *fwu, int tag)
 	return ret;
 }
 
+static inline void read_fwupdate_stats(struct max77779_fwupdate *fwu)
+{
+	int ret;
+
+	ret = gbms_storage_read(GBMS_TAG_FWSF, &fwu->stats, sizeof(fwu->stats));
+	if (ret < 0)
+		gbms_logbuffer_prlog(fwu->lb, LOGLEVEL_WARNING, 0, LOGLEVEL_INFO,
+				     "failed to read GBMS_TAG_FWSF (%d)\n", ret);
+
+	if (ret < 0 || fwu->stats.count < 0 || fwu->stats.success < 0 || fwu->stats.fail < 0
+	    || fwu->stats.count != fwu->stats.success + fwu->stats.fail) {
+		/* invalid stats values. reset all counter to 0 */
+		fwu->stats.count = 0;
+		fwu->stats.success = 0;
+		fwu->stats.fail = 0;
+	}
+}
+
+static inline void update_fwupdate_stats(struct max77779_fwupdate *fwu)
+{
+	int ret;
+
+	ret = gbms_storage_write(GBMS_TAG_FWSF, &fwu->stats, sizeof(fwu->stats));
+	if (ret < 0)
+		gbms_logbuffer_prlog(fwu->lb, LOGLEVEL_WARNING, 0, LOGLEVEL_INFO,
+				     "failed to write GBMS_TAG_FWSF (%d)\n", ret);
+}
+
+/* TODO: b/326472325 it needs to handle counter reaches MAX77779_FW_UPDATE_RETRY_MAX */
+static inline int max77779_schedule_update(struct max77779_fwupdate* fwu)
+{
+	int ret = -1;
+
+	mutex_lock(&fwu->status_lock);
+
+	if (fwu->update_info.retry_cnt < MAX77779_FW_UPDATE_RETRY_MAX) {
+		fwu->update_info.retry_cnt++;
+		ret = 0;
+	}
+
+	mutex_unlock(&fwu->status_lock);
+
+	if (ret == 0) {
+		dev_info(fwu->dev, "will schedule firmware update for [%s]\n", fwu->fw_name);
+		schedule_delayed_work(&fwu->update_work,
+				      msecs_to_jiffies(FW_UPDATE_CONDITION_CHECK_INTERVAL_MS));
+	}
+
+	return ret;
+}
+
 static int max77779_fwupdate_init(struct max77779_fwupdate *fwu)
 {
 	struct device* dev = fwu->dev;
@@ -226,7 +302,7 @@ static int max77779_fwupdate_init(struct max77779_fwupdate *fwu)
 	if (!dev)
 		return -EINVAL;
 
-	fwu->force_update = false;
+	fwu->update_info.force_update = false;
 	fwu->running_update = false;
 	fwu->minimum_voltage = MAX77779_FW_UPDATE_MIN_VOLTAGE;
 
@@ -285,6 +361,15 @@ static int max77779_fwupdate_init(struct max77779_fwupdate *fwu)
 	if (of_property_read_u32(dev->of_node, "version-minor", &val) == 0)
 		fwu->minimum.minor = (u8)val;
 
+	fwu->lb = logbuffer_register("max77779_fwupdate");
+	if (IS_ERR(fwu->lb)) {
+		val = PTR_ERR(fwu->lb);
+		dev_err(dev, "failed to obtain logbuffer, ret=%d\n", val);
+		fwu->lb = NULL;
+		return val;
+	}
+
+	read_fwupdate_stats(fwu);
 
 	return 0;
 }
@@ -655,7 +740,7 @@ static int max77779_can_update(struct max77779_fwupdate *fwu, struct max77779_ve
 		return -EACCES;
 
 	/* check version */
-	if (target->minor <= fwu->v_cur.minor && !fwu->force_update)
+	if (target->minor <= fwu->v_cur.minor && !fwu->update_info.force_update)
 		return -EINVAL;
 
 	return 0;
@@ -854,15 +939,20 @@ static int max77779_fwl_poll_complete(struct max77779_fwupdate *fwu)
 	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed on max77779_check_timer_refresh\n");
 
 	fwu->op_st = FGST_NORMAL;
+	fwu->stats.success++;
+	fwu->stats.fail--;
 
 	if (fwu->v_cur.major != fwu->v_new.major || fwu->v_cur.minor != fwu->v_new.minor) {
 		fwu->v_cur = fwu->v_new;
 		/* new version of firmware was installed: update GBMS_TAG_FWHI as 0 */
-		fwu->new_tag = 0;
+		fwu->update_info.new_tag = 0;
 	}
 
-	ret = set_firmware_update_tag(fwu, fwu->new_tag);
+	ret = set_firmware_update_tag(fwu, fwu->update_info.new_tag);
 	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed on updating GBMS_TAG_FWHI\n");
+
+	fwu->update_info.force_update = false;
+	fwu->update_info.retry_cnt = 0;
 
 	return ret;
 }
@@ -888,18 +978,22 @@ static inline int update_running_state(struct max77779_fwupdate *fwu, bool runni
 	bool ret = false;
 
 	mutex_lock(&fwu->status_lock);
+
 	if (fwu->running_update != running) {
 		fwu->running_update = running;
 		ret = true;
 	}
+
 	mutex_unlock(&fwu->status_lock);
 
 	return ret;
 }
+
 static inline int perform_firmware_update(struct max77779_fwupdate *fwu, const char* data,
 					  const size_t count)
 {
 	u32 written = 0;
+	enum max77779_fwupdate_err_code err_code = MAX77779_FWU_ERR_NONE;
 	int ret, ret_st;
 
 	/* if previous update is not completed yet, stop at here */
@@ -908,15 +1002,32 @@ static inline int perform_firmware_update(struct max77779_fwupdate *fwu, const c
 
 	__pm_stay_awake(fwu->fwupdate_wake_lock);
 
+	logbuffer_log(fwu->lb, "perform_firmware_update: %s", fwu->fw_name);
+
+	/*
+	 * increase failure count upfront
+	 *  - update can be distrubed without cleanup
+	 *  - decrease inside of max77779_fwl_poll_complete when everything is OK
+	 */
+	fwu->stats.count++;
+	fwu->stats.fail++;
+
+	update_fwupdate_stats(fwu);
+
 	ret = max77779_fwl_prepare(fwu, data, count);
-	if (ret)
+	if (ret) {
+		err_code = MAX77779_FWU_ERR_PREPARE;
 		goto perform_firmware_update_cleanup;
+	}
 
 	ret = max77779_fwl_write(fwu, data, 0, count, &written);
-	if (ret || written != count)
+	if (ret || written != count) {
+		err_code = MAX77779_FWU_ERR_DATA_TRANSFER;
 		goto perform_firmware_update_cleanup;
+	}
 
-	max77779_fwl_poll_complete(fwu);
+	if (max77779_fwl_poll_complete(fwu) != 0)
+		err_code = MAX77779_FWU_ERR_POST_STATUS_CHECK;
 
 perform_firmware_update_cleanup:
 	max77779_fwl_cleanup(fwu);
@@ -930,10 +1041,18 @@ perform_firmware_update_cleanup:
 
 	ret_st = gbms_storage_write(GBMS_TAG_FGST, &fwu->op_st, sizeof(fwu->op_st));
 	if (ret_st != sizeof(fwu->op_st))
-		dev_err(fwu->dev, "failed to update eeprom:GBMS_TAG_FGST (%d)\n", ret_st);
+		gbms_logbuffer_prlog(fwu->lb, LOGLEVEL_WARNING, 0, LOGLEVEL_INFO,
+				     "failed to update eeprom:GBMS_TAG_FGST (%d)\n", ret_st);
+
+	update_fwupdate_stats(fwu);
+	gbms_logbuffer_prlog(fwu->lb, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+			     "complete_firmware_update: %d %d %d (%d)", fwu->stats.count,
+			     fwu->stats.success, fwu->stats.fail, (int)err_code);
 
 	__pm_relax(fwu->fwupdate_wake_lock);
 	update_running_state(fwu, false);
+
+	kobject_uevent(&fwu->dev->kobj, KOBJ_CHANGE);
 
 	return ret;
 }
@@ -953,8 +1072,8 @@ static void firmware_update_work(struct work_struct* work)
 	/* check current voltage */
 	ret = max77779_external_fg_reg_read(fwu->fg, MAX77779_FG_AvgVCell, &val);
 	if (ret || reg_to_micro_volt(val) < fwu->minimum_voltage) {
-		schedule_delayed_work(&fwu->update_work,
-				      msecs_to_jiffies(FW_UPDATE_CONDITION_CHECK_INTERVAL_MS));
+		dev_warn(fwu->dev, "low voltage for update. schedule again\n");
+		max77779_schedule_update(fwu);
 		return;
 	}
 
@@ -975,11 +1094,14 @@ static void firmware_update_work(struct work_struct* work)
 
 	ret = perform_firmware_update(fwu, fw_data->data, fw_data->size);
 	if (ret)
-		dev_err(fwu->dev, "firmware update failed %d\n", ret);
+		dev_err(fwu->dev, "firmware update failed (retry:%d) %d\n",
+			fwu->update_info.retry_cnt, ret);
 
 firmware_update_work_cleanup:
 	release_firmware(fw_data);
-	fwu->force_update = false;
+
+	if (ret)
+		max77779_schedule_update(fwu);
 }
 
 /*
@@ -1022,10 +1144,15 @@ static ssize_t trigger_update_firmware(struct device *dev,
 		return -EINVAL;
 	}
 
-	fwu->new_tag = target_ver;
-	fwu->force_update = true;
+	mutex_lock(&fwu->status_lock);
 
-	dev_info(fwu->dev, "will schedule firmware update for [%s]\n", fwu->fw_name);
+	fwu->update_info.new_tag = target_ver;
+	fwu->update_info.force_update = true;
+	fwu->update_info.reboot_on_failure = true;
+	fwu->update_info.retry_cnt = 0;
+
+	mutex_unlock(&fwu->status_lock);
+
 	schedule_delayed_work(&fwu->update_work,
 			      msecs_to_jiffies(FW_UPDATE_TIMER_CHECK_INTERVAL_MS));
 
@@ -1132,6 +1259,42 @@ static ssize_t chip_reset_store(struct device *dev, struct device_attribute *att
 }
 
 static DEVICE_ATTR_WO(chip_reset);
+
+static ssize_t update_stats_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct max77779_fwupdate *fwu = dev_get_drvdata(dev);
+	if (!fwu)
+		return -EAGAIN;
+
+	return scnprintf(buf, PAGE_SIZE, "%d %d %d\n", fwu->stats.count, fwu->stats.success,
+			 fwu->stats.fail);
+}
+
+static ssize_t update_stats_store(struct device *dev, struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct max77779_fwupdate *fwu = dev_get_drvdata(dev);
+	int value, ret;
+
+	if (!fwu)
+		return -EAGAIN;
+
+	ret = kstrtoint(buf, 0, &value);
+	if (ret < 0)
+		return ret;
+
+	if (value == 0) {
+		fwu->stats.count = 0;
+		fwu->stats.success = 0;
+		fwu->stats.fail = 0;
+
+		update_fwupdate_stats(fwu);
+	}
+
+	return count;
+}
+
+static DEVICE_ATTR_RW(update_stats);
 
 /*
  * Using the same pattern as FW_LOADER
@@ -1258,6 +1421,12 @@ static int max77779_fwupdate_probe(struct platform_device *pdev)
 		return ret;
 	}
 
+	ret = device_create_file(fwu->dev, &dev_attr_update_stats);
+	if (ret != 0) {
+		pr_err("Failed to create update_stats files, ret=%d\n", ret);
+		return ret;
+	}
+
 	fwu->fwupdate_wake_lock = wakeup_source_register(NULL, "max77779-fwupdate");
 	if (!fwu->fwupdate_wake_lock) {
 		dev_err(fwu->dev, "failed to register wakeup source\n");
@@ -1275,9 +1444,10 @@ static int max77779_fwupdate_probe(struct platform_device *pdev)
 
 	/* the chip is running with base firmware: need to be updated */
 	if (fwu->op_st == FGST_BASEFW) {
-		fwu->force_update = true;
-		schedule_delayed_work(&fwu->update_work, msecs_to_jiffies(
-				      FW_UPDATE_CONDITION_CHECK_INTERVAL_MS));
+		fwu->update_info.retry_cnt = 0;
+		fwu->update_info.force_update = true;
+		fwu->update_info.reboot_on_failure = false;
+		max77779_schedule_update(fwu);
 	}
 
 	return ret;
@@ -1288,6 +1458,11 @@ static int max77779_fwupdate_remove(struct platform_device *pdev)
 	struct max77779_fwupdate *fwu = platform_get_drvdata(pdev);
 	if (!fwu)
 		return 0;
+
+	if (fwu->lb) {
+		logbuffer_unregister(fwu->lb);
+		fwu->lb = NULL;
+	}
 
 	mutex_destroy(&fwu->status_lock);
 
