@@ -1117,7 +1117,8 @@ static int max77779_fg_get_property(struct power_supply *psy,
 
 	mutex_lock(&chip->model_lock);
 
-	if (max77779_fg_resume_check(chip)) {
+	if (max77779_fg_resume_check(chip) || !chip->model_ok ||
+	    chip->model_reload != MAX77779_FG_LOAD_MODEL_IDLE) {
 		mutex_unlock(&chip->model_lock);
 		return -EAGAIN;
 	}
