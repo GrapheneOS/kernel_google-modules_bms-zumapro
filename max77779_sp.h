@@ -22,7 +22,7 @@
 
 
 #define MAX77779_SP_DATA		0x80
-#define MAX77779_SP_SIZE 		0x255
+#define MAX77779_SP_MAX_ADDR       	0xff
 
 struct max77779_sp_data {
 	struct device *dev;

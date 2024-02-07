@@ -13,7 +13,7 @@ static const struct regmap_config max77779_sp_regmap_cfg = {
 	.reg_bits = 8,
 	.val_bits = 16,
 	.val_format_endian = REGMAP_ENDIAN_NATIVE,
-	.max_register = MAX77779_SP_SIZE,
+	.max_register = MAX77779_SP_MAX_ADDR,
 	.readable_reg = max77779_sp_is_reg,
 	.volatile_reg = max77779_sp_is_reg,
 };

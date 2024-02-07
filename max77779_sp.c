@@ -210,7 +210,7 @@ static struct gbms_storage_desc max77779_sp_dsc = {
 bool max77779_sp_is_reg(struct device *dev, unsigned int reg)
 {
 	return (reg == MAX77779_SP_PAGE_CTRL) ||
-		   (reg >= MAX77779_SP_DATA && reg < MAX77779_SP_SIZE);
+	       (reg >= MAX77779_SP_DATA && reg <= MAX77779_SP_MAX_ADDR);
 }
 EXPORT_SYMBOL_GPL(max77779_sp_is_reg);
 
