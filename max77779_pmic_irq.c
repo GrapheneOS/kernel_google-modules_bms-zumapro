@@ -42,9 +42,11 @@ static irqreturn_t max77779_pmic_irq_handler(int irq, void *ptr)
 	int offset;
 	int err;
 
+	pm_stay_awake(info->dev);
 	err = max77779_external_pmic_reg_read(core, MAX77779_PMIC_INTSRC_STS, &intsrc_sts);
 	if (err) {
 		dev_err_ratelimited(info->dev, "read error %d\n", err);
+		pm_relax(info->dev);
 		return IRQ_NONE;
 	}
 
@@ -60,6 +62,7 @@ static irqreturn_t max77779_pmic_irq_handler(int irq, void *ptr)
 	if (err)
 		dev_err_ratelimited(info->dev, "write error %d\n", err);
 
+	pm_relax(info->dev);
 	return IRQ_HANDLED;
 }
 
@@ -198,6 +201,7 @@ static int max77779_pmic_irq_probe(struct platform_device *pdev)
 	if (!info)
 		return -ENOMEM;
 	info->dev = dev;
+	info->dev->init_name = "max77779-pmic-irq";
 	info->core = dev->parent;
 	mutex_init(&info->lock);
 
