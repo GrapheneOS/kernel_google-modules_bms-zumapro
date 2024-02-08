@@ -421,7 +421,8 @@ int gvotable_election_for_each(struct gvotable_election *el,
 		return ret;
 	}
 
-	/* TODO: LOCK list? */
+	gvotable_lock_result(el);
+
 	list_for_each_entry(ballot, &el->votes, list) {
 		if (!ballot->enabled)
 			continue;
@@ -431,6 +432,8 @@ int gvotable_election_for_each(struct gvotable_election *el,
 		if (ret < 0)
 			break;
 	}
+
+	gvotable_unlock_result(el);
 
 	return ret;
 }
