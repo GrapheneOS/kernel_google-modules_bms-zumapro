@@ -2360,7 +2360,7 @@ static int p9221_get_property(struct power_supply *psy,
 
 				rc = charger->chip_get_vout_max(charger, &mv);
 				if (rc)
-					val->intval = rc;
+					val->intval = 0;
 				else
 					val->intval = mv * 1000; /* mv to uV */
 			}
@@ -2379,7 +2379,7 @@ static int p9221_get_property(struct power_supply *psy,
 		}
 
 		if (rc)
-			val->intval = rc;
+			val->intval = 0;
 		break;
 
 	default:
