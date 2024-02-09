@@ -2165,12 +2165,13 @@ static void p9221_check_adapter_type(struct p9221_charger_data *charger)
 	if (p9221_get_tx_id_str(charger) != NULL) {
 		u8 id_type = (charger->tx_id & TXID_TYPE_MASK) >> TXID_TYPE_SHIFT;
 
-		if (id_type != charger->chg_data.adapter_type)
+		if (id_type != 0 && id_type != charger->chg_data.adapter_type) {
 			pr_info("%s: tx_id=%08x, adapter_type=%x->%x\n", __func__,
 				 charger->tx_id, charger->chg_data.adapter_type,
 				 id_type);
 
-		charger->chg_data.adapter_type = id_type;
+			charger->chg_data.adapter_type = id_type;
+		}
 	}
 }
 
