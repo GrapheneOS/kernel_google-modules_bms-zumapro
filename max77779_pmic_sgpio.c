@@ -41,12 +41,12 @@ struct max77779_pmic_sgpio_info {
 	int			irq;
 
 	unsigned int		mask;
-	unsigned int		mask_u;
+	unsigned int		mask_u;  /* mask update pending */
 
-	unsigned int		trig_type_u;
+	unsigned int		trig_type_u;  /* trig_type update pending */
 	unsigned int		trig_type[MAX77779_SGPIO_NUM_GPIOS];
 
-	unsigned int		wake_u;
+	unsigned int		wake_u;  /* wake update pending */
 	unsigned int		wake;
 };
 
@@ -260,33 +260,39 @@ static void max77779_pmic_sgpio_bus_sync_unlock(struct irq_data *d)
 	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
 	struct max77779_pmic_sgpio_info *info = gpiochip_get_data(gc);
 	struct device *core = info->core;
-	unsigned int id, reg, unmasked, cnfg_val;
+	unsigned int id;
 
-	if (!(info->trig_type_u | info->mask_u))
+	if (!(info->trig_type_u | info->mask_u | info->wake_u))
 		goto unlock_out;
-
-	while (info->trig_type_u) {
-		id = __ffs(info->trig_type_u);
-		unmasked = !(info->mask & BIT(id));
-
-		if (unmasked)
-			info->mask_u |= BIT(id);
-		info->trig_type_u &= ~BIT(id);
-	}
 
 	while (info->mask_u) {
 		id = __ffs(info->mask_u);
-		unmasked = !(info->mask & BIT(id));
-		reg = MAX77779_PMIC_GPIO_SGPIO_CNFG0 + id;
-		cnfg_val = max77779_pmic_sgpio_irqf2cnfg(info->trig_type[id]);
+
+		/* signal trig_type to handle this id */
+		info->trig_type_u |= BIT(id);
+		info->mask_u &= ~BIT(id);
+	}
+
+	while (info->trig_type_u) {
+		unsigned int masked;
+		unsigned int reg;
+		unsigned int cnfg_val;
+
+		id = __ffs(info->trig_type_u);
+
+		masked = BIT(id) & info->mask;
+		if (masked)
+			cnfg_val = MAX77779_SGPIO_CNFG_IRQ_DISABLE;
+		else
+			cnfg_val = max77779_pmic_sgpio_irqf2cnfg(info->trig_type[id]);
 		cnfg_val <<= MAX77779_PMIC_GPIO_SGPIO_CNFG0_IRQ_SEL_SHIFT;
 
-		if (unmasked)
-			max77779_external_pmic_reg_update(core, reg,
-					MAX77779_PMIC_GPIO_SGPIO_CNFG0_IRQ_SEL_MASK,
-					cnfg_val);
+		reg = MAX77779_PMIC_GPIO_SGPIO_CNFG0 + id;
+		max77779_external_pmic_reg_update(core, reg,
+						  MAX77779_PMIC_GPIO_SGPIO_CNFG0_IRQ_SEL_MASK,
+						  cnfg_val);
 
-		info->mask_u &= ~BIT(id);
+		info->trig_type_u &= ~BIT(id);
 	}
 
 	while (info->wake_u) {
