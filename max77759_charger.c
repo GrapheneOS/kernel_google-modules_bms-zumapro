@@ -57,6 +57,8 @@
 #define CHGR_CHG_CNFG_12_VREG_4P6V			0x1
 #define CHGR_CHG_CNFG_12_VREG_4P7V			0x2
 
+#define MAX77759_CHG_NUM_REGS (MAX77759_CHG_CNFG_19 - MAX77759_CHG_INT + 1)
+
 #define WCIN_INLIM_T					(5000)
 #define WCIN_INLIM_HEADROOM_MA				(200000)
 #define WCIN_INLIM_STEP_MA				(50000)
@@ -2670,41 +2672,51 @@ DEFINE_SIMPLE_ATTRIBUTE(debug_reg_rw_fops, max77759_chg_debug_reg_read,
 			max77759_chg_debug_reg_write, "%02llx\n");
 
 
-static ssize_t max77759_chg_show_reg_all(struct file *filp, char __user *buf,
-					size_t count, loff_t *ppos)
+static ssize_t registers_dump_show(struct device *dev, struct device_attribute *attr,
+				   char *buf)
 {
-	struct max77759_chgr_data *data = (struct max77759_chgr_data *)filp->private_data;
-	u32 reg_address;
-	u8 reg = 0;
-	char *tmp;
-	int ret = 0, len = 0;
+	struct max77759_chgr_data *data = dev_get_drvdata(dev);
+	static u8 *dump;
+	int ret = 0, offset = 0, i;
 
 	if (!data->regmap) {
 		pr_err("Failed to read, no regmap\n");
 		return -EIO;
 	}
 
-	tmp = kmalloc(PAGE_SIZE, GFP_KERNEL);
-	if (!tmp)
-		return -ENOMEM;
+	mutex_lock(&data->reg_dump_lock);
 
-	for (reg_address = 0xB0; reg_address <= 0xCC; reg_address++) {
-		ret = max77759_reg_read(data->regmap, reg_address, &reg);
-		if (ret < 0)
-			continue;
-
-		len += scnprintf(tmp + len, PAGE_SIZE - len, "%02x: %02x\n", reg_address, reg);
+	dump = kzalloc(MAX77759_CHG_NUM_REGS * sizeof(u8), GFP_KERNEL);
+	if (!dump) {
+		dev_err(dev, "[%s]: Failed to allocate mem ret:%d\n", __func__, ret);
+		goto unlock;
 	}
 
-	if (len > 0)
-		len = simple_read_from_buffer(buf, count,  ppos, tmp, strlen(tmp));
+	ret = max77759_readn(data->regmap, MAX77759_CHG_INT, dump, MAX77759_CHG_NUM_REGS);
+	if (ret < 0) {
+		dev_err(dev, "[%s]: Failed to dump ret:%d\n", __func__, ret);
+		goto done;
+	}
 
-	kfree(tmp);
+	for (i = 0; i < MAX77759_CHG_NUM_REGS; i++) {
+		u32 reg_address = i + MAX77759_CHG_INT;
 
-	return len;
+		ret = sysfs_emit_at(buf, offset, "%02x: %02x\n", reg_address, dump[i]);
+		if (!ret) {
+			dev_err(dev, "[%s]: Not all registers printed. last:%x\n", __func__,
+				reg_address - 1);
+			break;
+		}
+		offset += ret;
+	}
+
+done:
+	kfree(dump);
+unlock:
+	mutex_unlock(&data->reg_dump_lock);
+	return offset;
 }
-
-BATTERY_DEBUG_ATTRIBUTE(debug_all_reg_fops, max77759_chg_show_reg_all, NULL);
+static DEVICE_ATTR_RO(registers_dump);
 
 static int dbg_init_fs(struct max77759_chgr_data *data)
 {
@@ -2713,6 +2725,10 @@ static int dbg_init_fs(struct max77759_chgr_data *data)
 	ret = device_create_file(data->dev, &dev_attr_fship_dtls);
 	if (ret != 0)
 		pr_err("Failed to create fship_dtls, ret=%d\n", ret);
+
+	ret = device_create_file(data->dev, &dev_attr_registers_dump);
+	if (ret != 0)
+		dev_warn(data->dev, "Failed to create registers_dump, ret=%d\n", ret);
 
 	data->de = debugfs_create_dir("max77759_chg", 0);
 	if (IS_ERR_OR_NULL(data->de))
@@ -2731,8 +2747,6 @@ static int dbg_init_fs(struct max77759_chgr_data *data)
 
 	debugfs_create_u32("address", 0600, data->de, &data->debug_reg_address);
 	debugfs_create_file("data", 0600, data->de, data, &debug_reg_rw_fops);
-	/* dump all registers */
-	debugfs_create_file("registers", 0444, data->de, data, &debug_all_reg_fops);
 
 	debugfs_create_u32("inlim_period", 0600, data->de, &data->wcin_inlim_period);
 	debugfs_create_u32("inlim_headroom", 0600, data->de, &data->wcin_inlim_headroom);
@@ -3084,6 +3098,7 @@ static int max77759_charger_probe(struct i2c_client *client,
 	data->wden = false; /* TODO: read from DT */
 	mutex_init(&data->io_lock);
 	mutex_init(&data->wcin_inlim_lock);
+	mutex_init(&data->reg_dump_lock);
 	atomic_set(&data->insel_cnt, 0);
 	atomic_set(&data->early_topoff_cnt, 0);
 	i2c_set_clientdata(client, data);
