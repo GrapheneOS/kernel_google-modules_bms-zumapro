@@ -10638,8 +10638,8 @@ static void google_battery_init_work(struct work_struct *work)
 
 		fg_psy = power_supply_get_by_name(batt_drv->fg_psy_name);
 		if (!fg_psy) {
-			pr_info("failed to get \"%s\" power supply, retrying...\n",
-				batt_drv->fg_psy_name);
+			pr_debug("failed to get \"%s\" power supply, retrying...\n",
+				 batt_drv->fg_psy_name);
 			goto retry_init_work;
 		}
 
