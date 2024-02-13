@@ -45,6 +45,9 @@ int max77779_external_fg_reg_write(struct device *dev, uint16_t reg, uint16_t va
 
 int max77779_external_vimon_reg_read(struct device *dev, uint16_t reg, void *val, int len);
 int max77779_external_vimon_reg_write(struct device *dev, uint16_t reg, const void *val, int len);
+int max77779_external_vimon_read_buffer(struct device *dev, uint16_t *buff, size_t *count,
+					size_t buff_max);
+int max77779_external_vimon_enable(struct device *dev, bool enable);
 
 int max77779_fg_enable_firmware_update(struct device *dev, bool enable);
 
