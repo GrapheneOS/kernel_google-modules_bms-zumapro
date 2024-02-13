@@ -57,6 +57,8 @@
 
 #define WCIN_INLIM_VOTER				"WCIN_INLIM"
 
+#define MAX77779_CHG_NUM_REGS (MAX77779_CHG_CUST_TM - MAX77779_CHG_CHGIN_I_ADC_L + 1)
+
 /*
  * int[0]
  *  CHG_INT_AICL_I	(0x1 << 7)
@@ -2782,43 +2784,6 @@ static int max77779_chg_debug_reg_write(void *d, u64 val)
 DEFINE_SIMPLE_ATTRIBUTE(debug_reg_rw_fops, max77779_chg_debug_reg_read,
 			max77779_chg_debug_reg_write, "%02llx\n");
 
-
-static ssize_t max77779_chg_show_reg_all(struct file *filp, char __user *buf,
-					size_t count, loff_t *ppos)
-{
-	struct max77779_chgr_data *data = (struct max77779_chgr_data *)filp->private_data;
-	u32 reg_address;
-	u8 reg = 0;
-	char *tmp;
-	int ret = 0, len = 0;
-
-	if (!data->regmap) {
-		pr_err("Failed to read, no regmap\n");
-		return -EIO;
-	}
-
-	tmp = kmalloc(PAGE_SIZE, GFP_KERNEL);
-	if (!tmp)
-		return -ENOMEM;
-
-	for (reg_address = 0; reg_address <= 0xFF; reg_address++) {
-		ret = max77779_reg_read(data->regmap, reg_address, &reg);
-		if (ret < 0)
-			continue;
-
-		len += scnprintf(tmp + len, PAGE_SIZE - len, "%02x: %02x\n", reg_address, reg);
-	}
-
-	if (len > 0)
-		len = simple_read_from_buffer(buf, count,  ppos, tmp, strlen(tmp));
-
-	kfree(tmp);
-
-	return len;
-}
-
-BATTERY_DEBUG_ATTRIBUTE(debug_all_reg_fops, max77779_chg_show_reg_all, NULL);
-
 static int max77779_chg_debug_cop_warn_read(void *d, u64 *val)
 {
 	struct max77779_chgr_data *data = d;
@@ -2899,6 +2864,55 @@ static int max77779_chg_debug_cop_enable(void *d, u64 val)
 DEFINE_SIMPLE_ATTRIBUTE(debug_cop_enable_fops, max77779_chg_debug_cop_is_enabled,
 			max77779_chg_debug_cop_enable, "%llu\n");
 
+static ssize_t registers_dump_show(struct device *dev, struct device_attribute *attr,
+				   char *buf)
+{
+	struct max77779_chgr_data *data = dev_get_drvdata(dev);
+	static u8 *dump;
+	int ret = 0, offset = 0, i;
+
+	if (!data->regmap) {
+		pr_err("Failed to read, no regmap\n");
+		return -EIO;
+	}
+
+	mutex_lock(&data->reg_dump_lock);
+
+	dump = kzalloc(MAX77779_CHG_NUM_REGS * sizeof(u8), GFP_KERNEL);
+	if (!dump) {
+		dev_err(dev, "[%s]: Failed to allocate mem ret:%d\n", __func__, ret);
+		goto unlock;
+	}
+
+	ret = max77779_readn(data->regmap, MAX77779_CHG_CHGIN_I_ADC_L, dump, MAX77779_CHG_NUM_REGS);
+	if (ret < 0) {
+		dev_err(dev, "[%s]: Failed to dump ret:%d\n", __func__, ret);
+		goto done;
+	}
+
+	for (i = 0; i < MAX77779_CHG_NUM_REGS; i++) {
+		u32 reg_address = i + MAX77779_CHG_CHGIN_I_ADC_L;
+
+		if (!max77779_chg_is_reg(dev, reg_address))
+			continue;
+
+		ret = sysfs_emit_at(buf, offset, "%02x: %02x\n", reg_address, dump[i]);
+		if (!ret) {
+			dev_err(dev, "[%s]: Not all registers printed. last:%x\n", __func__,
+				reg_address - 1);
+			break;
+		}
+		offset += ret;
+	}
+
+done:
+	kfree(dump);
+unlock:
+	mutex_unlock(&data->reg_dump_lock);
+	return offset;
+}
+static DEVICE_ATTR_RO(registers_dump);
+
 static int dbg_init_fs(struct max77779_chgr_data *data)
 {
 	int ret;
@@ -2906,6 +2920,10 @@ static int dbg_init_fs(struct max77779_chgr_data *data)
 	ret = device_create_file(data->dev, &dev_attr_fship_dtls);
 	if (ret != 0)
 		pr_err("Failed to create fship_dtls, ret=%d\n", ret);
+
+	ret = device_create_file(data->dev, &dev_attr_registers_dump);
+	if (ret != 0)
+		dev_warn(data->dev, "Failed to create registers_dump, ret=%d\n", ret);
 
 	data->de = debugfs_create_dir("max77779_chg", 0);
 	if (IS_ERR_OR_NULL(data->de))
@@ -2934,8 +2952,6 @@ static int dbg_init_fs(struct max77779_chgr_data *data)
 
 	debugfs_create_u32("address", 0600, data->de, &data->debug_reg_address);
 	debugfs_create_file("data", 0600, data->de, data, &debug_reg_rw_fops);
-	/* dump all registers */
-	debugfs_create_file("registers", 0444, data->de, data, &debug_all_reg_fops);
 
 	debugfs_create_u32("inlim_period", 0600, data->de, &data->wcin_inlim_t);
 	debugfs_create_u32("inlim_headroom", 0600, data->de, &data->wcin_inlim_headroom);
@@ -3435,6 +3451,7 @@ int max77779_charger_init(struct max77779_chgr_data *data)
 	data->wden = false; /* TODO: read from DT */
 	data->mask = 0xFFFFFFFF;
 	mutex_init(&data->io_lock);
+	mutex_init(&data->reg_dump_lock);
 	mutex_init(&data->wcin_inlim_lock);
 	atomic_set(&data->insel_cnt, 0);
 	atomic_set(&data->early_topoff_cnt, 0);

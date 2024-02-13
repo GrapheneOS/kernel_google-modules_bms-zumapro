@@ -82,6 +82,7 @@ struct max77779_chgr_data {
 	atomic_t early_topoff_cnt;
 
 	struct mutex io_lock;
+	struct mutex reg_dump_lock;
 	bool resume_complete;
 	bool init_complete;
 	struct wakeup_source *usecase_wake_lock;
