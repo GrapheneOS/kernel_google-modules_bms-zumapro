@@ -95,6 +95,8 @@ enum max77729_pmic_register {
 #define MAX77759_STORAGE_SIZE	16
 #define MAX77759_STORAGE_BASE	(MAX77759_PMIC_AP_DATAOUT0 + MAX77759_STORAGE_SIZE)
 
+#define MAX77729_PMIC_NUM_REGS	(MAX77759_PMIC_UIC_SWRST - MAX77729_PMIC_ID + 1)
+
 struct max77729_pmic_data {
 	struct device        *dev;
 	struct regmap        *regmap;
@@ -117,6 +119,7 @@ struct max77729_pmic_data {
 	struct i2c_client *pmic_i2c_client;
 	void *ovp_client_data;
 	struct mutex io_lock;
+	struct mutex reg_dump_lock;
 	int batt_id;
 
 	atomic_t sysuvlo_cnt;
@@ -718,45 +721,54 @@ static int max777x9_pmic_debug_reg_write(void *d, u64 val)
 DEFINE_SIMPLE_ATTRIBUTE(debug_reg_rw_fops, max777x9_pmic_debug_reg_read,
 			max777x9_pmic_debug_reg_write, "%02llx\n");
 
-static ssize_t max777x9_pmic_debug_show_reg_all(struct file *filp, char __user *buf,
-						size_t count, loff_t *ppos)
+static ssize_t registers_dump_show(struct device *dev, struct device_attribute *attr,
+				   char *buf)
 {
-	struct max77729_pmic_data *data = (struct max77729_pmic_data *)filp->private_data;
-	u32 reg_address;
-	u8 reg = 0;
-	char *tmp;
-	int ret = 0, len = 0;
+	struct max77729_pmic_data *data = dev_get_drvdata(dev);
+	static u8 *dump;
+	int ret = 0, offset = 0, i;
 
 	if (!data->regmap) {
 		pr_err("Failed to read, no regmap\n");
 		return -EIO;
 	}
 
-	tmp = kmalloc(PAGE_SIZE, GFP_KERNEL);
-	if (!tmp)
-		return -ENOMEM;
+	mutex_lock(&data->reg_dump_lock);
 
-	for (reg_address = 0; reg_address <= 0xFF; reg_address++) {
-		/* reasonable registers */
-		if (!max77729_pmic_is_reg(data->dev, reg_address))
-			continue;
-
-		ret = max77729_pmic_rd8(data, reg_address, &reg);
-		if (ret < 0)
-			continue;
-
-		len += scnprintf(tmp + len, PAGE_SIZE - len, "%02x: %02x\n", reg_address, reg);
+	dump = kzalloc(MAX77729_PMIC_NUM_REGS * sizeof(u8), GFP_KERNEL);
+	if (!dump) {
+		dev_err(dev, "[%s]: Failed to allocate mem ret:%d\n", __func__, ret);
+		goto unlock;
 	}
 
-	if (len > 0)
-		len = simple_read_from_buffer(buf, count,  ppos, tmp, strlen(tmp));
+	ret = max77729_pmic_readn(data, MAX77729_PMIC_ID, dump, MAX77729_PMIC_NUM_REGS);
+	if (ret < 0) {
+		dev_err(dev, "[%s]: Failed to dump ret:%d\n", __func__, ret);
+		goto done;
+	}
 
-	kfree(tmp);
+	for (i = 0; i < MAX77729_PMIC_NUM_REGS; i++) {
+		u32 reg_address = i + MAX77729_PMIC_ID;
 
-	return len;
+		if (!max77729_pmic_is_reg(dev, reg_address))
+			continue;
+
+		ret = sysfs_emit_at(buf, offset, "%02x: %02x\n", reg_address, dump[i]);
+		if (!ret) {
+			dev_err(dev, "[%s]: Not all registers printed. last:%x\n", __func__,
+				reg_address - 1);
+			break;
+		}
+		offset += ret;
+	}
+
+done:
+	kfree(dump);
+unlock:
+	mutex_unlock(&data->reg_dump_lock);
+	return offset;
 }
-
-BATTERY_DEBUG_ATTRIBUTE(debug_all_reg_fops, max777x9_pmic_debug_show_reg_all, NULL);
+static DEVICE_ATTR_RO(registers_dump);
 
 static int max77759_pmic_storage_iter(int index, gbms_tag_t *tag, void *ptr)
 {
@@ -834,6 +846,12 @@ static void max777x9_pmic_storage_init_work(struct work_struct *work)
 
 static int dbg_init_fs(struct max77729_pmic_data *data)
 {
+	int ret;
+
+	ret = device_create_file(data->dev, &dev_attr_registers_dump);
+	if (ret != 0)
+		dev_warn(data->dev, "Failed to create registers_dump, ret=%d\n", ret);
+
 	data->de = debugfs_create_dir("max77729_pmic", 0);
 	if (IS_ERR_OR_NULL(data->de))
 		return -EINVAL;
@@ -848,7 +866,6 @@ static int dbg_init_fs(struct max77729_pmic_data *data)
 
 	debugfs_create_u32("address", 0600, data->de, &data->debug_reg_address);
 	debugfs_create_file("data", 0600, data->de, data, &debug_reg_rw_fops);
-	debugfs_create_file("registers", 0444, data->de, data, &debug_all_reg_fops);
 
 	return 0;
 }
@@ -1211,6 +1228,7 @@ static int max77729_pmic_probe(struct i2c_client *client,
 	data->pmic_id = pmic_id;
 	data->batt_id = -1;
 	mutex_init(&data->io_lock);
+	mutex_init(&data->reg_dump_lock);
 	atomic_set(&data->sysuvlo_cnt, 0);
 	atomic_set(&data->sysovlo_cnt, 0);
 	i2c_set_clientdata(client, data);
