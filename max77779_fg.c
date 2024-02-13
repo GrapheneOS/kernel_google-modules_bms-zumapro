@@ -63,6 +63,10 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj);
 static int max77779_fg_set_next_update(struct max77779_fg_chip *chip);
 static int max77779_fg_update_cycle_count(struct max77779_fg_chip *chip);
 
+/* Do not move reg_write_nolock to public header */
+int max77779_external_fg_reg_write_nolock(struct device *dev, uint16_t reg, uint16_t val);
+
+
 static struct mutex section_lock;
 
 static bool max77779_fg_reglog_init(struct max77779_fg_chip *chip)
@@ -176,6 +180,15 @@ static enum power_supply_property max77779_fg_battery_props[] = {
 };
 
 /* ------------------------------------------------------------------------- */
+
+static bool max77779_fg_reg_can_modify(struct max77779_fg_chip* chip)
+{
+	/* model_lock is already acquired by the caller and chip is already valid */
+	if (chip->fw_update_mode || chip->model_reload > MAX77779_FG_LOAD_MODEL_IDLE)
+		return false;
+
+	return true;
+}
 
 static ssize_t offmode_charger_show(struct device *dev,
 				    struct device_attribute *attr,
@@ -308,10 +321,6 @@ int max77779_fg_nregister_write(const struct maxfg_regmap *map,
 	return ret;
 }
 
-/*
- * special reg_read for firmware update
- * - it will not change the lock status
- */
 int max77779_external_fg_reg_read(struct device *dev, uint16_t reg, uint16_t *val)
 {
 	struct max77779_fg_chip *chip = dev_get_drvdata(dev);
@@ -333,11 +342,30 @@ int max77779_external_fg_reg_read(struct device *dev, uint16_t reg, uint16_t *va
 }
 EXPORT_SYMBOL_GPL(max77779_external_fg_reg_read);
 
+int max77779_external_fg_reg_write(struct device *dev, uint16_t reg, uint16_t val)
+{
+	struct max77779_fg_chip *chip = dev_get_drvdata(dev);
+	int rc = -EBUSY;
+
+	if (!chip || !chip->regmap.regmap)
+		return -EAGAIN;
+
+	mutex_lock(&chip->model_lock);
+
+	if (max77779_fg_reg_can_modify(chip))
+		rc = max77779_fg_register_write(&chip->regmap, reg, val, true);
+
+	mutex_unlock(&chip->model_lock);
+
+	return rc;
+}
+EXPORT_SYMBOL_GPL(max77779_external_fg_reg_write);
+
 /*
- * special reg_write for firmware update
+ * special reg_write only for max77779_fwupdate - do no use this API
  * - it will not change the lock status
  */
-int max77779_external_fg_reg_write(struct device *dev, uint16_t reg, uint16_t val)
+int max77779_external_fg_reg_write_nolock(struct device *dev, uint16_t reg, uint16_t val)
 {
 	struct max77779_fg_chip *chip = dev_get_drvdata(dev);
 
@@ -346,7 +374,7 @@ int max77779_external_fg_reg_write(struct device *dev, uint16_t reg, uint16_t va
 
 	return regmap_write(chip->regmap.regmap, reg, val);
 }
-EXPORT_SYMBOL_GPL(max77779_external_fg_reg_write);
+EXPORT_SYMBOL_GPL(max77779_external_fg_reg_write_nolock);
 
 /*
  * force is true when changing the model via debug props.
@@ -1416,7 +1444,7 @@ static int max77779_gbms_fg_set_property(struct power_supply *psy,
 	int rc = 0;
 
 	mutex_lock(&chip->model_lock);
-	if (max77779_fg_resume_check(chip)) {
+	if (max77779_fg_resume_check(chip) || chip->fw_update_mode) {
 		mutex_unlock(&chip->model_lock);
 		return -EAGAIN;
 	}

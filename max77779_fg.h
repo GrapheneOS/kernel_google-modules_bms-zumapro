@@ -270,6 +270,7 @@ enum max77779_fg_reg_sections {
 	MAX77779_FG_UNKNOWN_SECTION,
 };
 
+/* TODO: b/325642439 add protection during model loading and firmware update */
 #define MAX77779_FG_REGMAP_WRITE(regmap, what, value) \
 	max77779_fg_register_write(regmap, what, value, false)
 #define MAX77779_FG_REGMAP_WRITE_VERIFY(regmap, what, value) \

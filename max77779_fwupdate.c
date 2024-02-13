@@ -177,6 +177,8 @@ struct max77779_fwupdate {
 	struct mutex status_lock;
 };
 
+/* Defined at max77779_fg.c */
+int max77779_external_fg_reg_write_nolock(struct device *, uint16_t, uint16_t);
 
 static int get_firmware_update_tag(const struct max77779_fwupdate *fwu, int* ver_tag)
 {
@@ -424,7 +426,7 @@ static int max77779_send_command(struct max77779_fwupdate *fwu,
 {
 	int ret;
 
-	ret = max77779_external_fg_reg_write(fwu->fg, MAX77779_FG_Command_fw, cmd);
+	ret = max77779_external_fg_reg_write_nolock(fwu->fg, MAX77779_FG_Command_fw, cmd);
 	if (ret)
 		dev_err(fwu->dev, "failed to write fg reg %02x (%d) in max77779_send_command\n",
 			MAX77779_FG_Command_fw, ret);
@@ -481,9 +483,9 @@ static int max77779_change_fg_lock(struct max77779_fwupdate *fwu,
 	 * change FG's lock status
 	 * - write status_value 2 times to MAX77779_FG_USR
 	 */
-	ret = max77779_external_fg_reg_write(fwu->fg, MAX77779_FG_USR, st);
+	ret = max77779_external_fg_reg_write_nolock(fwu->fg, MAX77779_FG_USR, st);
 	if (ret == 0)
-		ret = max77779_external_fg_reg_write(fwu->fg, MAX77779_FG_USR, st);
+		ret = max77779_external_fg_reg_write_nolock(fwu->fg, MAX77779_FG_USR, st);
 
 	if (ret)
 		dev_err(fwu->dev, "failed to write fg reg %02x (%d) in change lock status\n",
@@ -562,7 +564,7 @@ static inline int max77779_clear_state_for_update(struct max77779_fwupdate *fwu)
 		return ret;
 	}
 
-	ret = max77779_external_fg_reg_write(fwu->fg, MAX77779_FG_FG_INT_STS, val);
+	ret = max77779_external_fg_reg_write_nolock(fwu->fg, MAX77779_FG_FG_INT_STS, val);
 	if (ret) {
 		dev_err(fwu->dev,
 			"failed to write reg %02x (%d) in max77779_clear_state_for_update\n",
