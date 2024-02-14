@@ -19,6 +19,7 @@
 #include "max77779_pmic.h"
 
 #define MAX77779_PMIC_ID_VAL	0x79
+#define MAX77779_PMIC_NUM_REGS (MAX77779_PMIC_GPIO_VGPI_CNFG - MAX77779_PMIC_ID + 1)
 
 static inline int max77779_pmic_reg_read(struct regmap *regmap, uint8_t reg, uint8_t *val)
 {
@@ -39,6 +40,19 @@ static int max77779_pmic_reg_write(struct regmap *map, uint8_t reg, uint8_t val)
 static int max77779_pmic_reg_update(struct regmap *map, uint8_t reg, uint8_t mask, uint8_t val)
 {
 	return regmap_update_bits(map, reg, mask, val);
+}
+
+static inline int max77779_pmic_readn(struct max77779_pmic_info *info,
+				      int addr, u8 *val, int len)
+{
+	int rc;
+
+	rc = regmap_bulk_read(info->regmap, addr, val, len);
+	if (rc < 0)
+		dev_warn(info->dev, "regmap_read failed for address %04x rc=%d\n",
+			 addr, rc);
+
+	return rc;
 }
 
 int max77779_external_pmic_reg_read(struct device *dev, uint8_t reg, uint8_t *val)
@@ -124,43 +138,6 @@ static int data_read(void *d, u64 *val)
 }
 DEFINE_SIMPLE_ATTRIBUTE(data_fops, data_read, data_write, "%llx\n");
 
-static ssize_t max77779_pmic_show_reg_all(struct file *filp, char __user *buf,
-					size_t count, loff_t *ppos)
-{
-	struct max77779_pmic_info *info = (struct max77779_pmic_info *)filp->private_data;
-	u32 reg_address;
-	uint8_t reg = 0;
-	char *tmp;
-	int ret = 0, len = 0;
-
-	if (!info->regmap) {
-		pr_err("Failed to read, no regmap\n");
-		return -EIO;
-	}
-
-	tmp = kmalloc(PAGE_SIZE, GFP_KERNEL);
-	if (!tmp)
-		return -ENOMEM;
-
-	for (reg_address = MAX77779_PMIC_ID; reg_address <= MAX77779_PMIC_GPIO_VGPI_CNFG;
-	     reg_address++) {
-		ret = max77779_pmic_reg_read(info->regmap, reg_address, &reg);
-		if (ret < 0)
-			continue;
-
-		len += scnprintf(tmp + len, PAGE_SIZE - len, "%02x: %02x\n", reg_address, reg);
-	}
-
-	if (len > 0)
-		len = simple_read_from_buffer(buf, count,  ppos, tmp, strlen(tmp));
-
-	kfree(tmp);
-
-	return len;
-}
-
-BATTERY_DEBUG_ATTRIBUTE(debug_all_reg_fops, max77779_pmic_show_reg_all, NULL);
-
 static int dbg_init_fs(struct max77779_pmic_info *info)
 {
 	info->de = debugfs_create_dir("max77779_pmic", 0);
@@ -170,9 +147,6 @@ static int dbg_init_fs(struct max77779_pmic_info *info)
 	debugfs_create_file("addr", 0600, info->de, info, &addr_fops);
 
 	debugfs_create_file("data", 0600, info->de, info, &data_fops);
-
-	/* dump all registers */
-	debugfs_create_file("registers", 0444, info->de, info, &debug_all_reg_fops);
 
 	return 0;
 }
@@ -188,6 +162,55 @@ static inline int dbg_init_fs(struct max77779_pmic_info *info)
 }
 static inline void dbg_remove_fs(struct max77779_pmic_info *info) {}
 #endif
+
+static ssize_t registers_dump_show(struct device *dev, struct device_attribute *attr,
+				   char *buf)
+{
+	struct max77779_pmic_info *info = dev_get_drvdata(dev);
+	static u8 *dump;
+	int ret = 0, offset = 0, i;
+
+	if (!info->regmap) {
+		pr_err("Failed to read, no regmap\n");
+		return -EIO;
+	}
+
+	mutex_lock(&info->reg_dump_lock);
+
+	dump = kzalloc(MAX77779_PMIC_NUM_REGS * sizeof(u8), GFP_KERNEL);
+	if (!dump) {
+		dev_err(dev, "[%s]: Failed to allocate mem ret:%d\n", __func__, ret);
+		goto unlock;
+	}
+
+	ret = max77779_pmic_readn(info, MAX77779_PMIC_ID, dump, MAX77779_PMIC_NUM_REGS);
+	if (ret < 0) {
+		dev_err(dev, "[%s]: Failed to dump ret:%d\n", __func__, ret);
+		goto done;
+	}
+
+	for (i = 0; i < MAX77779_PMIC_NUM_REGS; i++) {
+		u32 reg_address = i + MAX77779_PMIC_ID;
+
+		if (!max77779_pmic_is_readable(dev, reg_address))
+			continue;
+
+		ret = sysfs_emit_at(buf, offset, "%02x: %02x\n", reg_address, dump[i]);
+		if (!ret) {
+			dev_err(dev, "[%s]: Not all registers printed. last:%x\n", __func__,
+				reg_address - 1);
+			break;
+		}
+		offset += ret;
+	}
+
+done:
+	kfree(dump);
+unlock:
+	mutex_unlock(&info->reg_dump_lock);
+	return offset;
+}
+static DEVICE_ATTR_RO(registers_dump);
 
 bool max77779_pmic_is_readable(struct device *dev, unsigned int reg)
 {
@@ -248,6 +271,11 @@ int max77779_pmic_init(struct max77779_pmic_info *info)
 			ARRAY_SIZE(max77779_pmic_devs), NULL, 0, NULL);
 
 	dbg_init_fs(info);
+
+	mutex_init(&info->reg_dump_lock);
+	err = device_create_file(info->dev, &dev_attr_registers_dump);
+	if (err != 0)
+		dev_warn(info->dev, "Failed to create registers_dump, ret=%d\n", err);
 
 	return err;
 }
