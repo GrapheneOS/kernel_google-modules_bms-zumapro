@@ -151,6 +151,7 @@ struct max77779_fwupdate {
 	bool can_update;
 	bool force_update;
 	bool running_update;
+	int new_tag;
 
 	struct max77779_version_info v_cur;
 	struct max77779_version_info v_new;
@@ -195,7 +196,7 @@ static int get_firmware_update_tag(const struct max77779_fwupdate *fwu, int* ver
 	if ((fw_tag & MAX77779_FW_HIST_VER_MASK) == cur_ver)
 		*ver_tag = (fw_tag >> MAX77779_FW_HIST_OFFSET_TAG);
 
-	return ret;
+	return 0;
 }
 
 static int set_firmware_update_tag(const struct max77779_fwupdate *fwu, int tag)
@@ -267,7 +268,7 @@ static int max77779_fwupdate_init(struct max77779_fwupdate *fwu)
 	}
 
 	val = gbms_storage_read(GBMS_TAG_FGST, &fwu->op_st, sizeof(fwu->op_st));
-	if (val ==  -EPROBE_DEFER )
+	if (val ==  -EPROBE_DEFER)
 		return val;
 
 	if (of_property_read_u32(dev->of_node, "fwu,enabled", &val) == 0)
@@ -709,6 +710,10 @@ static int max77779_fwl_prepare(struct max77779_fwupdate *fwu,
 			data_frame_size);
 		return -EINVAL;
 	}
+
+	ret = max77779_get_firmware_version(fwu, &fwu->v_cur);
+	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed to read version information\n");
+
 	fwu->data_frame_size = data_frame_size;
 	fwu->op_st = (u8)FGST_FWUPDATE;
 
@@ -718,9 +723,6 @@ static int max77779_fwl_prepare(struct max77779_fwupdate *fwu,
 		dev_err(fwu->dev, "failed to update eeprom:GBMS_TAG_FGST (%d)\n", ret);
 		return -EIO;
 	}
-
-	ret = max77779_get_firmware_version(fwu, &fwu->v_cur);
-	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed to read version information\n");
 
 	ret = max77779_fg_enable_firmware_update(fwu->fg, true);
 	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed to set fg_enable_firmware_update");
@@ -742,7 +744,7 @@ static int max77779_fwl_prepare(struct max77779_fwupdate *fwu,
 	ret = max77779_send_command(fwu, MAX77779_CMD_REBOOT_RISCV);
 	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed send command CMD_REBOOT_RISCV");
 
-	/* wait_riscv_reboot may be timedout even following update will be fine */
+	/* wait_riscv_reboot might timeout but subsequent updates will be ok */
 	max77779_wait_riscv_reboot(fwu);
 
 	return ret;
@@ -817,7 +819,7 @@ static int max77779_fwl_poll_complete(struct max77779_fwupdate *fwu)
 
 	/* check firmware update status */
 	dev_info(fwu->dev, "firmware update CRC: %x\n", fwu->crc_val);
-	if (fwu->crc_val ==0) {
+	if (fwu->crc_val == 0) {
 		dev_info(fwu->dev, "bad CRC value returns");
 		return -EIO;
 	}
@@ -852,12 +854,13 @@ static int max77779_fwl_poll_complete(struct max77779_fwupdate *fwu)
 	fwu->op_st = FGST_NORMAL;
 
 	if (fwu->v_cur.major != fwu->v_new.major || fwu->v_cur.minor != fwu->v_new.minor) {
-		/* new version of firmware was installed: update GBMS_TAG_FWHI */
 		fwu->v_cur = fwu->v_new;
-
-		ret = set_firmware_update_tag(fwu, 0);
-		MAX77779_ABORT_ON_ERROR(ret, __func__, "failed on updating GBMS_TAG_FWHI\n");
+		/* new version of firmware was installed: update GBMS_TAG_FWHI as 0 */
+		fwu->new_tag = 0;
 	}
+
+	ret = set_firmware_update_tag(fwu, fwu->new_tag);
+	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed on updating GBMS_TAG_FWHI\n");
 
 	return ret;
 }
@@ -917,7 +920,7 @@ perform_firmware_update_cleanup:
 	max77779_fwl_cleanup(fwu);
 
 	/* force reboot RISC-V for the case of update failure*/
-	if (ret) {
+	if (ret || written != count) {
 		max77779_external_pmic_reg_write(fwu->pmic, MAX77779_PMIC_RISCV_COMMAND_HW,
 						 MAX77779_CMD_REBOOT_FG);
 		fwu->op_st = FGST_BASEFW;
@@ -1017,11 +1020,7 @@ static ssize_t trigger_update_firmware(struct device *dev,
 		return -EINVAL;
 	}
 
-	if (set_firmware_update_tag(fwu, target_ver) < 0) {
-		dev_err(fwu->dev, "can't update GBMS_TAG_FWHI: update will be aborted\n");
-		return -EACCES;
-	}
-
+	fwu->new_tag = target_ver;
 	fwu->force_update = true;
 
 	dev_info(fwu->dev, "will schedule firmware update for [%s]\n", fwu->fw_name);
