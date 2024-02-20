@@ -377,6 +377,7 @@
 #define P9382A_TX_INHIBIT			0x3
 
 #define P9382A_MODE_TXMODE			BIT(2)
+#define P9382A_MODE_MASK			0xFF
 
 #define P9382_PROP_TX_ID_REG			0xC4
 #define P9382_EPP_TX_MFG_CODE_REG		0xBA
@@ -437,6 +438,9 @@
 #define P9XXX_SYS_OP_MODE_PROPRIETARY		0x03 /* Renesas Prop. Protocol */
 #define P9XXX_SYS_OP_MODE_TX_MODE		0x08 /* TX Mode */
 #define P9XXX_SYS_OP_MODE_TX_FOD		0x09 /* TX FOD (Stop) */
+
+#define P9412_MODE_MASK				0xFF
+#define RA9530_MODE_MASK			0x0F
 
 #define P9412_TX_CMD_REG			0x4D
 #define P9412_TX_I_API_LIM_REG			0x56

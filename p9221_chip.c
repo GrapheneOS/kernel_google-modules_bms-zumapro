@@ -713,7 +713,7 @@ static int p9412_chip_get_sys_mode(struct p9221_charger_data *chgr, u8 *mode)
 
 /* These are more involved than just chip access */
 
-static int p9382_wait_for_mode(struct p9221_charger_data *chgr, int mode)
+static int p9382_wait_for_mode(struct p9221_charger_data *chgr, u8 mode, u8 mask)
 {
 	int loops, ret;
 	uint8_t sys_mode;
@@ -728,7 +728,7 @@ static int p9382_wait_for_mode(struct p9221_charger_data *chgr, int mode)
 			return -EIO;
 		}
 
-		if (sys_mode == mode)
+		if ((sys_mode & mask) == mode)
 			return 0;
 
 		msleep(50);
@@ -1039,12 +1039,12 @@ static int p9382_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 		}
 
 		/* check 0x4C reads back as 0x04 */
-		ret = p9382_wait_for_mode(chgr, P9382A_MODE_TXMODE);
+		ret = p9382_wait_for_mode(chgr, P9382A_MODE_TXMODE, P9382A_MODE_MASK);
 	} else {
 		/* Write 0x80 to 0x4E, check 0x4C reads back as 0x0000 */
 		ret = chgr->chip_set_cmd(chgr, P9221R5_COM_RENEGOTIATE);
 		if (ret == 0) {
-			ret = p9382_wait_for_mode(chgr, 0);
+			ret = p9382_wait_for_mode(chgr, 0, P9382A_MODE_MASK);
 			if (ret < 0)
 				pr_err("cannot exit rTX mode (%d)\n", ret);
 		}
@@ -1098,7 +1098,7 @@ static int p9412_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 	if (!enable) {
 		ret = chgr->chip_set_cmd(chgr, P9412_CMD_TXMODE_EXIT);
 		if (ret == 0) {
-			ret = p9382_wait_for_mode(chgr, 0);
+			ret = p9382_wait_for_mode(chgr, 0, P9412_MODE_MASK);
 			if (ret < 0)
 				pr_err("cannot exit rTX mode (%d)", ret);
 		}
@@ -1120,7 +1120,7 @@ static int p9412_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 			 "tx_cmd_reg write failed (%d)", ret);
 		return ret;
 	}
-	ret = p9382_wait_for_mode(chgr, P9XXX_SYS_OP_MODE_TX_MODE);
+	ret = p9382_wait_for_mode(chgr, P9XXX_SYS_OP_MODE_TX_MODE, P9412_MODE_MASK);
 	if (ret) {
 		logbuffer_log(chgr->rtx_log,
 			      "error waiting for tx_mode (%d)", ret);
@@ -1160,7 +1160,7 @@ static int ra9530_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 	if (!enable) {
 		ret = chgr->chip_set_cmd(chgr, P9412_CMD_TXMODE_EXIT);
 		if (ret == 0) {
-			ret = p9382_wait_for_mode(chgr, 0);
+			ret = p9382_wait_for_mode(chgr, 0, RA9530_MODE_MASK);
 			if (ret < 0)
 				pr_err("cannot exit rTX mode (%d)", ret);
 		}
@@ -1181,7 +1181,7 @@ static int ra9530_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 			 "tx_cmd_reg write failed (%d)", ret);
 		return ret;
 	}
-	ret = p9382_wait_for_mode(chgr, P9XXX_SYS_OP_MODE_TX_MODE);
+	ret = p9382_wait_for_mode(chgr, P9XXX_SYS_OP_MODE_TX_MODE, RA9530_MODE_MASK);
 	if (ret) {
 		logbuffer_log(chgr->rtx_log,
 			      "error waiting for tx_mode (%d)", ret);
