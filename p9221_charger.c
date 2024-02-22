@@ -2663,8 +2663,9 @@ static void p9221_dream_defend(struct p9221_charger_data *charger)
 	if (!threshold)
 		return;
 
-	if (charger->last_capacity > threshold &&
-		!charger->trigger_power_mitigation) {
+	if (charger->last_capacity > 0 &&
+	    charger->last_capacity > threshold &&
+	    !charger->trigger_power_mitigation) {
 		/* trigger_power_mitigation is the same as dream defend */
 		charger->trigger_power_mitigation = true;
 		ret = delayed_work_pending(&charger->power_mitigation_work);
