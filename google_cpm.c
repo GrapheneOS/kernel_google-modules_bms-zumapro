@@ -3805,24 +3805,6 @@ static void gcpm_init_work(struct work_struct *work)
 		return;
 	}
 
-	if (gcpm->cop_supported) {
-		int irq_in = platform_get_irq(gcpm->pdev, 0);
-
-		if (irq_in < 0) {
-			dev_err(gcpm->device, "%s failed to get irq ret = %d\n", __func__, irq_in);
-		} else {
-			ret = devm_request_threaded_irq(gcpm->device, irq_in, NULL,
-							google_cpm_cop_warn_irq_handler,
-							IRQF_TRIGGER_LOW |
-							IRQF_SHARED |
-							IRQF_ONESHOT,
-							"google_cpm_cop_warn",
-							gcpm);
-			if (ret < 0)
-				dev_err(gcpm->device, "Error setting up cop warn irq\n");
-		}
-	}
-
 	pr_info("google_cpm init_work done %d/%d pps=%d wlc_dc=%d\n",
 		found, gcpm->chg_psy_count,
 		!!gcpm->tcpm_psy, !!gcpm->wlc_dc_psy);
@@ -4560,6 +4542,29 @@ static int google_cpm_probe(struct platform_device *pdev)
 
 	gcpm->cop_supported = of_property_read_bool(pdev->dev.of_node, "google,cop-supported");
 	gcpm->cop_warn_trigger = COP_WARN_DEFAULT_TRIGGER_COUNT;
+
+	if (gcpm->cop_supported) {
+		int irq_in = platform_get_irq(gcpm->pdev, 0);
+
+		if (irq_in < 0) {
+			if (irq_in == -EPROBE_DEFER) {
+				dev_warn(gcpm->device, "IRQ wait, deferring probe.\n");
+				return irq_in;
+			}
+
+			dev_err(gcpm->device, "%s failed to get irq ret = %d\n", __func__, irq_in);
+		} else {
+			ret = devm_request_threaded_irq(gcpm->device, irq_in, NULL,
+							google_cpm_cop_warn_irq_handler,
+							IRQF_TRIGGER_LOW |
+							IRQF_SHARED |
+							IRQF_ONESHOT,
+							"google_cpm_cop_warn",
+							gcpm);
+			if (ret < 0)
+				dev_err(gcpm->device, "Error setting up cop warn irq\n");
+		}
+	}
 
 	dev_info(gcpm->device, "taper ts_m=%d ts_ccs=%d ts_i=%d ts_cnt=%d ts_g=%d ts_v=%d ts_c=%d\n",
 		 gcpm->taper_step_fv_margin, gcpm->taper_step_cc_step,
