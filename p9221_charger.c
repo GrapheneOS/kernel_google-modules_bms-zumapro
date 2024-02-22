@@ -997,7 +997,7 @@ static int feature_15w_enable(struct p9221_charger_data *charger, bool enable)
 	if (enable && !(chg_fts->session_features & WLCF_CHARGE_15W)) {
 		const u32 vout_mv = P9221_UV_TO_MV(CHARGE_15W_VOUT_UV);
 
-		if (charger->pdata->chip_id != P9412_CHIP_ID)
+		if (charger->pdata->chip_id != P9412_CHIP_ID && !charger->pdata->enable_15w)
 			return -ENOTSUPP;
 
 		/* TODO: feature_set_dc_icl() needs mutex_lock(&charger->auth_lock); */
@@ -7572,6 +7572,7 @@ static int p9221_parse_dt(struct device *dev,
 
 	pdata->bpp_cep_on_dl = of_property_read_bool(node, "google,bpp-cep-on-dl");
 	pdata->gpp_enhanced = of_property_read_bool(node, "google,gpp_enhanced");
+	pdata->enable_15w = of_property_read_bool(node, "google,enable_15w");
 	pdata->hda_tz_wlc = of_property_read_bool(node, "google,hda-tz-wlc");
 	pdata->magsafe_optimized = of_property_read_bool(node, "google,magsafe-optimized");
 
