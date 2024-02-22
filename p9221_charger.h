@@ -528,6 +528,7 @@
 #define RA9530_CMFET_DISABLE_ALL		(0x00)
 #define RA9530_CMFET_COM_1_2			(0xC0)
 #define RA9530_CMFET_COM_A_B			(0x30)
+#define RA9530_CMFET_COM_1_B			(0x60)
 #define RA9530_CMFET_ENABLE_ALL			(0xF0)
 
 #define P9221_CRC8_POLYNOMIAL			0x07    /* (x^8) + x^2 + x + 1 */
@@ -619,6 +620,10 @@ typedef enum {
 #define TXID_DD_TYPE2			0xA0
 #define P9221_POWER_MITIGATE_DELAY_MS   (10 * 1000)
 #define P9221_FOD_MAX_TIMES             3
+/* for RTx */
+#define TXID_PHONE_TYPE_MASK            0xFE
+#define TXID_PHONE_TYPE_CC              0x5
+
 
 enum p9221_align_mfg_chk_state {
 	ALIGN_MFG_FAILED = -1,
@@ -954,6 +959,7 @@ struct p9221_charger_data {
 	u16				rtx_fod_thrsh;
 	u16				ra9530_rtx_plim;
 	bool				chg_on_rtx;
+	bool				chg_on_cc_rtx;
 	bool				is_rtx_mode;
 	bool				prop_mode_en;
 	bool				negotiation_complete;

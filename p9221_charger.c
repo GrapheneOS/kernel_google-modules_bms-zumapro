@@ -1230,6 +1230,7 @@ static void p9221_set_offline(struct p9221_charger_data *charger)
 	charger->sw_ramp_done = false;
 	charger->force_bpp = false;
 	charger->chg_on_rtx = false;
+	charger->chg_on_cc_rtx = false;
 	if (!charger->wait_for_online)
 		p9221_reset_wlc_dc(charger);
 	charger->prop_mode_en = false;
@@ -6557,6 +6558,14 @@ static void p9221_handle_pp(struct p9221_charger_data *charger)
 					P9221_DC_ICL_RTX_UA, true);
 		dev_info(&charger->client->dev, "set ICL to %dmA",
 			 P9221_DC_ICL_RTX_UA / 1000);
+	}
+	/* check phone type bit[17-23] */
+	tmp = (charger->pp_buf[3] & TXID_PHONE_TYPE_MASK) >> 1;
+	charger->chg_on_cc_rtx = tmp == TXID_PHONE_TYPE_CC;
+	if (charger->chg_on_cc_rtx) {
+		res = p9xxx_chip_set_cmfet_reg(charger, RA9530_CMFET_COM_1_B);
+		dev_info(&charger->client->dev, "change comm cap to CM1 + CMB (0x%02x), ret=%d\n",
+			RA9530_CMFET_COM_1_B, res);
 	}
 }
 
