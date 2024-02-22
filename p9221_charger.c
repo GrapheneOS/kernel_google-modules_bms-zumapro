@@ -629,16 +629,12 @@ static int p9221_send_csp(struct p9221_charger_data *charger, u8 stat)
 
 	if (charger->online) {
 		int wcin;
-		const bool ext_bit = p9221_is_epp(charger) &&
-				     charger->ints.extended_mode_bit &&
-				     !charger->extended_int_recv;
 
 		wcin = p9221_has_dc_in(charger);
-		if (wcin <= 0 || ext_bit || !charger->chip_is_calibrated(charger)) {
+		if (wcin <= 0 || !charger->chip_is_calibrated(charger)) {
 			charger->last_capacity = -1;
 			dev_dbg(&charger->client->dev,
-				"skip to send CSP=%d wcin=%d extended_int_recv=%d\n",
-				stat, wcin, charger->extended_int_recv);
+				"skip to send CSP=%d wcin=%d\n", stat, wcin);
 			goto exit;
 		}
 		ret = p9221_reg_write_8(charger, charger->reg_csp_addr, stat);
@@ -2826,6 +2822,13 @@ static void p9221_dream_defend(struct p9221_charger_data *charger)
 
 	if (!threshold)
 		return;
+
+	if (charger->last_capacity < 0) {
+		schedule_delayed_work(&charger->soc_work, 0);
+		dev_info(&charger->client->dev, "retry, last_capacity=%d\n",
+			 charger->last_capacity);
+		return;
+	}
 
 	if (charger->last_capacity > threshold &&
 		!charger->trigger_power_mitigation) {
