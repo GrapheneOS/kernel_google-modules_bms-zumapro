@@ -1432,7 +1432,8 @@ static int max1720x_update_cycle_count(struct max1720x_chip *chip)
 		return -ECANCELED;
 
 	/* if cycle reg hasn't been restored from storage, restore it before update cycle count */
-	if (!chip->cycle_reg_ok && max_m5_recal_state(chip->model_data) == RE_CAL_STATE_IDLE) {
+	if (!chip->cycle_reg_ok && chip->gauge_type == MAX_M5_GAUGE_TYPE &&
+	    max_m5_recal_state(chip->model_data) == RE_CAL_STATE_IDLE) {
 		err = max1720x_restore_battery_cycle(chip);
 		if (err < 0)
 			dev_err(chip->dev, "%s cannot restore cycle count (%d)\n", __func__, err);
