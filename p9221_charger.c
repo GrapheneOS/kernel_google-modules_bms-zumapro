@@ -4982,6 +4982,9 @@ static ssize_t rtx_status_show(struct device *dev,
 	rtx_status = p9xxx_get_rtx_status(charger);
 	mutex_unlock(&charger->rtx_lock);
 
+	if (p9xxx_rtx_gpio_is_state(charger, RTX_RETRY))
+		rtx_status = RTX_ACTIVE;
+
 	return scnprintf(buf, PAGE_SIZE, "%s\n",
 			 rtx_state_text[rtx_status]);
 }
