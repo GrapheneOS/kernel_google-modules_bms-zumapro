@@ -2058,10 +2058,12 @@ static void p9221_update_head_stats(struct p9221_charger_data *charger)
 	int ret;
 
 	ret = charger->chip_get_sys_mode(charger, &sys_mode);
-	if (ret != 0)
+	if (ret != 0 || sys_mode <= 0)
 		return;
 
-	charger->chg_data.adapter_type = sys_mode;
+	/* Only allow updates to higher system modes */
+	if (sys_mode > charger->chg_data.adapter_type || sys_mode == P9XXX_SYS_OP_MODE_PROPRIETARY)
+		charger->chg_data.adapter_type = sys_mode;
 
 	ret = charger->chip_get_op_freq(charger, &wlc_freq);
 	if (ret != 0)
@@ -2161,12 +2163,16 @@ static void p9221_check_adapter_type(struct p9221_charger_data *charger)
 	if (p9221_get_tx_id_str(charger) != NULL) {
 		u8 id_type = (charger->tx_id & TXID_TYPE_MASK) >> TXID_TYPE_SHIFT;
 
-		if (id_type != 0 && id_type != charger->chg_data.adapter_type) {
+		if (charger->chg_data.adapter_type < P9XXX_SYS_OP_MODE_PROPRIETARY &&
+		    id_type != 0 && id_type != charger->chg_data.adapter_type) {
 			pr_info("%s: tx_id=%08x, adapter_type=%x->%x\n", __func__,
 				 charger->tx_id, charger->chg_data.adapter_type,
 				 id_type);
 
 			charger->chg_data.adapter_type = id_type;
+
+			if (id_type == TXID_DD_TYPE2)
+				charger->chg_data.start_time = get_boot_sec();
 		}
 	}
 }
