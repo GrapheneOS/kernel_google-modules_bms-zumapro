@@ -1223,7 +1223,6 @@ static void p9221_set_offline(struct p9221_charger_data *charger)
 	charger->online = false;
 	charger->online_at = 0;
 	charger->check_rp = RP_NOTSET;
-	charger->cc_vout_ready = false;
 	cancel_delayed_work(&charger->charge_stats_hda_work);
 	p9221_dump_charge_stats(charger);
 	mutex_unlock(&charger->stats_lock);
@@ -6599,9 +6598,6 @@ static void p9221_irq_handler(struct p9221_charger_data *charger, u16 irq_src)
 
 	p9221_check_dc_reset(charger, irq_src);
 
-	if (irq_src & charger->ints.cc_vout_bit)
-		charger->cc_vout_ready = true;
-
 	if (irq_src & charger->ints.stat_limit_mask)
 		p9221_over_handle(charger, irq_src);
 
@@ -7889,7 +7885,6 @@ static int p9221_charger_probe(struct i2c_client *client,
 	charger->extended_int_recv = false;
 	charger->trigger_dd = DREAM_DEBOUNCE_TIME_S;
 	charger->det_status = 1;
-	charger->cc_vout_ready = false;
 	charger->set_auth_icl = false;
 	charger->fod_mode = -1;
 	mutex_init(&charger->io_lock);
