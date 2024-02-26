@@ -75,6 +75,7 @@ enum wlc_align_codes {
 
 enum wlc_chg_mode {
 	WLC_BPP = 0,
+	WLC_BPP_LV,
 	WLC_EPP,
 	WLC_GPP,
 	WLC_EPP_COMP,
@@ -426,7 +427,7 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 	int ret;
 	int retries = 3;
 	int vout_mv;
-	static char *wlc_mode[] = { "BPP", "EPP", "GPP", "EPP_COMP", "EPP_IOP",
+	static char *wlc_mode[] = { "BPP", "BPP_LV", "EPP", "GPP", "EPP_COMP", "EPP_IOP",
 				    "HPP_0", "HPP_1", "HPP_2", "HPP_3",
 				    "HPP_4", "HPP_5", "HPP_6", "HPP_7" };
 
@@ -474,6 +475,12 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 			fod = charger->pdata->fod_gpp;
 			fod_count = charger->pdata->fod_gpp_num;
 		}
+	}
+
+	if (!p9221_is_epp(charger) && charger->pdata->fod_lv_num && vout_mv < 5500) {
+		fod = charger->pdata->fod_lv;
+		fod_count = charger->pdata->fod_lv_num;
+		mode = WLC_BPP_LV;
 	}
 
 	if (p9xxx_is_capdiv_en(charger) && charger->pdata->nb_hpp_fod_vol > 0) {
@@ -6959,8 +6966,8 @@ static void p9221_parse_fod(struct device *dev,
 	} else {
 		if (*fod_num > P9221R5_NUM_FOD) {
 			dev_err(dev,
-			    "Incorrect num of EPP FOD %d, using first %d\n",
-			    *fod_num, P9221R5_NUM_FOD);
+			    "Incorrect num of %s: %d, using first %d\n",
+			    of_name, *fod_num, P9221R5_NUM_FOD);
 			*fod_num = P9221R5_NUM_FOD;
 		}
 		ret = of_property_read_u8_array(node, of_name, fod, *fod_num);
@@ -7222,6 +7229,7 @@ static int p9221_parse_dt(struct device *dev,
 
 	/* Optional FOD data */
 	p9221_parse_fod(dev, &pdata->fod_num, pdata->fod, "fod");
+	p9221_parse_fod(dev, &pdata->fod_lv_num, pdata->fod_lv, "fod_lv");
 	p9221_parse_fod(dev, &pdata->fod_epp_num, pdata->fod_epp, "fod_epp");
 	p9221_parse_fod(dev, &pdata->fod_gpp_num, pdata->fod_gpp, "fod_gpp");
 	p9221_parse_fod(dev, &pdata->fod_epp_comp_num, pdata->fod_epp_comp, "fod_epp_comp");

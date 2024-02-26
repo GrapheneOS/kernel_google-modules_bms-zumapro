@@ -718,6 +718,7 @@ struct p9221_charger_platform_data {
 	int				max_vout_mv;
 	int				epp_vout_mv;
 	u8				fod[P9221R5_NUM_FOD];
+	u8				fod_lv[P9221R5_NUM_FOD];
 	u8				fod_epp[P9221R5_NUM_FOD];
 	u8				fod_gpp[P9221R5_NUM_FOD];
 	u8				fod_epp_comp[P9221R5_NUM_FOD];
@@ -726,6 +727,7 @@ struct p9221_charger_platform_data {
 	u8				fod_hpp_hv[P9221R5_NUM_FOD];
 	struct p9221_fod_data		hpp_fods[P9412_HPP_FOD_SETS];
 	int				fod_num;
+	int				fod_lv_num;
 	int				fod_epp_num;
 	int				fod_gpp_num;
 	int				fod_epp_comp_num;
