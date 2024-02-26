@@ -456,6 +456,10 @@ __printf(5,6)
 void gbms_logbuffer_prlog(struct logbuffer *log, int level, int debug_no_logbuffer,
 			  int debug_printk_prlog, const char *f, ...);
 
+void gbms_logbuffer_devlog(struct logbuffer *log, struct device *dev, int level,
+			   int debug_no_logbuffer, int debug_printk_prlog,
+			   const char *f, ...);
+
 /* debug/print */
 const char *gbms_chg_type_s(int chg_type);
 const char *gbms_chg_status_s(int chg_status);

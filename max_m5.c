@@ -1594,6 +1594,17 @@ const struct max17x0x_reg max_m5[] = {
 	[MAX17X0X_TAG_curr] = { ATOM_INIT_REG16(MAX_M5_CURRENT)},
 	[MAX17X0X_TAG_mcap] = { ATOM_INIT_REG16(MAX_M5_MIXCAP)},
 	[MAX17X0X_TAG_vfsoc] = { ATOM_INIT_REG16(MAX_M5_VFSOC)},
+
+	[MAXFG_TAG_tempco] = { ATOM_INIT_REG16(MAX_M5_TEMPCO)},
+	[MAXFG_TAG_rcomp0] = { ATOM_INIT_REG16(MAX_M5_RCOMP0)},
+	[MAXFG_TAG_fcnom] = { ATOM_INIT_REG16(MAX_M5_FULLCAPNOM)},
+	[MAXFG_TAG_fcrep] = { ATOM_INIT_REG16(MAX_M5_FULLCAPREP)},
+	[MAXFG_TAG_repsoc] = { ATOM_INIT_REG16(MAX_M5_REPSOC)},
+	[MAXFG_TAG_msoc] = { ATOM_INIT_REG16(MAX_M5_MIXSOC)},
+	[MAXFG_TAG_learn] = { ATOM_INIT_REG16(MAX_M5_LEARNCFG)},
+	[MAXFG_TAG_fstat] = { ATOM_INIT_REG16(MAX_M5_FSTAT)},
+	[MAXFG_TAG_dqacc] = { ATOM_INIT_REG16(MAX_M5_DQACC)},
+	[MAXFG_TAG_dpacc] = { ATOM_INIT_REG16(MAX_M5_DPACC)},
 };
 
 int max_m5_regmap_init(struct max17x0x_regmap *regmap, struct i2c_client *clnt)

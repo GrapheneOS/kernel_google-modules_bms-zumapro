@@ -35,6 +35,7 @@
 #include "gbms_power_supply.h"
 #include "google_bms.h"
 #include "max1720x_battery.h"
+#include "maxfg_logging.h"
 
 #include <linux/debugfs.h>
 
@@ -278,6 +279,9 @@ struct max1720x_chip {
 
 	/* Current Offset */
 	bool current_offset_done;
+
+	/* buffer for recording learning history */
+	struct maxfg_capture_buf cb_lh;
 };
 
 #define MAX1720_EMPTY_VOLTAGE(profile, temp, cycle) \
@@ -308,41 +312,7 @@ static bool max17x0x_reglog_init(struct max1720x_chip *chip)
 /* TODO: split between NV and Volatile? */
 
 
-static const struct max17x0x_reg * max17x0x_find_by_index(struct max17x0x_regtags *tags,
-							  int index)
-{
-	if (index < 0 || !tags || index >= tags->max)
-		return NULL;
 
-	return &tags->map[index];
-}
-
-static const struct max17x0x_reg * max17x0x_find_by_tag(struct max17x0x_regmap *map,
-							enum max17x0x_reg_tags tag)
-{
-	return max17x0x_find_by_index(&map->regtags, tag);
-}
-
-static inline int max17x0x_reg_read(struct max17x0x_regmap *map,
-				    enum max17x0x_reg_tags tag,
-				    u16 *val)
-{
-	const struct max17x0x_reg *reg;
-	unsigned int tmp;
-	int rtn;
-
-	reg = max17x0x_find_by_tag(map, tag);
-	if (!reg)
-		return -EINVAL;
-
-	rtn = regmap_read(map->regmap, reg->reg, &tmp);
-	if (rtn)
-		pr_err("Failed to read %x\n", reg->reg);
-	else
-		*val = tmp;
-
-	return rtn;
-}
 
 /* ------------------------------------------------------------------------- */
 
@@ -1141,6 +1111,36 @@ static ssize_t rc_switch_enable_show(struct device *dev,
 }
 
 static const DEVICE_ATTR_RW(rc_switch_enable);
+
+
+static ssize_t fg_learning_events_show(struct device *dev,
+				       struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct max1720x_chip *chip = power_supply_get_drvdata(psy);
+
+	return maxfg_show_captured_buffer(&chip->cb_lh, buf, PAGE_SIZE);
+}
+
+static ssize_t fg_learning_events_store(struct device *dev,
+					      struct device_attribute *attr,
+					      const char *buf, size_t count)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct max1720x_chip *chip = power_supply_get_drvdata(psy);
+	int value, ret;
+
+	ret = kstrtoint(buf, 0, &value);
+	if (ret < 0)
+		return ret;
+
+	if (value == 0)
+		maxfg_clear_capture_buf(&chip->cb_lh);
+
+	return count;
+}
+
+static DEVICE_ATTR_RW(fg_learning_events);
 
 /* lsb 1/256, race with max1720x_model_work()  */
 static int max1720x_get_capacity_raw(struct max1720x_chip *chip, u16 *data)
@@ -2272,6 +2272,49 @@ static int max1720x_current_offset_fix(struct max1720x_chip *chip)
 	return ret;
 }
 
+static int max1720x_monitor_log_learning(struct max1720x_chip *chip, bool force)
+{
+	const bool seed = !chip->cb_lh.latest_entry;
+	bool log_it;
+	char *buf;
+	int ret;
+
+	/* do nothing if no changes on dpacc/dqacc or relaxation */
+	log_it = force || seed ||
+	         maxfg_ce_relaxed(&chip->regmap,  MAX_M5_FSTAT_RELDT | MAX_M5_FSTAT_RELDT2,
+				(u16 *)chip->cb_lh.latest_entry);
+	if (!log_it)
+		return 0;
+
+	ret = maxfg_capture_registers(&chip->cb_lh);
+	if (ret < 0) {
+		dev_dbg(chip->dev, "cannot read learning parameters (%d)\n", ret);
+		return ret;
+	}
+
+	/* no need to log at boot */
+	if (seed)
+		return 0;
+
+	buf = kmalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
+	ret = maxfg_capture_to_cstr(&chip->cb_lh.config,
+				    (u16 *)chip->cb_lh.latest_entry,
+				    buf, PAGE_SIZE);
+	if (ret > 0)
+		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
+				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+				      "learn %s", buf);
+
+	kfree(buf);
+
+	kobject_uevent(&chip->dev->kobj, KOBJ_CHANGE);
+
+	return 0;
+}
+
 static int max1720x_get_property(struct power_supply *psy,
 				 enum power_supply_property psp,
 				 union power_supply_propval *val)
@@ -2309,6 +2352,9 @@ static int max1720x_get_property(struct power_supply *psy,
 		if (err == POWER_SUPPLY_STATUS_FULL)
 			batt_ce_start(&chip->cap_estimate,
 				      chip->cap_estimate.cap_tsettle);
+		/* check for relaxation event and log it */
+		max1720x_monitor_log_learning(chip, false);
+
 		/* return data ok */
 		err = 0;
 		break;
@@ -2940,6 +2986,7 @@ static bool max1720x_fg_irq_storm_check(struct max1720x_chip *chip)
 	return storm;
 }
 
+
 static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 {
 	struct max1720x_chip *chip = (struct max1720x_chip *)obj;
@@ -3104,6 +3151,7 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 		if (storm) {
 			pr_debug("Force power_supply_change in storm\n");
 		} else {
+			max1720x_monitor_log_learning(chip, false);
 			max1720x_monitor_log_data(chip, false);
 			if (chip->gauge_type == MAX_M5_GAUGE_TYPE)
 				max_m5_check_recal_state(chip->model_data,
@@ -3830,6 +3878,17 @@ static int debug_fake_battery_set(void *data, u64 val)
 DEFINE_SIMPLE_ATTRIBUTE(debug_fake_battery_fops, NULL,
 			debug_fake_battery_set, "%llu\n");
 
+
+static int max1720x_log_learn_set(void *data, u64 val)
+{
+	struct max1720x_chip *chip = data;
+
+       max1720x_monitor_log_learning(chip, true);
+       return 0;
+}
+DEFINE_SIMPLE_ATTRIBUTE(debug_log_learn_fops, NULL, max1720x_log_learn_set, "%llu\n");
+
+
 static void max17x0x_reglog_dump(struct max17x0x_reglog *regs,
 				 size_t size,
 				 char *buff)
@@ -4231,6 +4290,7 @@ static ssize_t act_impedance_show(struct device *dev,
 
 static const DEVICE_ATTR_RW(act_impedance);
 
+
 static int max17x0x_init_sysfs(struct max1720x_chip *chip)
 {
 	struct dentry *de;
@@ -4252,6 +4312,7 @@ static int max17x0x_init_sysfs(struct max1720x_chip *chip)
 	debugfs_create_file("fake_battery", 0400, de, chip, &debug_fake_battery_fops);
 	debugfs_create_file("batt_id", 0600, de, chip, &debug_batt_id_fops);
 	debugfs_create_file("force_psy_update", 0600, de, chip, &debug_force_psy_update_fops);
+	debugfs_create_file("log_learn", 0400, de, chip, &debug_log_learn_fops);
 
 	if (chip->regmap.reglog)
 		debugfs_create_file("regmap_writes", 0440, de,
@@ -6164,6 +6225,26 @@ void *max1720x_get_model_data(struct i2c_client *client)
 	return chip ? chip->model_data : NULL;
 }
 
+
+static int max1720x_init_fg_capture(struct max1720x_chip *chip)
+{
+	struct device *dev = &chip->psy->dev;
+	int ret;
+
+	/* Logging FG Learning */
+	maxfg_init_fg_learn_capture_config(&chip->cb_lh.config,
+					   &chip->regmap, &chip->regmap);
+	ret = maxfg_alloc_capture_buf(&chip->cb_lh, MAX_FG_LEARN_PARAM_MAX_HIST);
+	if (ret < 0)
+		return -ENOMEM;
+
+	ret = device_create_file(dev, &dev_attr_fg_learning_events);
+	if (ret)
+		dev_err(dev, "Failed to create fg_learning_params attribute\n");
+
+	return ret;
+}
+
 static int max1720x_probe(struct i2c_client *client,
 			  const struct i2c_device_id *id)
 {
@@ -6338,6 +6419,7 @@ static int max1720x_probe(struct i2c_client *client,
 	chip->reg_prop_capacity_raw = (reg) ? reg->reg : MAX1720X_REPSOC;
 
 	max17x0x_init_sysfs(chip);
+	max1720x_init_fg_capture(chip);
 
 	INIT_DELAYED_WORK(&chip->cap_estimate.settle_timer,
 			  batt_ce_capacityfiltered_work);
@@ -6381,6 +6463,8 @@ static int max1720x_remove(struct i2c_client *client)
 	if (chip->secondary)
 		i2c_unregister_device(chip->secondary);
 
+
+	maxfg_free_capture_buf(&chip->cb_lh);
 	wakeup_source_unregister(chip->get_prop_ws);
 
 	return 0;
