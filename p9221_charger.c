@@ -5733,21 +5733,23 @@ static ssize_t rtx_store(struct device *dev,
 	if (!charger->bcl_wlc_votable)
 		charger->bcl_wlc_votable = gvotable_election_get_handle(BCL_WLC);
 	if (!charger->bcl_wlc_votable)
-		return -ENOENT;
+		logbuffer_prlog(charger->rtx_log, "can't find bcl votable");
 
 	if (buf[0] == '0') {
 		mutex_lock(&charger->rtx_lock);
 		logbuffer_prlog(charger->rtx_log, "battery share off");
-		gvotable_cast_vote(charger->bcl_wlc_votable, BCL_DEV_VOTER, (void *)BCL_WLC_VOTE,
-				   WLC_DISABLED_TX);
+		if (charger->bcl_wlc_votable)
+			gvotable_cast_vote(charger->bcl_wlc_votable, BCL_DEV_VOTER,
+					   (void *)BCL_WLC_VOTE, WLC_DISABLED_TX);
 		charger->rtx_reset_cnt = 0;
 		ret = p9382_set_rtx(charger, false);
 		mutex_unlock(&charger->rtx_lock);
 	} else if (buf[0] == '1') {
 		mutex_lock(&charger->rtx_lock);
 		logbuffer_prlog(charger->rtx_log, "battery share on");
-		gvotable_cast_vote(charger->bcl_wlc_votable, BCL_DEV_VOTER, (void *)BCL_WLC_VOTE,
-				   WLC_ENABLED_TX);
+		if (charger->bcl_wlc_votable)
+			gvotable_cast_vote(charger->bcl_wlc_votable, BCL_DEV_VOTER,
+					   (void *)BCL_WLC_VOTE, WLC_ENABLED_TX);
 		charger->rtx_reset_cnt = 0;
 		rtx_status = p9xxx_get_rtx_status(charger);
 		if (rtx_status == RTX_AVAILABLE)
@@ -6898,13 +6900,9 @@ static void p9382_rtx_disable_work(struct work_struct *work)
 	mutex_lock(&charger->rtx_lock);
 	if (!charger->bcl_wlc_votable)
 		charger->bcl_wlc_votable = gvotable_election_get_handle(BCL_WLC);
-	if (!charger->bcl_wlc_votable) {
-		mutex_unlock(&charger->rtx_lock);
-		return;
-	}
-
-	gvotable_cast_vote(charger->bcl_wlc_votable, BCL_DEV_VOTER, (void *)BCL_WLC_VOTE,
-			   WLC_DISABLED_TX);
+	if (charger->bcl_wlc_votable)
+		gvotable_cast_vote(charger->bcl_wlc_votable, BCL_DEV_VOTER,
+				   (void *)BCL_WLC_VOTE, WLC_DISABLED_TX);
 
 	/* Disable rtx mode */
 	ret = p9382_set_rtx(charger, false);
