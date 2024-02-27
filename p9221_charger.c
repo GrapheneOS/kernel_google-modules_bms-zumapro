@@ -365,14 +365,18 @@ out:
 bool p9xxx_is_capdiv_en(struct p9221_charger_data *charger)
 {
 	int ret;
-	u8 cdmode;
+	u8 cdmode, mode_reg;
+
+	if (charger->chip_id < P9412_CHIP_ID)
+		return false;
 
 	/* 9530 doesn't require capdiv mode */
-	if (charger->chip_id == RA9530_CHIP_ID)
-		return true;
-
-	if (charger->chip_id != P9412_CHIP_ID)
+	if (charger->chip_id == RA9530_CHIP_ID) {
+		ret = charger->chip_get_sys_mode(charger, &mode_reg);
+		if (ret == 0 && mode_reg == P9XXX_SYS_OP_MODE_PROPRIETARY)
+			return true;
 		return false;
+	}
 
 	ret = charger->reg_read_8(charger, P9412_CDMODE_STS_REG, &cdmode);
 	if ((ret == 0) && (cdmode & CDMODE_CAP_DIV_MODE))
