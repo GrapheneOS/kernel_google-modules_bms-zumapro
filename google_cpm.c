@@ -2052,6 +2052,17 @@ static int gcpm_set_active_charger(struct gcpm_drv *gcpm,
 			gcpm->chg_psy_active, psp);
 	}
 
+	/* Write USB ICL and Voltage to main charger also to lift CHGIN_SUSP */
+	if (psp == POWER_SUPPLY_PROP_CURRENT_MAX || psp == POWER_SUPPLY_PROP_VOLTAGE_MAX) {
+		chg_psy = gcpm_chg_get_default(gcpm);
+		ret = power_supply_set_property(chg_psy, psp, pval);
+		if (ret < 0 && ret != -EAGAIN) {
+			pr_err("cannot route prop=%d to %d:%s (%d)\n", psp,
+				gcpm->chg_psy_active, gcpm_psy_name(chg_psy),
+				ret);
+		}
+	}
+
 done:
 	/*
 	 * route==false when using CP and when transitioning OUT of it.
