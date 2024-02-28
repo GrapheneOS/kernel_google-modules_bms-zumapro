@@ -22,6 +22,7 @@
 #include "maxfg_common.h"
 
 #define MAX77779_FIRMWARE_BINARY_PREFIX "batt_fw_adi_79"
+#define MAX77779_REASON_FIRMWARE        "FW_UPDATE"
 
 #define FW_UPDATE_RETRY_CPU_RESET             100
 #define FW_UPDATE_RETRY_FW_UPDATE             1000
@@ -200,6 +201,8 @@ struct max77779_fwupdate {
 	struct max77779_fwupdate_stats stats;
 
 	struct logbuffer *lb;
+
+	struct gvotable_election *mode_votable;
 };
 
 /* Defined at max77779_fg.c */
@@ -781,6 +784,7 @@ static int max77779_fwl_prepare(struct max77779_fwupdate *fwu,
 {
 	int ret;
 	size_t data_frame_size;
+	struct gvotable_election *mode_votable;
 
 	fwu->zero_filled_buffer = kzalloc(MAX77779_VIMON_PG_SIZE, GFP_KERNEL);
 	fwu->scratch_buffer = kmalloc(MAX77779_VIMON_PG_SIZE, GFP_KERNEL);
@@ -811,6 +815,21 @@ static int max77779_fwl_prepare(struct max77779_fwupdate *fwu,
 		return -EIO;
 	}
 
+	if (!fwu->mode_votable) {
+		mode_votable = gvotable_election_get_handle(GBMS_MODE_VOTABLE);
+		if (!mode_votable) {
+			dev_err(fwu->dev, "failed to get %s(%ld)\n", GBMS_MODE_VOTABLE,
+				PTR_ERR(mode_votable));
+			return -ENODEV;
+		}
+
+		fwu->mode_votable = mode_votable;
+	}
+
+	ret = gvotable_cast_long_vote(fwu->mode_votable, MAX77779_REASON_FIRMWARE,
+				      MAX77779_CHGR_MODE_BOOST_ON, true);
+	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed to set mode BOOST_ON");
+
 	ret = max77779_fg_enable_firmware_update(fwu->fg, true);
 	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed to set fg_enable_firmware_update");
 
@@ -823,10 +842,6 @@ static int max77779_fwl_prepare(struct max77779_fwupdate *fwu,
 
 	ret = max77779_clear_state_for_update(fwu);
 	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed clear command / POR  interrupt");
-
-	/* TODO: 308211733 need to prevent mode change  */
-	ret = max77779_external_chg_mode_write(fwu->chg, MAX77779_CHGR_MODE_BOOST_ON);
-	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed to set mode BOOST_ON");
 
 	ret = max77779_send_command(fwu, MAX77779_CMD_REBOOT_RISCV);
 	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed send command CMD_REBOOT_RISCV");
@@ -919,9 +934,6 @@ static int max77779_fwl_poll_complete(struct max77779_fwupdate *fwu)
 		return -EAGAIN;
 	}
 
-	ret = max77779_external_chg_mode_write(fwu->chg, MAX77779_CHGR_MODE_BUCK_ON);
-	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed to set MAX77779_CHGR_MODE_BUCK_ON");
-
 	/* b/310710147: risc-v is not operational state. requires reboot */
 	max77779_external_pmic_reg_write(fwu->pmic, MAX77779_PMIC_RISCV_COMMAND_HW,
 					 MAX77779_CMD_REBOOT_FG);
@@ -971,6 +983,14 @@ static void max77779_fwl_cleanup(struct max77779_fwupdate *fwu)
 	ret = max77779_fg_enable_firmware_update(fwu->fg, false);
 	if (ret)
 		dev_err(fwu->dev, "failed to set max77779_fg_enable_firmware_update (%d)\n", ret);
+
+	if (!fwu->mode_votable)
+		return;
+
+	ret = gvotable_cast_long_vote(fwu->mode_votable, MAX77779_REASON_FIRMWARE,
+				      MAX77779_CHGR_MODE_BOOST_ON, false);
+	if (ret)
+		dev_err(fwu->dev, "failed to restore CHG from update mode (%d)\n", ret);
 }
 
 static inline int update_running_state(struct max77779_fwupdate *fwu, bool running)
