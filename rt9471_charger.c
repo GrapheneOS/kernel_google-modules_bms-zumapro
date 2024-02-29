@@ -1351,6 +1351,9 @@ static int rt9471_register_irq(struct rt9471_chip *chip)
 		return ret;
 	}
 	device_init_wakeup(chip->dev, true);
+	ret = enable_irq_wake(chip->irq);
+	if (ret)
+		dev_err(chip->dev, "Error enabling irq wake ret:%d\n", ret);
 
 	return 0;
 }
@@ -2112,6 +2115,7 @@ static void rt9471_remove(struct i2c_client *client)
 
 	dev_info(chip->dev, "%s\n", __func__);
 	disable_irq(chip->irq);
+	disable_irq_wake(chip->irq);
 	power_supply_unregister(chip->psy);
 	mutex_destroy(&chip->io_lock);
 	mutex_destroy(&chip->bc12_lock);
@@ -2124,8 +2128,6 @@ static int rt9471_suspend(struct device *dev)
 
 	pm_runtime_get_sync(chip->dev);
 	dev_dbg(dev, "%s\n", __func__);
-	if (device_may_wakeup(dev))
-		enable_irq_wake(chip->irq);
 	disable_irq(chip->irq);
 	pm_runtime_put_sync(chip->dev);
 
@@ -2139,8 +2141,6 @@ static int rt9471_resume(struct device *dev)
 	pm_runtime_get_sync(chip->dev);
 	dev_dbg(dev, "%s\n", __func__);
 	enable_irq(chip->irq);
-	if (device_may_wakeup(dev))
-		disable_irq_wake(chip->irq);
 	pm_runtime_put_sync(chip->dev);
 
 	return 0;
