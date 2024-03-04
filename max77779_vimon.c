@@ -10,6 +10,7 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/regmap.h>
+#include <linux/reboot.h>
 
 #include "google_bms.h"
 #include "max77779.h"
@@ -31,6 +32,24 @@ static inline int max77779_vimon_reg_update(struct max77779_vimon_data *data, un
 					    unsigned int mask, unsigned int val)
 {
 	return regmap_update_bits(data->regmap, reg, mask, val);
+}
+
+/* 0 not running, !=0 running, <0 error */
+static int max77779_vimon_is_running(struct max77779_vimon_data *data)
+{
+	unsigned int running;
+	int ret;
+
+	ret = max77779_vimon_reg_read(data, MAX77779_BVIM_CTRL, &running);
+	if (ret < 0)
+		return ret;
+	return !!(running & MAX77779_BVIM_CTRL_BVIMON_TRIG_MASK);
+}
+
+/* requires mutex_lock(&data->vimon_lock); */
+static int vimon_is_running(struct max77779_vimon_data *data)
+{
+	return data->state > MAX77779_VIMON_IDLE;
 }
 
 int max77779_external_vimon_reg_read(struct device *dev, uint16_t reg, void *val, int len)
@@ -522,15 +541,42 @@ static int max77779_vimon_init_fs(struct max77779_vimon_data *data)
 	if (IS_ERR_OR_NULL(data->de))
 		return -EINVAL;
 
-	debugfs_create_file("start", 0600, data->de, data, &debug_start_fops);
-
 	debugfs_create_u32("address", 0600, data->de, &data->debug_reg_address);
 	debugfs_create_file("data", 0600, data->de, data, &debug_reg_rw_fops);
 	debugfs_create_file("registers", 0444, data->de, data, &debug_vimon_all_reg_fops);
+
+	debugfs_create_file("start", 0600, data->de, data, &debug_start_fops);
 	debugfs_create_file("buffer", 0444, data->de, data, &debug_vimon_all_buff_fops);
 	debugfs_create_file("buffer_page", 0600, data->de, data, &debug_buff_page_rw_fops);
+	debugfs_create_bool("run_in_offmode", 0644, data->de, &data->run_in_offmode);
 
 	return 0;
+}
+
+static int max77779_vimon_reboot_notifier(struct notifier_block *nb,
+					  unsigned long val, void *v)
+{
+	struct max77779_vimon_data *data =
+		container_of(nb, struct max77779_vimon_data, reboot_notifier);
+	int running;
+
+	running = max77779_vimon_is_running(data);
+	if (running < 0)
+		dev_err(data->dev, "cannot read VIMON HW state (%d)\n", running);
+	if (running || vimon_is_running(data))
+		dev_warn(data->dev, "vimon state HW=%d SW=%d\n",
+			 running, data->state);
+
+	/* stop the HW, warn on inconsistency betwee HW and SW state */
+	if (!data->run_in_offmode && running) {
+		int ret;
+
+		ret = max77779_vimon_stop(data);
+		if (ret < 0)
+			dev_err(data->dev, "cannot stop vimon acquisition\n");
+	}
+
+	return NOTIFY_OK;
 }
 
 /* IRQ */
@@ -576,10 +622,15 @@ vimon_rearm_interrupt:
 int max77779_vimon_init(struct max77779_vimon_data *data)
 {
 	struct device *dev = data->dev;
+	unsigned int running;
 	uint16_t cfg_mask = 0;
 	uint16_t cfg_mask_lower_bits = 0;
 	int ret;
 
+	/* VIMON can be used to profile battery drain during reboot */
+	running = max77779_vimon_is_running(data);
+	if (running)
+		dev_warn(data->dev, "VIMON is already running (%d)\n", running);
 	mutex_init(&data->vimon_lock);
 
 	/* configure collected sample count with MAX77779_VIMON_SMPL_CNT */
@@ -650,6 +701,12 @@ int max77779_vimon_init(struct max77779_vimon_data *data)
 	if (ret < 0)
 		dev_warn(dev, "Failed to initialize debug fs\n");
 
+	/* turn off vimon on reboot */
+	data->reboot_notifier.notifier_call = max77779_vimon_reboot_notifier;
+	ret = register_reboot_notifier(&data->reboot_notifier);
+	if (ret)
+		dev_err(data->dev, "failed to register reboot notifier\n");
+
 	ret = max77779_vimon_reg_write(data, MAX77779_BVIM_MASK, 0);
 	if (ret)
 		dev_err(data->dev, "Failed to unmask INT (%d).\n", ret);
@@ -660,11 +717,20 @@ int max77779_vimon_init(struct max77779_vimon_data *data)
 }
 EXPORT_SYMBOL_GPL(max77779_vimon_init);
 
+
 void max77779_vimon_remove(struct max77779_vimon_data *data)
 {
+	unsigned int running;
+
+	running = max77779_vimon_is_running(data);
+	if (running < 0)
+		dev_err(data->dev, "cannot read VIMON HW state (%d)\n", running);
+	if (running || vimon_is_running(data))
+		dev_warn(data->dev, "vimon state HW=%d SW=%d\n",
+			 running, data->state);
+
 	if (data->de)
 		debugfs_remove(data->de);
-
 	if (data->irq)
 		free_irq(data->irq, data);
 }

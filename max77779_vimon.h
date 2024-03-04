@@ -36,6 +36,10 @@ struct max77779_vimon_data {
 	int irq;
 	struct regmap *regmap;
 	struct dentry *de;
+
+	struct notifier_block	reboot_notifier;
+	bool run_in_offmode;
+
 	struct mutex vimon_lock;
 	unsigned max_cnt;
 	unsigned max_triggers;
