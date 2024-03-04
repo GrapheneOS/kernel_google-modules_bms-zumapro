@@ -2319,6 +2319,8 @@ static int max1720x_monitor_log_learning(struct max1720x_chip *chip, bool force)
 
 	kfree(buf);
 
+	kobject_uevent(&chip->dev->kobj, KOBJ_CHANGE);
+
 	return 0;
 }
 
