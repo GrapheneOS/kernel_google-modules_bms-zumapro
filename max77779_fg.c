@@ -24,6 +24,9 @@
 #include <linux/regmap.h>
 #include "max77779_fg.h"
 
+/* sync from google/logbuffer.c */
+#define LOG_BUFFER_ENTRY_SIZE	256
+
 #define MAX77779_FG_TPOR_MS 800
 
 #define MAX77779_FG_TICLR_MS 500
@@ -1760,21 +1763,37 @@ static int max77779_gbms_fg_property_is_writeable(struct power_supply *psy,
 	return 0;
 }
 
-/* TODO: b/309384491 - FG register dump for max77779 */
-static int max77779_fg_extensive_dump_work(struct max77779_fg_chip *chip) {
-	return 0;
-}
-
-/* TODO: b/309384491 - FG register dump for max77779 */
-static int max77779_fg_recurent_dump_work(struct max77779_fg_chip *chip) {
-	return 0;
-}
-
-static int max77779_fg_check_logging_event(struct max77779_fg_chip *chip)
+static int max77779_fg_log_abnormal_events(struct max77779_fg_chip *chip, unsigned int curr_event,
+					   unsigned int last_event)
 {
-	int ret = 0, event = chip->fg_logging_events;
+	int ret, i;
+	unsigned int changed;
+	char buf[LOG_BUFFER_ENTRY_SIZE] = {0};
+
+	ret = maxfg_reg_log_abnormal(&chip->regmap, &chip->regmap_debug, buf, sizeof(buf));
+	if (ret < 0)
+		return ret;
+
+	/* report when event changed (bitflip) */
+	changed = curr_event ^ last_event;
+	for (i = 1; changed > 0 ; i++, changed = changed >> 1, curr_event = curr_event >> 1) {
+		if (!(changed & 0x1))
+			continue;
+
+		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
+				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+				      "0x%04X %d %d%s",
+				      MONITOR_TAG_AB, i, curr_event & 0x1, buf);
+	}
+
+	return 0;
+}
+
+static int max77779_fg_monitor_log_abnormal(struct max77779_fg_chip *chip)
+{
+	int ret;
 	u16 data, fullcapnom, designcap, repsoc, mixsoc, edet, fdet, vfocv, avgvcell, ibat;
-	bool changed;
+	unsigned int curr_event;
 
 	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_FullCapNom, &fullcapnom);
 	if (ret < 0)
@@ -1797,12 +1816,12 @@ static int max77779_fg_check_logging_event(struct max77779_fg_chip *chip)
 	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_FStat, &data);
 	if (ret < 0)
 		return ret;
-	edet = (data & MAX77779_FG_FStat_EDet_MASK);
+	edet = !!(data & MAX77779_FG_FStat_EDet_MASK);
 
 	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_Status2, &data);
 	if (ret < 0)
 		return ret;
-	fdet = (data & MAX77779_FG_Status2_FullDet_MASK);
+	fdet = !!(data & MAX77779_FG_Status2_FullDet_MASK);
 
 	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_VFOCV, &vfocv);
 	if (ret < 0)
@@ -1816,85 +1835,102 @@ static int max77779_fg_check_logging_event(struct max77779_fg_chip *chip)
 	if (ret < 0)
 		return ret;
 
-	/* stop when FullCapNom updated */
-	if ((event & MAX77779_FG_EVENT_FULLCAPNOM_LOW) &&
-	    (fullcapnom != chip->pre_fullcapnom))
-		event &= ~MAX77779_FG_EVENT_FULLCAPNOM_LOW;
-
-	/* stop when FullCapNom updated */
-	if ((event & MAX77779_FG_EVENT_FULLCAPNOM_HIGH) &&
-	    (fullcapnom != chip->pre_fullcapnom))
-		event &= ~MAX77779_FG_EVENT_FULLCAPNOM_HIGH;
-
-	/* stop when RepSoc > 20% */
-	if ((event & MAX77779_FG_EVENT_REPSOC_EDET) && (repsoc > 20))
-		event &= ~MAX77779_FG_EVENT_REPSOC_EDET;
-
-	/* stop when RepSoc < 80% */
-	if ((event & MAX77779_FG_EVENT_REPSOC_FDET) && (repsoc < 80))
-		event &= ~MAX77779_FG_EVENT_REPSOC_FDET;
-
-	/* stop when abs(MixSoC - RepSoC) < 20% */
-	if ((event & MAX77779_FG_EVENT_REPSOC) && (abs(mixsoc - repsoc) < 20))
-		event &= ~MAX77779_FG_EVENT_REPSOC;
-
-	/* stop when VFOCV < (AvgVCell - 200mV) || VFOCV > (AvgVCell + 200mV) */
-	if ((event & MAX77779_FG_EVENT_VFOCV) &&
-	    (reg_to_micro_volt(vfocv) < (reg_to_micro_volt(avgvcell) - 200000) ||
-	     reg_to_micro_volt(vfocv) > (reg_to_micro_volt(avgvcell) + 200000)))
-		event &= ~MAX77779_FG_EVENT_VFOCV;
-
-	changed = event != chip->fg_logging_events;
-
-	/* trigger when FullCapNom < DesignCap x 60% */
-	if (fullcapnom < (designcap * 60 / 100)) {
-		event |= MAX77779_FG_EVENT_FULLCAPNOM_LOW;
-		chip->pre_fullcapnom = fullcapnom;
+	mutex_lock(&chip->check_event_lock);
+	curr_event = chip->abnormal_event_bits;
+	/*
+	 * Always check stop condition first
+	 *
+	 * reason: unexpected FullCapNom Learning
+	 * stop condition: next FullCapNom updated
+	 * start condition: FullCapNom < DesignCap x 60%
+	 */
+	if (curr_event & MAX77779_FG_EVENT_FULLCAPNOM_LOW) {
+		if (fullcapnom != chip->last_fullcapnom)
+			curr_event &= ~MAX77779_FG_EVENT_FULLCAPNOM_LOW;
+	} else if (fullcapnom < (designcap * 60 / 100)) {
+		curr_event |= MAX77779_FG_EVENT_FULLCAPNOM_LOW;
+		chip->last_fullcapnom = fullcapnom;
 	}
-
-	/* trigger when FullCapNom > DesignCap x 115% */
-	if (fullcapnom > (designcap * 115 / 100)) {
-		event |= MAX77779_FG_EVENT_FULLCAPNOM_HIGH;
-		chip->pre_fullcapnom = fullcapnom;
-	}
-
-	/* trigger when RepSoC > 10% && Empty detection bit is set */
-	if (repsoc > 10 && edet)
-		event |= MAX77779_FG_EVENT_REPSOC_EDET;
-
-	/* trigger when RepSoC < 90% && Full detection is enabled */
-	if (repsoc < 90 && fdet)
-		event |= MAX77779_FG_EVENT_REPSOC_FDET;
-
-	/* trigger when abs(MixSoC - RepSoC) > 25% */
-	if (abs(mixsoc - repsoc) > 25)
-		event |= MAX77779_FG_EVENT_REPSOC;
 
 	/*
-	 * trigger when (VFOCV < (AvgVCell - 1V) || VFOCV > (AvgVCell + 1V))
-	 *	         && abs(Current) < 5A
+	 * reason: unexpected FullCapNom Learning
+	 * stop condition: next FullCapNom updated
+	 * start condition: FullCapNom > DesignCap x 115%
 	 */
-	if ((reg_to_micro_volt(vfocv) < (reg_to_micro_volt(avgvcell) - 1000000) ||
-	     reg_to_micro_volt(vfocv) > (reg_to_micro_volt(avgvcell) + 1000000)) &&
-	     abs(reg_to_micro_amp(ibat, chip->RSense)) < 5000000)
-		event |= MAX77779_FG_EVENT_VFOCV;
-
-	changed |= event != chip->fg_logging_events;
-
-	if (changed) {
-		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
-				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-				      "event changed 0x%02X->0x%02X: fullcapnom=%d designcap=%d "
-				      "repsoc=%d edet=%d fdet=%d mixsoc=%d vfocv=%d avgvcell=%d "
-				      "current=%d",
-				      chip->fg_logging_events, event, fullcapnom, designcap,
-				      repsoc, !!edet, !!fdet, mixsoc,
-				      reg_to_micro_volt(vfocv), reg_to_micro_volt(avgvcell),
-				      reg_to_micro_amp(ibat, chip->RSense));
+	if (curr_event & MAX77779_FG_EVENT_FULLCAPNOM_HIGH) {
+		if (fullcapnom != chip->last_fullcapnom)
+			curr_event &= ~MAX77779_FG_EVENT_FULLCAPNOM_HIGH;
+	} else if (fullcapnom > (designcap * 115 / 100)) {
+		curr_event |= MAX77779_FG_EVENT_FULLCAPNOM_HIGH;
+		chip->last_fullcapnom = fullcapnom;
 	}
-	chip->fg_logging_events = event;
 
-	return event;
+	/*
+	 * reason: RepSoC not accurate
+	 * stop condition: RepSoC > 20%
+	 * start condition: RepSoC > 10% && Empty detection bit is set
+	 */
+	if (curr_event & MAX77779_FG_EVENT_REPSOC_EDET) {
+		if (repsoc > 20)
+			curr_event &= ~MAX77779_FG_EVENT_REPSOC_EDET;
+	} else if (repsoc > 10 && edet) {
+		curr_event |= MAX77779_FG_EVENT_REPSOC_EDET;
+	}
+
+	/*
+	 * reason: RepSoC not accurate
+	 * stop condition: RepSoc < 80%
+	 * start condition: RepSoC < 90% && Full detection bit is set
+	 */
+	if (curr_event & MAX77779_FG_EVENT_REPSOC_FDET) {
+		if (repsoc < 80)
+			curr_event &= ~MAX77779_FG_EVENT_REPSOC_FDET;
+	} else if (repsoc < 90 && fdet) {
+		curr_event |= MAX77779_FG_EVENT_REPSOC_FDET;
+	}
+
+	/*
+	 * reason: Repsoc not accurate
+	 * stop condition: abs(MixSoC - RepSoC) < 20%
+	 * start condition: abs(MixSoC - RepSoC) > 25%
+	 */
+	if (curr_event & MAX77779_FG_EVENT_REPSOC) {
+		if (abs(mixsoc - repsoc) < 20)
+			curr_event &= ~MAX77779_FG_EVENT_REPSOC;
+	} else if (abs(mixsoc - repsoc) > 25) {
+		curr_event |= MAX77779_FG_EVENT_REPSOC;
+	}
+
+	/*
+	 * reason: VFOCV estimate might be wrong
+	 * stop condition: VFOCV < (AvgVCell - 200mV) || VFOCV > (AvgVCell + 200mV)
+	 * start condition: (VFOCV < (AvgVCell - 1V) || VFOCV > (AvgVCell + 1V))
+	 *		    && abs(Current) < 5A
+	 */
+	if (curr_event & MAX77779_FG_EVENT_VFOCV) {
+		if (reg_to_micro_volt(vfocv) < (reg_to_micro_volt(avgvcell) - 200000) ||
+		    reg_to_micro_volt(vfocv) > (reg_to_micro_volt(avgvcell) + 200000))
+			curr_event &= ~MAX77779_FG_EVENT_VFOCV;
+	} else if ((reg_to_micro_volt(vfocv) < (reg_to_micro_volt(avgvcell) - 1000000) ||
+		    reg_to_micro_volt(vfocv) > (reg_to_micro_volt(avgvcell) + 1000000)) &&
+		    abs(reg_to_micro_amp(ibat, chip->RSense)) < 5000000) {
+		curr_event |= MAX77779_FG_EVENT_VFOCV;
+	}
+
+	/* do nothing if no state change */
+	if (curr_event == chip->abnormal_event_bits) {
+		mutex_unlock(&chip->check_event_lock);
+		return 0;
+	}
+
+	ret = max77779_fg_log_abnormal_events(chip, curr_event, chip->abnormal_event_bits);
+	if (ret == 0)
+		kobject_uevent(&chip->dev->kobj, KOBJ_CHANGE);
+
+	chip->abnormal_event_bits = curr_event;
+	mutex_unlock(&chip->check_event_lock);
+
+	return ret;
 }
 
 /*
@@ -2001,7 +2037,7 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 	if (fg_int_sts & MAX77779_FG_Status_dSOCi_MASK) {
 		max77779_fg_monitor_log_data(chip, false);
 		max77779_fg_update_cycle_count(chip);
-		max77779_fg_check_logging_event(chip);
+		max77779_fg_monitor_log_abnormal(chip);
 		max77779_fg_check_learning(chip);
 	}
 
@@ -2730,16 +2766,16 @@ static ssize_t act_impedance_show(struct device *dev,
 
 static DEVICE_ATTR_RW(act_impedance);
 
-static ssize_t fg_logging_events_show(struct device *dev,
-				      struct device_attribute *attr, char *buf)
+static ssize_t fg_abnormal_events_show(struct device *dev,
+				       struct device_attribute *attr, char *buf)
 {
 	struct power_supply *psy = container_of(dev, struct power_supply, dev);
 	struct max77779_fg_chip *chip = power_supply_get_drvdata(psy);
 
-	return scnprintf(buf, PAGE_SIZE, "0x%02X\n", chip->fg_logging_events);
+	return scnprintf(buf, PAGE_SIZE, "%x\n", chip->abnormal_event_bits);
 }
 
-static DEVICE_ATTR_RO(fg_logging_events);
+static DEVICE_ATTR_RO(fg_abnormal_events);
 
 static ssize_t fg_learning_events_show(struct device *dev,
 				       struct device_attribute *attr, char *buf)
@@ -3480,7 +3516,7 @@ static struct attribute *max77779_fg_attrs[] = {
 	&dev_attr_resistance.attr,
 	&dev_attr_gmsr.attr,
 	&dev_attr_model_state.attr,
-	&dev_attr_fg_logging_events.attr,
+	&dev_attr_fg_abnormal_events.attr,
 	&dev_attr_fg_learning_events.attr,
 	NULL,
 };
@@ -3639,6 +3675,7 @@ int max77779_fg_init(struct max77779_fg_chip *chip)
 	/* fuel gauge model needs to know the batt_id */
 	mutex_init(&chip->model_lock);
 	mutex_init(&chip->save_data_lock);
+	mutex_init(&chip->check_event_lock);
 
 	chip->max77779_fg_psy_desc.psy_dsc.type = POWER_SUPPLY_TYPE_BATTERY;
 	chip->max77779_fg_psy_desc.psy_dsc.get_property = max77779_fg_get_property;
