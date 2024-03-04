@@ -949,6 +949,7 @@ static ssize_t fg_learning_events_show(struct device *dev,
 
 	return maxfg_show_captured_buffer(&chip->cb_lh, buf, PAGE_SIZE);
 }
+
 static ssize_t fg_learning_events_store(struct device *dev,
 					struct device_attribute *attr,
 					const char *buf, size_t count)
@@ -1859,7 +1860,7 @@ static int max1720x_monitor_log_learning(struct max1720x_chip *chip, bool force)
 
 	ret = maxfg_capture_registers(&chip->cb_lh);
 	if (ret < 0) {
-		dev_err(chip->dev, "cannot read learning parameters (%d)\n", ret);
+		dev_dbg(chip->dev, "cannot read learning parameters (%d)\n", ret);
 		return ret;
 	}
 
@@ -3389,8 +3390,8 @@ static int max1720x_log_learn_set(void *data, u64 val)
 {
 	struct max1720x_chip *chip = (struct max1720x_chip *)data;
 
-       max1720x_monitor_log_learning(chip, true);
-       return 0;
+	max1720x_monitor_log_learning(chip, true);
+	return 0;
 }
 DEFINE_SIMPLE_ATTRIBUTE(debug_log_learn_fops, NULL, max1720x_log_learn_set, "%llu\n");
 
