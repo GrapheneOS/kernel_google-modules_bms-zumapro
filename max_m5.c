@@ -1578,6 +1578,7 @@ const struct regmap_config max_m5_regmap_cfg = {
 	.readable_reg = max_m5_is_reg,
 	.volatile_reg = max_m5_is_reg,
 };
+
 const struct maxfg_reg max_m5[] = {
 	[MAXFG_TAG_avgc] = { ATOM_INIT_REG16(MAX_M5_AVGCURRENT)},
 	[MAXFG_TAG_cnfg] = { ATOM_INIT_REG16(MAX_M5_CONFIG)},
