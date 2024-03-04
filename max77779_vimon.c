@@ -623,8 +623,15 @@ int max77779_vimon_init(struct max77779_vimon_data *data)
 	if (ret)
 		data->max_triggers = MAX77779_VIMON_DEFAULT_MAX_TRIGGERS;
 
-	data->buf = devm_kzalloc(dev, sizeof(*data->buf * data->max_cnt * data->max_triggers * 2),
-				GFP_KERNEL);
+	data->buf_size = sizeof(*data->buf) * data->max_cnt * data->max_triggers * 2;
+	if (!data->buf_size) {
+		dev_err(dev, "max_cnt=%d, max_cnt=%d invalid buf_size\n",
+			data->max_cnt, data->max_triggers);
+		return -EINVAL;
+	}
+	data->buf = devm_kzalloc(dev, data->buf_size, GFP_KERNEL);
+	if (!data->buf)
+		return -ENOMEM;
 
 	INIT_DELAYED_WORK(&data->read_data_work, max77779_vimon_handle_data);
 
@@ -648,7 +655,7 @@ int max77779_vimon_init(struct max77779_vimon_data *data)
 		dev_err(data->dev, "Failed to unmask INT (%d).\n", ret);
 
 	data->state = MAX77779_VIMON_IDLE;
-
+	dev_info(data->dev, "buf_size=%lu\n", data->buf_size);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(max77779_vimon_init);
