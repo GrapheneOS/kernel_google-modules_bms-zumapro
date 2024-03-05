@@ -336,8 +336,8 @@ vimon_handle_data_exit:
 		dev_err(data->dev, "Failed to clear INT_STS (%d).\n",
 				ret);
 
-	pm_relax(data->dev);
 	mutex_unlock(&data->vimon_lock);
+	pm_relax(data->dev);
 }
 
 static ssize_t bvim_cfg_store(struct device *dev, struct device_attribute *attr, const char* buf,
