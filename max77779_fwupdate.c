@@ -208,28 +208,25 @@ struct max77779_fwupdate {
 /* Defined at max77779_fg.c */
 int max77779_external_fg_reg_write_nolock(struct device *, uint16_t, uint16_t);
 
-static int get_firmware_update_tag(const struct max77779_fwupdate *fwu, int* ver_tag)
+static int get_firmware_update_tag(const struct max77779_fwupdate *fwu)
 {
-	int ret;
-	uint32_t fw_tag, cur_ver;
+	int ret, ver_tag = 0;
+	uint32_t fw_tag = 0, cur_ver;
 
 	ret = gbms_storage_read(GBMS_TAG_FWHI, &fw_tag, sizeof(fw_tag));
-	if (ret < 0) {
-		dev_err(fwu->dev, "failed to read GBMS_TAG_FWHI (%d)\n", ret);
-		return ret;
-	}
+	if (ret < 0)
+		gbms_logbuffer_prlog(fwu->lb, LOGLEVEL_WARNING, 0, LOGLEVEL_INFO,
+				     "failed to read GBMS_TAG_FWHI (%d)\n", ret);
 
 	cur_ver = (fwu->v_cur.major << 8) | fwu->v_cur.minor;
 
-	/* set tag version as '0' if there is no saved history */
-	*ver_tag = 0;
 	if ((fw_tag & MAX77779_FW_HIST_VER_MASK) == cur_ver)
-		*ver_tag = (fw_tag >> MAX77779_FW_HIST_OFFSET_TAG);
+		ver_tag = (fw_tag >> MAX77779_FW_HIST_OFFSET_TAG);
 
-	return 0;
+	return ver_tag;
 }
 
-static int set_firmware_update_tag(const struct max77779_fwupdate *fwu, int tag)
+static void set_firmware_update_tag(const struct max77779_fwupdate *fwu, int tag)
 {
 	int ret;
 	uint32_t fw_tag;
@@ -238,11 +235,9 @@ static int set_firmware_update_tag(const struct max77779_fwupdate *fwu, int tag)
 	fw_tag |= (fwu->v_cur.major << 8) | fwu->v_cur.minor;
 
 	ret= gbms_storage_write(GBMS_TAG_FWHI, &fw_tag, sizeof(fw_tag));
-
 	if (ret < 0)
-		dev_err(fwu->dev, "failed to write GBMS_TAG_FWHI (%d)\n", ret);
-
-	return ret;
+		gbms_logbuffer_prlog(fwu->lb, LOGLEVEL_WARNING, 0, LOGLEVEL_INFO,
+				     "failed to write GBMS_TAG_FWHI (%d)\n", ret);
 }
 
 static inline void read_fwupdate_stats(struct max77779_fwupdate *fwu)
@@ -349,8 +344,9 @@ static int max77779_fwupdate_init(struct max77779_fwupdate *fwu)
 	}
 
 	val = gbms_storage_read(GBMS_TAG_FGST, &fwu->op_st, sizeof(fwu->op_st));
-	if (val ==  -EPROBE_DEFER)
-		return val;
+	if (val < 0)
+		gbms_logbuffer_prlog(fwu->lb, LOGLEVEL_WARNING, 0, LOGLEVEL_INFO,
+				     "failed to read FGST tag (%d)\n", val);
 
 	if (of_property_read_u32(dev->of_node, "fwu,enabled", &val) == 0)
 		fwu->can_update = val;
@@ -811,8 +807,8 @@ static int max77779_fwl_prepare(struct max77779_fwupdate *fwu,
 	ret = gbms_storage_write(GBMS_TAG_FGST, &fwu->op_st, sizeof(fwu->op_st));
 	if (ret != sizeof(fwu->op_st)) {
 		fwu->op_st = (u8)FGST_ERR_READTAG;
-		dev_err(fwu->dev, "failed to update eeprom:GBMS_TAG_FGST (%d)\n", ret);
-		return -EIO;
+		gbms_logbuffer_prlog(fwu->lb, LOGLEVEL_WARNING, 0, LOGLEVEL_INFO,
+				     "failed to update eeprom:GBMS_TAG_FGST (%d)\n", ret);
 	}
 
 	if (!fwu->mode_votable) {
@@ -960,8 +956,7 @@ static int max77779_fwl_poll_complete(struct max77779_fwupdate *fwu)
 		fwu->update_info.new_tag = 0;
 	}
 
-	ret = set_firmware_update_tag(fwu, fwu->update_info.new_tag);
-	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed on updating GBMS_TAG_FWHI\n");
+	set_firmware_update_tag(fwu, fwu->update_info.new_tag);
 
 	fwu->update_info.force_update = false;
 	fwu->update_info.retry_cnt = 0;
@@ -982,7 +977,7 @@ static void max77779_fwl_cleanup(struct max77779_fwupdate *fwu)
 
 	ret = max77779_fg_enable_firmware_update(fwu->fg, false);
 	if (ret)
-		dev_err(fwu->dev, "failed to set max77779_fg_enable_firmware_update (%d)\n", ret);
+		dev_err(fwu->dev, "failed to restore FG from update mode (%d)\n", ret);
 
 	if (!fwu->mode_votable)
 		return;
@@ -1148,10 +1143,7 @@ static ssize_t trigger_update_firmware(struct device *dev,
 		return -EINVAL;
 	}
 
-	if (get_firmware_update_tag(fwu, &current_ver) < 0) {
-		dev_err(fwu->dev, "can't access GBMS_TAG_FWHI: update will be aborted\n");
-		return -EACCES;
-	}
+	current_ver = get_firmware_update_tag(fwu);
 
 	if (target_ver <= current_ver) {
 		dev_info(fwu->dev, "ver %d already installed: update request will be skipped",
