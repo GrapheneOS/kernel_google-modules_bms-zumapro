@@ -1874,9 +1874,14 @@ static int max1720x_monitor_log_learning(struct max1720x_chip *chip, bool force)
 		return -ENOMEM;
 	}
 
+	mutex_lock(&chip->cb_lh.cb_wr_lock);
+
 	ret = maxfg_capture_to_cstr(&chip->cb_lh.config,
 				    (u16 *)chip->cb_lh.latest_entry,
 				    buf, PAGE_SIZE);
+
+	mutex_unlock(&chip->cb_lh.cb_wr_lock);
+
 	if (ret > 0)
 		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
 				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
