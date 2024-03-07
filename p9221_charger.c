@@ -5252,7 +5252,6 @@ static ssize_t p9382_show_rtx_boost(struct device *dev,
 /* assume that we have 2 GPIO to turn on the boost */
 static int p9382_rtx_enable(struct p9221_charger_data *charger, bool enable)
 {
-	const bool rtx_gpio_retry = p9xxx_rtx_gpio_is_state(charger, RTX_RETRY);
 	int ret = 0;
 	int val, loops;
 
@@ -5260,8 +5259,6 @@ static int p9382_rtx_enable(struct p9221_charger_data *charger, bool enable)
 	 * TODO: deprecate the support for rTX on whitefin2 or use a DT entry
 	 * to ignore the votable and use ben+switch
 	 */
-	if (rtx_gpio_retry)
-		return 0;
 
 	if (!charger->chg_mode_votable)
 		charger->chg_mode_votable =
@@ -5491,6 +5488,7 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 {
 	const bool rtx_gpio_retry = p9xxx_rtx_gpio_is_state(charger, RTX_RETRY);
 	int ret = 0, tx_icl = -1;
+	bool reset = false;
 
 	if ((enable && charger->ben_state) || (!enable && !charger->ben_state)) {
 		logbuffer_prlog(charger->rtx_log, "RTx is %s\n", enable ? "enabled" : "disabled");
@@ -5507,17 +5505,14 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 			ret = p9xxx_rtx_mode_en(charger, false);
 			charger->is_rtx_mode = false;
 		}
-		ret = p9382_ben_cfg(charger, RTX_BEN_DISABLED);
-		if (ret < 0)
-			goto error;
+		/* make sure it will re-enable so that vote can reset if error happens */
+		if (!rtx_gpio_retry) {
+			ret = p9382_ben_cfg(charger, RTX_BEN_DISABLED);
+			if (ret < 0)
+				goto error;
 
-		if (!rtx_gpio_retry)
 			ret = p9382_disable_dcin_en(charger, false);
-
-		if (ret)
-			dev_err(&charger->client->dev,
-				"fail to enable dcin, ret=%d\n", ret);
-
+		}
 		logbuffer_log(charger->rtx_log, "disable rtx\n");
 
 		goto done;
@@ -5531,7 +5526,7 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 			dev_err(&charger->client->dev, "rtx be disabled\n");
 			logbuffer_log(charger->rtx_log, "rtx be disabled\n");
 			charger->rtx_reset_cnt = 0;
-			goto done;
+			reset = true;
 		}
 
 		/*
@@ -5544,18 +5539,14 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 			logbuffer_log(charger->rtx_log,
 				      "rTX is not allowed during WLC\n");
 			charger->rtx_reset_cnt = 0;
-			goto done;
+			reset = true;
 		}
 
 		/*
 		 * DCIN_EN votable will not be available on all systems.
 		 * if it is there, it is needed.
 		 */
-		ret = p9382_disable_dcin_en(charger, true);
-		if (ret) {
-			dev_err(&charger->client->dev, "cannot enable rTX mode %d\n", ret);
-			goto error;
-		}
+		ret = p9382_disable_dcin_en(charger, !reset ? true : false);
 
 		charger->com_busy = 0;
 		charger->rtx_csp = 0;
@@ -5563,9 +5554,18 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 		charger->is_rtx_mode = false;
 		p9xxx_rtx_gpio_wait(charger);
 
-		ret = p9382_ben_cfg(charger, RTX_BEN_ON);
-		if (ret < 0)
+		if (reset) {
+			ret = p9382_ben_cfg(charger, RTX_BEN_DISABLED);
+			goto done;
+		}
+
+		if (ret == 0)
+			ret = p9382_ben_cfg(charger, RTX_BEN_ON);
+
+		if (ret < 0) {
+			dev_err(&charger->client->dev, "cannot enable rTX mode %d\n", ret);
 			goto error;
+		}
 
 		msleep(10);
 
