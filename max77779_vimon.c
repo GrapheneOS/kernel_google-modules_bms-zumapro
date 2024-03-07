@@ -348,11 +348,11 @@ static ssize_t bvim_cfg_store(struct device *dev, struct device_attribute *attr,
         struct max77779_vimon_data *data = dev_get_drvdata(dev);
 
 	ret = kstrtoint(buf, 0, &val);
-	if (ret <0)
+	if (ret < 0)
 		return ret;
 
         ret = max77779_vimon_reg_write(data, MAX77779_BVIM_bvim_cfg, val);
-        return (ret < 0) ? ret : count;
+        return ret < 0 ? ret : count;
 }
 
 DEVICE_ATTR(bvim_cfg, 0660, bvim_cfg_show, bvim_cfg_store);
@@ -387,8 +387,8 @@ static int max77779_vimon_debug_reg_read(void *d, u64 *val)
 	int ret, reg;
 
 	ret = regmap_read(data->regmap, data->debug_reg_address, &reg);
-
-	*val = reg & 0xffff;
+	if (ret == 0)
+		*val = reg & 0xffff;
 
 	return ret;
 }
@@ -523,7 +523,7 @@ DEFINE_SIMPLE_ATTRIBUTE(debug_buff_page_rw_fops, max77779_vimon_debug_buff_page_
 
 bool max77779_vimon_is_reg(struct device *dev, unsigned int reg)
 {
-	return (reg >= 0 && reg <= MAX77779_VIMON_SIZE);
+	return reg >= 0 && reg <= MAX77779_VIMON_SIZE;
 }
 EXPORT_SYMBOL_GPL(max77779_vimon_is_reg);
 
