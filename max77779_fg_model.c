@@ -245,7 +245,22 @@ int max77779_load_gauge_model(struct max77779_model_data *model_data, int rev, i
 		return -EIO;
 	}
 
-	/* Step 1: Check for POR (not needed, we're here when POR is set) */
+	/*
+	 * Step 1: Check for POR (not needed, we're here when POR is set)
+	 * substep: check RISC-V status, 0x82 should be present
+	 */
+	for (retries = 20; retries > 0; retries--) {
+		ret = REGMAP_READ(regmap, MAX77779_FG_BOOT_CHECK_REG, &data);
+		if (ret == 0 &&
+		    (data & MAX77779_FG_BOOT_CHECK_SUCCESS) == MAX77779_FG_BOOT_CHECK_SUCCESS)
+			break;
+
+		msleep(10);
+	}
+	if (retries == 0) {
+		dev_err(model_data->dev, "Error RISC-V is not ready\n");
+		return -ETIMEDOUT;
+	}
 
 	/*
 	 * Step 2: Delay until FSTAT.DNR bit == 0
