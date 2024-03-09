@@ -18,14 +18,6 @@
 
 static int gs201_otg_enable(struct max77779_usecase_data *uc_data, bool enable);
 /* ----------------------------------------------------------------------- */
-static void gs201_charge_full_5v_enable(struct max77779_usecase_data *uc_data, bool enable)
-{
-	if (!uc_data->force_5v_votable)
-		uc_data->force_5v_votable = gvotable_election_get_handle(VOTABLE_FORCE_5V);
-
-	if (uc_data->force_5v_votable)
-		gvotable_cast_int_vote(uc_data->force_5v_votable, "USECASE", enable, 1);
-}
 
 int gs201_wlc_en(struct max77779_usecase_data *uc_data, enum wlc_state_t state)
 {
@@ -63,8 +55,6 @@ static int gs201_wlc_tx_enable(struct max77779_usecase_data *uc_data, int use_ca
 
 	if (!enable) {
 		if (!uc_data->reverse12_en) {
-			gs201_charge_full_5v_enable(uc_data, true);
-
 			ret = max77779_external_chg_reg_write(uc_data->dev, MAX77779_CHG_CNFG_11, 0x0);
 			if (ret < 0)
 				pr_err("%s: fail to reset MAX77779_CHG_REVERSE_BOOST_VOUT\n",
@@ -111,7 +101,6 @@ static int gs201_wlc_tx_enable(struct max77779_usecase_data *uc_data, int use_ca
 			uc_data->rtx_state = GSU_RTX_DISABLED;
 			return -EINVAL;
 		}
-		gs201_charge_full_5v_enable(uc_data, false);
 	}
 
 	ret = gs201_wlc_en(uc_data, WLC_ENABLED);
@@ -548,11 +537,9 @@ int gs201_to_usecase(struct max77779_usecase_data *uc_data, int use_case)
 		break;
 	case GSU_MODE_USB_CHG:
 	case GSU_MODE_USB_DC:
-		rtx_avail = true;
-		if (uc_data->rtx_available >= 0 && !uc_data->reverse12_en) {
+		rtx_avail = false;
+		if (uc_data->rtx_available >= 0 && !uc_data->reverse12_en)
 			cancel_delayed_work(&uc_data->rtx_supported_work);
-			schedule_delayed_work(&uc_data->rtx_supported_work, msecs_to_jiffies(50));
-		}
 		break;
 	case GSU_MODE_STANDBY:
 	case GSU_RAW_MODE:

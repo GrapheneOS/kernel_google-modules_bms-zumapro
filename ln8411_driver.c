@@ -4497,7 +4497,8 @@ static int ln8411_set_charging_enabled(struct ln8411_charger *ln8411, int index)
 		ln8411->timer_period = 0;
 		mod_delayed_work(ln8411->dc_wq, &ln8411->timer_work,
 				 msecs_to_jiffies(ln8411->timer_period));
-	} else if (ln8411->charging_state == DC_STATE_NO_CHARGING) {
+	} else if (ln8411->charging_state == DC_STATE_NO_CHARGING
+		   && ln8411->chg_mode == CHG_NO_DC_MODE) {
 		logbuffer_prlog(ln8411, LOGLEVEL_DEBUG,
 				"%s: start pps_idx=%d->%d charging_state=%d timer_id=%d",
 				__func__, ln8411->pps_index, index,
@@ -4528,6 +4529,11 @@ static int ln8411_set_charging_enabled(struct ln8411_charger *ln8411, int index)
 		ln8411->charging_state,
 		ln8411->timer_id);
 		ret = -EINVAL;
+	} else if (ln8411->charging_state == DC_STATE_NO_CHARGING
+		   && ln8411->chg_mode != CHG_NO_DC_MODE) {
+		logbuffer_prlog(ln8411, LOGLEVEL_INFO, "%s: Can't start charging in chg_mode: %d\n",
+				__func__, ln8411->chg_mode);
+		ret = -EINVAL;
 	}
 
 	mutex_unlock(&ln8411->lock);
@@ -4545,7 +4551,7 @@ static int ln8411_init_1_2_mode(struct ln8411_charger *ln8411)
 	if (ln8411->chg_mode != CHG_NO_DC_MODE) {
 		dev_info(ln8411->dev, "%s: chg_mode is not NO_DC_MODE. Not initing 1_2 mode=%d\n",
 			 __func__, ln8411->chg_mode);
-		ret = -EINVAL;
+		ret = -ENOTSUPP;
 		goto error;
 	}
 	ln8411->chg_mode = CHG_1TO2_DC_MODE;
@@ -4656,8 +4662,8 @@ static int ln8411_stop_1_2_mode(struct ln8411_charger *ln8411)
 {
 	int ret, ret1;
 
-	dev_dbg(ln8411->dev, "%s: =========START=========\n", __func__);
-        if (ln8411->chg_mode == CHG_NO_DC_MODE)
+	dev_dbg(ln8411->dev, "%s: =========START========= mode: %d\n", __func__, ln8411->chg_mode);
+        if (ln8411->chg_mode != CHG_1TO2_DC_MODE)
                return 0;
 
 	ret = ln8411_set_status_disable_charging(ln8411);
@@ -4681,7 +4687,7 @@ error:
 
 static int ln8411_start_1_2_mode(struct ln8411_charger *ln8411)
 {
-	int ret, rc;
+	int ret;
 
 	dev_dbg(ln8411->dev, "%s: =========START=========\n", __func__);
 	mutex_lock(&ln8411->lock);
@@ -4689,6 +4695,11 @@ static int ln8411_start_1_2_mode(struct ln8411_charger *ln8411)
 	ret = ln8411_init_1_2_mode(ln8411);
 	if (ret) {
 		dev_info(ln8411->dev, "%s: Error initializing 1_2 mode (%d)\n", __func__, ret);
+		if (ret == -ENOTSUPP) {
+			mutex_unlock(&ln8411->lock);
+			return ret;
+		}
+
 		goto error;
 	}
 
@@ -4700,9 +4711,10 @@ static int ln8411_start_1_2_mode(struct ln8411_charger *ln8411)
 
 error:
 	if (ret) {
-		rc = ln8411_stop_1_2_mode(ln8411);
+		int rc = ln8411_stop_1_2_mode(ln8411);
+
 		if (rc)
-			dev_info(ln8411->dev, "%s: Error disabling 1_2 mode (%d)\n", __func__, ret);
+			dev_info(ln8411->dev, "%s: Error disabling 1_2 mode (%d)\n", __func__, rc);
 	}
 
 	mutex_unlock(&ln8411->lock);
