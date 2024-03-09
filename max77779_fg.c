@@ -79,12 +79,6 @@ static bool max77779_fg_reglog_init(struct max77779_fg_chip *chip)
 /* TODO: b/285191823 - Validate all conversion helper functions */
 /* ------------------------------------------------------------------------- */
 
-static inline int reg_to_percentage(u16 val)
-{
-	/* LSB: 1/256% */
-	return val >> 8;
-}
-
 static inline int reg_to_twos_comp_int(u16 val)
 {
 	/* Convert u16 to twos complement  */
@@ -95,12 +89,6 @@ static inline int reg_to_micro_amp(s16 val, u16 rsense)
 {
 	/* LSB: 1.5625μV/RSENSE ; Rsense LSB is 2μΩ */
 	return div_s64((s64) val * 156250, rsense);
-}
-
-static inline int reg_to_deci_deg_cel(s16 val)
-{
-	/* LSB: 1/256°C */
-	return div_s64((s64) val * 10, 256);
 }
 
 static inline int reg_to_cycles(u32 val)
