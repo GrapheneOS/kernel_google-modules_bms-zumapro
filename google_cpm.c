@@ -1316,8 +1316,8 @@ static bool gcpm_taper_step(const struct gcpm_drv *gcpm,
 		int ret, ibatt;
 
 		/* TODO: use current average if available */
-		ret = GPSY_GET_INT_PROP(dc_psy, POWER_SUPPLY_PROP_CURRENT_NOW,
-					&ibatt);
+		ibatt = GPSY_GET_INT_PROP(dc_psy, POWER_SUPPLY_PROP_CURRENT_NOW,
+					  &ret);
 		if (ret < 0)
 			pr_err("%s: cannot read current (%d)", __func__, ret);
 		else if (ibatt > gcpm->taper_step_current)
@@ -2041,7 +2041,7 @@ static int gcpm_set_active_charger(struct gcpm_drv *gcpm,
 	chg_psy = gcpm_chg_get_active(gcpm);
 	if (chg_psy) {
 		/* replace the pval with dc_iin limit when DC is selected */
-		ret = power_supply_set_property(chg_psy, psp, pval);
+		ret = GPSY_SET_PROP(chg_psy, psp, pval->intval);
 		if (ret < 0 && ret != -EAGAIN) {
 			pr_err("cannot route prop=%d to %d:%s (%d)\n", psp,
 				gcpm->chg_psy_active, gcpm_psy_name(chg_psy),
