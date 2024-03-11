@@ -54,11 +54,8 @@ static int vimon_is_running(struct max77779_vimon_data *data)
 
 int max77779_external_vimon_reg_read(struct device *dev, uint16_t reg, void *val, int len)
 {
-	struct max77779_vimon_data *data;
-	if (!dev)
-		return -ENODEV;
+	struct max77779_vimon_data *data = dev_get_drvdata(dev);
 
-	data = dev_get_drvdata(dev);
 	if (!data || !data->regmap)
 		return -ENODEV;
 
@@ -68,11 +65,8 @@ EXPORT_SYMBOL_GPL(max77779_external_vimon_reg_read);
 
 int max77779_external_vimon_reg_write(struct device *dev, uint16_t reg, const void *val, int len)
 {
-	struct max77779_vimon_data *data;
-	if (!dev)
-		return -ENODEV;
+	struct max77779_vimon_data *data = dev_get_drvdata(dev);
 
-	data = dev_get_drvdata(dev);
 	if (!data || !data->regmap)
 		return -ENODEV;
 
@@ -83,14 +77,10 @@ EXPORT_SYMBOL_GPL(max77779_external_vimon_reg_write);
 int max77779_external_vimon_read_buffer(struct device *dev, uint16_t *buff, size_t *count,
 					size_t buff_max)
 {
-	struct max77779_vimon_data *data;
+	struct max77779_vimon_data *data = dev_get_drvdata(dev);
 	int ret = 0;
 	int copy_count;
 
-	if (!dev)
-		return -ENODEV;
-
-	data = dev_get_drvdata(dev);
 	if (!data)
 		return -ENODEV;
 
@@ -111,13 +101,9 @@ EXPORT_SYMBOL_GPL(max77779_external_vimon_read_buffer);
 
 int max77779_external_vimon_enable(struct device *dev, bool enable)
 {
-	struct max77779_vimon_data *data;
+	struct max77779_vimon_data *data = dev_get_drvdata(dev);
 	int ret, reg;
 
-	if (!dev)
-		return -ENODEV;
-
-	data = dev_get_drvdata(dev);
 	if (!data)
 		return -ENODEV;
 
