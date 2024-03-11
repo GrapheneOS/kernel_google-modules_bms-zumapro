@@ -248,12 +248,8 @@ static int max77779_resume_check(struct max77779_chgr_data *data)
 /* ----------------------------------------------------------------------- */
 int max77779_external_chg_reg_read(struct device *dev, uint8_t reg, uint8_t *val)
 {
-	struct max77779_chgr_data *data;
+	struct max77779_chgr_data *data = dev_get_drvdata(dev);
 
-	if (!dev)
-		return -ENODEV;
-
-	data = dev_get_drvdata(dev);
 	if (!data || !data->regmap)
 		return -ENODEV;
 
@@ -266,12 +262,8 @@ EXPORT_SYMBOL_GPL(max77779_external_chg_reg_read);
 
 int max77779_external_chg_reg_write(struct device *dev, uint8_t reg, uint8_t val)
 {
-	struct max77779_chgr_data *data;
+	struct max77779_chgr_data *data = dev_get_drvdata(dev);
 
-	if (!dev)
-		return -ENODEV;
-
-	data = dev_get_drvdata(dev);
 	if (!data || !data->regmap)
 		return -ENODEV;
 
@@ -284,12 +276,8 @@ EXPORT_SYMBOL_GPL(max77779_external_chg_reg_write);
 
 int max77779_external_chg_reg_update(struct device *dev, u8 reg, u8 mask, u8 value)
 {
-	struct max77779_chgr_data *data;
+	struct max77779_chgr_data *data = dev_get_drvdata(dev);
 
-	if (!dev)
-		return -ENODEV;
-
-	data = dev_get_drvdata(dev);
 	if (!data || !data->regmap)
 		return -ENODEV;
 

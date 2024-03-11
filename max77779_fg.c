@@ -245,6 +245,18 @@ unlock_exit:
 	return ret;
 }
 
+static int max77779_fg_resume_check(struct max77779_fg_chip *chip)
+{
+	int ret = 0;
+
+	pm_runtime_get_sync(chip->dev);
+	if (!chip->init_complete || !chip->resume_complete)
+		ret = -EAGAIN;
+	pm_runtime_put_sync(chip->dev);
+
+	return ret;
+}
+
 /* NOTE: it might not be static inline depending on how it's used */
 static inline int max77779_fg_usr_lock(const struct maxfg_regmap *map, unsigned int reg, bool enabled) {
 	switch (reg) {
@@ -316,6 +328,9 @@ int max77779_external_fg_reg_read(struct device *dev, uint16_t reg, uint16_t *va
 	int ret;
 
 	if (!chip || !chip->regmap.regmap)
+		return -ENODEV;
+
+	if (max77779_fg_resume_check(chip))
 		return -EAGAIN;
 
 	tmp = *val;
@@ -336,6 +351,9 @@ int max77779_external_fg_reg_write(struct device *dev, uint16_t reg, uint16_t va
 	int rc = -EBUSY;
 
 	if (!chip || !chip->regmap.regmap)
+		return -ENODEV;
+
+	if (max77779_fg_resume_check(chip))
 		return -EAGAIN;
 
 	mutex_lock(&chip->model_lock);
@@ -358,6 +376,9 @@ int max77779_external_fg_reg_write_nolock(struct device *dev, uint16_t reg, uint
 	struct max77779_fg_chip *chip = dev_get_drvdata(dev);
 
 	if (!chip || !chip->regmap.regmap)
+		return -ENODEV;
+
+	if (max77779_fg_resume_check(chip))
 		return -EAGAIN;
 
 	return regmap_write(chip->regmap.regmap, reg, val);
@@ -876,18 +897,6 @@ static int batt_ce_init(struct gbatt_capacity_estimation *cap_esti,
 	/* Capacity Estimation starts only when the state is NONE */
 	cap_esti->estimate_state = ESTIMATE_NONE;
 	return 0;
-}
-
-static int max77779_fg_resume_check(struct max77779_fg_chip *chip)
-{
-	int ret = 0;
-
-	pm_runtime_get_sync(chip->dev);
-	if (!chip->init_complete || !chip->resume_complete)
-		ret = -EAGAIN;
-	pm_runtime_put_sync(chip->dev);
-
-	return ret;
 }
 
 /* call holding chip->model_lock */
