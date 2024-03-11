@@ -78,7 +78,6 @@ static struct maxfg_reg max77779_debug_fg[] = {
 
 struct max77779_fg_chip {
 	struct device *dev;
-	struct i2c_client *primary;
 	struct i2c_client *secondary;
 	struct device *pmic_dev;
 
