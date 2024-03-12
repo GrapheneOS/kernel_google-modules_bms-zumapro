@@ -68,6 +68,7 @@ static const struct maxfg_reg max77779_fg[] = {
 	[MAXFG_TAG_vfcap] = { ATOM_INIT_REG16(MAX77779_FG_VFRemCap)},
 	[MAXFG_TAG_cycles] = { ATOM_INIT_REG16(MAX77779_FG_Cycles)},
 	[MAXFG_TAG_rslow] = { ATOM_INIT_REG16(MAX77779_FG_RSlow)},
+	[MAXFG_TAG_vfocv] = { ATOM_INIT_REG16(MAX77779_FG_VFOCV)},
 };
 
 static const struct maxfg_reg max77779_debug_fg[] = {
