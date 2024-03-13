@@ -966,21 +966,16 @@ static int p9221_reset_wlc_dc(struct p9221_charger_data *charger)
 /* call holding mutex_lock(&charger->auth_lock); */
 static int feature_set_dc_icl(struct p9221_charger_data *charger, u32 ilim_ua)
 {
-	/*
-	 * TODO: use p9221_icl_ramp_start(charger) for ilim_ua.
-	 * Need to make sure that charger->pdata->icl_ramp_delay_ms is set.
-	 */
+	const u32 delay = charger->pdata->icl_ramp_delay_ms == -1 ?
+			  0 : charger->pdata->icl_ramp_delay_ms;
 	charger->icl_ramp_alt_ua = ilim_ua > 0 ? ilim_ua : 0;
 	p9221_set_auth_dc_icl(charger, false);
 	p9221_icl_ramp_reset(charger);
 
 	dev_info(&charger->client->dev, "ICL ramp set alarm %dms, %dua, ramp=%d\n",
-		 charger->pdata->icl_ramp_delay_ms, charger->icl_ramp_alt_ua,
-		 charger->icl_ramp);
+		 delay, charger->icl_ramp_alt_ua, charger->icl_ramp);
 
-	/* can I just shorcut the 0? */
-	alarm_start_relative(&charger->icl_ramp_alarm,
-			     ms_to_ktime(charger->pdata->icl_ramp_delay_ms));
+	alarm_start_relative(&charger->icl_ramp_alarm, ms_to_ktime(delay));
 	return 0;
 }
 
