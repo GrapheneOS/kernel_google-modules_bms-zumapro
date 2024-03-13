@@ -2402,7 +2402,7 @@ static void p9221_charge_stats_hda_work(struct work_struct *work)
 	const ktime_t now = get_boot_sec();
 	const ktime_t start_time = chg_data->start_time;
 	const ktime_t elap = now - chg_data->start_time;
-	int tz_vote = HDA_TZ_WLC_NONE;
+	int tz_vote = HDA_TZ_NONE;
 
 	mutex_lock(&charger->stats_lock);
 

@@ -357,8 +357,27 @@ static ssize_t bvim_cfg_store(struct device *dev, struct device_attribute *attr,
 
 DEVICE_ATTR(bvim_cfg, 0660, bvim_cfg_show, bvim_cfg_store);
 
+static ssize_t latest_buff_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	int idx;
+	ssize_t count = 0;
+	uint16_t rdback;
+	struct max77779_vimon_data *data = dev_get_drvdata(dev);
+
+	mutex_lock(&data->vimon_lock);
+	for (idx = 0; idx < data->buf_len / MAX77779_VIMON_BYTES_PER_ENTRY; idx++) {
+		rdback = data->buf[idx];
+		count += sysfs_emit_at(buf, count, "%#x\n", rdback);
+	}
+	mutex_unlock(&data->vimon_lock);
+
+	return count;
+}
+static DEVICE_ATTR_RO(latest_buff);
+
 static struct attribute *max77779_vimon_attrs[] = {
 	&dev_attr_bvim_cfg.attr,
+	&dev_attr_latest_buff.attr,
 	NULL,
 };
 
