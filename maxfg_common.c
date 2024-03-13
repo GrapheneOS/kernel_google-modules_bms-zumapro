@@ -856,13 +856,12 @@ bool maxfg_ce_relaxed(struct maxfg_regmap *regmap, const u16 relax_mask, const u
 		fcnom != prev_val[0];
 }
 
-#define  MAXFG_DR_VFSOC_DELTA_DEFAULT	30
+#define  MAXFG_DR_VFSOC_DELTA_DEFAULT	0
 #define  MAXFG_DR_TEMP_MIN_DEFAULT	150
 #define  MAXFG_DR_TEMP_MAX_DEFAULT	350
 #define  MAXFG_DR_RELAX_INVALID		0xffff
 #define  MAXFG_DR_VFOCV_MV_INHIB_MIN_DEFAULT	3900
 #define  MAXFG_DR_VFOCV_MV_INHIB_MAX_DEFAULT	4200
-
 
 bool maxfg_is_relaxed(struct maxfg_regmap *regmap, u16 *fstat, u16 mask)
 {
