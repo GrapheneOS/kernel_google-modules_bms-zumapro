@@ -756,6 +756,7 @@ struct p9221_charger_platform_data {
 	u16				chip_id;
 	bool				has_wlc_dc;
 	bool				gpp_enhanced;
+	bool				enable_15w;
 	bool				has_rtx;
 	bool				has_rtx_gpio;
 	bool				rtx_wait_ben;
