@@ -988,14 +988,17 @@ static int feature_15w_enable(struct p9221_charger_data *charger, bool enable)
 	pr_debug("%s: enable=%d chip_id=%x\n", __func__, enable,
 		 charger->pdata->chip_id);
 
+	mutex_lock(&charger->auth_lock);
+
 	/* wc_vol =12V & wc_cur = 1.27A */
 	if (enable && !(chg_fts->session_features & WLCF_CHARGE_15W)) {
 		const u32 vout_mv = P9221_UV_TO_MV(CHARGE_15W_VOUT_UV);
 
-		if (charger->pdata->chip_id != P9412_CHIP_ID && !charger->pdata->enable_15w)
+		if (charger->pdata->chip_id != P9412_CHIP_ID && !charger->pdata->enable_15w) {
+			mutex_unlock(&charger->auth_lock);
 			return -ENOTSUPP;
+		}
 
-		/* TODO: feature_set_dc_icl() needs mutex_lock(&charger->auth_lock); */
 		ret = charger->chip_set_vout_max(charger, vout_mv);
 		if (ret == 0)
 			ret = feature_set_dc_icl(charger, CHARGE_15W_ILIM_UA);
@@ -1004,7 +1007,6 @@ static int feature_15w_enable(struct p9221_charger_data *charger, bool enable)
 						      P9221_OCP_VOTER,
 						      CHARGE_15W_ILIM_UA,
 						      true);
-		/* TODO: feature_set_dc_icl() needs mutex_unlock(&charger->auth_lock); */
 	} else if (!enable && (chg_fts->session_features & WLCF_CHARGE_15W)) {
 		const u32 vout_mv = P9221_UV_TO_MV(P9221_EPP_THRESHOLD_UV);
 		const int ocp_icl = (charger->dc_icl_epp > 0) ?
@@ -1030,7 +1032,7 @@ static int feature_15w_enable(struct p9221_charger_data *charger, bool enable)
 
 		ret = rc1 < 0 || rc2 < 0 ? -EIO : 0;
 	}
-
+	mutex_unlock(&charger->auth_lock);
 	return ret;
 }
 
