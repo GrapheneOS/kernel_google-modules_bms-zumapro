@@ -1022,7 +1022,9 @@ static int feature_15w_enable(struct p9221_charger_data *charger, bool enable)
 		if (rc1 < 0)
 			dev_err(&charger->client->dev, "15W: cannot reset ocp_icl (%d)", rc1);
 		/* reset ramp */
-		rc2 = feature_set_dc_icl(charger, -1);
+		charger->icl_ramp_alt_ua = 0;
+		rc2 = gvotable_cast_int_vote(charger->dc_icl_votable, DCIN_AICL_VOTER,
+					     charger->icl_ramp_alt_ua, true);
 		if (rc2 < 0)
 			dev_err(&charger->client->dev, "15W: cannot reset ramp (%d)", rc2);
 		/* reset VOUT will fail if online */
@@ -1157,7 +1159,6 @@ static int feature_update_session(struct p9221_charger_data *charger, u64 ft)
 		chg_fts->session_features |= WLCF_CHARGE_15W;
 	} else {
 		chg_fts->session_features &= ~WLCF_CHARGE_15W;
-		charger->icl_ramp_alt_ua = 0; /* TODO cleanup the interface */
 	}
 
 	/* warn when a feature doesn't have a rule and align session_features */
