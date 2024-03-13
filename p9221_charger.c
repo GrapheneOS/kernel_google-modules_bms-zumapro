@@ -8066,6 +8066,8 @@ static int p9221_charger_probe(struct i2c_client *client,
 	if (online) {
 		/* set charger->online=true, will ignore first VRECTON IRQ */
 		p9221_set_online(charger);
+		if (charger->alignment == -1)
+			p9221_init_align(charger);
 	} else {
 		/* disconnected, (likely err!=0) vote for BPP */
 		p9221_vote_defaults(charger);
