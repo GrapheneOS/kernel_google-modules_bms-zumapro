@@ -856,21 +856,22 @@ bool maxfg_ce_relaxed(struct maxfg_regmap *regmap, const u16 relax_mask, const u
 		fcnom != prev_val[0];
 }
 
-#define  MAXFG_DR_VFSOC_DELTA_DEFAULT	0
-#define  MAXFG_DR_TEMP_MIN_DEFAULT	150
-#define  MAXFG_DR_TEMP_MAX_DEFAULT	350
-#define  MAXFG_DR_RELAX_INVALID		0xffff
-#define  MAXFG_DR_VFOCV_MV_INHIB_MIN_DEFAULT	3900
-#define  MAXFG_DR_VFOCV_MV_INHIB_MAX_DEFAULT	4200
-
 bool maxfg_is_relaxed(struct maxfg_regmap *regmap, u16 *fstat, u16 mask)
 {
 	return maxfg_reg_read(regmap, MAXFG_TAG_fstat, fstat) == 0 &&
 		(*fstat & mask);
 }
 
-bool maxfg_dynrel_check(struct maxfg_dynrel_state *dr_state,
-			struct maxfg_regmap *regmap)
+#define MAXFG_DR_VFSOC_DELTA_DEFAULT		0
+#define MAXFG_DR_LEARN_STAGE_MIN_DEFAULT	7
+#define MAXFG_DR_TEMP_MIN_DEFAULT		150
+#define MAXFG_DR_TEMP_MAX_DEFAULT		350
+#define MAXFG_DR_VFOCV_MV_INHIB_MIN_DEFAULT	3900
+#define MAXFG_DR_VFOCV_MV_INHIB_MAX_DEFAULT	4200
+#define MAXFG_DR_RELAX_INVALID			0xffff
+
+bool maxfg_dynrel_can_relax(struct maxfg_dynrel_state *dr_state,
+			    struct maxfg_regmap *regmap)
 {
 	u16 delta_vfsoc;
 	int ret;
@@ -895,35 +896,36 @@ bool maxfg_dynrel_check(struct maxfg_dynrel_state *dr_state,
 	if (ret < 0)
 		return false;
 
-	if (dr_state->vfsoc_rel == MAXFG_DR_RELAX_INVALID)
+	if (dr_state->vfsoc_det == MAXFG_DR_RELAX_INVALID)
 		return true;
 
-	delta_vfsoc = abs(dr_state->vfsoc_last - dr_state->vfsoc_rel);
+	delta_vfsoc = abs(dr_state->vfsoc_last - dr_state->vfsoc_det);
 	if (delta_vfsoc < dr_state->vfsoc_delta)
 		return false;
 
 	return true;
 }
 
-int maxfg_dynrel_mark_relax(struct maxfg_dynrel_state *dr_state,
+int maxfg_dynrel_mark_det(struct maxfg_dynrel_state *dr_state,
 			    struct maxfg_regmap *regmap)
 {
 	int ret;
 
 	/* needs vfsoc for next round */
-	ret = maxfg_reg_read(regmap, MAXFG_TAG_vfsoc, &dr_state->vfsoc_rel);
+	ret = maxfg_reg_read(regmap, MAXFG_TAG_vfsoc, &dr_state->vfsoc_det);
 	if (ret < 0)
 		return -EIO;
-	ret = maxfg_reg_read(regmap, MAXFG_TAG_temp, &dr_state->temp_rel);
+	ret = maxfg_reg_read(regmap, MAXFG_TAG_temp, &dr_state->temp_det);
 	if (ret < 0)
-		dr_state->temp_rel = 0xffff;
-	ret = maxfg_reg_read(regmap, MAXFG_TAG_vfocv, &dr_state->vfocv_rel);
+		dr_state->temp_det = 0xffff;
+	ret = maxfg_reg_read(regmap, MAXFG_TAG_vfocv, &dr_state->vfocv_det);
 	if (ret < 0)
-		dr_state->vfocv_rel = 0xffff;
+		dr_state->temp_det = 0xffff;
 
 	return 0;
 }
 
+/* enable=false inhibit relaxation */
 int maxfg_dynrel_relaxcfg(struct maxfg_dynrel_state *dr_state,
 			  struct maxfg_regmap *regmap, bool enable)
 {
@@ -939,21 +941,9 @@ int maxfg_dynrel_relaxcfg(struct maxfg_dynrel_state *dr_state,
 	if (ret < 0)
 		return -EIO;
 	if (temp != value)
-		return -EINVAL;
+		return -EIO;
 
 	return 0;
-}
-
-void maxfg_dynrel_init_sysfs(struct maxfg_dynrel_state *dr_state,
-			     struct dentry *de)
-{
-	if (!de)
-		return;
-
-	debugfs_create_u32("dr_vsoc_delta", 0644, de, &dr_state->vfsoc_delta);
-	debugfs_create_u16("dr_relcfg_inhibit", 0644, de, &dr_state->relcfg_inhibit);
-	debugfs_create_u16("dr_relcfg_allow", 0644, de, &dr_state->relcfg_allow);
-	debugfs_create_bool("dr_monitor", 0644, de, &dr_state->monitor);
 }
 
 void maxfg_dynrel_init(struct maxfg_dynrel_state *dr_state,
@@ -962,12 +952,17 @@ void maxfg_dynrel_init(struct maxfg_dynrel_state *dr_state,
 	u32 value;
 	int ret;
 
-	dr_state->vfsoc_rel = MAXFG_DR_RELAX_INVALID;
+	dr_state->vfsoc_det = MAXFG_DR_RELAX_INVALID;
 
 	ret = of_property_read_u32(node, "maxfg,dr_vfsoc_delta", &value);
 	if (ret < 0)
 		value = MAXFG_DR_VFSOC_DELTA_DEFAULT;
 	dr_state->vfsoc_delta = percentage_to_reg(value);
+
+	ret = of_property_read_u32(node, "maxfg,learn_stage_min", &value);
+	if (ret < 0)
+		value = MAXFG_DR_LEARN_STAGE_MIN_DEFAULT;
+	dr_state->learn_stage_min = value;
 
 	ret = of_property_read_u32(node, "maxfg,dr_min_deci_temp_c", &value);
 	if (ret < 0)
@@ -1006,18 +1001,18 @@ static void maxfg_dynrel_log__(struct logbuffer *mon, struct device *dev,
 			       const struct maxfg_dynrel_state *dr_state,
 			        u16 mark, u16 vfocv, u16 vfsoc, u16 temp)
 {
-	int vfsoc_rel;
+	int vfsoc_det;
 
-	if (dr_state->vfsoc_rel == MAXFG_DR_RELAX_INVALID) {
-		vfsoc_rel = -1;
+	if (dr_state->vfsoc_det == MAXFG_DR_RELAX_INVALID) {
+		vfsoc_det = -1;
 	} else {
-		vfsoc_rel = reg_to_micro_volt(dr_state->vfsoc_rel) / 1000;
+		vfsoc_det = reg_to_micro_volt(dr_state->vfsoc_det) / 1000;
 	}
 
 	gbms_logbuffer_devlog(mon, dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-			"dynrel mark=%x allowed=%d lrel=%d, temp=%d vfocv=%d vfsoc=%d",
-			mark, dr_state->relax_allowed, vfsoc_rel,
-			reg_to_deci_deg_cel(temp),
+			"dynrel mark=%x sticky=%d allowed=%d lrel=%d, temp=%d vfocv=%d vfsoc=%d",
+			mark, dr_state->sticky_cnt, dr_state->relax_allowed,
+			vfsoc_det, reg_to_deci_deg_cel(temp),
 			reg_to_micro_volt(vfocv) / 1000,
 			reg_to_percentage(vfsoc));
 }
@@ -1026,8 +1021,8 @@ static void maxfg_dynrel_log__(struct logbuffer *mon, struct device *dev,
 void maxfg_dynrel_log_rel(struct logbuffer *mon, struct device *dev, u16 mark,
 			  const struct maxfg_dynrel_state *dr_state)
 {
-	maxfg_dynrel_log__(mon, dev, dr_state, mark, dr_state->vfocv_rel,
-			   dr_state->vfsoc_rel, dr_state->temp_rel);
+	maxfg_dynrel_log__(mon, dev, dr_state, mark, dr_state->vfocv_det,
+			   dr_state->vfsoc_det, dr_state->temp_det);
 }
 
 void maxfg_dynrel_log(struct logbuffer *mon, struct device *dev, u16 mark,
