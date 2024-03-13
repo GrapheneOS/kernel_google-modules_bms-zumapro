@@ -405,9 +405,6 @@ static int max77779_fg_model_reload(struct max77779_fg_chip *chip, bool force)
 	if (!force && (pending || disabled))
 		return -EEXIST;
 
-	if (!force && max77779_fg_model_check_version(chip->model_data))
-		return -EINVAL;
-
 	gbms_logbuffer_devlog(chip->ce_log, chip->dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
 			      "Schedule Load FG Model, ID=%d, ver:%d->%d",
 			      chip->batt_id, max77779_model_read_version(chip->model_data),
@@ -3237,9 +3234,10 @@ static int max77779_fg_init_model_data(struct max77779_fg_chip *chip)
 	if (ret < 0)
 		dev_warn(chip->dev, "Error on Next Update, Will retry\n");
 
-	dev_info(chip->dev, "FG Model OK, ver=%d next_update=%d\n",
-		 max77779_model_read_version(chip->model_data),
-		 chip->model_next_update);
+	gbms_logbuffer_devlog(chip->ce_log, chip->dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+			      "FG Model OK, ver=%d next_update=%d",
+			      max77779_model_read_version(chip->model_data),
+			      chip->model_next_update);
 
 	chip->reg_prop_capacity_raw = MAX77779_FG_RepSOC;
 	chip->model_ok = true;

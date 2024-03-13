@@ -36,38 +36,28 @@
 #define MAX7779_FG_CRC8_POLYNOMIAL		0x07	/* (x^8) + x^2 + x + 1 */
 DECLARE_CRC8_TABLE(max77779_fg_crc8_table);
 
-#define MODEL_VERSION_SHIFT	8
-#define MODEL_VERSION_MASK	0xff
 int max77779_model_read_version(const struct max77779_model_data *model_data)
 {
-	u16 temp;
+	u8 temp;
 	int ret;
 
-	ret = REGMAP_READ(model_data->regmap, MAX77779_FG_MODEL_VERSION_REG, &temp);
-	if (ret == 0)
-		return (temp >> MAX77779_FG_TAlrtTh_TMAX_SHIFT) & MODEL_VERSION_MASK;
+	ret = gbms_storage_read(GBMS_TAG_MDLV, &temp, sizeof(temp));
 
-	return ret;
+	return ret < 0 ? ret : temp;
 }
 
 int max77779_model_write_version(const struct max77779_model_data *model_data, int version)
 {
-	struct maxfg_regmap *regmap = model_data->regmap;
-	u16 temp;
+	u8 temp;
 	int ret;
 
 	if (version == MAX77779_FG_INVALID_VERSION)
 		return 0;
 
-	ret = REGMAP_READ(regmap, MAX77779_FG_MODEL_VERSION_REG, &temp);
-	if (ret == 0) {
-		temp &= ~(MODEL_VERSION_MASK << MODEL_VERSION_SHIFT);
-		temp |= (version & MODEL_VERSION_MASK) << MODEL_VERSION_SHIFT;
+	temp = (u8)version;
+	ret = gbms_storage_write(GBMS_TAG_MDLV, &temp, sizeof(temp));
 
-		ret = MAX77779_FG_REGMAP_WRITE(regmap, MAX77779_FG_MODEL_VERSION_REG, temp);
-	}
-
-	return ret;
+	return ret < 0 ? ret : 0;
 }
 
 int max77779_reset_state_data(struct max77779_model_data *model_data)
