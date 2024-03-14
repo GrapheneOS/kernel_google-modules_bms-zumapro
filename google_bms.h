@@ -509,11 +509,17 @@ const char *gbms_chg_ev_adapter_s(int adapter);
 
 #define VOTABLE_FORCE_5V	"FORCE_5V"
 
-#define HDA_TZ_WLC_NONE		(0)
+#define HDA_TZ_NONE		(0)
 #define HDA_TZ_WLC_ADAPTER	(1)
 #define HDA_TZ_WLC_EPP_1P	(10)
 #define HDA_TZ_WLC_EPP_3P	(20)
 #define HDA_TZ_WLC_NOT_ALIGN	(30)
+#define HDA_TZ_USB_SUB5W	(51)
+#define HDA_TZ_USB_5W		(52)
+#define HDA_TZ_USB_7P5W		(53)
+#define HDA_TZ_USB_15W		(54)
+#define HDA_TZ_USB_18W		(55)
+#define HDA_TZ_USB_GT18W	(56)
 
 #define FAN_LVL_UNKNOWN		-1
 #define FAN_LVL_NOT_CARE	0

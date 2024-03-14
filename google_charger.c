@@ -73,6 +73,7 @@
 #define MSC_USER_CHG_LEVEL_VOTER	"msc_user_chg_level"
 #define MSC_CHG_TERM_VOTER		"msc_chg_term"
 #define MSC_PWR_VOTER			"msc_pwr_disable"
+#define MSC_HDA_VOTER			"msc_hda"
 
 #define CHG_TERM_LONG_DELAY_MS		300000	/* 5 min */
 #define CHG_TERM_SHORT_DELAY_MS		60000	/* 1 min */
@@ -660,6 +661,35 @@ static int info_usb_ad_type(int usb_type, int usbc_type)
 	}
 }
 
+static int chg_hda_tz_vote(int voltage_max, int amperage_max)
+{
+	struct gvotable_election *hda_tz_votable = gvotable_election_get_handle(VOTABLE_HDA_TZ);
+	int power = (voltage_max * amperage_max) / 1000;
+	int vote = HDA_TZ_NONE;
+
+	if (!hda_tz_votable)
+		return -1;
+
+	if (power < 5000)
+		vote = HDA_TZ_USB_SUB5W;
+	else if (power <= 5000)
+		vote = HDA_TZ_USB_5W;
+	else if (power <= 7500)
+		vote = HDA_TZ_USB_7P5W;
+	else if (power <= 15000)
+		vote = HDA_TZ_USB_15W;
+	else if (power <= 18000)
+		vote = HDA_TZ_USB_18W;
+	else if (power > 18000)
+		vote = HDA_TZ_USB_GT18W;
+
+	pr_debug("%s: voltage_max: %d, amp_max: %d, vote: %d\n",
+		__func__, voltage_max, amperage_max, vote);
+
+	gvotable_cast_int_vote(hda_tz_votable, MSC_HDA_VOTER, vote, vote);
+	return 0;
+}
+
 static int info_usb_state(union gbms_ce_adapter_details *ad,
 			  struct power_supply *usb_psy,
 			  struct power_supply *tcpm_psy)
@@ -696,6 +726,8 @@ static int info_usb_state(union gbms_ce_adapter_details *ad,
 			current_now / 1000,
 			voltage_max < 0 ? voltage_max : voltage_max / 1000,
 			amperage_max < 0 ? amperage_max : amperage_max / 1000);
+
+		chg_hda_tz_vote(voltage_max/1000, amperage_max/1000);
 	}
 
 	if (!ad)
