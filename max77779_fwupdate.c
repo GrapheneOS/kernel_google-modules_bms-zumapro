@@ -27,6 +27,7 @@
 #define FW_UPDATE_RETRY_CPU_RESET             100
 #define FW_UPDATE_RETRY_FW_UPDATE             1000
 #define FW_UPDATE_RETRY_RISCV_REBOOT          20
+#define FW_UPDATE_RETRY_ONCE                  1
 #define FW_UPDATE_WAIT_INTERVAL_MS            50
 #define FW_UPDATE_WAIT_LOAD_BIN_MS            50
 #define FW_UPDATE_TIMER_CHECK_INTERVAL_MS     1000
@@ -452,20 +453,28 @@ static int max77779_wait_riscv_reboot(struct max77779_fwupdate *fwu)
 	return -ETIMEDOUT;
 }
 
-static int check_boot_completed(struct max77779_fwupdate *fwu)
+/* b/328083603: Even POR triggered, RISC-V may not be ready */
+static int check_boot_completed(struct max77779_fwupdate *fwu, int max_retry)
 {
-	int ret;
+	int ret, retry;
 	uint16_t val;
 
-	ret = max77779_external_fg_reg_read(fwu->fg, MAX77779_FG_BOOT_CHECK_REG, &val);
-	if (ret) {
-		dev_err(fwu->dev, "failed to read %02x (%d) in check boot completed\n",
-			MAX77779_FG_BOOT_CHECK_REG, ret);
-		return ret;
+	for (retry = 0; retry < max_retry; retry++) {
+		ret = max77779_external_fg_reg_read(fwu->fg, MAX77779_FG_BOOT_CHECK_REG, &val);
+		if (ret) {
+			dev_err(fwu->dev, "failed to read %02x (%d) in check boot completed\n",
+				MAX77779_FG_BOOT_CHECK_REG, ret);
+			return ret;
+		}
+
+		/* b/323382370 */
+		if ((val & MAX77779_FG_BOOT_CHECK_SUCCESS) == MAX77779_FG_BOOT_CHECK_SUCCESS)
+			break;
+
+		msleep(FW_UPDATE_WAIT_INTERVAL_MS);
 	}
 
-	/* b/323382370 */
-	if ((val & MAX77779_FG_BOOT_CHECK_SUCCESS) != MAX77779_FG_BOOT_CHECK_SUCCESS) {
+	if (retry == max_retry) {
 		dev_err(fwu->dev, "Boot NOT completed successfully: %04x\n", val);
 		return -EIO;
 	}
@@ -935,13 +944,13 @@ static int max77779_fwl_poll_complete(struct max77779_fwupdate *fwu)
 					 MAX77779_CMD_REBOOT_FG);
 	max77779_wait_riscv_reboot(fwu);
 
+	ret = check_boot_completed(fwu, FW_UPDATE_RETRY_CPU_RESET);
+	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed on check_boot_completed\n");
+
 	ret = max77779_get_firmware_version(fwu, &fwu->v_new);
 	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed to get firmware version\n");
 	dev_info(fwu->dev, "updated firmware version: %u.%u\n",
 		 fwu->v_new.major, fwu->v_new.minor);
-
-	ret = check_boot_completed(fwu);
-	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed on check_boot_completed\n");
 
 	ret = max77779_check_timer_refresh(fwu);
 	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed on max77779_check_timer_refresh\n");
@@ -1227,7 +1236,7 @@ static ssize_t update_status_show(struct device *dev, struct device_attribute *a
 		goto update_status_show_exit;
 	}
 
-	ret = check_boot_completed(fwu);
+	ret = check_boot_completed(fwu, FW_UPDATE_RETRY_ONCE);
 	if (ret < 0) {
 		st = MAX77779_FWU_BOOT_ERR;
 		goto update_status_show_exit;
