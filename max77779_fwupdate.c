@@ -42,10 +42,8 @@
 #define MAX77779_FW_IMG_SZ_PACKET 42
 #define MAX77779_FW_IMG_SZ_FRAME (MAX77779_FW_IMG_SZ_PACKET * 20)
 
-/* FG's reg 0x40 and status value of 0x82 are not documented */
-#define MAX77779_FG_BOOT_CHECK_REG 0x40
+
 #define MAX77779_FG_SECUPDATE_STATUS_REG 0x6F
-#define MAX77779_FG_BOOT_CHECK_SUCCESS 0x82
 #define MAX77779_FG_SECUPDATE_STATUS_SUCCESS 0x03
 
 /* PMIC.0x62 can be set 0xFF if previous firmware update fails */

@@ -21,6 +21,11 @@
 #define MAX77779_PMIC_ID_SEQ	0x79
 #define MAX77779_PMIC_OF_NAME	"max77779,pmic"
 
+/* FG's reg 0x40 and status value of 0x82 are not documented */
+#define MAX77779_FG_BOOT_CHECK_REG 0x40
+#define MAX77779_FG_BOOT_CHECK_SUCCESS 0x82
+
+
 struct device* max77779_get_dev(struct device *dev, const char *name);
 
 /* write to a register */
