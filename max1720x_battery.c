@@ -2274,19 +2274,28 @@ static int max1720x_current_offset_fix(struct max1720x_chip *chip)
 
 static int max1720x_monitor_log_learning(struct max1720x_chip *chip, bool force)
 {
-	const bool seed = !chip->cb_lh.latest_entry;
-	bool log_it;
+	bool log_it, seed;
 	char *buf;
 	int ret;
+	u16* last_entry;
+
+	mutex_lock(&chip->cb_lh.cb_wr_lock);
+	seed = !chip->cb_lh.latest_entry;
 
 	/* do nothing if no changes on dpacc/dqacc or relaxation */
 	log_it = force || seed ||
 	         maxfg_ce_relaxed(&chip->regmap,  MAX_M5_FSTAT_RELDT | MAX_M5_FSTAT_RELDT2,
 				(u16 *)chip->cb_lh.latest_entry);
-	if (!log_it)
+	if (!log_it) {
+		mutex_unlock(&chip->cb_lh.cb_wr_lock);
 		return 0;
+	}
 
 	ret = maxfg_capture_registers(&chip->cb_lh);
+	last_entry = chip->cb_lh.latest_entry;
+
+	mutex_unlock(&chip->cb_lh.cb_wr_lock);
+
 	if (ret < 0) {
 		dev_dbg(chip->dev, "cannot read learning parameters (%d)\n", ret);
 		return ret;
@@ -2301,7 +2310,7 @@ static int max1720x_monitor_log_learning(struct max1720x_chip *chip, bool force)
 		return -ENOMEM;
 
 	ret = maxfg_capture_to_cstr(&chip->cb_lh.config,
-				    (u16 *)chip->cb_lh.latest_entry,
+				    last_entry,
 				    buf, PAGE_SIZE);
 	if (ret > 0)
 		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,

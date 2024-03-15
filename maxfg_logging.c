@@ -73,15 +73,25 @@ int maxfg_alloc_capture_buf(struct maxfg_capture_buf *buf, int slots)
 
 void maxfg_clear_capture_buf(struct maxfg_capture_buf *buf)
 {
+	int head, tail;
 	if (!buf)
 		return;
 
 	mutex_lock(&buf->cb_wr_lock);
 	mutex_lock(&buf->cb_rd_lock);
 
-	buf->latest_entry = NULL;
-	buf->cb.head = 0;
-	buf->cb.tail = 0;
+	head = buf->cb.head;
+	tail = buf->cb.tail;
+
+	if (CIRC_CNT(head, tail, buf->slots)) {
+		head = (head + 1) & (buf->slots - 1);
+
+		smp_wmb();
+
+		/* make buffer empty by (head == tail) while preserving latest_entry as a seed */
+		WRITE_ONCE(buf->cb.head, head);
+		WRITE_ONCE(buf->cb.tail, head);
+	}
 
 	mutex_unlock(&buf->cb_rd_lock);
 	mutex_unlock(&buf->cb_wr_lock);
@@ -125,8 +135,6 @@ int maxfg_capture_registers(struct maxfg_capture_buf *buf)
 	int head, tail, ret;
 	u16 *reg_val;
 
-	mutex_lock(&buf->cb_wr_lock);
-
 	head = buf->cb.head;
 	tail = READ_ONCE(buf->cb.tail);
 
@@ -156,7 +164,6 @@ int maxfg_capture_registers(struct maxfg_capture_buf *buf)
 	buf->latest_entry = latest_entry;
 
 exit_done:
-	mutex_unlock(&buf->cb_wr_lock);
 	return ret;
 }
 
