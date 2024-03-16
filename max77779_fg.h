@@ -35,7 +35,7 @@
 
 #define MAX77779_FG_NDGB_ADDRESS 0x37
 
-static struct maxfg_reg max77779_fg[] = {
+static const struct maxfg_reg max77779_fg[] = {
 	[MAXFG_TAG_avgc] = { ATOM_INIT_REG16(MAX77779_FG_AvgCurrent)},
 	[MAXFG_TAG_cnfg] = { ATOM_INIT_REG16(MAX77779_FG_Config)},
 	[MAXFG_TAG_mmdv] = { ATOM_INIT_REG16(MAX77779_FG_MaxMinVolt)},
@@ -70,10 +70,11 @@ static struct maxfg_reg max77779_fg[] = {
 	[MAXFG_TAG_rslow] = { ATOM_INIT_REG16(MAX77779_FG_RSlow)},
 };
 
-static struct maxfg_reg max77779_debug_fg[] = {
+static const struct maxfg_reg max77779_debug_fg[] = {
 	[MAXFG_TAG_tempco] = { ATOM_INIT_REG16(MAX77779_FG_NVM_nTempCo)},
 	[MAXFG_TAG_rcomp0] = { ATOM_INIT_REG16(MAX77779_FG_NVM_nRComp0)},
 	[MAXFG_TAG_filcfg] = { ATOM_INIT_REG16(MAX77779_FG_NVM_nFilterCfg)},
+	[MAXFG_TAG_relaxcfg] = { ATOM_INIT_REG16(MAX77779_FG_NVM_RelaxCFG)},
 };
 
 struct max77779_fg_chip {
