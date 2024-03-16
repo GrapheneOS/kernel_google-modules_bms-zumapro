@@ -1187,6 +1187,7 @@ static int max77779_dynrel_relaxcfg(struct max77779_fg_chip *chip, bool enable)
 	if (rc < 0)
 		return -EIO;
 
+	/* enable use ->relcfg_allow , !enable -> relcfg_inhibit */
 	ret = maxfg_dynrel_relaxcfg(&chip->dynrel_state, &chip->regmap_debug,
 				    enable);
 
@@ -1197,66 +1198,135 @@ static int max77779_dynrel_relaxcfg(struct max77779_fg_chip *chip, bool enable)
 	return ret;
 }
 
-static void max77779_fg_check_learning(struct max77779_fg_chip *chip)
+static int max77779_fg_get_learn_stage(struct maxfg_regmap *regmap)
+{
+	u16 learncfg;
+	int ret;
+
+	ret = maxfg_reg_read(regmap, MAXFG_TAG_learn, &learncfg);
+	if (ret < 0)
+		return -EIO;
+
+	return _max77779_fg_learncfg_learnstage_get(learncfg);
+}
+
+/* <0 error, 0 success, dynrel disabled */
+static int max77779_dynrel_ctl(struct max77779_fg_chip *chip, bool enable)
+{
+	struct logbuffer *mon = chip->monitor_log;
+	bool relax_allowed;
+	int ret;
+
+	if (enable && !chip->dynrel_state.vfsoc_delta)
+		return -EINVAL;
+
+	/* allow_relax when dynrelax is disabled */
+	relax_allowed = !enable ||
+			maxfg_dynrel_can_relax(&chip->dynrel_state, &chip->regmap);
+
+	/* enable || (!enable && relax_allowed) */
+	ret = max77779_dynrel_relaxcfg(chip, relax_allowed);
+	if (ret < 0) {
+		dev_err(chip->dev,
+			"dynrel: dynrel=%d enable=%d cannot set relaxcfg=%d (%d)\n",
+			chip->dynrel_state.vfsoc_delta != 0, enable,
+			relax_allowed, ret);
+
+		ret = max77779_dynrel_relaxcfg(chip, true);
+		if (ret < 0) {
+			/* failed to change relax twice! disable dynrel */
+			dev_err(chip->dev, "dynrel: dynrel=%d cannot force relaxcfg (%d)\n",
+				chip->dynrel_state.vfsoc_delta != 0, ret);
+			chip->dynrel_state.vfsoc_delta = 0;
+		} else if (!relax_allowed) {
+			/* (enable && !relax_allowed) */
+			dev_err(chip->dev, "dynrel: cannot inhibit relax (%d)\n", ret);
+			relax_allowed = true;
+		}
+	}
+
+	if (enable) {
+		chip->dynrel_state.relax_allowed = relax_allowed;
+		/* (vfsoc_delta == 0) && (ret < 0) */
+		maxfg_dynrel_log_cfg(mon, chip->dev, &chip->dynrel_state);
+		maxfg_dynrel_log(mon, chip->dev, 0, &chip->dynrel_state);
+	}
+
+	/* <0 on double failure (vfsoc_delta==0), enable otherwise */
+	return ret < 0 ? ret : enable;
+}
+
+static void max77779_fg_dynrelax(struct max77779_fg_chip *chip)
 {
 	struct maxfg_dynrel_state *dr_state = &chip->dynrel_state;
 	struct maxfg_regmap *regmap = &chip->regmap;
+	int learn_stage, ret;
 	bool relaxed;
 	u16 fstat;
-	int ret;
-
-	/* check for relaxation event and log it */
-	max77779_fg_monitor_log_learning(chip, false);
 
 	/* dynamic relaxation */
-	if (!dr_state->vfsoc_delta)
+	if (!dr_state->vfsoc_delta) {
+		dev_dbg(chip->dev, "dynrel: disabled vfsoc_delta=%d\n",
+			dr_state->vfsoc_delta);
 		return;
+	}
+
+	learn_stage = max77779_fg_get_learn_stage(regmap);
+	if (learn_stage < dr_state->learn_stage_min) {
+		dev_dbg(chip->dev, "dynrel: learn_stage=%d < %d\n",
+			learn_stage, dr_state->learn_stage_min);
+		return;
+	}
 
 	relaxed = maxfg_is_relaxed(regmap, &fstat, MAX77779_FG_FStat_RelDt_MASK);
 	if (relaxed) {
-		const bool reldt = fstat & MAX77779_FG_FStat_RelDt_MASK;
-		const bool reldt_last = dr_state->mark_last &
-					MAX77779_FG_FStat_RelDt_MASK;
 
-		/* reldt stils after changing relaxconfig  */
-		if (reldt && (reldt == reldt_last)) {
-			if (dr_state->monitor)
-				dev_warn(chip->dev, "dynrel: sticky fstat=%x mark=%x\n",
-					 fstat, dr_state->mark_last);
-			return;
-		}
+		/* reldt should clear shortly after changing relaxcfg */
+		if (!dr_state->relax_allowed) {
+			dr_state->sticky_cnt += 1;
 
-		/* reldt cleared */
-		if (reldt_last && !reldt) {
-			if (dr_state->monitor)
-				dev_warn(chip->dev, "dynrel: clear fstat=%x mark=%x\n",
-					 fstat, dr_state->mark_last);
-			dr_state->mark_last = fstat;
+			ret = max77779_dynrel_relaxcfg(chip, false);
+			if (ret == 0)
+				dr_state->relax_allowed = false;
+
+			if (ret < 0 || dr_state->monitor)
+				dev_warn(chip->dev, "dynrel: allowed=%d sticky_cnt=%d (%d)\n",
+					 dr_state->relax_allowed,
+					 dr_state->sticky_cnt, ret);
 			return;
 		}
 
 		/* mark new relaxation */
-		ret = maxfg_dynrel_mark_relax(dr_state, regmap);
+		ret = maxfg_dynrel_mark_det(dr_state, regmap);
 		if (ret < 0) {
-			dev_err(chip->dev, "dynrel: no mark relax (%d)\n", ret);
+			dev_err(chip->dev, "dynrel: cannot mark relax (%d)\n", ret);
 			return;
 		}
 
+		/* when this fails */
 		ret = max77779_dynrel_relaxcfg(chip, false);
-		if (ret == 0)
+		if (ret == 0) {
 			dr_state->relax_allowed = false;
+			dr_state->mark_last = fstat;
+			dr_state->sticky_cnt = 0;
+		}
 
-		/* log the relax point when successful */
 		maxfg_dynrel_log_rel(chip->monitor_log, chip->dev, fstat, dr_state);
-		dr_state->mark_last = fstat;
 	} else {
 		bool can_relax;
 
-		can_relax = maxfg_dynrel_check(dr_state, regmap);
-		if (can_relax && can_relax != dr_state->relax_allowed) {
-			ret = max77779_dynrel_relaxcfg(chip, true);
-			if (ret == 0)
-				dr_state->relax_allowed = true;
+		can_relax = maxfg_dynrel_can_relax(dr_state, regmap);
+		if (can_relax != dr_state->relax_allowed) {
+			if (dr_state->sticky_cnt)
+				dev_warn(chip->dev, "dynrel: sticky_cnt=%d\n",
+					 dr_state->sticky_cnt);
+
+			ret = max77779_dynrel_relaxcfg(chip, can_relax);
+			if (ret == 0) {
+				dr_state->relax_allowed = can_relax;
+				dr_state->mark_last = fstat;
+				dr_state->sticky_cnt = 0;
+			}
 
 			maxfg_dynrel_log(chip->monitor_log, chip->dev,
 					 fstat, dr_state);
@@ -1266,6 +1336,14 @@ static void max77779_fg_check_learning(struct max77779_fg_chip *chip)
 			maxfg_dynrel_log(NULL, chip->dev, fstat, dr_state);
 	}
 
+}
+
+static void max77779_fg_check_learning(struct max77779_fg_chip *chip)
+{
+	/* check for relaxation event and log it */
+	max77779_fg_monitor_log_learning(chip, false);
+	/* run dynamic relax if enabled  */
+	max77779_fg_dynrelax(chip);
 }
 
 static int max77779_fg_get_property(struct power_supply *psy,
@@ -2653,6 +2731,50 @@ static ssize_t fg_learning_events_store(struct device *dev,
 
 static DEVICE_ATTR_RW(fg_learning_events);
 
+
+static int get_dr_vsoc_delta(void *data, u64 *val)
+{
+	struct max77779_fg_chip *chip = data;
+
+	*val = chip->dynrel_state.vfsoc_delta;
+	return 0;
+}
+
+static int set_dr_vsoc_delta(void *data, u64 val)
+{
+	struct max77779_fg_chip *chip = data;
+	int ret;
+
+	if (val > 100)
+		return -EINVAL;
+
+	chip->dynrel_state.vfsoc_delta = percentage_to_reg((int)val);
+	ret = max77779_dynrel_ctl(chip, chip->dynrel_state.vfsoc_delta != 0);
+	if (ret < 0 || ret != (chip->dynrel_state.vfsoc_delta != 0))
+		dev_err(chip->dev, "dynrel: error enable=%d result=%d\n",
+			chip->dynrel_state.vfsoc_delta != 0, ret);
+
+	return ret;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(dr_vsoc_delta_fops, get_dr_vsoc_delta,
+			set_dr_vsoc_delta, "%llu\n");
+
+static void max77779_dynrel_init_sysfs(struct max77779_fg_chip *chip,
+				       struct dentry *de)
+{
+	struct maxfg_dynrel_state *dr_state = &chip->dynrel_state;
+
+	if (!de)
+		return;
+
+	debugfs_create_file("dr_vsoc_delta", 0644, de, chip, &dr_vsoc_delta_fops);
+	debugfs_create_u16("dr_learn_stage_min", 0644, de, &dr_state->learn_stage_min);
+	debugfs_create_u16("dr_relcfg_inhibit", 0644, de, &dr_state->relcfg_inhibit);
+	debugfs_create_u16("dr_relcfg_allow", 0644, de, &dr_state->relcfg_allow);
+	debugfs_create_bool("dr_monitor", 0644, de, &dr_state->monitor);
+}
+
 static int max77779_fg_init_sysfs(struct max77779_fg_chip *chip)
 {
 	struct dentry *de;
@@ -2704,7 +2826,7 @@ static int max77779_fg_init_sysfs(struct max77779_fg_chip *chip)
 	debugfs_create_file("fw_sub_revision", 0600, de, chip, &debug_fw_sub_revision_fops);
 
 	/* dynamic relaxation */
-	maxfg_dynrel_init_sysfs(&chip->dynrel_state, de);
+	max77779_dynrel_init_sysfs(chip, de);
 
 	return 0;
 }
@@ -3126,34 +3248,6 @@ static void max77779_fg_read_serial_number(struct max77779_fg_chip *chip)
 		chip->serial_number[0] = '\0';
 }
 
-static bool max77779_init_dynrelax(struct max77779_fg_chip *chip)
-{
-	bool allowed = true;
-	int ret;
-
-	maxfg_dynrel_init(&chip->dynrel_state, chip->dev->of_node);
-	chip->dynrel_state.relcfg_allow = 0x043c; /* read from model */
-        chip->dynrel_state.relcfg_inhibit = 0x1ff; /* read from DT */
-	if (chip->dynrel_state.vfsoc_delta)
-		allowed = maxfg_dynrel_check(&chip->dynrel_state, &chip->regmap);
-
-	ret = max77779_dynrel_relaxcfg(chip, allowed);
-	if (ret < 0) {
-		dev_err(chip->dev, "dynrel_init: cannot set relaxcfg=%d (%d)\n",
-			allowed, ret);
-
-		/* when this fails it's bad, try a FG reset */
-		ret = max77779_dynrel_relaxcfg(chip, true);
-		if (ret < 0)
-			dev_err(chip->dev, "dynrel_init: cannot reset relaxcfg (%d)\n",
-				ret);
-		allowed = true;
-	}
-
-	chip->dynrel_state.relax_allowed = allowed;
-	return chip->dynrel_state.vfsoc_delta != 0;
-}
-
 static void max77779_fg_init_work(struct work_struct *work)
 {
 	struct max77779_fg_chip *chip = container_of(work, struct max77779_fg_chip,
@@ -3203,14 +3297,16 @@ static void max77779_fg_init_work(struct work_struct *work)
 	max77779_fg_init_sysfs(chip);
 
 	/* dynamic relaxation */
-	ret = max77779_init_dynrelax(chip);
-	if (ret) {
-		struct logbuffer *mon = chip->monitor_log;
-
-		maxfg_dynrel_log_cfg(mon, chip->dev, &chip->dynrel_state);
-		maxfg_dynrel_log(mon, chip->dev, 0, &chip->dynrel_state);
-	}
-
+	maxfg_dynrel_init(&chip->dynrel_state, chip->dev->of_node);
+	chip->dynrel_state.relcfg_allow = 0x043c; /* read from model */
+        chip->dynrel_state.relcfg_inhibit = 0x1ff; /* read from DT */
+	ret = max77779_dynrel_ctl(chip, chip->dynrel_state.vfsoc_delta != 0);
+	if (ret < 0 || ret != (chip->dynrel_state.vfsoc_delta != 0))
+		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
+				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+				      "dynrel: error enable=%d result=%d\n",
+				      chip->dynrel_state.vfsoc_delta != 0,
+				      ret);
 
 	/*
 	 * Handle any IRQ that might have been set before init
