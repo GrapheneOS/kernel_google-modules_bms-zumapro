@@ -344,7 +344,6 @@ static inline int maxfg_regmap_writeverify(const struct maxfg_regmap *map,
 
 #define REGMAP_WRITE_VERIFY(regmap, what, value) \
 	maxfg_regmap_writeverify(regmap, what, value, #what)
-
 /* dump FG model data */
 void dump_model(struct device *dev, u16 model_start, u16 *data, int count);
 int maxfg_get_fade_rate(struct device *dev, int bhi_fcn_count, int *fade_rate, enum gbms_property p);
@@ -380,5 +379,56 @@ int maxfg_capture_to_cstr(struct maxfg_capture_config *config, u16 *reg_val,
 
 bool maxfg_ce_relaxed(struct maxfg_regmap *regmap, const u16 relax_mask,
 		      const u16 *prev_val);
+bool maxfg_is_relaxed(struct maxfg_regmap *regmap, u16 *fstat, u16 mask);
+
+
+/* dynamic relax */
+struct maxfg_limits {
+        int min;
+        int max;
+};
+
+struct maxfg_dynrel_state {
+	/* configuration */
+        struct maxfg_limits temp_qual;
+        struct maxfg_limits vfocv_inhibit;
+        u32 vfsoc_delta; /* 0 to disable */
+        u16 relcfg_inhibit;
+        u16 relcfg_allow;
+
+	/* last relaxation */
+        u16 vfsoc_rel;
+        u16 vfocv_rel;
+        u16 temp_rel;
+
+	/* current state */
+	bool relax_allowed;
+	u16 mark_last;
+        u16 vfsoc_last;
+        u16 vfocv_last;
+        u16 temp_last;
+
+	/* debug */
+	bool monitor;
+};
+
+void maxfg_dynrel_init(struct maxfg_dynrel_state *dr_state,
+		       struct device_node *node);
+void maxfg_dynrel_init_sysfs(struct maxfg_dynrel_state *dr_state,
+			     struct dentry *de);
+int maxfg_dynrel_relaxcfg(struct maxfg_dynrel_state *dr_state,
+			  struct maxfg_regmap *regmap, bool enable);
+bool maxfg_dynrel_check(struct maxfg_dynrel_state *dr_state,
+			  struct maxfg_regmap *regmap);
+
+int maxfg_dynrel_mark_relax(struct maxfg_dynrel_state *dr_state,
+			    struct maxfg_regmap *regmap);
+void maxfg_dynrel_log_cfg(struct logbuffer *mon, struct device *dev,
+			     const struct maxfg_dynrel_state *dr_state);
+void maxfg_dynrel_log(struct logbuffer *mon, struct device *dev, u16 mark,
+			 const struct maxfg_dynrel_state *dr_state);
+void maxfg_dynrel_log_rel(struct logbuffer *mon, struct device *dev, u16 mark,
+			     const struct maxfg_dynrel_state *dr_state);
+
 
 #endif  // MAXFG_COMMON_H_

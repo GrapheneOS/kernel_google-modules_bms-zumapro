@@ -134,6 +134,9 @@ struct max77779_fg_chip {
 	struct gbatt_capacity_estimation cap_estimate;
 	struct logbuffer *ce_log;
 
+	/* Dynamic Relax */
+	struct maxfg_dynrel_state dynrel_state;
+
 	/* debug interface, register to read or write */
 	u32 debug_reg_address;
 	u32 debug_dbg_reg_address;

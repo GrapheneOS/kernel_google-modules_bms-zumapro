@@ -1122,6 +1122,12 @@ static int max77779_fg_monitor_log_data(struct max77779_fg_chip *chip, bool forc
 	return ret;
 }
 
+static int max77779_is_relaxed(struct max77779_fg_chip *chip)
+{
+	return maxfg_ce_relaxed(&chip->regmap, MAX77779_FG_FStat_RelDt_MASK,
+			(u16*)chip->cb_lh.latest_entry);
+}
+
 static int max77779_fg_monitor_log_learning(struct max77779_fg_chip *chip, bool force)
 {
 	bool log_it, seed = !chip->cb_lh.latest_entry;
@@ -1171,6 +1177,96 @@ static int max77779_fg_monitor_log_learning(struct max77779_fg_chip *chip, bool 
 	return 0;
 }
 
+/* same as max77779_fg_nregister_write() */
+static int max77779_dynrel_relaxcfg(struct max77779_fg_chip *chip, bool enable)
+{
+	struct maxfg_regmap *regmap = &chip->regmap;
+	int ret, rc;
+
+	rc = max77779_fg_usr_lock_section(regmap, MAX77779_FG_NVM_SECTION, false);
+	if (rc < 0)
+		return -EIO;
+
+	ret = maxfg_dynrel_relaxcfg(&chip->dynrel_state, &chip->regmap_debug,
+				    enable);
+
+	rc = max77779_fg_usr_lock_section(regmap, MAX77779_FG_NVM_SECTION, true);
+	if (rc)
+		return -EPERM;
+
+	return ret;
+}
+
+static void max77779_fg_check_learning(struct max77779_fg_chip *chip)
+{
+	struct maxfg_dynrel_state *dr_state = &chip->dynrel_state;
+	struct maxfg_regmap *regmap = &chip->regmap;
+	bool relaxed;
+	u16 fstat;
+	int ret;
+
+	/* check for relaxation event and log it */
+	max77779_fg_monitor_log_learning(chip, false);
+
+	/* dynamic relaxation */
+	if (!dr_state->vfsoc_delta)
+		return;
+
+	relaxed = maxfg_is_relaxed(regmap, &fstat, MAX77779_FG_FStat_RelDt_MASK);
+	if (relaxed) {
+		const bool reldt = fstat & MAX77779_FG_FStat_RelDt_MASK;
+		const bool reldt_last = dr_state->mark_last &
+					MAX77779_FG_FStat_RelDt_MASK;
+
+		/* reldt stils after changing relaxconfig  */
+		if (reldt && (reldt == reldt_last)) {
+			if (dr_state->monitor)
+				dev_warn(chip->dev, "dynrel: sticky fstat=%x mark=%x\n",
+					 fstat, dr_state->mark_last);
+			return;
+		}
+
+		/* reldt cleared */
+		if (reldt_last && !reldt) {
+			if (dr_state->monitor)
+				dev_warn(chip->dev, "dynrel: clear fstat=%x mark=%x\n",
+					 fstat, dr_state->mark_last);
+			dr_state->mark_last = fstat;
+			return;
+		}
+
+		/* mark new relaxation */
+		ret = maxfg_dynrel_mark_relax(dr_state, regmap);
+		if (ret < 0) {
+			dev_err(chip->dev, "dynrel: no mark relax (%d)\n", ret);
+			return;
+		}
+
+		ret = max77779_dynrel_relaxcfg(chip, false);
+		if (ret == 0)
+			dr_state->relax_allowed = false;
+
+		/* log the relax point when successful */
+		maxfg_dynrel_log_rel(chip->monitor_log, chip->dev, fstat, dr_state);
+		dr_state->mark_last = fstat;
+	} else {
+		bool can_relax;
+
+		can_relax = maxfg_dynrel_check(dr_state, regmap);
+		if (can_relax && can_relax != dr_state->relax_allowed) {
+			ret = max77779_dynrel_relaxcfg(chip, true);
+			if (ret == 0)
+				dr_state->relax_allowed = true;
+
+			maxfg_dynrel_log(chip->monitor_log, chip->dev,
+					 fstat, dr_state);
+		}
+
+		if (dr_state->monitor)
+			maxfg_dynrel_log(NULL, chip->dev, fstat, dr_state);
+	}
+
+}
 
 static int max77779_fg_get_property(struct power_supply *psy,
 				    enum power_supply_property psp,
@@ -1193,6 +1289,8 @@ static int max77779_fg_get_property(struct power_supply *psy,
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_STATUS:
+		max77779_fg_check_learning(chip);
+
 		err = max77779_fg_get_battery_status(chip);
 		if (err < 0)
 			break;
@@ -1205,8 +1303,6 @@ static int max77779_fg_get_property(struct power_supply *psy,
 		if (err == POWER_SUPPLY_STATUS_FULL)
 			batt_ce_start(&chip->cap_estimate,
 				      chip->cap_estimate.cap_tsettle);
-		/* check for relaxation event and log it */
-		max77779_fg_monitor_log_learning(chip, false);
 
 		/* return data ok */
 		err = 0;
@@ -1807,7 +1903,7 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 		max77779_fg_monitor_log_data(chip, false);
 		max77779_fg_update_cycle_count(chip);
 		max77779_fg_check_logging_event(chip);
-		max77779_fg_monitor_log_learning(chip, false);
+		max77779_fg_check_learning(chip);
 	}
 
 	if (chip->psy)
@@ -2573,7 +2669,6 @@ static int max77779_fg_init_sysfs(struct max77779_fg_chip *chip)
 	debugfs_create_file("force_psy_update", 0600, de, chip, &debug_force_psy_update_fops);
 	debugfs_create_file("log_learn", 0400, de, chip, &debug_log_learn_fops);
 
-
 	if (chip->regmap.reglog)
 		debugfs_create_file("regmap_writes", 0440, de,
 					chip->regmap.reglog,
@@ -2605,9 +2700,11 @@ static int max77779_fg_init_sysfs(struct max77779_fg_chip *chip)
 
 	/* fuel gauge operation status */
 	debugfs_create_file("fw_update", 0600, de, chip, &debug_fw_update_fops);
-
 	debugfs_create_file("fw_revision", 0600, de, chip, &debug_fw_revision_fops);
 	debugfs_create_file("fw_sub_revision", 0600, de, chip, &debug_fw_sub_revision_fops);
+
+	/* dynamic relaxation */
+	maxfg_dynrel_init_sysfs(&chip->dynrel_state, de);
 
 	return 0;
 }
@@ -3029,6 +3126,34 @@ static void max77779_fg_read_serial_number(struct max77779_fg_chip *chip)
 		chip->serial_number[0] = '\0';
 }
 
+static bool max77779_init_dynrelax(struct max77779_fg_chip *chip)
+{
+	bool allowed = true;
+	int ret;
+
+	maxfg_dynrel_init(&chip->dynrel_state, chip->dev->of_node);
+	chip->dynrel_state.relcfg_allow = 0x043c; /* read from model */
+        chip->dynrel_state.relcfg_inhibit = 0x1ff; /* read from DT */
+	if (chip->dynrel_state.vfsoc_delta)
+		allowed = maxfg_dynrel_check(&chip->dynrel_state, &chip->regmap);
+
+	ret = max77779_dynrel_relaxcfg(chip, allowed);
+	if (ret < 0) {
+		dev_err(chip->dev, "dynrel_init: cannot set relaxcfg=%d (%d)\n",
+			allowed, ret);
+
+		/* when this fails it's bad, try a FG reset */
+		ret = max77779_dynrel_relaxcfg(chip, true);
+		if (ret < 0)
+			dev_err(chip->dev, "dynrel_init: cannot reset relaxcfg (%d)\n",
+				ret);
+		allowed = true;
+	}
+
+	chip->dynrel_state.relax_allowed = allowed;
+	return chip->dynrel_state.vfsoc_delta != 0;
+}
+
 static void max77779_fg_init_work(struct work_struct *work)
 {
 	struct max77779_fg_chip *chip = container_of(work, struct max77779_fg_chip,
@@ -3076,6 +3201,16 @@ static void max77779_fg_init_work(struct work_struct *work)
 	}
 
 	max77779_fg_init_sysfs(chip);
+
+	/* dynamic relaxation */
+	ret = max77779_init_dynrelax(chip);
+	if (ret) {
+		struct logbuffer *mon = chip->monitor_log;
+
+		maxfg_dynrel_log_cfg(mon, chip->dev, &chip->dynrel_state);
+		maxfg_dynrel_log(mon, chip->dev, 0, &chip->dynrel_state);
+	}
+
 
 	/*
 	 * Handle any IRQ that might have been set before init
