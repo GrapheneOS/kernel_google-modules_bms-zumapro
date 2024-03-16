@@ -21,6 +21,11 @@
 #define MAX_FG_LEARN_PARAM_MAX_HIST 32
 #define MAX_FG_CAPTURE_CONFIG_NAME_MAX 32
 
+#define DEFAULT_BATTERY_ID		0
+#define DEFAULT_BATTERY_ID_RETRIES	20
+#define DUMMY_BATTERY_ID		170
+
+
 enum maxfg_reg_tags {
 	MAXFG_TAG_avgc,
 	MAXFG_TAG_cnfg,
@@ -117,10 +122,6 @@ struct gbatt_capacity_estimation {
 #define CE_DELTA_VFSOC_SUM_REG	2
 #define CE_FILTER_COUNT_MAX	15
 
-#define DEFAULT_BATTERY_ID		0
-#define DEFAULT_BATTERY_ID_RETRIES	20
-#define DUMMY_BATTERY_ID		170
-
 /* this is a map for u16 registers */
 #define ATOM_INIT_MAP(...)			\
 	.type = GBMS_ATOM_TYPE_MAP,		\
@@ -168,10 +169,40 @@ static inline int reg_to_micro_volt(u16 val)
 	return div_u64((u64) val * 78125, 1000);
 }
 
+static inline int reg_to_deci_deg_cel(s16 val)
+{
+	/* LSB: 1/256°C */
+	return div_s64((s64) val * 10, 256);
+}
+
 static inline int reg_to_resistance_micro_ohms(s16 val, u16 rsense)
 {
 	/* LSB: 1/4096 Ohm */
 	return div_s64((s64) val * 1000 * rsense, 4096);
+}
+
+static inline int reg_to_percentage(u16 val)
+{
+	/* LSB: 1/256% */
+	return val >> 8;
+}
+
+static inline s16 deci_deg_cel_to_reg(int val)
+{
+	/* LSB: 1/256°C */
+	return (val * 256) / 10;
+}
+
+static inline s16 micro_volt_to_reg(int val)
+{
+	/* LSB: 0.078125mV */
+	return (val / 78125) * 1000;
+}
+
+static inline u16 percentage_to_reg(int val)
+{
+	/* LSB: 1/256% */
+	return val << 8;
 }
 
 #define NB_REGMAP_MAX 256
