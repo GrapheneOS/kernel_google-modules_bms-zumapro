@@ -393,13 +393,14 @@ struct maxfg_dynrel_state {
         struct maxfg_limits temp_qual;
         struct maxfg_limits vfocv_inhibit;
         u32 vfsoc_delta; /* 0 to disable */
+        u16 learn_stage_min;
         u16 relcfg_inhibit;
         u16 relcfg_allow;
 
-	/* last relaxation */
-        u16 vfsoc_rel;
-        u16 vfocv_rel;
-        u16 temp_rel;
+	/* last reldet */
+        u16 vfsoc_det;
+        u16 vfocv_det;
+        u16 temp_det;
 
 	/* current state */
 	bool relax_allowed;
@@ -409,6 +410,7 @@ struct maxfg_dynrel_state {
         u16 temp_last;
 
 	/* debug */
+	int sticky_cnt;
 	bool monitor;
 };
 
@@ -418,10 +420,10 @@ void maxfg_dynrel_init_sysfs(struct maxfg_dynrel_state *dr_state,
 			     struct dentry *de);
 int maxfg_dynrel_relaxcfg(struct maxfg_dynrel_state *dr_state,
 			  struct maxfg_regmap *regmap, bool enable);
-bool maxfg_dynrel_check(struct maxfg_dynrel_state *dr_state,
-			  struct maxfg_regmap *regmap);
+bool maxfg_dynrel_can_relax(struct maxfg_dynrel_state *dr_state,
+			    struct maxfg_regmap *regmap);
 
-int maxfg_dynrel_mark_relax(struct maxfg_dynrel_state *dr_state,
+int maxfg_dynrel_mark_det(struct maxfg_dynrel_state *dr_state,
 			    struct maxfg_regmap *regmap);
 void maxfg_dynrel_log_cfg(struct logbuffer *mon, struct device *dev,
 			     const struct maxfg_dynrel_state *dr_state);
