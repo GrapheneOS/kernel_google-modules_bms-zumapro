@@ -1613,6 +1613,7 @@ const struct maxfg_reg max_m5[] = {
 	[MAXFG_TAG_vfcap] = { ATOM_INIT_REG16(MAX_M5_VFREMCAP)},
 	[MAXFG_TAG_cycles] = { ATOM_INIT_REG16(MAX_M5_CYCLES)},
 	[MAXFG_TAG_rslow] = { ATOM_INIT_REG16(MAX_M5_RSLOW)},
+	[MAXFG_TAG_relaxcfg] = { ATOM_INIT_REG16(MAX_M5_RELAXCFG)},
 };
 
 int max_m5_regmap_init(struct maxfg_regmap *regmap, struct i2c_client *clnt)
