@@ -1213,7 +1213,7 @@ static int max77779_fg_get_learn_stage(struct maxfg_regmap *regmap)
 /* <0 error, 0 success, dynrel disabled */
 static int max77779_dynrel_ctl(struct max77779_fg_chip *chip, bool enable)
 {
-	struct logbuffer *mon = chip->monitor_log;
+	struct logbuffer *mon = chip->ce_log;
 	bool relax_allowed;
 	int ret;
 
@@ -1260,6 +1260,7 @@ static void max77779_fg_dynrelax(struct max77779_fg_chip *chip)
 {
 	struct maxfg_dynrel_state *dr_state = &chip->dynrel_state;
 	struct maxfg_regmap *regmap = &chip->regmap;
+	struct logbuffer *mon = chip->ce_log;
 	int learn_stage, ret;
 	bool relaxed;
 	u16 fstat;
@@ -1311,7 +1312,7 @@ static void max77779_fg_dynrelax(struct max77779_fg_chip *chip)
 			dr_state->sticky_cnt = 0;
 		}
 
-		maxfg_dynrel_log_rel(chip->monitor_log, chip->dev, fstat, dr_state);
+		maxfg_dynrel_log_rel(mon, chip->dev, fstat, dr_state);
 	} else {
 		bool can_relax;
 
@@ -1328,8 +1329,7 @@ static void max77779_fg_dynrelax(struct max77779_fg_chip *chip)
 				dr_state->sticky_cnt = 0;
 			}
 
-			maxfg_dynrel_log(chip->monitor_log, chip->dev,
-					 fstat, dr_state);
+			maxfg_dynrel_log(mon, chip->dev, fstat, dr_state);
 		}
 
 		if (dr_state->monitor)
@@ -3296,13 +3296,13 @@ static void max77779_fg_init_work(struct work_struct *work)
 
 	max77779_fg_init_sysfs(chip);
 
-	/* dynamic relaxation */
+	/* dynamic relaxation, call after max77779_fg_init_chip */
 	maxfg_dynrel_init(&chip->dynrel_state, chip->dev->of_node);
-	chip->dynrel_state.relcfg_allow = 0x043c; /* read from model */
-        chip->dynrel_state.relcfg_inhibit = 0x1ff; /* read from DT */
+	chip->dynrel_state.relcfg_allow = max77779_get_relaxcfg(chip->model_data);
+
 	ret = max77779_dynrel_ctl(chip, chip->dynrel_state.vfsoc_delta != 0);
 	if (ret < 0 || ret != (chip->dynrel_state.vfsoc_delta != 0))
-		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
+		gbms_logbuffer_devlog(chip->ce_log, chip->dev,
 				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
 				      "dynrel: error enable=%d result=%d\n",
 				      chip->dynrel_state.vfsoc_delta != 0,
