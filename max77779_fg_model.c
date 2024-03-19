@@ -228,6 +228,7 @@ static int max77779_update_custom_parameters(struct max77779_model_data *model_d
  * Model loading procedure version: 0.1.4
  * 0 is ok
  */
+#define MODEL_LOADING_VERSION "0.1.4-1"
 int max77779_load_gauge_model(struct max77779_model_data *model_data, int rev, int sub_rev)
 {
 	struct maxfg_regmap *regmap = model_data->regmap;
@@ -244,6 +245,8 @@ int max77779_load_gauge_model(struct max77779_model_data *model_data, int rev, i
 		dev_err(model_data->dev, "Error! No regmap\n");
 		return -EIO;
 	}
+
+	dev_info(model_data->dev, "Model loading version:%s\n", MODEL_LOADING_VERSION);
 
 	/*
 	 * Step 1: Check for POR (not needed, we're here when POR is set)
@@ -308,10 +311,8 @@ int max77779_load_gauge_model(struct max77779_model_data *model_data, int rev, i
 	}
 
 	/* Step 3.4.3: Initiate Model Loading */
-	ret = REGMAP_READ(regmap, MAX77779_FG_Config2, &config2);
-	if (ret == 0)
-		ret = REGMAP_WRITE(regmap, MAX77779_FG_Config2,
-				   config2 | MAX77779_FG_Config2_LDMdl_MASK);
+	ret = REGMAP_WRITE(regmap, MAX77779_FG_Config2,
+			   model_data->parameters.config2 | MAX77779_FG_Config2_LDMdl_MASK);
 	if (ret < 0) {
 		dev_err(model_data->dev, "Failed initiate model loading (%d)\n", ret);
 		goto error_done;
@@ -332,10 +333,13 @@ int max77779_load_gauge_model(struct max77779_model_data *model_data, int rev, i
 		goto error_done;
 	}
 
-	/* (Optional) Restore Config2 */
+	/* Restore Config2 */
 	ret = REGMAP_WRITE(regmap, MAX77779_FG_Config2, model_data->parameters.config2);
 	if (ret < 0)
 		dev_err(model_data->dev, "cannot restore Config2 (%d)\n", ret);
+
+	/* b/328398641 need delay to internal register re-synchronized */
+	msleep(200);
 
 	/* Step 3.4.5: Update QRTable20 and QRTable30 */
 	ret = REGMAP_WRITE_VERIFY(regmap, MAX77779_FG_QRTable20,
