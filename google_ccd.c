@@ -662,6 +662,12 @@ static int google_ccd_remove(struct platform_device *pdev)
 
 	cancel_delayed_work(&gccd->init_work);
 
+	if (gccd->main_chg_psy)
+		power_supply_put(gccd->main_chg_psy);
+
+	if (gccd->buck_chg_psy)
+		power_supply_put(gccd->buck_chg_psy);
+
 	return 0;
 }
 
