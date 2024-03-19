@@ -105,6 +105,7 @@ static int p9221_has_dc_in(struct p9221_charger_data *charger);
 static bool p9xxx_find_votable(struct p9221_charger_data *charger);
 static void p9221_init_align(struct p9221_charger_data *charger);
 static bool p9xxx_rtx_gpio_is_state(struct p9221_charger_data *charger, enum p9xxx_rtx_gpio_state state);
+static int check_hpp_fod_level(struct p9221_charger_data *charger, int dc_voltage);
 
 static char *align_status_str[] = {
 	"...", "M2C", "OK", "-1"
@@ -426,6 +427,7 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 	int ret;
 	int retries = 3;
 	int vout_mv;
+	u32 vout;
 	static char *wlc_mode[] = { "BPP", "BPP_LV", "EPP", "GPP", "EPP_COMP", "EPP_IOP",
 				    "HPP_0", "HPP_1", "HPP_2", "HPP_3",
 				    "HPP_4", "HPP_5", "HPP_6", "HPP_7" };
@@ -482,7 +484,9 @@ static void p9221_write_fod(struct p9221_charger_data *charger)
 		mode = WLC_BPP_LV;
 	}
 
-	if (p9xxx_is_capdiv_en(charger) && charger->pdata->nb_hpp_fod_vol > 0) {
+	ret = charger->chip_get_vout(charger, &vout);
+	charger->hpp_fod_level = (ret == 0) ? check_hpp_fod_level(charger, vout * 1000) : 0;
+	if (p9xxx_is_capdiv_en(charger) && charger->pdata->nb_hpp_fod_vol > 0 && vout > 12000) {
 		fod = charger->pdata->hpp_fods[charger->hpp_fod_level].fod;
 		fod_count = charger->pdata->hpp_fods[charger->hpp_fod_level].num;
 		mode = WLC_HPP + charger->hpp_fod_level;
@@ -3016,7 +3020,6 @@ static int p9221_set_property(struct power_supply *psy,
 						 P9221_UV_TO_MV(charger->wlc_dc_voltage_now));
 		if (ret < 0)
 			break;
-		charger->hpp_fod_level = check_hpp_fod_level(charger, charger->wlc_dc_voltage_now);
 		p9221_write_fod(charger);
 		break;
 
