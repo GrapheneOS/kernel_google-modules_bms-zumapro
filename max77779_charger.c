@@ -651,9 +651,12 @@ static int max77779_get_usecase(struct max77779_foreach_cb_data *cb_data,
 	if (cb_data->otg_on || cb_data->frs_on)
 		return max77779_get_otg_usecase(cb_data, uc_data);
 
-	/* USB will disable wlc_rx */
-	if (cb_data->buck_on && !uc_data->dcin_is_dock)
+	/* USB will disable wlc_rx, tx */
+	if (cb_data->buck_on && !uc_data->dcin_is_dock) {
 		wlc_rx = false;
+		wlc_tx = false;
+		cb_data->wlc_tx = 0;
+	}
 
 	/* buck_on is wired, wlc_rx is wireless, might still need rTX */
 	if (cb_data->usb_wlc) {
@@ -2427,14 +2430,16 @@ static int max77779_psy_set_property(struct power_supply *psy,
 	/* Charge current is set to 0 to EOC */
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
 	{
-		u8 reg;
+		u8 reg, mode;
 
 		ret = max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_00, &reg);
 		if (ret)
 			break;
 
+		mode = _max77779_chg_cnfg_00_mode_get(reg);
+
 		if ((pval->intval > 0 && !_max77779_chg_cnfg_00_cp_en_get(reg)
-		   && !_max77779_chg_cnfg_00_mode_get(reg))
+		   && (!mode || mode == MAX77779_CHGR_MODE_BUCK_ON))
 		   || pval->intval != data->cc_max) {
 			ret = max77779_set_charger_current_max_ua(data, pval->intval);
 			data->cc_max = pval->intval;
