@@ -991,7 +991,6 @@ struct p9221_charger_data {
 	bool				send_eop;
 	wait_queue_head_t		ccreset_wq;
 	bool				cc_reset_pending;
-	bool				cc_vout_ready;
 	bool				set_auth_icl;
 	int				send_txid_cnt;
 	bool				sw_ramp_done;
@@ -1106,6 +1105,7 @@ struct p9221_charger_data {
 	void (*chip_set_cmfet)(struct p9221_charger_data *chgr);
 	int (*chip_set_bpp_icl)(struct p9221_charger_data *chgr);
 	void (*chip_magsafe_optimized)(struct p9221_charger_data *chgr);
+	bool (*chip_is_vout_on)(struct p9221_charger_data *chgr);
 };
 
 u8 p9221_crc8(u8 *pdata, size_t nbytes, u8 crc);

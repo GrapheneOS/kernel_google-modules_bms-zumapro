@@ -2352,6 +2352,20 @@ err_exit:
 	return chgr->prop_mode_en && chgr->negotiation_complete;
 }
 
+static bool p9xxx_is_vout_on(struct p9221_charger_data *chgr)
+{
+	int ret;
+	u8 val = 0;
+
+	ret = chgr->reg_read_8(chgr, P9221_STATUS_REG, &val);
+	if (ret < 0) {
+		dev_err(&chgr->client->dev, "can't get vout state, ret=%d\n", ret);
+		return false;
+	}
+
+	return val & P9221_STAT_VOUT;
+}
+
 static bool p9xxx_chip_is_calibrated(struct p9221_charger_data *chgr)
 {
 	return true;
@@ -2378,7 +2392,7 @@ static bool ra9530_chip_is_calibrated(struct p9221_charger_data *chgr)
 	int ret;
 
 	if (!p9221_is_epp(chgr))
-		return chgr->cc_vout_ready;
+		return chgr->chip_is_vout_on(chgr);
 
 	ret = chgr->reg_read_8(chgr, P9412_EPP_CAL_STATE_REG, &val);
 
@@ -2388,9 +2402,9 @@ static bool ra9530_chip_is_calibrated(struct p9221_charger_data *chgr)
 	dev_dbg(&chgr->client->dev, "EPP_CAL_STATE_REG=%02x\n", val);
 
 	if (chgr->fw_rev < RA9530_FW_REV_22)
-		return chgr->cc_vout_ready && (val & RA9530_V21_EPP_CAL_STATE_MASK) == 0;
+		return chgr->chip_is_vout_on(chgr) && (val & RA9530_V21_EPP_CAL_STATE_MASK) == 0;
 
-	return chgr->cc_vout_ready &&
+	return chgr->chip_is_vout_on(chgr) &&
 	       (val & RA9530_EPP_CAL_STATE_MASK) == RA9530_EPP_CALIBRATED_STATE;
 }
 
@@ -2793,6 +2807,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 	chgr->chip_set_bpp_icl = p9xxx_chip_set_bpp_icl;
 	chgr->chip_get_ping_freq = p9xxx_chip_get_ping_freq;
 	chgr->chip_magsafe_optimized = p9xxx_magsafe_optimized;
+	chgr->chip_is_vout_on = p9xxx_is_vout_on;
 
 	switch (chip_id) {
 	case P9412_CHIP_ID:
