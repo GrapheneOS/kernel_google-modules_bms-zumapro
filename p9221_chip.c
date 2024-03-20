@@ -3111,7 +3111,7 @@ static void p9xxx_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 			break;
 		}
 
-		if (value == 0 && prev_state == RTX_READY)
+		if (value == 0 && prev_state == RTX_READY && charger->ben_state == RTX_BEN_ON)
 			charger->rtx_gpio_state = RTX_RETRY;
 		else if (value == 1)
 			charger->rtx_gpio_state = RTX_READY;
