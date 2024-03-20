@@ -663,7 +663,8 @@ static int info_usb_ad_type(int usb_type, int usbc_type)
 
 static int chg_hda_tz_vote(int voltage_max, int amperage_max)
 {
-	struct gvotable_election *hda_tz_votable = gvotable_election_get_handle(VOTABLE_HDA_TZ);
+	struct gvotable_election *hda_tz_votable =
+				gvotable_election_get_handle(VOTABLE_HDA_TZ);
 	int power = (voltage_max * amperage_max) / 1000;
 	int vote = HDA_TZ_NONE;
 
@@ -672,7 +673,7 @@ static int chg_hda_tz_vote(int voltage_max, int amperage_max)
 
 	if (power < 5000)
 		vote = HDA_TZ_USB_SUB5W;
-	else if (power <= 5000)
+	else if (power == 5000)
 		vote = HDA_TZ_USB_5W;
 	else if (power <= 7500)
 		vote = HDA_TZ_USB_7P5W;
@@ -686,7 +687,7 @@ static int chg_hda_tz_vote(int voltage_max, int amperage_max)
 	pr_debug("%s: voltage_max: %d, amp_max: %d, vote: %d\n",
 		__func__, voltage_max, amperage_max, vote);
 
-	gvotable_cast_int_vote(hda_tz_votable, MSC_HDA_VOTER, vote, vote);
+	gvotable_cast_int_vote(hda_tz_votable, MSC_HDA_VOTER, vote, true);
 	return 0;
 }
 
@@ -2531,6 +2532,8 @@ static void chg_work(struct work_struct *work)
 
 		if (stop_charging) {
 			int ret;
+			struct gvotable_election *hda_tz_votable =
+						gvotable_election_get_handle(VOTABLE_HDA_TZ);
 
 			ad.v = 0;
 			pr_info("MSC_CHG no power source, disabling charging\n");
@@ -2546,6 +2549,10 @@ static void chg_work(struct work_struct *work)
 						MSC_CHG_VOTER, true);
 
 			gvotable_cast_int_vote(chg_drv->msc_last_votable, "BATT", 0, 1);
+
+			if (hda_tz_votable)
+				gvotable_cast_int_vote(hda_tz_votable,
+						       MSC_HDA_VOTER, HDA_TZ_NONE, false);
 
 			if (!chg_drv->bd_state.triggered) {
 				mutex_lock(&chg_drv->bd_lock);
