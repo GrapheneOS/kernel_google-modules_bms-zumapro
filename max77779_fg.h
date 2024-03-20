@@ -243,6 +243,7 @@ int max77779_model_get_cap_lsb(const struct max77779_model_data *model_data);
 int max77779_reset_state_data(struct max77779_model_data *model_data);
 int max77779_needs_reset_model_data(const struct max77779_model_data *model_data);
 u16 max77779_get_designcap(const struct max77779_model_data *model_data);
+u16 max77779_get_relaxcfg(const struct max77779_model_data *model_data);
 
 /*
  * max77779 might use the low 8 bits of devname to keep the model version number

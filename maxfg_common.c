@@ -869,6 +869,7 @@ bool maxfg_is_relaxed(struct maxfg_regmap *regmap, u16 *fstat, u16 mask)
 #define MAXFG_DR_VFOCV_MV_INHIB_MIN_DEFAULT	3900
 #define MAXFG_DR_VFOCV_MV_INHIB_MAX_DEFAULT	4200
 #define MAXFG_DR_RELAX_INVALID			0xffff
+#define MAXFG_DR_RELCFG_INHIBIT			0x1ff
 
 bool maxfg_dynrel_can_relax(struct maxfg_dynrel_state *dr_state,
 			    struct maxfg_regmap *regmap)
@@ -949,10 +950,16 @@ int maxfg_dynrel_relaxcfg(struct maxfg_dynrel_state *dr_state,
 void maxfg_dynrel_init(struct maxfg_dynrel_state *dr_state,
 		       struct device_node *node)
 {
+	u16 value16;
 	u32 value;
 	int ret;
 
 	dr_state->vfsoc_det = MAXFG_DR_RELAX_INVALID;
+
+	ret = of_property_read_u16(node, "maxfg,dr_relcfg_inhibit", &value16);
+	if (ret < 0)
+		value16 = MAXFG_DR_RELCFG_INHIBIT;
+	dr_state->relcfg_inhibit = value16;
 
 	ret = of_property_read_u32(node, "maxfg,dr_vfsoc_delta", &value);
 	if (ret < 0)
