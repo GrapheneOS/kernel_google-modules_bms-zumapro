@@ -5252,7 +5252,6 @@ static ssize_t p9382_show_rtx_boost(struct device *dev,
 static int p9382_rtx_enable(struct p9221_charger_data *charger, bool enable)
 {
 	int ret = 0;
-	int val, loops;
 
 	/*
 	 * TODO: deprecate the support for rTX on whitefin2 or use a DT entry
@@ -5267,17 +5266,10 @@ static int p9382_rtx_enable(struct p9221_charger_data *charger, bool enable)
 					      P9221_WLC_VOTER,
 					      GBMS_CHGR_MODE_WLC_TX, enable);
 		if (charger->pdata->ben_gpio > 0) {
-			if (enable && charger->pdata->rtx_wait_ben) {
-				for (loops = 3 ; loops ; loops--) {
-					val = gpio_get_value_cansleep(charger->pdata->ben_gpio);
-					if (val != 0)
-						break;
-					dev_dbg(&charger->client->dev,
-						"enable RTx waiting ben_gpio: %d", val);
-					msleep(100);
-				}
-			}
-			gpio_set_value_cansleep(charger->pdata->ben_gpio, enable);
+			if (enable && charger->pdata->rtx_wait_ben)
+				dev_dbg(&charger->client->dev, "enable RTx waiting ben_gpio");
+			else
+				gpio_set_value_cansleep(charger->pdata->ben_gpio, enable);
 		}
 		return ret;
 	}
@@ -5476,8 +5468,11 @@ static int p9xxx_rtx_mode_en(struct p9221_charger_data *charger, bool enable)
 	if (!enable)
 		return charger->chip_tx_mode_en(charger, false);
 
-	if (p9xxx_rtx_gpio_is_state(charger, RTX_READY))
+	if (p9xxx_rtx_gpio_is_state(charger, RTX_READY)) {
+		if (charger->pdata->rtx_wait_ben && charger->pdata->ben_gpio > 0)
+			gpio_set_value_cansleep(charger->pdata->ben_gpio, true);
 		return charger->chip_tx_mode_en(charger, true);
+	}
 
 	return -ENOTSUPP;
 }
