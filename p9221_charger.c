@@ -51,11 +51,6 @@
 #define WLC_HPP_SOC_LIMIT	80
 #define PROP_MODE_PWR_DEFAULT	30
 
-#define RTX_BEN_DISABLED	0
-#define RTX_BEN_ON		1
-#define RTX_BEN_ENABLED		2
-#define FACTORY_BOOST_ENABLED	9
-
 #define REENABLE_RTX_DELAY	3000
 #define P9XXX_CHK_RP_DELAY_MS	200
 
@@ -5506,6 +5501,9 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 				goto error;
 
 			ret = p9382_disable_dcin_en(charger, false);
+
+			/* reset rtx gpio state */
+			p9xxx_rtx_gpio_wait(charger);
 		}
 		logbuffer_log(charger->rtx_log, "disable rtx\n");
 
@@ -5542,9 +5540,13 @@ static int p9382_set_rtx(struct p9221_charger_data *charger, bool enable)
 		 */
 		ret = p9382_disable_dcin_en(charger, !reset ? true : false);
 
+		/*
+		 * clear state and error by thermal or hardware limitation before enable
+		 * but keep the unsupported type of error decided by state machine
+		 */
 		charger->com_busy = 0;
 		charger->rtx_csp = 0;
-		charger->rtx_err = RTX_NO_ERROR;
+		charger->rtx_err &= RTX_CHRG_NOTSUP_BIT;
 		charger->is_rtx_mode = false;
 		p9xxx_rtx_gpio_wait(charger);
 
@@ -6372,7 +6374,8 @@ static void rtx_irq_handler(struct p9221_charger_data *charger, u16 irq_src)
 
 		cancel_delayed_work_sync(&charger->rtx_work);
 		if (charger->rtx_err & RTX_HARD_OCP_BIT) {
-			charger->rtx_err = RTX_NO_ERROR;
+		        /* keep unsupported error decided by state machine */
+			charger->rtx_err &= RTX_CHRG_NOTSUP_BIT;
 			schedule_work(&charger->rtx_reset_work);
 		} else {
 			charger->is_rtx_mode = false;

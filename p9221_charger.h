@@ -1125,6 +1125,11 @@ extern void p9221_chip_init_params(struct p9221_charger_data *charger,
 extern void p9221_chip_init_interrupt_bits(struct p9221_charger_data *charger,
 					   u16 chip_id);
 
+#define RTX_BEN_DISABLED	0
+#define RTX_BEN_ON		1
+#define RTX_BEN_ENABLED		2
+#define FACTORY_BOOST_ENABLED	9
+
 enum p9382_rtx_state {
 	RTX_NOTSUPPORTED = 0,
 	RTX_AVAILABLE,
