@@ -579,6 +579,11 @@ int max77779_model_read_state(struct max77779_model_data *model_data)
 	return rc;
 }
 
+u16 max77779_get_relaxcfg(const struct max77779_model_data *model_data)
+{
+	return model_data->parameters.relaxcfg;
+}
+
 u16 max77779_get_designcap(const struct max77779_model_data *model_data)
 {
 	return model_data->parameters.designcap;
