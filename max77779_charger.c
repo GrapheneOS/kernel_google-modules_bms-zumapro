@@ -1133,6 +1133,31 @@ static int max77779_enable_sw_recharge(struct max77779_chgr_data *data,
 	return ret;
 }
 
+static int max77779_higher_headroom_enable(struct max77779_chgr_data *data, bool flag)
+{
+	int ret = 0;
+	u8 reg, reg_rd;
+	const u8 val = flag ? CHGR_CHG_CNFG_12_VREG_4P7V : CHGR_CHG_CNFG_12_VREG_4P6V;
+
+	mutex_lock(&data->io_lock);
+	ret = max77779_reg_read(data, MAX77779_CHG_CNFG_12, &reg);
+	if (ret < 0)
+		goto done;
+
+	reg_rd = reg;
+
+	reg = _max77779_chg_cnfg_12_vchgin_reg_set(reg, val);
+	ret = max77779_reg_write(data, MAX77779_CHG_CNFG_12, reg);
+
+done:
+	mutex_unlock(&data->io_lock);
+
+	dev_dbg(data->dev, "%s: val: %#02x, reg: %#02x -> %#02x (%d)\n", __func__,
+		val, reg_rd, reg, ret);
+
+	return ret;
+}
+
 /* called from gcpm and for CC_MAX == 0 */
 static int max77779_set_charge_enabled(struct max77779_chgr_data *data,
 				       int enabled, const char *reason)
@@ -1156,6 +1181,11 @@ static int max77779_set_charge_disable(struct max77779_chgr_data *data,
 		if (ret < 0)
 			dev_err(data->dev, "%s cannot re-enable charging (%d)\n",
 				__func__, ret);
+
+		ret = max77779_higher_headroom_enable(data, false); /* reset on plug/unplug */
+		if (ret)
+			dev_err_ratelimited(data->dev, "%s error disabling higher headroom,"
+					    "ret:%d\n", __func__, ret);
 	}
 
 	return gvotable_cast_long_vote(data->mode_votable, reason,
@@ -2081,30 +2111,6 @@ static int max77779_init_wcin_psy(struct max77779_chgr_data *data)
 		return PTR_ERR(data->wcin_psy);
 
 	return 0;
-}
-
-static int max77779_higher_headroom_enable(struct max77779_chgr_data *data, bool flag)
-{
-	int ret = 0;
-	u8 reg, reg_rd, val = flag ? CHGR_CHG_CNFG_12_VREG_4P7V : CHGR_CHG_CNFG_12_VREG_4P6V;
-
-	mutex_lock(&data->io_lock);
-	ret = max77779_reg_read(data, MAX77779_CHG_CNFG_12, &reg);
-	if (ret < 0)
-		goto done;
-
-	reg_rd = reg;
-
-	reg = _max77779_chg_cnfg_12_vchgin_reg_set(reg, val);
-	ret = max77779_reg_write(data, MAX77779_CHG_CNFG_12, reg);
-
-done:
-	mutex_unlock(&data->io_lock);
-
-	dev_dbg(data->dev, "%s: val: %#02x, reg: %#02x -> %#02x (%d)\n", __func__,
-		val, reg_rd, reg, ret);
-
-	return ret;
 }
 
 static int max77779_chgin_is_online(struct max77779_chgr_data *data)
@@ -3113,13 +3119,6 @@ static irqreturn_t max77779_chgr_irq(int irq, void *d)
 		pr_debug("%s: INSEL insel_auto_clear=%d (%d)\n", __func__,
 			 data->insel_clear, data->insel_clear ? ret : 0);
 		atomic_inc(&data->insel_cnt);
-
-		ret = max77779_higher_headroom_enable(data, false); /* reset on plug/unplug */
-		if (ret) {
-			dev_err_ratelimited(data->dev, "%s error disabling higher headroom,"
-					    "ret:%d\n", __func__, ret);
-			return IRQ_NONE;
-		}
 	}
 
 	if (chg_int[1] & MAX77779_CHG_INT2_CHG_STA_TO_I_MASK) {
