@@ -57,12 +57,8 @@ static inline int max77779_pmic_readn(struct max77779_pmic_info *info,
 
 int max77779_external_pmic_reg_read(struct device *dev, uint8_t reg, uint8_t *val)
 {
-	struct max77779_pmic_info *info;
+	struct max77779_pmic_info *info = dev_get_drvdata(dev);
 
-	if (!dev)
-		return -ENODEV;
-
-	info = dev_get_drvdata(dev);
 	if (!info || !info->regmap)
 		return -ENODEV;
 
@@ -72,12 +68,8 @@ EXPORT_SYMBOL_GPL(max77779_external_pmic_reg_read);
 
 int max77779_external_pmic_reg_write(struct device *dev, uint8_t reg, uint8_t val)
 {
-	struct max77779_pmic_info *info;
+	struct max77779_pmic_info *info = dev_get_drvdata(dev);
 
-	if (!dev)
-		return -ENODEV;
-
-	info = dev_get_drvdata(dev);
 	if (!info || !info->regmap)
 		return -ENODEV;
 
@@ -87,12 +79,8 @@ EXPORT_SYMBOL_GPL(max77779_external_pmic_reg_write);
 
 int max77779_external_pmic_reg_update(struct device *dev, uint8_t reg, uint8_t msk, uint8_t val)
 {
-	struct max77779_pmic_info *info;
+	struct max77779_pmic_info *info = dev_get_drvdata(dev);
 
-	if (!dev)
-		return -ENODEV;
-
-	info = dev_get_drvdata(dev);
 	if (!info || !info->regmap)
 		return -ENODEV;
 
