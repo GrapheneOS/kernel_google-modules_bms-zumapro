@@ -1980,6 +1980,8 @@ static int p9382_get_ptmc_id_str(char *buffer, int len,
 static int p9221_get_psy_online(struct p9221_charger_data *charger)
 {
 	int suspend = -EINVAL;
+	int ret;
+	u8 val;
 
 	if (!charger->dc_suspend_votable)
 		charger->dc_suspend_votable =
@@ -1994,6 +1996,15 @@ static int p9221_get_psy_online(struct p9221_charger_data *charger)
 	if (suspend || !charger->online || !charger->enabled)
 		return 0;
 
+	ret = charger->chip_get_sys_mode(charger, &val);
+	if (ret != 0) {
+		dev_err(&charger->client->dev, "WLC online but cannot access i2c, ret=%d\n", ret);
+		if (!delayed_work_pending(&charger->notifier_work)) {
+			charger->check_dc = true;
+			schedule_delayed_work(&charger->notifier_work,
+					      msecs_to_jiffies(P9221_NOTIFIER_DELAY_MS));
+		}
+	}
 	return charger->wlc_dc_enabled ? PPS_PSY_PROG_ONLINE : 1;
 }
 
