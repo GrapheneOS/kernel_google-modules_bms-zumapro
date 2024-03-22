@@ -2989,6 +2989,15 @@ static int max77779_fg_model_load(struct max77779_fg_chip *chip)
 	return 0;
 }
 
+static void max77779_fg_init_setting(struct max77779_fg_chip *chip)
+{
+	/* dump registers */
+	max77779_fg_monitor_log_data(chip, true);
+
+	/* PASS1/1.5 */
+	max77779_current_offset_check(chip);
+}
+
 static void max77779_fg_model_work(struct work_struct *work)
 {
 	struct max77779_fg_chip *chip = container_of(work, struct max77779_fg_chip,
@@ -3034,7 +3043,7 @@ static void max77779_fg_model_work(struct work_struct *work)
 			 chip->model_next_update);
 		/* force check again after model loading */
 		chip->current_offset_check_done = false;
-		max77779_current_offset_check(chip);
+		max77779_fg_init_setting(chip);
 		max77779_fg_prime_battery_qh_capacity(chip);
 		power_supply_changed(chip->psy);
 	}
@@ -3344,9 +3353,9 @@ static void max77779_fg_init_work(struct work_struct *work)
 	 */
 	max77779_fg_irq_thread_fn(-1, chip);
 
-	max77779_fg_monitor_log_data(chip, true);
-
-	max77779_current_offset_check(chip);
+	/* run after model loading done */
+	if (!chip->por)
+		max77779_fg_init_setting(chip);
 
 	dev_info(chip->dev, "init_work done\n");
 }
