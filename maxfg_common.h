@@ -194,7 +194,7 @@ static inline s16 deci_deg_cel_to_reg(int val)
 	return (val * 256) / 10;
 }
 
-static inline s16 micro_volt_to_reg(int val)
+static inline u16 micro_volt_to_reg(int val)
 {
 	/* LSB: 0.078125mV */
 	return (val / 78125) * 1000;
@@ -384,30 +384,32 @@ bool maxfg_is_relaxed(struct maxfg_regmap *regmap, u16 *fstat, u16 mask);
 
 /* dynamic relax */
 struct maxfg_limits {
-        int min;
-        int max;
+	u16 min;
+	u16 max;
 };
 
 struct maxfg_dynrel_state {
 	/* configuration */
-        struct maxfg_limits temp_qual;
-        struct maxfg_limits vfocv_inhibit;
-        u32 vfsoc_delta; /* 0 to disable */
-        u16 learn_stage_min;
-        u16 relcfg_inhibit;
-        u16 relcfg_allow;
+	struct maxfg_limits temp_qual;
+	struct maxfg_limits vfocv_inhibit;
+	u32 vfsoc_delta; /* 0 to disable */
+	u16 learn_stage_min;
+	u16 relcfg_inhibit;
+	u16 relcfg_allow;
 
 	/* last reldet */
-        u16 vfsoc_det;
-        u16 vfocv_det;
-        u16 temp_det;
+	u16 dpacc_det;
+	u16 dqacc_det;
+	u16 vfsoc_det;
+	u16 vfocv_det;
+	u16 temp_det;
 
 	/* current state */
 	bool relax_allowed;
 	u16 mark_last;
-        u16 vfsoc_last;
-        u16 vfocv_last;
-        u16 temp_last;
+	u16 vfsoc_last;
+	u16 vfocv_last;
+	u16 temp_last;
 
 	/* debug */
 	int sticky_cnt;
@@ -420,6 +422,9 @@ void maxfg_dynrel_init_sysfs(struct maxfg_dynrel_state *dr_state,
 			     struct dentry *de);
 int maxfg_dynrel_relaxcfg(struct maxfg_dynrel_state *dr_state,
 			  struct maxfg_regmap *regmap, bool enable);
+int maxfg_dynrel_override_dxacc(struct maxfg_dynrel_state *dr_state,
+				struct maxfg_regmap *regmap);
+
 bool maxfg_dynrel_can_relax(struct maxfg_dynrel_state *dr_state,
 			    struct maxfg_regmap *regmap);
 
@@ -427,9 +432,9 @@ int maxfg_dynrel_mark_det(struct maxfg_dynrel_state *dr_state,
 			    struct maxfg_regmap *regmap);
 void maxfg_dynrel_log_cfg(struct logbuffer *mon, struct device *dev,
 			     const struct maxfg_dynrel_state *dr_state);
-void maxfg_dynrel_log(struct logbuffer *mon, struct device *dev, u16 mark,
+void maxfg_dynrel_log(struct logbuffer *mon, struct device *dev, u16 fstat,
 			 const struct maxfg_dynrel_state *dr_state);
-void maxfg_dynrel_log_rel(struct logbuffer *mon, struct device *dev, u16 mark,
+void maxfg_dynrel_log_rel(struct logbuffer *mon, struct device *dev, u16 fstat,
 			     const struct maxfg_dynrel_state *dr_state);
 
 
