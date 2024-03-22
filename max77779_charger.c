@@ -1432,7 +1432,7 @@ update_reg:
 	ret = max77779_reg_update(data, MAX77779_CHG_CNFG_02,
 				   MAX77779_CHG_CNFG_02_CHGCC_MASK,
 				   value);
-	if (ret == 0 && !cp_enabled)
+	if (ret == 0)
 		ret = max77779_set_charge_enabled(data, !disabled, "CC_MAX");
 
 	if (data->cop_warn > new_cop_warn) {
