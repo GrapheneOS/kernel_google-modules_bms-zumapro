@@ -50,8 +50,7 @@ static int gs201_wlc_tx_enable(struct max77779_usecase_data *uc_data, int use_ca
 {
 	int ret = 0;
 
-	pr_debug("%s: use_case:%d enable:%d rtx_state:%d\n", __func__, use_case, enable,
-		 uc_data->rtx_state);
+	pr_debug("%s: use_case:%d enable:%d\n", __func__, use_case, enable);
 
 	if (!enable) {
 		if (!uc_data->reverse12_en) {
@@ -68,49 +67,10 @@ static int gs201_wlc_tx_enable(struct max77779_usecase_data *uc_data, int use_ca
 		return ret;
 	}
 
-	/*
-	 * If we were just in standby, return now and unblock other drivers (like usb)
-	 * who might be held behind the mode_callback lock. Next mode callback will try
-	 * to enable rtx.
-	 */
-	if (uc_data->rtx_state == GSU_RTX_STANDBY) {
-		uc_data->rtx_state = GSU_RTX_SETUP;
-		/* Notify CPM in case we just turned off the CP*/
-		if (uc_data->psy)
-			power_supply_changed(uc_data->psy);
-
-		/* No error, but don't notify WLC yet. Next mode callback will notify. */
-		pr_debug("%s: complete rtx but don't notify wlc yet\n", __func__);
-		return 0;
-	}
-
-	if (!uc_data->reverse12_en) {
-		if ((use_case == GSU_MODE_USB_CHG_WLC_TX) && (uc_data->input_uv != 9000000)) {
-			if (uc_data->rtx_retries) {
-				pr_debug("%s: retries %d\n", __func__, uc_data->rtx_retries);
-				uc_data->rtx_state = GSU_RTX_RETRY;
-				uc_data->rtx_retries--;
-				return -EAGAIN;
-			}
-
-			pr_err("%s: disabling rtx, usb max_voltage not 9V max_usbv=%d",
-			__func__, uc_data->input_uv);
-
-			if (uc_data->rtx_available >= 0)
-				gpio_set_value_cansleep(uc_data->rtx_available, 0);
-			uc_data->rtx_state = GSU_RTX_DISABLED;
-			return -EINVAL;
-		}
-	}
-
 	ret = gs201_wlc_en(uc_data, WLC_ENABLED);
 	if (ret < 0)
 		pr_err("%s: cannot enable WLC (%d)\n", __func__, ret);
 
-	uc_data->rtx_state = GSU_RTX_ENABLED;
-
-	if (use_case == GSU_MODE_USB_CHG_WLC_TX && uc_data->rtx_available >= 0)
-		gpio_set_value_cansleep(uc_data->rtx_available, 1);
 	if (uc_data->rtx_ready >= 0)
 		gpio_set_value_cansleep(uc_data->rtx_ready, 1);
 
@@ -202,8 +162,7 @@ int gs201_to_standby(struct max77779_usecase_data *uc_data, int use_case)
 			break;
 		}
 
-		need_stby = use_case != GSU_MODE_USB_CHG_WLC_TX &&
-			    use_case != GSU_MODE_DOCK &&
+		need_stby = use_case != GSU_MODE_DOCK &&
 			    use_case != GSU_MODE_USB_DC &&
 			    use_case != GSU_MODE_USB_OTG_FRS;
 		break;
@@ -213,16 +172,7 @@ int gs201_to_standby(struct max77779_usecase_data *uc_data, int use_case)
 			    use_case != GSU_MODE_WLC_DC;
 		break;
 	case GSU_MODE_WLC_TX:
-		need_stby = use_case != GSU_MODE_USB_CHG_WLC_TX || !uc_data->reverse12_en;
-		if (need_stby && uc_data->rtx_ready >= 0)
-			gpio_set_value_cansleep(uc_data->rtx_ready, 0);
-		break;
-	case GSU_MODE_USB_CHG_WLC_TX:
-		if (use_case == GSU_MODE_WLC_TX) {
-			need_stby = !uc_data->reverse12_en;
-			break;
-		}
-		need_stby = use_case != GSU_MODE_USB_CHG;
+		need_stby = !uc_data->reverse12_en;
 		if (need_stby && uc_data->rtx_ready >= 0)
 			gpio_set_value_cansleep(uc_data->rtx_ready, 0);
 		break;
@@ -288,11 +238,9 @@ int gs201_to_standby(struct max77779_usecase_data *uc_data, int use_case)
 	if (ret < 0)
 		return -EIO;
 
-	if (!uc_data->reverse12_en && (use_case == GSU_MODE_USB_CHG_WLC_TX))
-		uc_data->rtx_state = GSU_RTX_STANDBY;
-
 	if (uc_data->rtx_available >= 0)
 		gpio_set_value_cansleep(uc_data->rtx_available, 1);
+
 	uc_data->use_case = GSU_MODE_STANDBY;
 	return ret;
 }
@@ -461,7 +409,6 @@ static int gs201_to_otg_usecase(struct max77779_usecase_data *uc_data, int use_c
 	break;
 
 	case GSU_MODE_USB_CHG:
-	case GSU_MODE_USB_CHG_WLC_TX:
 		/* need to go through stby out of this */
 		if (use_case != GSU_MODE_USB_OTG && use_case != GSU_MODE_USB_OTG_FRS)
 			return -EINVAL;
@@ -522,7 +469,6 @@ int gs201_to_usecase(struct max77779_usecase_data *uc_data, int use_case)
 		ret = gs201_to_otg_usecase(uc_data, use_case);
 		break;
 	case GSU_MODE_WLC_TX:
-	case GSU_MODE_USB_CHG_WLC_TX:
 		rtx_avail = true;
 		ret = gs201_wlc_tx_config(uc_data, use_case);
 		break;
@@ -538,8 +484,6 @@ int gs201_to_usecase(struct max77779_usecase_data *uc_data, int use_case)
 	case GSU_MODE_USB_CHG:
 	case GSU_MODE_USB_DC:
 		rtx_avail = false;
-		if (uc_data->rtx_available >= 0 && !uc_data->reverse12_en)
-			cancel_delayed_work(&uc_data->rtx_supported_work);
 		break;
 	case GSU_MODE_STANDBY:
 	case GSU_RAW_MODE:
@@ -567,14 +511,13 @@ int gs201_finish_usecase(struct max77779_usecase_data *uc_data, int use_case)
 
 	switch (use_case) {
 	case GSU_MODE_WLC_TX:
-	case GSU_MODE_USB_CHG_WLC_TX:
 		/* p9412 will not be in RX when powered from EXT */
 		ret = gs201_wlc_tx_enable(uc_data, use_case, true);
 		if (ret < 0)
 			return ret;
 		break;
 	default:
-		if (from_uc == GSU_MODE_WLC_TX || from_uc == GSU_MODE_USB_CHG_WLC_TX) {
+		if (from_uc == GSU_MODE_WLC_TX) {
 			/* p9412 is already off from insel */
 			ret = gs201_wlc_tx_enable(uc_data, use_case, false);
 			if (ret < 0)
@@ -583,13 +526,9 @@ int gs201_finish_usecase(struct max77779_usecase_data *uc_data, int use_case)
 			ret = gs201_wlc_en(uc_data, WLC_ENABLED); /* re-enable wlc in case of rx */
 			if (ret < 0)
 				return ret;
-
-			uc_data->rtx_state = GSU_RTX_DEFAULT;
 		}
 		break;
 	}
-
-	uc_data->rtx_retries = MAX77779_CHG_TX_RETRIES;
 
 	return ret;
 }
@@ -618,26 +557,6 @@ int max77779_otg_vbyp_mv_to_code(u8 *code, int vbyp)
 	return 0;
 }
 
-static void gs201_rtx_supported_work(struct work_struct *work)
-{
-	struct max77779_usecase_data *uc_data = container_of(work, struct max77779_usecase_data,
-						rtx_supported_work.work);
-	int i;
-
-	if (uc_data->rtx_available < 0)
-		return;
-
-	for (i = 0; i < 10; i++) {
-		if ((uc_data->input_uv == 0) || (uc_data->input_uv >= 9000000)) {
-			gpio_set_value_cansleep(uc_data->rtx_available, 1);
-			return;
-		}
-		msleep(100);
-	}
-
-	gpio_set_value_cansleep(uc_data->rtx_available, 0);
-}
-
 #define GS201_OTG_ILIM_DEFAULT_MA	1500
 #define GS201_OTG_VBYPASS_DEFAULT_MV	5100
 
@@ -660,8 +579,6 @@ static bool gs201_setup_usecases_done(struct max77779_usecase_data *uc_data)
 static void gs201_setup_default_usecase(struct max77779_usecase_data *uc_data)
 {
 	int ret;
-
-	INIT_DELAYED_WORK(&uc_data->rtx_supported_work, gs201_rtx_supported_work);
 
 	/* external boost */
 	uc_data->bst_on = -EPROBE_DEFER;
@@ -749,8 +666,6 @@ bool gs201_setup_usecases(struct max77779_usecase_data *uc_data,
 
 	if (uc_data->rtx_available == -EPROBE_DEFER)
 		uc_data->rtx_available = of_get_named_gpio(node, "max77779,rtx-available", 0);
-
-	uc_data->rtx_retries = MAX77779_CHG_TX_RETRIES;
 
 	return gs201_setup_usecases_done(uc_data);
 }
