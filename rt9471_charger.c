@@ -1983,8 +1983,8 @@ static int rt9471_register_psy(struct rt9471_chip *chip)
 	chip->psy_desc.property_is_writeable = rt9471_psy_is_writeable;
 	chip->psy_cfg.of_node = chip->dev->of_node;
 	chip->psy_cfg.drv_data = chip;
-	chip->psy = power_supply_register(chip->dev, &chip->psy_desc,
-					  &chip->psy_cfg);
+	chip->psy = devm_power_supply_register(chip->dev, &chip->psy_desc,
+					       &chip->psy_cfg);
 	if (IS_ERR(chip->psy))
 		return PTR_ERR(chip->psy);
 	return 0;
@@ -2105,7 +2105,6 @@ static void rt9471_shutdown(struct i2c_client *client)
 
 	dev_info(chip->dev, "%s\n", __func__);
 	disable_irq(chip->irq);
-	power_supply_unregister(chip->psy);
 	rt9471_reset_register(chip);
 }
 
@@ -2116,7 +2115,6 @@ static void rt9471_remove(struct i2c_client *client)
 	dev_info(chip->dev, "%s\n", __func__);
 	disable_irq(chip->irq);
 	disable_irq_wake(chip->irq);
-	power_supply_unregister(chip->psy);
 	mutex_destroy(&chip->io_lock);
 	mutex_destroy(&chip->bc12_lock);
 	mutex_destroy(&chip->hidden_mode_lock);
