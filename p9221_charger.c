@@ -3844,6 +3844,8 @@ static void p9221_notifier_check_dc(struct p9221_charger_data *charger)
 		charger->chip_magsafe_optimized(charger);
 		p9221_set_dc_icl(charger);
 		p9xxx_set_vout_iop(charger);
+		if (!p9221_is_epp(charger))
+			p9xxx_chip_set_ask_mod_fet(charger, charger->pdata->ask_mod_fet);
 		charger->fod_mode = -1;
 		p9221_write_fod(charger);
 		if (!charger->dc_icl_bpp)
@@ -7650,6 +7652,10 @@ static int p9221_parse_dt(struct device *dev,
 
 	pdata->freq_108_disable_ramp = of_property_read_bool(node,
 						"google,bpp-freq108-disable-ramp");
+
+	ret = of_property_read_u8(node, "google,bpp_ask_mod_fet", &pdata->ask_mod_fet);
+	if (ret < 0)
+		pdata->ask_mod_fet = 0;
 
 	return 0;
 }

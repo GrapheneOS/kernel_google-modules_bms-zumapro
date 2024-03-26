@@ -314,6 +314,7 @@
 #define P9222RE_TX_PINGFREQ_REG			0x5E
 #define P9222RE_ILIM_SET_REG			0x60
 #define P9222RE_COM_REG				0x62
+#define P9222RE_ASK_MOD_REG			0x7F
 #define P9222RE_FOD_REG				0x84
 #define P9222RE_COM_CHAN_RECV_SIZE_REG		0x98
 #define P9222RE_EPP_TX_GUARANTEED_POWER_REG	0xB4
@@ -800,6 +801,7 @@ struct p9221_charger_platform_data {
 	u32				gpp_cmfet;
 	bool				freq_108_disable_ramp;
 	bool				magsafe_optimized;
+	u8				ask_mod_fet;
 };
 
 struct p9221_charger_ints_bit {
@@ -1050,6 +1052,7 @@ struct p9221_charger_data {
 	u16				reg_hivout_cmfet_addr;
 	u16				reg_epp_tx_guarpwr_addr;
 	u16				reg_freq_limit_addr;
+	u16				reg_ask_mod_fet_addr;
 
 	int (*reg_read_n)(struct p9221_charger_data *chgr, u16 reg,
 			  void *buf, size_t n);
@@ -1208,6 +1211,8 @@ enum p9xxx_renego_state {
       -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_hivout_cmfet_addr, data))
 #define p9xxx_chip_set_freq_limit(chgr, data) (chgr->reg_freq_limit_addr == 0 ? \
       -ENOTSUPP : chgr->reg_write_16(chgr, chgr->reg_freq_limit_addr, data))
+#define p9xxx_chip_set_ask_mod_fet(chgr, data) ((chgr->reg_ask_mod_fet_addr == 0 || data == 0) ? \
+      -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_ask_mod_fet_addr, data))
 #define logbuffer_prlog(p, fmt, ...)     \
       gbms_logbuffer_prlog(p, LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG, fmt, ##__VA_ARGS__)
 #endif /* __P9221_CHARGER_H__ */
