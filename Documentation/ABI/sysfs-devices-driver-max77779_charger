@@ -19,4 +19,6 @@ Description:
                 to 1 on power loss. The reports MAX77779_CHG_DETAILS_03 when the bit
                 is 1 and report 0 when the bit is set to 0.
 
+                This function acquires the IO lock
+
 Users:		Debug
