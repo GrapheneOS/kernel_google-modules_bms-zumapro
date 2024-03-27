@@ -62,6 +62,8 @@ enum maxfg_reg_tags {
 	MAXFG_TAG_cycles,
 	MAXFG_TAG_rslow,
 	MAXFG_TAG_relaxcfg,
+	MAXFG_TAG_avgt,
+	MAXFG_TAG_avgv,
 
 	MAXFG_TAG_BCNT,
 	MAXFG_TAG_SNUM,
