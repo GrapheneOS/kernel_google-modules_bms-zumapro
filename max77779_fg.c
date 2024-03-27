@@ -2991,11 +2991,28 @@ static int max77779_fg_model_load(struct max77779_fg_chip *chip)
 
 static void max77779_fg_init_setting(struct max77779_fg_chip *chip)
 {
+	int ret;
+	u16 data16;
+
 	/* dump registers */
 	max77779_fg_monitor_log_data(chip, true);
 
 	/* PASS1/1.5 */
 	max77779_current_offset_check(chip);
+
+	/* Set thm2 config */
+	if (!chip->dev->of_node)
+		return;
+
+	ret = of_property_read_u16(chip->dev->of_node, "max77779,thm2-config", &data16);
+	if (ret == 0) {
+		ret = MAX77779_FG_N_REGMAP_WRITE(&chip->regmap, &chip->regmap_debug,
+						 MAX77779_FG_NVM_nThermCfg2, data16);
+		if (ret)
+			dev_warn(chip->dev, "Unable to write THM2 config (%d)\n", ret);
+		else
+			dev_info(chip->dev, "THM2 config set 0x%x\n", data16);
+	}
 }
 
 static void max77779_fg_model_work(struct work_struct *work)
