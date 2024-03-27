@@ -83,6 +83,7 @@ struct max77779_chgr_data {
 
 	struct mutex io_lock;
 	struct mutex mode_callback_lock;
+	struct mutex prot_lock;
 	struct mutex reg_dump_lock;
 	bool resume_complete;
 	bool init_complete;
