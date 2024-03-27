@@ -394,6 +394,7 @@ struct maxfg_dynrel_state {
 	struct maxfg_limits vfocv_inhibit;
 	u32 vfsoc_delta; /* 0 to disable */
 	u16 learn_stage_min;
+	bool override_mode;
 	u16 relcfg_inhibit;
 	u16 relcfg_allow;
 
