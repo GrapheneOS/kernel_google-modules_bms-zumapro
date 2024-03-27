@@ -511,6 +511,7 @@ const char *gbms_chg_ev_adapter_s(int adapter);
 
 #define HDA_TZ_NONE		(0)
 #define HDA_TZ_WLC_ADAPTER	(1)
+#define HDA_TZ_WLC_EPP_L7	(5)
 #define HDA_TZ_WLC_EPP_1P	(10)
 #define HDA_TZ_WLC_EPP_3P	(20)
 #define HDA_TZ_WLC_NOT_ALIGN	(30)
