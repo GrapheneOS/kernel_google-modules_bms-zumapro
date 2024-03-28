@@ -4497,8 +4497,7 @@ static int ln8411_set_charging_enabled(struct ln8411_charger *ln8411, int index)
 		ln8411->timer_period = 0;
 		mod_delayed_work(ln8411->dc_wq, &ln8411->timer_work,
 				 msecs_to_jiffies(ln8411->timer_period));
-	} else if (ln8411->charging_state == DC_STATE_NO_CHARGING
-		   && ln8411->chg_mode == CHG_NO_DC_MODE) {
+	} else if (ln8411->charging_state == DC_STATE_NO_CHARGING) {
 		logbuffer_prlog(ln8411, LOGLEVEL_DEBUG,
 				"%s: start pps_idx=%d->%d charging_state=%d timer_id=%d",
 				__func__, ln8411->pps_index, index,
@@ -4528,11 +4527,6 @@ static int ln8411_set_charging_enabled(struct ln8411_charger *ln8411, int index)
 				__func__, ln8411->pps_index, index,
 		ln8411->charging_state,
 		ln8411->timer_id);
-		ret = -EINVAL;
-	} else if (ln8411->charging_state == DC_STATE_NO_CHARGING
-		   && ln8411->chg_mode != CHG_NO_DC_MODE) {
-		logbuffer_prlog(ln8411, LOGLEVEL_INFO, "%s: Can't start charging in chg_mode: %d\n",
-				__func__, ln8411->chg_mode);
 		ret = -EINVAL;
 	}
 
