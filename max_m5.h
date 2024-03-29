@@ -157,6 +157,7 @@ enum max_m5_re_cal_algo {
 /** ------------------------------------------------------------------------ */
 
 int max_m5_model_read_version(const struct max_m5_data *m5_data);
+int max_m5_model_write_version(const struct max_m5_data *m5_data, int version);
 int max_m5_model_get_cap_lsb(const struct max_m5_data *m5_data);
 int max_m5_reset_state_data(struct max_m5_data *m5_data);
 int max_m5_needs_reset_model_data(const struct max_m5_data *m5_data);
