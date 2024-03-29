@@ -50,7 +50,7 @@ int max77779_model_read_version(const struct max77779_model_data *model_data)
 	return ret;
 }
 
-static int max77779_model_write_version(const struct max77779_model_data *model_data, int version)
+int max77779_model_write_version(const struct max77779_model_data *model_data, int version)
 {
 	struct maxfg_regmap *regmap = model_data->regmap;
 	u16 temp;
