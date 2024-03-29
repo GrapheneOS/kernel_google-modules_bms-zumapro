@@ -663,25 +663,12 @@ static int max77779_get_usecase(struct max77779_foreach_cb_data *cb_data,
 				mode = MAX77779_CHGR_MODE_BOOST_UNO_ON;
 		}
 	} else if (wlc_tx) {
-		if (!buck_on) {
-			usecase = GSU_MODE_WLC_TX;
-			if (uc_data->reverse12_en)
-				mode = MAX77779_CHGR_MODE_ALL_OFF;
-			else
-				mode = MAX77779_CHGR_MODE_BOOST_UNO_ON;
-		} else if (chgr_on) {
-			if (uc_data->reverse12_en)
-				mode = MAX77779_CHGR_MODE_CHGR_BUCK_ON;
-			else
-				mode = MAX77779_CHGR_MODE_CHGR_BUCK_BOOST_UNO_ON;
-			usecase = GSU_MODE_USB_CHG_WLC_TX;
-		} else {
-			if (uc_data->reverse12_en)
-				mode = MAX77779_CHGR_MODE_BUCK_ON;
-			else
-				mode = MAX77779_CHGR_MODE_BUCK_BOOST_UNO_ON;
-			usecase = GSU_MODE_USB_CHG_WLC_TX;
-		}
+		/* above checks that buck_on is false */
+		usecase = GSU_MODE_WLC_TX;
+		if (uc_data->reverse12_en)
+			mode = MAX77779_CHGR_MODE_ALL_OFF;
+		else
+			mode = MAX77779_CHGR_MODE_BOOST_UNO_ON;
 	} else if (wlc_rx) {
 
 		/* will be in mode 4 if in stby unless dc is enabled */
