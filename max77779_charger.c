@@ -100,75 +100,42 @@ static u8 max77779_int_mask[MAX77779_CHG_INT_COUNT] = {
 static int max77779_is_limited(struct max77779_chgr_data *data);
 static int max77779_wcin_current_now(struct max77779_chgr_data *data, int *iic);
 
-static inline int max77779_reg_read(struct regmap *regmap, uint8_t reg,
+static inline int max77779_reg_read(struct max77779_chgr_data *data, uint8_t reg,
 				    uint8_t *val)
 {
 	int ret, ival;
 
-	ret = regmap_read(regmap, reg, &ival);
+	ret = regmap_read(data->regmap, reg, &ival);
 	if (ret == 0)
 		*val = 0xFF & ival;
 
 	return ret;
 }
 
-/* 1 if changed, 0 if not changed, or < 0 on error */
-static int max77779_chg_prot(struct regmap *regmap, bool enable)
+static bool max77779_chg_is_protected(uint8_t reg)
+{
+	switch(reg) {
+	case MAX77779_CHG_CNFG_01:
+	case MAX77779_CHG_CNFG_03:
+	case MAX77779_CHG_CNFG_07 ... MAX77779_CHG_CNFG_08:
+	case MAX77779_CHG_CNFG_13 ... MAX77779_BAT_OILO2_CNFG_3:
+	case MAX77779_CHG_CUST_TM:
+		return true;
+	default:
+		return false;
+	}
+}
+
+/*
+ * 1 if changed, 0 if not changed or not protected, or < 0 on error
+ * Must call this function with prot disabled, do write IO, then call this function
+ * with prot enabled
+ */
+static int max77779_chg_prot(struct max77779_chgr_data *data, uint8_t reg, int count, bool enable)
 {
 	const u8 value = enable ? 0 : MAX77779_CHG_CNFG_06_CHGPROT_MASK;
-	bool changed;
-	int ret;
-
-	ret = regmap_update_bits_check(regmap, MAX77779_CHG_CNFG_06,
-				       MAX77779_CHG_CNFG_06_CHGPROT_MASK,
-				       value,
-				       &changed);
-	if (ret < 0)
-		return ret;
-
-	return changed;
-}
-
-static bool max77779_chg_is_protected(uint8_t reg);
-
-static inline int max77779_reg_write(struct regmap *regmap, uint8_t reg,
-				     uint8_t val)
-{
-	const bool is_protected = max77779_chg_is_protected(reg);
-	int ret, prot;
-
-	if (is_protected) {
-		prot = max77779_chg_prot(regmap, false);
-		if (prot < 0) {
-			pr_err("%s: cannot disable protection bits (%d)\n", __func__, prot);
-			return prot;
-		}
-	}
-
-	ret = regmap_write(regmap, reg, val);
-
-	if (is_protected) {
-		prot = max77779_chg_prot(regmap, true);
-		if (prot < 0) {
-			pr_err("%s: cannot restore protection bits (%d)\n", __func__, prot);
-			return prot;
-		};
-	}
-
-	return ret;
-}
-
-static inline int max77779_readn(struct regmap *regmap, uint8_t reg,
-				 uint8_t *val, int count)
-{
-	return regmap_bulk_read(regmap, reg, val, count);
-}
-
-static inline int max77779_writen(struct regmap *regmap, uint8_t reg, /* NOTYPO */
-				  const uint8_t *val, int count)
-{
-	bool is_protected = false;
-	int i, ret, prot;
+	bool changed, is_protected = false;
+	int ret, i;
 
 	if (count < 1)
 		return -EINVAL;
@@ -179,23 +146,62 @@ static inline int max77779_writen(struct regmap *regmap, uint8_t reg, /* NOTYPO 
 		is_protected |= max77779_chg_is_protected(reg + i);
 	}
 
-	if (is_protected) {
-		prot = max77779_chg_prot(regmap, false);
-		if (prot < 0) {
-			pr_err("%s: cannot disable protection bits (%d)\n", __func__, prot);
-			return prot;
-		}
-	}
+	if (!is_protected)
+		return 0;
 
-	ret = regmap_bulk_write(regmap, reg, val, count);
+	if (!enable)
+		mutex_lock(&data->prot_lock);
+	ret = regmap_update_bits_check(data->regmap, MAX77779_CHG_CNFG_06,
+				       MAX77779_CHG_CNFG_06_CHGPROT_MASK,
+				       value,
+				       &changed);
+	if (ret)
+		dev_err(data->dev, "error modifying protection bits reg:0x%x count:%d "
+			"enable:%d ret:%d\n", reg, count, enable, ret);
+	if (enable)
+		mutex_unlock(&data->prot_lock);
 
-	if (is_protected) {
-		prot = max77779_chg_prot(regmap, true);
-		if (prot < 0) {
-			pr_err("%s: cannot restore protection bits (%d)\n", __func__, prot);
-			return prot;
-		};
-	}
+	return ret ? ret : changed;
+}
+
+static inline int max77779_reg_write(struct max77779_chgr_data *data, uint8_t reg,
+				     uint8_t val)
+{
+	int ret, prot;
+
+	prot = max77779_chg_prot(data, reg, 1, false);
+	if (prot < 0)
+		return prot;
+
+	ret = regmap_write(data->regmap, reg, val);
+
+	prot = max77779_chg_prot(data, reg, 1, true);
+	if (prot < 0)
+		return prot;
+
+	return ret;
+}
+
+static inline int max77779_readn(struct max77779_chgr_data *data, uint8_t reg,
+				 uint8_t *val, int count)
+{
+	return regmap_bulk_read(data->regmap, reg, val, count);
+}
+
+static inline int max77779_writen(struct max77779_chgr_data *data, uint8_t reg, /* NOTYPO */
+				  const uint8_t *val, int count)
+{
+	int ret, prot;
+
+	prot = max77779_chg_prot(data, reg, count, false);
+	if (prot < 0)
+		return prot;
+
+	ret = regmap_bulk_write(data->regmap, reg, val, count);
+
+	prot = max77779_chg_prot(data, reg, count, true);
+	if (prot < 0)
+		return prot;
 
 	return ret;
 }
@@ -203,26 +209,17 @@ static inline int max77779_writen(struct regmap *regmap, uint8_t reg, /* NOTYPO 
 static inline int max77779_reg_update(struct max77779_chgr_data *data,
 				      uint8_t reg, uint8_t msk, uint8_t val)
 {
-	const bool is_protected = max77779_chg_is_protected(reg);
 	int ret, prot;
 
-	if (is_protected) {
-		prot = max77779_chg_prot(data->regmap, false);
-		if (prot < 0) {
-			pr_err("%s: cannot disable protection bits (%d)\n", __func__, prot);
-			return prot;
-		}
-	}
+	prot = max77779_chg_prot(data, reg, 1, false);
+	if (prot < 0)
+		return prot;
 
 	ret = regmap_write_bits(data->regmap, reg, msk, val); /* forces update */
 
-	if (is_protected) {
-		prot = max77779_chg_prot(data->regmap, true);
-		if (prot < 0) {
-			pr_err("%s: cannot restore protection bits (%d)\n", __func__, prot);
-			return prot;
-		};
-	}
+	prot = max77779_chg_prot(data, reg, 1, true);
+	if (prot < 0)
+		return prot;
 
 	return ret;
 }
@@ -237,7 +234,7 @@ static inline int max77779_reg_update_verify(struct max77779_chgr_data *data,
 	if (ret)
 		return ret;
 
-	ret = max77779_reg_read(data->regmap, reg, &tmp);
+	ret = max77779_reg_read(data, reg, &tmp);
 	if (ret)
 		return ret;
 
@@ -267,7 +264,7 @@ int max77779_external_chg_reg_read(struct device *dev, uint8_t reg, uint8_t *val
 	if (max77779_resume_check(data))
 		return -EAGAIN;
 
-	return max77779_reg_read(data->regmap, reg, val);
+	return max77779_reg_read(data, reg, val);
 }
 EXPORT_SYMBOL_GPL(max77779_external_chg_reg_read);
 
@@ -281,7 +278,7 @@ int max77779_external_chg_reg_write(struct device *dev, uint8_t reg, uint8_t val
 	if (max77779_resume_check(data))
 		return -EAGAIN;
 
-	return max77779_reg_write(data->regmap, reg, val);
+	return max77779_reg_write(data, reg, val);
 }
 EXPORT_SYMBOL_GPL(max77779_external_chg_reg_write);
 
@@ -301,9 +298,20 @@ EXPORT_SYMBOL_GPL(max77779_external_chg_reg_update);
 
 int max77779_external_chg_mode_write(struct device *dev, enum max77779_charger_modes mode)
 {
-	return max77779_external_chg_reg_update(dev, MAX77779_CHG_CNFG_00,
-						MAX77779_CHG_CNFG_00_MODE_MASK,
-						mode);
+	int ret;
+	struct max77779_chgr_data *data = dev_get_drvdata(dev);
+
+	if (!data)
+		return -ENODEV;
+
+	/* Protect mode register */
+	mutex_lock(&data->io_lock);
+	ret = max77779_external_chg_reg_update(dev, MAX77779_CHG_CNFG_00,
+					       MAX77779_CHG_CNFG_00_MODE_MASK,
+					       mode);
+	mutex_unlock(&data->io_lock);
+
+	return ret;
 }
 EXPORT_SYMBOL_GPL(max77779_external_chg_mode_write);
 
@@ -374,7 +382,7 @@ static int max77779_read_wcin(struct max77779_chgr_data *data, int *vbyp)
 	u16 tmp;
 	int ret;
 
-	ret = max77779_readn(data->regmap, MAX77779_CHG_WCIN_V_ADC_L, (uint8_t*)&tmp, 2);
+	ret = max77779_readn(data, MAX77779_CHG_WCIN_V_ADC_L, (uint8_t*)&tmp, 2);
 	if (ret) {
 		pr_err("Failed to read %x\n", MAX77779_CHG_WCIN_V_ADC_L);
 		return ret;
@@ -886,18 +894,24 @@ static int max77779_set_usecase(struct max77779_chgr_data *data,
 
 exit_done:
 
+	/* Protect mode register */
+	mutex_lock(&data->io_lock);
+
 	/* finally set mode register */
-	ret = max77779_reg_write(data->regmap, MAX77779_CHG_CNFG_00, cb_data->reg);
+	ret = max77779_reg_write(data, MAX77779_CHG_CNFG_00, cb_data->reg);
 	pr_debug("%s: CHARGER_MODE=%x ret:%x\n", __func__, cb_data->reg, ret);
 	if (ret < 0) {
 		dev_err(data->dev,  "use_case=%d->%d CNFG_00=%x failed ret:%d\n",
 			from_uc, use_case, cb_data->reg, ret);
-		return ret;
+		goto done;
 	}
 
 	ret = gs201_finish_usecase(uc_data, use_case);
 	if (ret < 0 && ret != -EAGAIN)
 		dev_err(data->dev, "Error finishing usecase config ret:%d\n", ret);
+
+done:
+	mutex_unlock(&data->io_lock);
 
 	return ret;
 }
@@ -932,7 +946,7 @@ static int max77779_mode_callback(struct gvotable_election *el,
 	}
 
 	/* no caching */
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_00, &reg);
+	ret = max77779_reg_read(data, MAX77779_CHG_CNFG_00, &reg);
 	if (ret < 0) {
 		dev_err(data->dev, "cannot read CNFG_00 (%d)\n", ret);
 		goto unlock_done;
@@ -1108,7 +1122,7 @@ static int max77779_enable_sw_recharge(struct max77779_chgr_data *data,
 		return -EAGAIN;
 
 	if (!needs_restart) {
-		ret = max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_01, &reg);
+		ret = max77779_reg_read(data, MAX77779_CHG_DETAILS_01, &reg);
 		needs_restart = (ret < 0) ||
 				_max77779_chg_details_01_chg_dtls_get(reg) == CHGR_DTLS_DONE_MODE;
 		if (!needs_restart)
@@ -1117,7 +1131,7 @@ static int max77779_enable_sw_recharge(struct max77779_chgr_data *data,
 
 	/* This: will not trigger the usecase state machine */
 	mutex_lock(&data->io_lock);
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_00, &reg);
+	ret = max77779_reg_read(data, MAX77779_CHG_CNFG_00, &reg);
 	if (ret == 0)
 		ret = max77779_external_chg_mode_write(data->dev, MAX77779_CHGR_MODE_ALL_OFF);
 	if (ret == 0)
@@ -1221,7 +1235,7 @@ static int max77779_get_regulation_voltage_uv(struct max77779_chgr_data *data,
 	u8 value;
 	int ret;
 
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_04, &value);
+	ret = max77779_reg_read(data, MAX77779_CHG_CNFG_04, &value);
 	if (ret < 0)
 		return ret;
 
@@ -1250,7 +1264,7 @@ static bool max77779_is_cop_enabled(struct max77779_chgr_data *data)
 	u8 value;
 	int ret;
 
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_COP_CTRL, &value);
+	ret = max77779_reg_read(data, MAX77779_CHG_COP_CTRL, &value);
 	return (ret == 0) && _max77779_chg_cop_ctrl_cop_en_get(value);
 }
 
@@ -1268,7 +1282,7 @@ static int max77779_set_cop_warn(struct max77779_chgr_data *data, uint32_t max_v
 		return -EINVAL;
 	}
 
-	ret = max77779_writen(data->regmap, MAX77779_CHG_COP_WARN_L, /* NOTYPO */
+	ret = max77779_writen(data, MAX77779_CHG_COP_WARN_L, /* NOTYPO */
 			     (uint8_t*)&max_value, 2);
 	if (ret) {
 		dev_err(data->dev, "Error writing MAX77779_CHG_COP_WARN_L ret:%d", ret);
@@ -1285,7 +1299,7 @@ static int max77779_get_cop_warn(struct max77779_chgr_data *data, uint32_t *max_
 	int ret;
 	u16 temp;
 
-	ret = max77779_readn(data->regmap, MAX77779_CHG_COP_WARN_L, (uint8_t*)&temp, 2);
+	ret = max77779_readn(data, MAX77779_CHG_COP_WARN_L, (uint8_t*)&temp, 2);
 	if (ret) {
 		dev_err(data->dev, "Error reading MAX77779_CHG_COP_WARN_L ret:%d", ret);
 		return ret;
@@ -1309,7 +1323,7 @@ static int max77779_set_cop_limit(struct max77779_chgr_data *data, uint32_t max_
 		return -EINVAL;
 	}
 
-	ret = max77779_writen(data->regmap, MAX77779_CHG_COP_LIMIT_L, /* NOTYPO */
+	ret = max77779_writen(data, MAX77779_CHG_COP_LIMIT_L, /* NOTYPO */
 			     (uint8_t*)&max_value, 2);
 	if (ret) {
 		dev_err(data->dev, "Error writing MAX77779_CHG_COP_LIMIT_L ret:%d", ret);
@@ -1324,7 +1338,7 @@ static int max77779_get_cop_limit(struct max77779_chgr_data *data, uint32_t *max
 	int ret;
 	u16 temp;
 
-	ret = max77779_readn(data->regmap, MAX77779_CHG_COP_LIMIT_L, (uint8_t*)&temp, 2);
+	ret = max77779_readn(data, MAX77779_CHG_COP_LIMIT_L, (uint8_t*)&temp, 2);
 	if (ret) {
 		dev_err(data->dev, "Error reading MAX77779_CHG_COP_LIMIT_L ret:%d", ret);
 		return ret;
@@ -1383,7 +1397,7 @@ static int max77779_set_charger_current_max_ua(struct max77779_chgr_data *data,
 	else
 		value = 0x3 + (current_ua - 200000) / 66670;
 
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_00, &reg);
+	ret = max77779_reg_read(data, MAX77779_CHG_CNFG_00, &reg);
 	if (ret < 0) {
 		dev_err(data->dev, "cannot read CHG_CNFG_00 (%d)\n", ret);
 		return ret;
@@ -1441,7 +1455,7 @@ static int max77779_get_charger_current_max_ua(struct max77779_chgr_data *data,
 	u8 value;
 	int ret;
 
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_02,
+	ret = max77779_reg_read(data, MAX77779_CHG_CNFG_02,
 				&value);
 	if (ret < 0)
 		return ret;
@@ -1499,7 +1513,7 @@ static int max77779_chgin_get_ilim_max_ua(struct max77779_chgr_data *data,
 	int icl, ret;
 	u8 value;
 
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_09, &value);
+	ret = max77779_reg_read(data, MAX77779_CHG_CNFG_09, &value);
 	if (ret < 0)
 		return ret;
 
@@ -1575,7 +1589,7 @@ static int max77779_wcin_get_ilim_max_ua(struct max77779_chgr_data *data,
 	int ret;
 	u8 value;
 
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_10, &value);
+	ret = max77779_reg_read(data, MAX77779_CHG_CNFG_10, &value);
 	if (ret < 0)
 		return ret;
 
@@ -1665,7 +1679,7 @@ static void max77779_inlim_irq_en(struct max77779_chgr_data *data, bool en)
 		max77779_int_mask[0] &= ~MAX77779_CHG_INT_INLIM_I_MASK;
 	else
 		max77779_int_mask[0] |= MAX77779_CHG_INT_INLIM_I_MASK;
-	ret = max77779_writen(data->regmap, MAX77779_CHG_INT_MASK,
+	ret = max77779_writen(data, MAX77779_CHG_INT_MASK,
 					max77779_int_mask,
 					sizeof(max77779_int_mask));
 	if (ret < 0)
@@ -1794,7 +1808,7 @@ static int max77779_wcin_is_valid(struct max77779_chgr_data *data)
 	uint8_t wcin_dtls;
 	int ret;
 
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_00, &val);
+	ret = max77779_reg_read(data, MAX77779_CHG_DETAILS_00, &val);
 	if (ret < 0)
 		return ret;
 	wcin_dtls = _max77779_chg_details_00_wcin_dtls_get(val);
@@ -1867,7 +1881,7 @@ static int max77779_current_check_mode(struct max77779_chgr_data *data)
 	int ret;
 	u8 reg;
 
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_00, &reg);
+	ret = max77779_reg_read(data, MAX77779_CHG_CNFG_00, &reg);
 	if (ret < 0)
 		return ret;
 
@@ -1900,7 +1914,7 @@ static int max77779_wcin_current_now(struct max77779_chgr_data *data, int *iic)
 	u16 tmp;
 	int ret;
 
-	ret = max77779_readn(data->regmap, MAX77779_CHG_WCIN_I_ADC_L, (uint8_t*)&tmp, 2);
+	ret = max77779_readn(data, MAX77779_CHG_WCIN_I_ADC_L, (uint8_t*)&tmp, 2);
 	if (ret) {
 		pr_err("Failed to read %x\n", MAX77779_CHG_WCIN_I_ADC_L);
 		return ret;
@@ -2088,14 +2102,14 @@ static int max77779_higher_headroom_enable(struct max77779_chgr_data *data, bool
 	u8 reg, reg_rd, val = flag ? CHGR_CHG_CNFG_12_VREG_4P7V : CHGR_CHG_CNFG_12_VREG_4P6V;
 
 	mutex_lock(&data->io_lock);
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_12, &reg);
+	ret = max77779_reg_read(data, MAX77779_CHG_CNFG_12, &reg);
 	if (ret < 0)
 		goto done;
 
 	reg_rd = reg;
 
 	reg = _max77779_chg_cnfg_12_vchgin_reg_set(reg, val);
-	ret = max77779_reg_write(data->regmap, MAX77779_CHG_CNFG_12, reg);
+	ret = max77779_reg_write(data, MAX77779_CHG_CNFG_12, reg);
 
 done:
 	mutex_unlock(&data->io_lock);
@@ -2109,7 +2123,7 @@ done:
 static int max77779_chgin_is_online(struct max77779_chgr_data *data)
 {
 	uint8_t val;
-	int ret = max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_00, &val);
+	int ret = max77779_reg_read(data, MAX77779_CHG_DETAILS_00, &val);
 
 	return (ret == 0) && (_max77779_chg_details_00_chgin_dtls_get(val) == 0x2 ||
 		_max77779_chg_details_00_chgin_dtls_get(val) == 0x3);
@@ -2125,7 +2139,7 @@ static int max77779_is_limited(struct max77779_chgr_data *data)
 	int ret;
 	u8 value;
 
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_INT_OK, &value);
+	ret = max77779_reg_read(data, MAX77779_CHG_INT_OK, &value);
 	return (ret == 0) && _max77779_chg_int_ok_inlim_ok_get(value) == 0;
 }
 
@@ -2135,7 +2149,7 @@ static int max77779_is_online(struct max77779_chgr_data *data)
 	uint8_t val;
 	int ret;
 
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_00, &val);
+	ret = max77779_reg_read(data, MAX77779_CHG_DETAILS_00, &val);
 	return (ret == 0) && ((_max77779_chg_details_00_chgin_dtls_get(val) == 0x2)||
 	       (_max77779_chg_details_00_chgin_dtls_get(val) == 0x3) ||
 	       (_max77779_chg_details_00_wcin_dtls_get(val) == 0x2) ||
@@ -2150,7 +2164,7 @@ static int max77779_get_charge_type(struct max77779_chgr_data *data)
 	if (!max77779_is_online(data))
 		return POWER_SUPPLY_CHARGE_TYPE_NONE;
 
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_01, &reg);
+	ret = max77779_reg_read(data, MAX77779_CHG_DETAILS_01, &reg);
 	if (ret < 0)
 		return POWER_SUPPLY_CHARGE_TYPE_UNKNOWN;
 
@@ -2211,7 +2225,7 @@ static int max77779_get_status(struct max77779_chgr_data *data)
 	 * ->charge_done. Also need a check on max77779_is_full() or
 	 * google_charger will fail to restart charging.
 	 */
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_01, &val);
+	ret = max77779_reg_read(data, MAX77779_CHG_DETAILS_01, &val);
 	if (ret < 0)
 		return POWER_SUPPLY_STATUS_UNKNOWN;
 
@@ -2256,10 +2270,10 @@ static int max77779_get_chg_chgr_state(struct max77779_chgr_data *data,
 	chg_state->f.flags = gbms_gen_chg_flags(chg_state->f.chg_status,
 						chg_state->f.chg_type);
 
-	rc = max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_00, &cnfg);
+	rc = max77779_reg_read(data, MAX77779_CHG_CNFG_00, &cnfg);
 	if (rc == 0) {
 		cp_enabled = _max77779_chg_cnfg_00_cp_en_get(cnfg);
-		rc = max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_02,
+		rc = max77779_reg_read(data, MAX77779_CHG_DETAILS_02,
 					&dtls);
 	}
 
@@ -2336,7 +2350,7 @@ static int max77779_chgin_current_now(struct max77779_chgr_data *data, int *iic)
 	u16 tmp;
 	int ret;
 
-	ret = max77779_readn(data->regmap, MAX77779_CHG_CHGIN_I_ADC_L, (uint8_t*)&tmp, 2);
+	ret = max77779_readn(data, MAX77779_CHG_CHGIN_I_ADC_L, (uint8_t*)&tmp, 2);
 	if (ret) {
 		pr_err("Failed to read %x\n", MAX77779_CHG_CHGIN_I_ADC_L);
 		return ret;
@@ -2350,11 +2364,16 @@ static int max77779_wd_tickle(struct max77779_chgr_data *data)
 {
 	int ret;
 
+	/* Protect mode register */
+	mutex_lock(&data->io_lock);
+
 	ret = max77779_reg_update(data, MAX77779_CHG_CNFG_00,
 				  MAX77779_CHG_CNFG_00_WDTCLR_MASK,
 				  _max77779_chg_cnfg_00_wdtclr_set(0, 0x1));
 	if (ret < 0)
 		dev_err(data->dev, "WD Tickle failed %d\n", ret);
+
+	mutex_unlock(&data->io_lock);
 
 	return ret;
 }
@@ -2400,7 +2419,7 @@ static int max77779_psy_set_property(struct power_supply *psy,
 	{
 		u8 reg, mode;
 
-		ret = max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_00, &reg);
+		ret = max77779_reg_read(data, MAX77779_CHG_CNFG_00, &reg);
 		if (ret)
 			break;
 
@@ -2702,7 +2721,7 @@ static ssize_t show_fship_dtls(struct device *dev,
 	if (_max77779_pmic_int_mask_fship_not_rd_get(pmic_rd)) {
 		u8 fship_dtls;
 
-		ret = max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_04,
+		ret = max77779_reg_read(data, MAX77779_CHG_DETAILS_04,
 					&fship_dtls);
 		if (ret < 0)
 			goto unlock;
@@ -2741,7 +2760,7 @@ static int vdroop2_ok_get(void *d, u64 *val)
 	if(max77779_resume_check(data))
 		return -EAGAIN;
 
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_DETAILS_01, &chg_dtls1);
+	ret = max77779_reg_read(data, MAX77779_CHG_DETAILS_01, &chg_dtls1);
 	if (ret < 0)
 		return -ENODEV;
 
@@ -2761,7 +2780,7 @@ static int vdp1_stp_bst_get(void *d, u64 *val)
 	if(max77779_resume_check(data))
 		return -EAGAIN;
 
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_17, &chg_cnfg17);
+	ret = max77779_reg_read(data, MAX77779_CHG_CNFG_17, &chg_cnfg17);
 	if (ret < 0)
 		return -ENODEV;
 
@@ -2793,7 +2812,7 @@ static int vdp2_stp_bst_get(void *d, u64 *val)
 	if(max77779_resume_check(data))
 		return -EAGAIN;
 
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_17, &chg_cnfg17);
+	ret = max77779_reg_read(data, MAX77779_CHG_CNFG_17, &chg_cnfg17);
 	if (ret < 0)
 		return -ENODEV;
 
@@ -2842,7 +2861,7 @@ static int max77779_chg_debug_reg_read(void *d, u64 *val)
 	if(max77779_resume_check(data))
 		return -EAGAIN;
 
-	ret = max77779_reg_read(data->regmap, data->debug_reg_address, &reg);
+	ret = max77779_reg_read(data, data->debug_reg_address, &reg);
 	if (ret)
 		return ret;
 
@@ -2859,7 +2878,7 @@ static int max77779_chg_debug_reg_write(void *d, u64 val)
 		return -EAGAIN;
 
 	pr_warn("debug write reg 0x%x, 0x%x", data->debug_reg_address, reg);
-	return max77779_reg_write(data->regmap, data->debug_reg_address, reg);
+	return max77779_reg_write(data, data->debug_reg_address, reg);
 }
 DEFINE_SIMPLE_ATTRIBUTE(debug_reg_rw_fops, max77779_chg_debug_reg_read,
 			max77779_chg_debug_reg_write, "%02llx\n");
@@ -2964,7 +2983,7 @@ static ssize_t registers_dump_show(struct device *dev, struct device_attribute *
 		goto unlock;
 	}
 
-	ret = max77779_readn(data->regmap, MAX77779_CHG_CHGIN_I_ADC_L, dump, MAX77779_CHG_NUM_REGS);
+	ret = max77779_readn(data, MAX77779_CHG_CHGIN_I_ADC_L, dump, MAX77779_CHG_NUM_REGS);
 	if (ret < 0) {
 		dev_err(dev, "[%s]: Failed to dump ret:%d\n", __func__, ret);
 		goto done;
@@ -3055,20 +3074,6 @@ bool max77779_chg_is_reg(struct device *dev, unsigned int reg)
 }
 EXPORT_SYMBOL_GPL(max77779_chg_is_reg);
 
-static bool max77779_chg_is_protected(uint8_t reg)
-{
-	switch(reg) {
-	case MAX77779_CHG_CNFG_01:
-	case MAX77779_CHG_CNFG_03:
-	case MAX77779_CHG_CNFG_07 ... MAX77779_CHG_CNFG_08:
-	case MAX77779_CHG_CNFG_13 ... MAX77779_BAT_OILO2_CNFG_3:
-	case MAX77779_CHG_CUST_TM:
-		return true;
-	default:
-		return false;
-	}
-}
-
 static irqreturn_t max77779_chgr_irq(int irq, void *d)
 {
 	struct max77779_chgr_data *data = d;
@@ -3082,7 +3087,7 @@ static irqreturn_t max77779_chgr_irq(int irq, void *d)
 		return IRQ_HANDLED;
 	}
 
-	ret = max77779_readn(data->regmap, MAX77779_CHG_INT, chg_int, 2);
+	ret = max77779_readn(data, MAX77779_CHG_INT, chg_int, 2);
 	if (ret < 0) {
 		dev_err_ratelimited(data->dev, "%s i2c error reading INT, IRQ_NONE\n", __func__);
 		return IRQ_NONE;
@@ -3098,7 +3103,7 @@ static irqreturn_t max77779_chgr_irq(int irq, void *d)
 	chg_int_clr[0] = chg_int[0] & ~max77779_int_mask[0];
 	chg_int_clr[1] = chg_int[1] & ~max77779_int_mask[1];
 
-	ret = max77779_writen(data->regmap, MAX77779_CHG_INT, /* NOTYPO */
+	ret = max77779_writen(data, MAX77779_CHG_INT, /* NOTYPO */
                               chg_int_clr, 2);
 	if (ret < 0) {
 		dev_err_ratelimited(data->dev, "%s i2c error writing INT, IRQ_NONE\n", __func__);
@@ -3198,7 +3203,7 @@ static irqreturn_t max77779_chgr_irq(int irq, void *d)
 		uint8_t int_ok;
 		bool thm2_sts;
 
-		ret = max77779_reg_read(data->regmap, MAX77779_CHG_INT_OK, &int_ok);
+		ret = max77779_reg_read(data, MAX77779_CHG_INT_OK, &int_ok);
 		if (ret == 0) {
 			thm2_sts = (_max77779_chg_int_ok_thm2_ok_get(int_ok))? false : true;
 
@@ -3264,7 +3269,7 @@ static irqreturn_t max77779_chg_irq_handler(int irq, void *ptr)
 		return IRQ_HANDLED;
 	}
 
-	ret = max77779_readn(data->regmap, MAX77779_CHG_INT, (uint8_t*)&intsrc_sts, 2);
+	ret = max77779_readn(data, MAX77779_CHG_INT, (uint8_t*)&intsrc_sts, 2);
 	if (ret) {
 		dev_err_ratelimited(data->dev, "%s: read error %d\n", __func__, ret);
 		return IRQ_NONE;
@@ -3284,7 +3289,7 @@ static irqreturn_t max77779_chg_irq_handler(int irq, void *ptr)
 		}
 	}
 
-	ret = max77779_writen(data->regmap, MAX77779_CHG_INT, (uint8_t*)&irq_handled, 2); /* NOTYPO */
+	ret = max77779_writen(data, MAX77779_CHG_INT, (uint8_t*)&irq_handled, 2); /* NOTYPO */
 	if (ret) {
 		dev_err_ratelimited(data->dev, "%s: write error %d\n", __func__, ret);
 		return IRQ_NONE;
@@ -3435,7 +3440,7 @@ static void max77779_chg_bus_sync_unlock(struct irq_data *d)
 	if (!data->mask_u)
 		goto unlock_out;
 
-	err = max77779_readn(data->regmap, MAX77779_CHG_INT_MASK, (uint8_t*)&intb_mask, 2);
+	err = max77779_readn(data, MAX77779_CHG_INT_MASK, (uint8_t*)&intb_mask, 2);
 	if (err < 0) {
 		dev_err(data->dev, "Unable to read interrupt mask (%d)\n", err);
 		goto unlock_out;
@@ -3452,7 +3457,7 @@ static void max77779_chg_bus_sync_unlock(struct irq_data *d)
 		data->mask_u &= ~(1 << offset);
 	}
 
-	err = max77779_writen(data->regmap, MAX77779_CHG_INT_MASK, /* NOTYPO */
+	err = max77779_writen(data, MAX77779_CHG_INT_MASK, /* NOTYPO */
 			      (uint8_t*)&intb_mask, 2);
 	if (err < 0) {
 		dev_err(data->dev, "Unable to write interrupt mask (%d)\n", err);
@@ -3522,7 +3527,7 @@ int max77779_charger_init(struct max77779_chgr_data *data)
 	int ret = 0;
 	u8 ping;
 
-	ret = max77779_reg_read(data->regmap, MAX77779_CHG_CNFG_00, &ping);
+	ret = max77779_reg_read(data, MAX77779_CHG_CNFG_00, &ping);
 	if (ret < 0)
 		return -ENODEV;
 
@@ -3532,6 +3537,7 @@ int max77779_charger_init(struct max77779_chgr_data *data)
 	data->mask = 0xFFFFFFFF;
 	mutex_init(&data->io_lock);
 	mutex_init(&data->mode_callback_lock);
+	mutex_init(&data->prot_lock);
 	mutex_init(&data->reg_dump_lock);
 	mutex_init(&data->wcin_inlim_lock);
 	atomic_set(&data->insel_cnt, 0);
@@ -3683,7 +3689,7 @@ int max77779_charger_init(struct max77779_chgr_data *data)
 		if (ret == 0) {
 			/* might cause the isr to be called */
 			max77779_chg_irq_handler(-1, data);
-			ret = max77779_writen(data->regmap, MAX77779_CHG_INT_MASK, /* NOTYPO */
+			ret = max77779_writen(data, MAX77779_CHG_INT_MASK, /* NOTYPO */
 					      max77779_int_mask,
 					      sizeof(max77779_int_mask));
 			if (ret < 0)
