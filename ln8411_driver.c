@@ -985,8 +985,9 @@ int ln8411_check_active(struct ln8411_charger *ln8411)
 		val = 0;
 
 	if (!val) {
-		dev_err(ln8411->dev, "%s: CP Not switching LN8411_SYS_STS: %#02X\n",
-			__func__, reg);
+		if (ln8411->charging_state != DC_STATE_NO_CHARGING)
+			dev_err(ln8411->dev, "%s: CP Not switching LN8411_SYS_STS: %#02X\n",
+				__func__, reg);
 		return -EINVAL;
 	}
 
