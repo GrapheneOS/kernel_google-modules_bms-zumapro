@@ -39,10 +39,7 @@ struct max77779_usecase_data {
 
 	int rtx_ready; /* rtx ready gpio from wireless */
 	int rtx_available; /* rtx supported gpio from wlc, usecase set for UI */
-	struct delayed_work rtx_supported_work;
 
-	int rtx_retries;
-	int rtx_state;
 	struct power_supply *psy;
 
 	bool dcin_is_dock;
@@ -70,15 +67,6 @@ enum gsu_usecases {
 	GSU_MODE_USB_WLC_RX	= 13,
 
 	GSU_MODE_DOCK		= 14,
-};
-
-enum gsu_rtx_state {
-	GSU_RTX_DEFAULT = 0,
-	GSU_RTX_STANDBY,
-	GSU_RTX_SETUP,
-	GSU_RTX_RETRY,
-	GSU_RTX_ENABLED,
-	GSU_RTX_DISABLED,
 };
 
 enum wlc_state_t {
