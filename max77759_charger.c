@@ -1261,6 +1261,36 @@ static int max77759_enable_sw_recharge(struct max77759_chgr_data *data,
 	return ret;
 }
 
+static int max77759_higher_headroom_enable(struct max77759_chgr_data *data, bool flag)
+{
+	int ret = 0;
+	u8 reg, reg_rd;
+	const u8 val = flag ? CHGR_CHG_CNFG_12_VREG_4P7V : CHGR_CHG_CNFG_12_VREG_4P6V;
+
+	ret = max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_12, &reg);
+	if (ret < 0)
+		return ret;
+
+	reg_rd = reg;
+	ret = max77759_chg_prot(data->regmap, false);
+	if (ret < 0)
+		return ret;
+
+	reg = _chg_cnfg_12_vchgin_reg_set(reg, val);
+	ret = max77759_reg_write(data->regmap, MAX77759_CHG_CNFG_12, reg);
+	if (ret)
+		dev_info(data->dev, "%s: error setting headroom to %d (%d)\n",
+			 __func__, val, ret);
+
+	dev_dbg(data->dev, "%s: val: %#02x, reg: %#02x -> %#02x (%d)\n",
+		__func__, val, reg_rd, reg, ret);
+
+	ret = max77759_chg_prot(data->regmap, true);
+	if (ret < 0)
+		dev_err(data->dev, "%s: error enabling prot (%d)\n", __func__, ret);
+	return ret < 0 ? ret : 0;
+}
+
 /* called from gcpm and for CC_MAX == 0 */
 static int max77759_set_charge_enabled(struct max77759_chgr_data *data,
 				       int enabled, const char *reason)
@@ -1284,6 +1314,11 @@ static int max77759_set_charge_disable(struct max77759_chgr_data *data,
 		if (ret < 0)
 			dev_err(data->dev, "%s cannot re-enable charging (%d)\n",
 				__func__, ret);
+
+		ret = max77759_higher_headroom_enable(data, false); /* reset on plug/unplug */
+		if (ret)
+			dev_err_ratelimited(data->dev, "%s error disabling higher headroom,"
+					    "ret:%d\n", __func__, ret);
 	}
 
 	return gvotable_cast_long_vote(data->mode_votable, reason,
@@ -2030,38 +2065,6 @@ static int max77759_init_wcin_psy(struct max77759_chgr_data *data)
 		return PTR_ERR(data->wcin_psy);
 
 	return 0;
-}
-
-static int max77759_higher_headroom_enable(struct max77759_chgr_data *data, bool flag)
-{
-	int ret = 0;
-	u8 reg, reg_rd, val = flag ? CHGR_CHG_CNFG_12_VREG_4P7V : CHGR_CHG_CNFG_12_VREG_4P6V;
-
-	ret = max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_12, &reg);
-	if (ret < 0)
-		return ret;
-
-	reg_rd = reg;
-	ret = max77759_chg_prot(data->regmap, false);
-	if (ret < 0)
-		return ret;
-
-	reg = _chg_cnfg_12_vchgin_reg_set(reg, val);
-	ret = max77759_reg_write(data->regmap, MAX77759_CHG_CNFG_12, reg);
-	if (ret)
-		goto done;;
-
-	dev_dbg(data->dev, "%s: val: %#02x, reg: %#02x -> %#02x\n", __func__, val, reg_rd, reg);
-
-	ret = max77759_reg_read(data->regmap, MAX77759_CHG_CNFG_12, &reg);
-	if (ret)
-		goto done;
-
-done:
-	ret = max77759_chg_prot(data->regmap, true);
-	if (ret < 0)
-		dev_err(data->dev, "%s: error enabling prot (%d)\n", __func__, ret);
-	return ret < 0 ? ret : 0;
 }
 
 static int max77759_chg_is_valid(struct max77759_chgr_data *data)
@@ -2975,13 +2978,6 @@ static irqreturn_t max77759_chgr_irq(int irq, void *client)
 		pr_debug("%s: INSEL insel_auto_clear=%d (%d)\n", __func__,
 			 data->insel_clear, data->insel_clear ? ret : 0);
 		atomic_inc(&data->insel_cnt);
-
-		ret = max77759_higher_headroom_enable(data, false); /* reset on plug/unplug */
-		if (ret) {
-			dev_err_ratelimited(data->dev, "%s error disabling higher headroom,"
-					    "ret:%d\n", __func__, ret);
-			return IRQ_NONE;
-		}
 	}
 
 	/* TODO: make this an interrupt controller */
