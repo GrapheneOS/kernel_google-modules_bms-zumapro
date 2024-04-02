@@ -2404,6 +2404,24 @@ static int debug_sync_model(void *data, u64 val)
 
 DEFINE_SIMPLE_ATTRIBUTE(debug_sync_model_fops, NULL, debug_sync_model, "%llu\n");
 
+static int debug_model_version_get(void *data, u64 *val)
+{
+	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)data;
+
+	*val = max77779_model_read_version(chip->model_data);
+
+	return 0;
+}
+
+static int debug_model_version_set(void *data, u64 val)
+{
+	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)data;
+
+	return max77779_model_write_version(chip->model_data, val);
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(debug_model_version_fops, debug_model_version_get,
+			debug_model_version_set, "%llu\n");
 
 static ssize_t max77779_fg_show_debug_data(struct file *filp, char __user *buf,
 					   size_t count, loff_t *ppos)
@@ -2808,6 +2826,7 @@ static void max77779_fg_init_sysfs(struct max77779_fg_chip *chip, struct dentry 
 	debugfs_create_file("fg_model", 0444, de, chip, &debug_custom_model_fops);
 	debugfs_create_bool("model_ok", 0444, de, &chip->model_ok);
 	debugfs_create_file("sync_model", 0400, de, chip, &debug_sync_model_fops);
+	debugfs_create_file("model_version", 0600, de, chip, &debug_model_version_fops);
 
 	/* new debug interface */
 	debugfs_create_u32("address", 0600, de, &chip->debug_reg_address);

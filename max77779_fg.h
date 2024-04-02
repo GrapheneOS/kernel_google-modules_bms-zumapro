@@ -240,6 +240,7 @@ struct max77779_model_data {
 /** ------------------------------------------------------------------------ */
 
 int max77779_model_read_version(const struct max77779_model_data *model_data);
+int max77779_model_write_version(const struct max77779_model_data *model_data, int version);
 int max77779_model_get_cap_lsb(const struct max77779_model_data *model_data);
 int max77779_reset_state_data(struct max77779_model_data *model_data);
 int max77779_needs_reset_model_data(const struct max77779_model_data *model_data);
