@@ -782,6 +782,24 @@ static inline int max77779_set_firmwarename(struct max77779_fwupdate *fwu)
 	return 0;
 }
 
+static inline int max77779_fwupdate_chip_reset(struct max77779_fwupdate *fwu)
+{
+	int ret;
+
+	/* non zero opcode may distrub chip reset */
+	ret = max77779_external_pmic_reg_write(fwu->pmic, MAX77779_PMIC_RISCV_AP_DATAOUT_OPCODE,
+					       0x0);
+	if (ret)
+		dev_err(fwu->dev, "failed to clear opcode (%d)\n", ret);
+
+	ret = max77779_external_pmic_reg_write(fwu->pmic, MAX77779_PMIC_RISCV_COMMAND_HW,
+					       MAX77779_CMD_REBOOT_FG);
+	if (ret)
+		dev_err(fwu->dev, "failed to reset chip (%d)\n", ret);
+
+	return ret;
+}
+
 static int max77779_fwl_prepare(struct max77779_fwupdate *fwu,
 				const u8 *data, u32 size)
 {
@@ -938,8 +956,7 @@ static int max77779_fwl_poll_complete(struct max77779_fwupdate *fwu)
 	}
 
 	/* b/310710147: risc-v is not operational state. requires reboot */
-	max77779_external_pmic_reg_write(fwu->pmic, MAX77779_PMIC_RISCV_COMMAND_HW,
-					 MAX77779_CMD_REBOOT_FG);
+	max77779_fwupdate_chip_reset(fwu);
 	max77779_wait_riscv_reboot(fwu);
 
 	ret = check_boot_completed(fwu, FW_UPDATE_RETRY_CPU_RESET);
@@ -1056,8 +1073,7 @@ perform_firmware_update_cleanup:
 
 	/* force reboot RISC-V for the case of update failure*/
 	if (ret || written != count) {
-		max77779_external_pmic_reg_write(fwu->pmic, MAX77779_PMIC_RISCV_COMMAND_HW,
-						 MAX77779_CMD_REBOOT_FG);
+		max77779_fwupdate_chip_reset(fwu);
 		fwu->op_st = FGST_BASEFW;
 	}
 
@@ -1255,7 +1271,7 @@ static ssize_t chip_reset_store(struct device *dev, struct device_attribute *att
 				   const char *buf, size_t count)
 {
 	bool trigger;
-	int rt = count;
+	int rt = -EBUSY;
 	struct max77779_fwupdate *fwu = dev_get_drvdata(dev);
 
 	if (!fwu)
@@ -1266,11 +1282,8 @@ static ssize_t chip_reset_store(struct device *dev, struct device_attribute *att
 
 	mutex_lock(&fwu->status_lock);
 	/* if there is no on-going fwupdate, trigger reset */
-	if (!fwu->running_update)
-		max77779_external_pmic_reg_write(fwu->pmic, MAX77779_PMIC_RISCV_COMMAND_HW,
-						 MAX77779_CMD_REBOOT_FG);
-	else
-		rt = -EBUSY;
+	if (!fwu->running_update && max77779_fwupdate_chip_reset(fwu) == 0)
+		rt = count;
 
 	mutex_unlock(&fwu->status_lock);
 
