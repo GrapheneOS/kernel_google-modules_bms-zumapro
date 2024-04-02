@@ -975,7 +975,8 @@ static int max77779_fg_find_pmic(struct max77779_fg_chip *chip)
 
 static int max77779_fg_get_fw_ver(struct max77779_fg_chip *chip)
 {
-	uint8_t fw_rev, fw_sub_rev;
+	uint8_t fw_rev, fw_sub_rev, pmic_revision;
+	u16 fg_ic_info;
 	int ret;
 
 	ret = max77779_fg_find_pmic(chip);
@@ -988,15 +989,27 @@ static int max77779_fg_get_fw_ver(struct max77779_fg_chip *chip)
 	if (ret < 0)
 		return ret;
 
-	ret = max77779_external_pmic_reg_read(chip->pmic_dev, MAX77779_PMIC_RISCV_FW_SUB_REV, &fw_sub_rev);
+	ret = max77779_external_pmic_reg_read(chip->pmic_dev, MAX77779_PMIC_RISCV_FW_SUB_REV,
+					      &fw_sub_rev);
 	if (ret < 0)
 		return ret;
 
 	chip->fw_rev = fw_rev;
 	chip->fw_sub_rev = fw_sub_rev;
 
+	ret = max77779_external_pmic_reg_read(chip->pmic_dev, MAX77779_PMIC_REVISION,
+					      &pmic_revision);
+	if (ret < 0)
+		return ret;
+
+	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_ic_info, &fg_ic_info);
+
 	gbms_logbuffer_devlog(chip->monitor_log, chip->dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-			      "FW_REV=%d, FW_SUB_REV=%d", chip->fw_rev, chip->fw_sub_rev);
+			      "FW_REV=%d, FW_SUB_REV=%d, PMIC_VER/REV=%d/PASS%d, TestProgramRev=%d",
+			      chip->fw_rev, chip->fw_sub_rev,
+			      _max77779_pmic_revision_ver_get(pmic_revision),
+			      _max77779_pmic_revision_rev_get(pmic_revision),
+			      _max77779_fg_ic_info_testprogramrev_get(fg_ic_info));
 
 	return 0;
 }
