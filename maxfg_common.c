@@ -586,10 +586,10 @@ int maxfg_reg_log_data(struct maxfg_regmap *map, struct maxfg_regmap *map_debug,
 }
 
 /* learning parameters */
-#define MAX_FG_LEARNING_CONFIG_NORMAL_REGS 8
+#define MAX_FG_LEARNING_CONFIG_NORMAL_REGS 14
 #define MAX_FG_LEARNING_CONFIG_DEBUG_REGS 2
 
-static enum maxfg_reg_tags fg_learnign_param[] ={
+static enum maxfg_reg_tags fg_learning_param[] ={
 	/* from normal regmap */
 	MAXFG_TAG_fcnom,
 	MAXFG_TAG_dpacc,
@@ -599,6 +599,12 @@ static enum maxfg_reg_tags fg_learnign_param[] ={
 	MAXFG_TAG_msoc,
 	MAXFG_TAG_vfsoc,
 	MAXFG_TAG_fstat,
+	MAXFG_TAG_avgt,
+	MAXFG_TAG_temp,
+	MAXFG_TAG_qh,
+	MAXFG_TAG_vcel,
+	MAXFG_TAG_avgv,
+	MAXFG_TAG_vfocv,
 
 	/* from debug_regmap */
 	MAXFG_TAG_rcomp0,
@@ -615,11 +621,11 @@ void maxfg_init_fg_learn_capture_config(struct maxfg_capture_config *config,
 	}
 
 	scnprintf(&config->name[0], MAX_FG_CAPTURE_CONFIG_NAME_MAX, "FG Learning Parameters");
-	config->normal.tag = &fg_learnign_param[0];
+	config->normal.tag = &fg_learning_param[0];
 	config->normal.reg_cnt = MAX_FG_LEARNING_CONFIG_NORMAL_REGS;
 	config->normal.regmap = regmap;
 
-	config->debug.tag = &fg_learnign_param[MAX_FG_LEARNING_CONFIG_NORMAL_REGS];
+	config->debug.tag = &fg_learning_param[MAX_FG_LEARNING_CONFIG_NORMAL_REGS];
 	config->debug.reg_cnt = MAX_FG_LEARNING_CONFIG_DEBUG_REGS;
 	config->debug.regmap = debug_regmap;
 
@@ -823,7 +829,7 @@ maxfg_show_captured_buffer_exit:
 }
 
 /*
- * data in prev_val follows the order of fg_learnign_param[]
+ * data in prev_val follows the order of fg_learning_param[]
  *  prev_val[0]: fcnom
  *  prev_val[1]: dpacc
  *  prev_val[2]: dqacc

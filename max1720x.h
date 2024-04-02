@@ -332,6 +332,8 @@ static const struct maxfg_reg max1720x[] = {
 	[MAXFG_TAG_vfcap] = { ATOM_INIT_REG16(MAX1720X_VFREMCAP)},
 	[MAXFG_TAG_cycles] = { ATOM_INIT_REG16(MAX1720X_CYCLES)},
 	[MAXFG_TAG_rslow] = { ATOM_INIT_REG16(MAX1720X_RCELL)},
+	[MAXFG_TAG_avgt] = { ATOM_INIT_REG16(MAX1720X_AVGTA)},
+	[MAXFG_TAG_avgv] = { ATOM_INIT_REG16(MAX1720X_AVGVCELL)},
 
 	[MAXFG_TAG_BCNT] = { ATOM_INIT_MAP(0x8e, 0x8f, 0xb2, 0xb4, 0xc4,
 					   0xc5, 0xcd, 0xce, 0xd7, 0xdf) },
