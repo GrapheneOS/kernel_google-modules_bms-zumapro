@@ -3235,7 +3235,7 @@ static int p9221_enable_interrupts(struct p9221_charger_data *charger)
 						P9221_WC_DC_RESET_MODECHANGED)
 			mask |= charger->ints.mode_changed_bit;
 	}
-	ret = p9221_clear_interrupts(charger, mask);
+	ret = p9221_clear_interrupts(charger, P9XXX_INT_CLEAR_MASK);
 	if (ret)
 		dev_err(&charger->client->dev,
 			"Could not clear interrupts: %d\n", ret);
