@@ -875,36 +875,47 @@ bool maxfg_is_relaxed(struct maxfg_regmap *regmap, u16 *fstat, u16 mask)
 #define MAXFG_DR_VFOCV_MV_INHIB_MAX_DEFAULT	4200
 #define MAXFG_DR_RELAX_INVALID			0xffff
 #define MAXFG_DR_RELCFG_INHIBIT			0x1ff
+#define MAXFG_DR_RELAX_FIRST			false
 
+/* true if the device is allowed to relax given the parameters */
 bool maxfg_dynrel_can_relax(struct maxfg_dynrel_state *dr_state,
 			    struct maxfg_regmap *regmap)
 {
+	const bool has_vfocv_range = dr_state->vfocv_inhibit.min !=
+					dr_state->vfocv_inhibit.max;
+	const bool has_temp_range = dr_state->temp_qual.min !=
+					dr_state->temp_qual.max;
 	bool allowed = true;
 	u16 delta_vfsoc;
 	int ret;
-
-	/* alternative: set this to 0 and qual on temp, vfocv */
-	if (!dr_state->vfsoc_delta)
-		return true;
 
 	ret = maxfg_reg_read(regmap, MAXFG_TAG_vfsoc, &dr_state->vfsoc_last);
 	if (ret < 0)
 		allowed = false;
 
 	ret = maxfg_reg_read(regmap, MAXFG_TAG_temp, &dr_state->temp_last);
-	if (ret < 0 || dr_state->temp_last < dr_state->temp_qual.min ||
-		dr_state->temp_last > dr_state->temp_qual.max)
+	if (ret < 0 || (has_temp_range &&
+			(dr_state->temp_last < dr_state->temp_qual.min ||
+			dr_state->temp_last > dr_state->temp_qual.max)))
 		allowed = false;
 
 	/* exclude */
 	ret = maxfg_reg_read(regmap, MAXFG_TAG_vfocv, &dr_state->vfocv_last);
-	if (ret < 0 || (dr_state->vfocv_last >= dr_state->vfocv_inhibit.min &&
+	if (ret < 0 || (has_vfocv_range &&
+			dr_state->vfocv_last >= dr_state->vfocv_inhibit.min &&
 			dr_state->vfocv_last <= dr_state->vfocv_inhibit.max))
 		allowed = false;
 
+	/*
+	 * define MAXFG_DR_RELAX_FIRST to true to always qualify the first
+	 * relaxation after boot. Set it to false to qualify the first
+	 * relaxation after boot with valid soc, temperature and inhibit ranges
+	 * (if defined).
+	 */
 	if (dr_state->vfsoc_det == MAXFG_DR_RELAX_INVALID)
-		return true;
+		return MAXFG_DR_RELAX_FIRST || allowed;
 
+	/* ->vfsoc_delta=0 will void this test */
 	delta_vfsoc = abs(dr_state->vfsoc_last - dr_state->vfsoc_det);
 	if (delta_vfsoc < dr_state->vfsoc_delta)
 		allowed = false;
@@ -941,29 +952,25 @@ int maxfg_dynrel_override_dxacc(struct maxfg_dynrel_state *dr_state,
 {
 	int ret;
 
-	ret = maxfg_reg_write_verify(regmap, MAXFG_TAG_dpacc, dr_state->dpacc_det);
-	if (ret < 0)
-		return -EIO;
-	ret = maxfg_reg_write_verify(regmap, MAXFG_TAG_dqacc, dr_state->dqacc_det);
-	if (ret < 0)
-		return -EIO;
+	/* ignore if there is no previous relaxation */
+	if (dr_state->vfsoc_det == MAXFG_DR_RELAX_INVALID)
+		return -EINVAL;
+
+	ret = maxfg_reg_write_verify(regmap, MAXFG_TAG_dpacc,
+				     dr_state->dpacc_det);
+	if (ret == 0)
+		ret = maxfg_reg_write_verify(regmap, MAXFG_TAG_dqacc,
+					     dr_state->dqacc_det);
 
 	return ret;
 }
 
-/* enable=false inhibit relaxation or restore */
+/* enable=false inhibit relaxation unless ->relcfg_allow==->relcfg_inhibit */
 int maxfg_dynrel_relaxcfg(struct maxfg_dynrel_state *dr_state,
 			  struct maxfg_regmap *regmap, bool enable)
 {
-	const u16 value = enable ?
-		dr_state->relcfg_allow : dr_state->relcfg_inhibit;
-	int ret;
-
-	ret = maxfg_reg_write_verify(regmap, MAXFG_TAG_relaxcfg, value);
-	if (ret < 0)
-		return -EIO;
-
-	return 0;
+	return maxfg_reg_write_verify(regmap, MAXFG_TAG_relaxcfg, enable ?
+			dr_state->relcfg_allow : dr_state->relcfg_inhibit);
 }
 
 void maxfg_dynrel_init(struct maxfg_dynrel_state *dr_state,
@@ -979,6 +986,16 @@ void maxfg_dynrel_init(struct maxfg_dynrel_state *dr_state,
 	if (ret < 0)
 		value16 = MAXFG_DR_RELCFG_INHIBIT;
 	dr_state->relcfg_inhibit = value16;
+
+	/* if set override the one from the model */
+	ret = of_property_read_u16(node, "maxfg,dr_relcfg_allow", &value16);
+	if (ret == 0)
+		dr_state->relcfg_allow = value16;
+
+	/*  default to override_mode if allow=relax will set if explicit */
+	dr_state->override_mode =
+		dr_state->relcfg_inhibit == dr_state->relcfg_allow ||
+		of_property_read_bool(node, "maxfg,dr_mode_override");
 
 	ret = of_property_read_u32(node, "maxfg,dr_vfsoc_delta", &value);
 	if (ret < 0)
@@ -1013,14 +1030,14 @@ void maxfg_dynrel_log_cfg(struct logbuffer *mon, struct device *dev,
 			  const struct maxfg_dynrel_state *dr_state)
 {
 	gbms_logbuffer_devlog(mon, dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-		"dynrel_cfg temp=%d,%d vfocv=%d,%d delta=%d cfg=%x,%x\n",
+		"dynrel_cfg temp=%d,%d vfocv=%d,%d delta=%d cfg=%x,%x dxacc=%d",
 		reg_to_deci_deg_cel(dr_state->temp_qual.min),
 		reg_to_deci_deg_cel(dr_state->temp_qual.max),
 		reg_to_micro_volt(dr_state->vfocv_inhibit.min) / 1000,
 		reg_to_micro_volt(dr_state->vfocv_inhibit.max) / 1000,
 		reg_to_percentage(dr_state->vfsoc_delta),
-		dr_state->relcfg_allow,
-		dr_state->relcfg_inhibit);
+		dr_state->relcfg_allow, dr_state->relcfg_inhibit,
+		dr_state->override_mode);
 }
 
 static void maxfg_dynrel_log__(struct logbuffer *mon, struct device *dev,
@@ -1036,7 +1053,7 @@ static void maxfg_dynrel_log__(struct logbuffer *mon, struct device *dev,
 	}
 
 	gbms_logbuffer_devlog(mon, dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-			"dynrel fstat=%x sticky=%d allowed=%d lrel=%d, temp=%d vfocv=%d vfsoc=%d dpacc=%d dqacc=%d",
+			"dynrel fstat=%x sticky=%d allowed=%d vsoc_det=%d, temp=%d vfocv=%d vfsoc=%d dpacc_det=%d dqacc_det=%d",
 			fstat, dr_state->sticky_cnt, dr_state->relax_allowed,
 			vfsoc_det, reg_to_deci_deg_cel(temp),
 			reg_to_micro_volt(vfocv) / 1000,
