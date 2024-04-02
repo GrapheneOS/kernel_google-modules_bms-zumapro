@@ -378,8 +378,7 @@ int max_m5_model_read_version(const struct max_m5_data *m5_data)
 	return (version >> MODEL_VERSION_SHIFT) & MODEL_VERSION_MASK;
 }
 
-static int max_m5_model_write_version(const struct max_m5_data *m5_data,
-				      int version)
+int max_m5_model_write_version(const struct max_m5_data *m5_data, int version)
 {
 	u16 temp;
 	int ret;

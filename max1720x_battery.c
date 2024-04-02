@@ -4143,6 +4143,24 @@ static int debug_sync_model(void *data, u64 val)
 
 DEFINE_SIMPLE_ATTRIBUTE(debug_sync_model_fops, NULL, debug_sync_model, "%llu\n");
 
+static int debug_model_version_get(void *data, u64 *val)
+{
+	struct max1720x_chip *chip = (struct max1720x_chip *)data;
+
+	*val = max_m5_model_read_version(chip->model_data);
+
+	return 0;
+}
+
+static int debug_model_version_set(void *data, u64 val)
+{
+	struct max1720x_chip *chip = (struct max1720x_chip *)data;
+
+	return max_m5_model_write_version(chip->model_data, val);
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(debug_model_version_fops, debug_model_version_get,
+			debug_model_version_set, "%llu\n");
 
 static ssize_t max1720x_show_debug_data(struct file *filp, char __user *buf,
 					size_t count, loff_t *ppos)
@@ -4438,8 +4456,8 @@ static int max17x0x_init_sysfs(struct max1720x_chip *chip)
 				    &debug_model_reg_fops);
 	}
 	debugfs_create_bool("model_ok", 0444, de, &chip->model_ok);
-	debugfs_create_file("sync_model", 0400, de, chip,
-			    &debug_sync_model_fops);
+	debugfs_create_file("sync_model", 0400, de, chip, &debug_sync_model_fops);
+	debugfs_create_file("model_version", 0600, de, chip, &debug_model_version_fops);
 
 	/* capacity drift fixup, one of MAX1720X_DA_VER_* */
 	debugfs_create_u32("algo_ver", 0644, de, &chip->drift_data.algo_ver);
