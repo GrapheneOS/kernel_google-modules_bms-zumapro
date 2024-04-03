@@ -713,7 +713,7 @@ void max77779_free_data(struct max77779_model_data *model_data)
 	devm_kfree(model_data->dev, model_data);
 }
 
-/* TODO: b/283487421 - Implement model loading */
+/* mark model_data->model_version as invalid to prevent from reloading if failed to read */
 void *max77779_init_data(struct device *dev, struct device_node *node,
 			 struct maxfg_regmap *regmap, struct maxfg_regmap *debug_regmap)
 {
@@ -739,19 +739,17 @@ void *max77779_init_data(struct device *dev, struct device_node *node,
 	cnt = of_property_count_elems_of_size(node, propname, sizeof(u16));
 	if (cnt != MAX77779_FG_MODEL_SIZE) {
 		dev_err(dev, "fg-model: not found, or invalid %d\n", cnt);
+		model_data->model_version = MAX77779_FG_INVALID_VERSION;
 	} else {
 		ret = of_property_read_u16_array(node, propname, model, cnt);
-		if (ret < 0)
+		if (ret < 0) {
 			dev_err(dev, "fg-model: no data cnt=%d %s %s: %d\n",
 				cnt, node->name, propname, ret);
-		else
+			model_data->model_version = MAX77779_FG_INVALID_VERSION;
+		} else {
 			model_data->custom_model_size = cnt;
+		}
 	}
-
-	ret = of_property_read_u32(node, "max77779,model-version", &temp);
-	if (ret < 0 || temp > 255)
-		temp = MAX77779_FG_INVALID_VERSION;
-	model_data->model_version = temp;
 
 	model_data->force_reset_model_data =
 		of_property_read_bool(node, "max77779,force-reset-model-data");
@@ -761,8 +759,17 @@ void *max77779_init_data(struct device *dev, struct device_node *node,
 	 * updated from max1720x_model_work()
 	 */
 	ret = max77779_init_custom_parameters(dev, &model_data->parameters, node);
-	if (ret < 0)
+	if (ret < 0) {
 		dev_err(dev, "fg-params: not found ret=%d\n", ret);
+		model_data->model_version = MAX77779_FG_INVALID_VERSION;
+	}
+
+	if (model_data->model_version != MAX77779_FG_INVALID_VERSION) {
+		ret = of_property_read_u32(node, "max77779,model-version", &temp);
+		if (ret < 0 || temp > 255)
+			temp = MAX77779_FG_INVALID_VERSION;
+		model_data->model_version = temp;
+	}
 
 	crc8_populate_msb(max77779_fg_crc8_table, MAX7779_FG_CRC8_POLYNOMIAL);
 
