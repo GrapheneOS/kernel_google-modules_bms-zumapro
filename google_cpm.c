@@ -211,7 +211,7 @@ struct gcpm_drv  {
 	int out_uv;
 
 	int dcen_gpio;
-	u32 dcen_gpio_default;
+	bool dcen_gpio_default;
 
 	/* >0 when enabled, pps charger to use */
 	int pps_index;
@@ -4445,8 +4445,8 @@ static int google_cpm_probe(struct platform_device *pdev)
 	if (gcpm->dcen_gpio >= 0) {
 		unsigned long init_flags = GPIOF_OUT_INIT_LOW;
 
-		of_property_read_u32(pdev->dev.of_node, "google,dc-en-value",
-				     &gcpm->dcen_gpio_default);
+		gcpm->dcen_gpio_default = of_property_read_bool(pdev->dev.of_node,
+								"google,google,dc-en-value");
 		if (gcpm->dcen_gpio_default)
 			init_flags = GPIOF_OUT_INIT_HIGH;
 
