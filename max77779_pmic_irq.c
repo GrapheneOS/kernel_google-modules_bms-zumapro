@@ -227,7 +227,7 @@ static int max77779_pmic_irq_probe(struct platform_device *pdev)
 	info->irq = gpio_to_irq(irq_gpio);
 	if (info->irq < 0) {
 		dev_err(dev, "Error getting irq (%d)\n", info->irq);
-		return err;
+		return info->irq;
 	}
 
 	device_init_wakeup(dev, true);
