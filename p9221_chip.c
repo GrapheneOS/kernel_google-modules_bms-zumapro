@@ -1936,7 +1936,7 @@ error_exit:
 static int p9412_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 {
 	const int req_pwr_val = req_pwr * 2 / 1000;
-	int ret, loops, i, txpwr_mw;
+	int ret = 0, loops, i, txpwr_mw;
 	u8 val8, cdmode, txpwr, pwr_stp, mode_sts, err_sts, prop_cur_pwr, prop_req_pwr;
 	u32 val = 0;
 
@@ -2051,6 +2051,11 @@ enable_capdiv:
 	 */
 	/* 60 * 50 = 3 secs */
 	for (loops = 60 ; loops ; loops--) {
+		if (!chgr->online) {
+			chgr->prop_mode_en = false;
+			ret = -ENODEV;
+			break;
+		}
 		if (chgr->prop_mode_en) {
 			dev_info(&chgr->client->dev,
 				 "PROP_MODE: Proprietary Mode Enabled\n");
@@ -2102,12 +2107,16 @@ request_pwr:
 		usleep_range(100 * USEC_PER_MSEC, 120 * USEC_PER_MSEC);
 		if (!chgr->online) {
 			chgr->prop_mode_en = false;
+			ret = -ENODEV;
 			dev_err(&chgr->client->dev,
 				"PROP_MODE: charger went offline after requesting prop mode\n");
 		}
 	}
 
 err_exit:
+	if (ret == -ENODEV)
+		return ret;
+
         /* check status */
 	ret = chgr->chip_get_sys_mode(chgr, &val8);
 	ret |= chgr->reg_read_8(chgr, P9412_PROP_CURR_PWR_REG, &prop_cur_pwr);
@@ -2229,6 +2238,11 @@ static int ra9530_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 	 */
 	loop_cnt = max_wait_time / 50;
 	for (loops = loop_cnt ; loops ; loops--) {
+		if (!chgr->online) {
+			chgr->prop_mode_en = false;
+			ret = -ENODEV;
+			break;
+		}
 		if (chgr->prop_mode_en) {
 			dev_info(&chgr->client->dev, "PROP_MODE: Proprietary Mode Enabled\n");
 			break;
@@ -2245,6 +2259,7 @@ request_pwr:
 		usleep_range(100 * USEC_PER_MSEC, 120 * USEC_PER_MSEC);
 		if (!chgr->online) {
 			chgr->prop_mode_en = false;
+			ret = -ENODEV;
 			goto err_exit;
 		}
 	}
@@ -2306,6 +2321,9 @@ request_pwr:
 
 
 err_exit:
+	if (ret == -ENODEV)
+		return ret;
+
         /* check status */
 	ret = chgr->chip_get_sys_mode(chgr, &val8);
 	ret |= chgr->reg_read_8(chgr, P9412_PROP_CURR_PWR_REG, &prop_cur_pwr);
