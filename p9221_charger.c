@@ -905,7 +905,7 @@ static int p9221_reset_wlc_dc(struct p9221_charger_data *charger)
 	if (!charger->pdata->has_wlc_dc)
 		return -EOPNOTSUPP;
 
-	dev_dbg(&charger->client->dev, "%s\n start", __func__);
+	dev_dbg(&charger->client->dev, "%s start\n", __func__);
 	charger->wlc_dc_enabled = false;
 
 	usleep_range(500 * USEC_PER_MSEC, 510 * USEC_PER_MSEC);
@@ -2717,6 +2717,10 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 			ret = charger->chip_prop_mode_en(charger, req_pwr);
 			if (ret == -EAGAIN) {
 				dev_warn(&charger->client->dev, "PROP Mode retry\n");
+				return ret;
+			}
+			if (ret == -ENODEV) {
+				dev_warn(&charger->client->dev, "Offline during PROP Mode\n");
 				return ret;
 			}
 			set_renego_state(charger, P9XXX_AVAILABLE);
