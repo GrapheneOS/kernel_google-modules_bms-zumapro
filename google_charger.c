@@ -2380,7 +2380,7 @@ static void chg_work(struct work_struct *work)
 	int usb_online, usb_present = 0;
 	int present, online;
 	int soc = -1, update_interval = -1;
-	bool chg_done = false;
+	bool chg_done = false, online_changed = false;
 	int success, rc = 0;
 
 	__pm_stay_awake(chg_drv->chg_ws);
@@ -2454,6 +2454,7 @@ static void chg_work(struct work_struct *work)
 				      ext_present, chg_drv->stop_charging);
 		chg_drv->online = online;
 		chg_drv->present = present;
+		online_changed = true;
 	}
 
 	if (usb_online  < 0 || wlc_online < 0 || ext_online < 0) {
@@ -2487,7 +2488,7 @@ static void chg_work(struct work_struct *work)
 		if (rc < 0)
 			goto rerun_error;
 
-		if (stop_charging) {
+		if (stop_charging || online_changed) {
 			int ret;
 
 			ad.v = 0;
