@@ -241,6 +241,15 @@ static inline int max77779_reg_update_verify(struct max77779_chgr_data *data,
 	return ((tmp & msk) == val) ? 0 : -EINVAL;
 }
 
+static int max77779_chg_mode_write_locked(struct max77779_chgr_data *data,
+					  enum max77779_charger_modes mode)
+{
+	/* The io lock should be held before you call this to protect the mode register */
+	return max77779_reg_update(data, MAX77779_CHG_CNFG_00,
+				   MAX77779_CHG_CNFG_00_MODE_MASK,
+				   mode);
+}
+
 static int max77779_resume_check(struct max77779_chgr_data *data)
 {
 	int ret = 0;
@@ -306,9 +315,7 @@ int max77779_external_chg_mode_write(struct device *dev, enum max77779_charger_m
 
 	/* Protect mode register */
 	mutex_lock(&data->io_lock);
-	ret = max77779_external_chg_reg_update(dev, MAX77779_CHG_CNFG_00,
-					       MAX77779_CHG_CNFG_00_MODE_MASK,
-					       mode);
+	ret = max77779_chg_mode_write_locked(data, mode);
 	mutex_unlock(&data->io_lock);
 
 	return ret;
@@ -890,15 +897,15 @@ exit_done:
 	if (ret < 0) {
 		dev_err(data->dev,  "use_case=%d->%d CNFG_00=%x failed ret:%d\n",
 			from_uc, use_case, cb_data->reg, ret);
-		goto done;
+		mutex_unlock(&data->io_lock);
+		return ret;
 	}
+	mutex_unlock(&data->io_lock);
 
 	ret = gs201_finish_usecase(uc_data, use_case);
 	if (ret < 0 && ret != -EAGAIN)
 		dev_err(data->dev, "Error finishing usecase config ret:%d\n", ret);
 
-done:
-	mutex_unlock(&data->io_lock);
 
 	return ret;
 }
@@ -1120,9 +1127,9 @@ static int max77779_enable_sw_recharge(struct max77779_chgr_data *data,
 	mutex_lock(&data->io_lock);
 	ret = max77779_reg_read(data, MAX77779_CHG_CNFG_00, &reg);
 	if (ret == 0)
-		ret = max77779_external_chg_mode_write(data->dev, MAX77779_CHGR_MODE_ALL_OFF);
+		ret = max77779_chg_mode_write_locked(data, MAX77779_CHGR_MODE_ALL_OFF);
 	if (ret == 0)
-		ret = max77779_external_chg_mode_write(data->dev, reg);
+		ret = max77779_chg_mode_write_locked(data, reg);
 	mutex_unlock(&data->io_lock);
 
 	data->charge_done = false;
