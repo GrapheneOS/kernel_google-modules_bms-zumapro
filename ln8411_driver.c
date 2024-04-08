@@ -1250,7 +1250,6 @@ static int ln8411_stop_charging(struct ln8411_charger *ln8411)
 
 	/* restore to config */
 	ln8411->pdata->iin_cfg = ln8411->pdata->iin_cfg_max;
-	ln8411->pdata->v_float = ln8411->pdata->v_float_dt;
 
 	/*
 	 * Clear charging configuration
@@ -5140,16 +5139,6 @@ static int of_ln8411_dt(struct device *dev,
 		dev_warn(dev, "ln8411,ta-max-vol_2_1 is Empty\n");
 		pdata->ta_max_vol_2_1 = LN8411_TA_MAX_VOL_2_1;
 	}
-
-	/* charging float voltage */
-	ret = of_property_read_u32(np_ln8411, "ln8411,float-voltage",
-				   &pdata->v_float_dt);
-	if (ret) {
-		dev_warn(dev, "ln8411,float-voltage is Empty\n");
-		pdata->v_float_dt = LN8411_VFLOAT_DFT;
-	}
-	pdata->v_float = pdata->v_float_dt;
-	dev_info(dev, "ln8411,v_float is %u\n", pdata->v_float);
 
 	/* input topoff current */
 	ret = of_property_read_u32(np_ln8411, "ln8411,input-itopoff",
