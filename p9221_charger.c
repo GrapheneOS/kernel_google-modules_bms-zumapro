@@ -3235,7 +3235,7 @@ static int p9221_enable_interrupts(struct p9221_charger_data *charger)
 	} else {
 		mask = charger->ints.stat_limit_mask | charger->ints.stat_cc_mask |
 		       charger->ints.vrecton_bit | charger->ints.prop_mode_mask |
-		       charger->ints.extended_mode_bit;
+		       charger->ints.extended_mode_bit | charger->ints.stat_limitlog_mask;
 
 		if (charger->pdata->needs_dcin_reset ==
 						P9221_WC_DC_RESET_VOUTCHANGED)
@@ -6634,6 +6634,8 @@ static void p9221_irq_handler(struct p9221_charger_data *charger, u16 irq_src)
 
 	if (irq_src & charger->ints.stat_limit_mask)
 		p9221_over_handle(charger, irq_src);
+	else if (irq_src & charger->ints.stat_limitlog_mask)
+		dev_err(&charger->client->dev, "Received OVER INT: %02x, handled by FW\n", irq_src);
 
 	/* Receive complete */
 	if (irq_src & charger->ints.cc_data_rcvd_bit) {
