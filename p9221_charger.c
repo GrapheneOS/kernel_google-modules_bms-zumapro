@@ -2001,8 +2001,10 @@ static int p9221_get_psy_online(struct p9221_charger_data *charger)
 		dev_err(&charger->client->dev, "WLC online but cannot access i2c, ret=%d\n", ret);
 		if (!delayed_work_pending(&charger->notifier_work)) {
 			charger->check_dc = true;
-			schedule_delayed_work(&charger->notifier_work,
-					      msecs_to_jiffies(P9221_NOTIFIER_DELAY_MS));
+			pm_stay_awake(charger->dev);
+			if (!schedule_delayed_work(&charger->notifier_work,
+						   msecs_to_jiffies(P9221_NOTIFIER_DELAY_MS)))
+				pm_relax(charger->dev);
 		}
 	}
 	return charger->wlc_dc_enabled ? PPS_PSY_PROG_ONLINE : 1;
