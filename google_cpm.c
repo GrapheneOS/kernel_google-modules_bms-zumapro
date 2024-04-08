@@ -2120,6 +2120,10 @@ static int gcpm_psy_set_property(struct power_supply *psy,
 		ta_check = true;
 		break;
 
+	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
+		route = !gcpm_chg_is_cp_active(gcpm);
+		break;
+
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
 		ta_check = gcpm->fv_uv != pval->intval;
 		gcpm->fv_uv = pval->intval;
