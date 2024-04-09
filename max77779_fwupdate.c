@@ -257,11 +257,12 @@ static inline void read_fwupdate_stats(struct max77779_fwupdate *fwu)
 	}
 }
 
-static inline void update_fwupdate_stats(struct max77779_fwupdate *fwu)
+static inline void update_fwupdate_stats(struct max77779_fwupdate *fwu,
+					 struct max77779_fwupdate_stats* stats)
 {
 	int ret;
 
-	ret = gbms_storage_write(GBMS_TAG_FWSF, &fwu->stats, sizeof(fwu->stats));
+	ret = gbms_storage_write(GBMS_TAG_FWSF, stats, sizeof(*stats));
 	if (ret < 0)
 		gbms_logbuffer_prlog(fwu->lb, LOGLEVEL_WARNING, 0, LOGLEVEL_INFO,
 				     "failed to write GBMS_TAG_FWSF (%d)\n", ret);
@@ -970,15 +971,18 @@ static int max77779_fwl_poll_complete(struct max77779_fwupdate *fwu)
 	ret = max77779_check_timer_refresh(fwu);
 	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed on max77779_check_timer_refresh\n");
 
-	fwu->op_st = FGST_NORMAL;
-	fwu->stats.success++;
-	fwu->stats.fail--;
+	mutex_lock(&fwu->status_lock);
 
-	if (fwu->v_cur.major != fwu->v_new.major || fwu->v_cur.minor != fwu->v_new.minor) {
+	fwu->op_st = FGST_NORMAL;
+	fwu->stats.count++;
+	fwu->stats.success++;
+
+	update_fwupdate_stats(fwu, &fwu->stats);
+
+	mutex_unlock(&fwu->status_lock);
+
+	if (fwu->v_cur.major != fwu->v_new.major || fwu->v_cur.minor != fwu->v_new.minor)
 		fwu->v_cur = fwu->v_new;
-		/* new version of firmware was installed: update GBMS_TAG_FWHI as 0 */
-		fwu->update_info.new_tag = 0;
-	}
 
 	set_firmware_update_tag(fwu, fwu->update_info.new_tag);
 
@@ -1034,6 +1038,7 @@ static inline int perform_firmware_update(struct max77779_fwupdate *fwu, const c
 	u32 written = 0;
 	enum max77779_fwupdate_err_code err_code = MAX77779_FWU_ERR_NONE;
 	int ret, ret_st;
+	struct max77779_fwupdate_stats stats_backup;
 
 	/* if previous update is not completed yet, stop at here */
 	if (!update_running_state(fwu, true))
@@ -1046,12 +1051,17 @@ static inline int perform_firmware_update(struct max77779_fwupdate *fwu, const c
 	/*
 	 * increase failure count upfront
 	 *  - update can be distrubed without cleanup
-	 *  - decrease inside of max77779_fwl_poll_complete when everything is OK
+	 *  - store with new value inside of max77779_fwl_poll_complete when everything is OK
 	 */
-	fwu->stats.count++;
-	fwu->stats.fail++;
+	mutex_lock(&fwu->status_lock);
 
-	update_fwupdate_stats(fwu);
+	stats_backup.count = fwu->stats.count + 1;
+	stats_backup.success = fwu->stats.success;
+	stats_backup.fail = fwu->stats.fail + 1;
+
+	update_fwupdate_stats(fwu, &stats_backup);
+
+	mutex_unlock(&fwu->status_lock);
 
 	ret = max77779_fwl_prepare(fwu, data, count);
 	if (ret) {
@@ -1074,7 +1084,14 @@ perform_firmware_update_cleanup:
 	/* force reboot RISC-V for the case of update failure*/
 	if (ret || written != count) {
 		max77779_fwupdate_chip_reset(fwu);
+
+		mutex_lock(&fwu->status_lock);
+
 		fwu->op_st = FGST_BASEFW;
+		fwu->stats.count++;
+		fwu->stats.fail++;
+
+		mutex_unlock(&fwu->status_lock);
 	}
 
 	ret_st = gbms_storage_write(GBMS_TAG_FGST, &fwu->op_st, sizeof(fwu->op_st));
@@ -1082,7 +1099,6 @@ perform_firmware_update_cleanup:
 		gbms_logbuffer_prlog(fwu->lb, LOGLEVEL_WARNING, 0, LOGLEVEL_INFO,
 				     "failed to update eeprom:GBMS_TAG_FGST (%d)\n", ret_st);
 
-	update_fwupdate_stats(fwu);
 	gbms_logbuffer_prlog(fwu->lb, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
 			     "complete_firmware_update: %d %d %d (%d)", fwu->stats.count,
 			     fwu->stats.success, fwu->stats.fail, (int)err_code);
@@ -1148,9 +1164,9 @@ firmware_update_work_cleanup:
  */
 static ssize_t trigger_update_firmware(struct device *dev,
 				       struct device_attribute *attr,
-				       const char *override_tag, size_t count)
+				       const char *options, size_t count)
 {
-	int current_ver, target_ver;
+	int current_ver, read_cnt, target_ver, override_ver = 0;
 	struct max77779_fwupdate *fwu = dev_get_drvdata(dev);
 
 	if (!fwu)
@@ -1161,14 +1177,15 @@ static ssize_t trigger_update_firmware(struct device *dev,
 		return -EACCES;
 	}
 
-	if (kstrtoint(override_tag, 10, &target_ver)) {
-		dev_err(fwu->dev, "incorrect input: expects override_tag(number)\n");
+	read_cnt = sscanf(options, "%d %d", &target_ver, &override_ver);
+	if (read_cnt < 1) {
+		dev_err(fwu->dev, "incorrect input: expects override_tag(number) and reset_tag"
+			"(optional)\n");
 		return -EINVAL;
 	}
 
 	current_ver = get_firmware_update_tag(fwu);
-
-	if (target_ver <= current_ver) {
+	if (!override_ver && (target_ver <= current_ver)) {
 		dev_info(fwu->dev, "ver %d already installed: update request will be skipped",
 			target_ver);
 		return count;
@@ -1294,12 +1311,19 @@ static DEVICE_ATTR_WO(chip_reset);
 
 static ssize_t update_stats_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
+	ssize_t ret;
 	struct max77779_fwupdate *fwu = dev_get_drvdata(dev);
 	if (!fwu)
 		return -EAGAIN;
 
-	return scnprintf(buf, PAGE_SIZE, "%d %d %d\n", fwu->stats.count, fwu->stats.success,
-			 fwu->stats.fail);
+	mutex_lock(&fwu->status_lock);
+
+	ret = scnprintf(buf, PAGE_SIZE, "%d %d %d\n", fwu->stats.count, fwu->stats.success,
+			fwu->stats.fail);
+
+	mutex_unlock(&fwu->status_lock);
+
+	return ret;
 }
 
 static ssize_t update_stats_store(struct device *dev, struct device_attribute *attr,
@@ -1315,15 +1339,23 @@ static ssize_t update_stats_store(struct device *dev, struct device_attribute *a
 	if (ret < 0)
 		return ret;
 
-	if (value == 0) {
+	mutex_lock(&fwu->status_lock);
+
+	if (value == 0 && !fwu->running_update) {
 		fwu->stats.count = 0;
 		fwu->stats.success = 0;
 		fwu->stats.fail = 0;
 
-		update_fwupdate_stats(fwu);
+		update_fwupdate_stats(fwu, &fwu->stats);
+
+		ret = count;
+	} else {
+		ret = -EBUSY;
 	}
 
-	return count;
+	mutex_unlock(&fwu->status_lock);
+
+	return ret;
 }
 
 static DEVICE_ATTR_RW(update_stats);
