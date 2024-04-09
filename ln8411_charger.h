@@ -39,11 +39,6 @@ struct ln8411_platform_data {
 	u32		ta_max_vol_4_1;
 	bool		si_fet_ovp_drive;
 
-	/* irdrop */
-	s32		irdrop_limits[3];
-	s32		irdrop_limit_cnt;
-	u8		ln8411_irdrop;
-
 #if IS_ENABLED(CONFIG_THERMAL)
 	const char *usb_tz_name;
 #endif
