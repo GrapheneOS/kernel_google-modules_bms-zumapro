@@ -215,12 +215,16 @@ struct max77779_custom_parameters {
 
 /* this is what is saved and restored to/from GMSR */
 struct model_state_save {
+	u16 qrtable00;
+	u16 qrtable10;
+	u16 qrtable20;
+	u16 qrtable30;
+	u16 fullcapnom;
+	u16 fullcaprep;
 	u16 rcomp0;
 	u16 tempco;
-	u16 fullcaprep;
 	u16 cycles;
-	u16 fullcapnom;
-	u8 padding[12]; /* keep the same size as 59 for consistency GBMS_GMSR_LEN */
+	u8 padding[4]; /* keep the same size as 59 for consistency GBMS_GMSR_LEN */
 	u8 crc;
 } __attribute__((packed));
 
@@ -233,6 +237,7 @@ struct max77779_model_data {
 	struct max77779_custom_parameters parameters;
 	u16 cycles;
 	u16 cv_mixcap;
+	u16 hibcfg;
 
 	int custom_model_size;
 	u16 *custom_model;
