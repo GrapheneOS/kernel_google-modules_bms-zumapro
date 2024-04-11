@@ -1999,6 +1999,7 @@ static int p9221_get_psy_online(struct p9221_charger_data *charger)
 	ret = charger->chip_get_sys_mode(charger, &val);
 	if (ret != 0) {
 		dev_err(&charger->client->dev, "WLC online but cannot access i2c, ret=%d\n", ret);
+		/* pm_stay_awake(charger->dev) is needed for schedule notifier_work */
 		if (!delayed_work_pending(&charger->notifier_work)) {
 			charger->check_dc = true;
 			pm_stay_awake(charger->dev);
@@ -2644,14 +2645,22 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 			return -EOPNOTSUPP;
 		}
 
-		if (charger->last_capacity > WLC_HPP_SOC_LIMIT)
-			return -EOPNOTSUPP;
+		/*
+		 * Lower DC_ICL for HPP to improve communications while
+		 * the charger ramps up the voltage to the limit.
+		 */
+		ret = p9221_set_hpp_dc_icl(charger, true);
+		if (ret < 0)
+			dev_err(&charger->client->dev, "cannot set HPP DC ICL: %d\n", ret);
+
 		if (charger->last_capacity < 0) {
 			schedule_delayed_work(&charger->soc_work, 0);
 			dev_dbg(&charger->client->dev, "retry, last_capacity=%d\n",
 				charger->last_capacity);
 			return -EAGAIN;
 		}
+		if (charger->last_capacity > WLC_HPP_SOC_LIMIT)
+			  goto not_hpp;
 
 		/* need to check calibration is done before re-negotiate */
 		if (!charger->chip_is_calibrated(charger)) {
@@ -2664,8 +2673,7 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 			return -EINVAL;
 		if (val8 < P9XXX_TX_GUAR_PWR_15W) {
 			dev_warn(&charger->client->dev, "Tx guar_pwr=%dW\n", val8 / 2);
-			p9221_set_auth_dc_icl(charger, false);
-			return -EOPNOTSUPP;
+			goto not_hpp;
 		}
 
 		/* will return -EAGAIN until the feature is supported */
@@ -2682,27 +2690,17 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 			dev_warn(&charger->client->dev, "Feature check failed\n");
 			p9221_set_auth_dc_icl(charger, false);
 			mutex_unlock(&charger->auth_lock);
-			return -EOPNOTSUPP;
+			goto not_hpp;
 		}
 
 		mutex_unlock(&charger->auth_lock);
 
 		/* Check alignment before enabling proprietary mode */
 		ret = p9xxx_check_alignment(charger);
-		if (ret < 0) {
-			p9221_set_auth_dc_icl(charger, false);
+		if (ret == -EAGAIN)
 			return ret;
-		}
-
-		/*
-		 * AUTH is passed, remove the DC_ICL limit and set ICL for
-		 * prepare HPP mode
-		 */
-		ret = p9221_set_hpp_dc_icl(charger, true);
-		ret |= p9221_set_auth_dc_icl(charger, false);
-		if (ret < 0)
-			dev_warn(&charger->client->dev, "Cannot enable HPP_ICL (%d)\n", ret);
-		mdelay(10);
+		if (ret == -EOPNOTSUPP)
+			goto not_hpp;
 
 		/*
 		 * run ->chip_prop_mode_en() if proprietary mode or cap divider
@@ -2744,7 +2742,7 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 					 "Cannot disable HPP_VOTER (%d)\n", ret);
 
 			dev_dbg(&charger->client->dev, "%s: HPP not supported\n", __func__);
-			return -EOPNOTSUPP;
+			goto not_hpp;
 		}
 
 		p9221_write_fod(charger);
@@ -2760,7 +2758,8 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 			dev_warn(&charger->client->dev, "Fail to set comm cap(%d)\n", ret);
 
 		return 1;
-	} else if (wlc_dc_enabled) {
+	}
+	if (wlc_dc_enabled) {
 		/* TODO: thermals might come in and disable with 0 */
 		p9221_reset_wlc_dc(charger);
 	}
@@ -2788,6 +2787,12 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 				P9221_WLC_VOTER, !charger->enabled);
 
 	return 1;
+
+not_hpp:
+	ret = p9221_set_hpp_dc_icl(charger, false);
+	if (ret < 0)
+		dev_warn(&charger->client->dev, "Cannot disable HPP_ICL (%d)\n", ret);
+	return -EOPNOTSUPP;
 }
 
 /* 400 seconds debounce for auth per WPC spec */
@@ -3155,6 +3160,7 @@ static int p9221_gbms_prop_is_writeable(struct power_supply *psy,
 	return writeable;
 }
 
+/* pm_stay_awake(charger->dev) is needed for schedule notifier_work */
 static int p9221_notifier_cb(struct notifier_block *nb, unsigned long event,
 			     void *data)
 {
@@ -3261,6 +3267,8 @@ int p9xxx_sw_ramp_icl(struct p9221_charger_data *charger, const int icl_target)
 	if (!charger->pdata->has_sw_ramp)
 		return 0;
 
+	mutex_lock(&charger->icl_lock);
+
 	icl_now = gvotable_get_current_int_vote(charger->dc_icl_votable);
 
 	dev_dbg(&charger->client->dev, "%s: Set ICL %d->%d ==========\n", __func__, icl_now, icl_target);
@@ -3281,6 +3289,8 @@ int p9xxx_sw_ramp_icl(struct p9221_charger_data *charger, const int icl_target)
 		gvotable_cast_int_vote(charger->dc_icl_votable, P9221_RAMP_VOTER, icl_now, true);
 		usleep_range(100 * USEC_PER_MSEC, 120 * USEC_PER_MSEC);
 	}
+
+	mutex_unlock(&charger->icl_lock);
 
 	if (!charger->online)
 		return -ENODEV;
@@ -3950,6 +3960,7 @@ static void p9xxx_update_q_factor(struct p9221_charger_data *charger)
 		 q, charger->mfg, ret);
 }
 
+/* pm_stay_awake(charger->dev) is needed for schedule notifier_work */
 static void p9221_notifier_work(struct work_struct *work)
 {
 	struct p9221_charger_data *charger = container_of(work,
@@ -4863,6 +4874,10 @@ static ssize_t features_store(struct device *dev,
 			charger->pdata->feat_compat_mode = false;
 		}
 	} else {
+		mutex_lock(&charger->auth_lock);
+		/* remove auth_icl after AUTH is done */
+		p9221_set_auth_dc_icl(charger, false);
+		mutex_unlock(&charger->auth_lock);
 		ret = feature_update_session(charger, ft);
 		if (ret < 0)
 			count = ret;
