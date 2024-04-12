@@ -627,8 +627,11 @@ bool gs201_setup_usecases(struct max77779_usecase_data *uc_data,
 	}
 
 	/* control external boost if present */
-	if (uc_data->bst_on == -EPROBE_DEFER)
+	if (uc_data->bst_on == -EPROBE_DEFER) {
 		uc_data->bst_on = of_get_named_gpio(node, "max77779,bst-on", 0);
+		if (uc_data->bst_on >= 0)
+			gpio_direction_output(uc_data->bst_on, 0);
+	}
 	if (uc_data->ext_bst_ctl == -EPROBE_DEFER)
 		uc_data->ext_bst_ctl = of_get_named_gpio(node, "max77779,extbst-ctl", 0);
 	if (uc_data->ext_bst_mode == -EPROBE_DEFER) {
