@@ -109,7 +109,6 @@ struct rt9471_desc {
 	bool en_safe_tmr;
 	bool en_te;
 	bool en_jeita;
-	bool ceb_invert;
 	bool dis_i2c_tout;
 	bool en_qon_rst;
 	bool auto_aicr;
@@ -130,7 +129,6 @@ static struct rt9471_desc rt9471_default_desc = {
 	.en_safe_tmr = true,
 	.en_te = true,
 	.en_jeita = true,
-	.ceb_invert = false,
 	.dis_i2c_tout = false,
 	.en_qon_rst = true,
 	.auto_aicr = true,
@@ -1496,7 +1494,6 @@ static int rt9471_parse_dt(struct rt9471_chip *chip)
 	desc->en_safe_tmr = of_property_read_bool(np, "en-safe-tmr");
 	desc->en_te = of_property_read_bool(np, "en-te");
 	desc->en_jeita = of_property_read_bool(np, "en-jeita");
-	desc->ceb_invert = of_property_read_bool(np, "ceb-invert");
 	desc->dis_i2c_tout = of_property_read_bool(np, "dis-i2c-tout");
 	desc->en_qon_rst = of_property_read_bool(np, "en-qon-rst");
 	desc->auto_aicr = of_property_read_bool(np, "auto-aicr");
