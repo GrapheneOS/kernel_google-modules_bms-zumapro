@@ -10178,7 +10178,6 @@ static int gbatt_get_health(struct batt_drv *batt_drv)
 	return health;
 }
 
-#define TTF_REPORT_MAX_RATIO	300
 static int gbatt_get_property(struct power_supply *psy,
 				 enum power_supply_property psp,
 				 union power_supply_propval *val)
@@ -10281,9 +10280,11 @@ static int gbatt_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_TIME_TO_FULL_NOW: {
 		ktime_t res;
 		int max_ratio;
+		const int report_ratio = batt_drv->ttf_stats.report_max_ratio;
 
 		max_ratio = batt_ttf_estimate(&res, batt_drv);
-		if (max_ratio >= TTF_REPORT_MAX_RATIO) {
+		/* always report when report_max_ratio is 0 */
+		if (report_ratio && max_ratio >= report_ratio) {
 			val->intval = 0;
 		} else if (max_ratio >= 0) {
 			if (res < 0)
