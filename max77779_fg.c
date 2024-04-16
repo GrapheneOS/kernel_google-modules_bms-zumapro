@@ -1617,13 +1617,11 @@ static int max77779_gbms_fg_get_property(struct power_supply *psy,
 
 	mutex_lock(&chip->model_lock);
 
-	pm_runtime_get_sync(chip->dev);
-	if (!chip->init_complete || !chip->resume_complete) {
-		pm_runtime_put_sync(chip->dev);
+	if (max77779_fg_resume_check(chip) || !chip->model_ok ||
+	    chip->model_reload != MAX77779_FG_LOAD_MODEL_IDLE) {
 		mutex_unlock(&chip->model_lock);
 		return -EAGAIN;
 	}
-	pm_runtime_put_sync(chip->dev);
 
 	switch (psp) {
 	case GBMS_PROP_CAPACITY_RAW:
@@ -3051,6 +3049,7 @@ static void max77779_fg_model_work(struct work_struct *work)
 				/* saved new value in max77779_fg_set_next_update */
 				chip->model_next_update = reg_cycle > 0 ? reg_cycle - 1 : 0;
 			}
+			max77779_fg_monitor_log_data(chip, true);
 		} else if (rc != -EAGAIN) {
 			chip->model_reload = MAX77779_FG_LOAD_MODEL_DISABLED;
 			chip->model_ok = false;
