@@ -87,6 +87,42 @@ properties:
     description: max77779 PMIC device phandle.
     $ref: /schemas/types.yaml#/definitions/phandle
 
+  max77779,bst-on:
+    description: external boost enable gpio.
+
+  max77779,extbst-ctl:
+    description: external boost control gpio.
+
+  max77779,extbst-mode:
+    description: External boost mode gpio.
+
+  max77779,wlc-en:
+    description: WLC enable gpio.
+
+  max77779,wlc-spoof:
+    description: WLC spoof gpio. Used during thermal throttling.
+
+  max77779,wlc-spoof-vbyp:
+    description: WLC spoof vbypass gpio.
+
+  max77779,rx-to-rx-otg-en:
+    description: wlc_rx to wlc_rx + otg supported.
+    type: boolean
+
+  max77779,ext-otg-only:
+    description: external boost OTG only.
+    type: boolean
+
+  max77779,reverse_12-en:
+    description: reverse 1:2 mode supported.
+    type: boolean
+
+  max77779,rtx-ready:
+    description: RTX usecase ready gpio.
+
+  max77779,rtx-available:
+    description: RTX usecase available gpio.
+
 required:
   - compatible
   - reg

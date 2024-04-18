@@ -97,6 +97,82 @@ properties:
     description: Name of DC power supply
     $ref: /schemas/types.yaml#/definitions/string
 
+  max77759,bst-on:
+    description: external boost enable gpio.
+
+  max77759,bst-sel:
+    description: external boost select gpio.
+
+  max77759,extbst-ctl:
+    description: external boost control gpio.
+
+  max77759,pogo-ovp-en:
+    description: pogo pin charging overvoltage protection enable gpio.
+
+  max77759,pogo-vout-sw-en:
+    description: pogo pin charging vout software enable gpio.
+
+  max77759,vin-is_valid:
+    description: NBC workaround for OTG gpio.
+
+  max77759,lsw1-is_closed:
+    description: Load switch 1 closed gpio.
+
+  max77759,lsw1-is_open:
+    description: Load switch 1 open gpio.
+
+  max77759,otg-enable:
+    description: OTG enable gpio.
+
+  max77759,wlc-en:
+    description: WLC enable gpio.
+
+  max77759,wlc-vbus_en:
+    description: WLC vbus enable gpio.
+
+  max77759,cpout-en:
+    description: WLC cpout gpio
+
+  max77759,wlc-spoof:
+    description: WLC spoof gpio. Used during thermal throttling.
+
+  max77759,cpout-ctl:
+    description: WLC cpout control gpio.
+
+  max77759,cpout_21-en:
+    description: WLC cpout control gpio. 2:1 cpout mode.
+
+  max77759,ls1-en:
+    description: Load Switch 1 enable gpio.
+
+  max77759,ls2-en:
+    description: Load Switch 2 enable gpio.
+
+  max77759,sw-en:
+    description: OTG+RTXL enable gpio.
+
+  max77759,extbst-mode:
+    description: External boost mode gpio.
+
+  max77759,rx-to-rx-otg-en:
+    description: wlc_rx to wlc_rx + otg supported.
+    type: boolean
+
+  max77759,ext-otg-only:
+    description: external boost OTG only.
+    type: boolean
+
+  max77759,bst-lsw-sequence:
+    description: use boost on first on/off sequence of wlc_tx.
+    type: boolean
+
+  max77759,wlc-otg-extbst-en:
+    description: only enable external boost when in wlc+otg mode
+    type: boolean
+
+  max77759,gpio_dc_switch:
+    description: WLC DC mode enable gpio.
+
 required:
   - compatible
   - reg
