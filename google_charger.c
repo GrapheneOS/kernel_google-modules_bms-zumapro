@@ -152,6 +152,11 @@ enum dock_defend_settings {
        DOCK_DEFEND_USER_ENABLED,
 };
 
+enum {
+	ADAPTER_CAP_PDO,
+	ADAPTER_CAP_APDO,
+};
+
 struct chg_thermal_device {
 	struct chg_drv *chg_drv;
 
@@ -354,6 +359,7 @@ struct chg_drv {
 	int thermal_stats_last_level;
 	int *thermal_stats_mdis_levels;
 	int thermal_levels_count;
+	u32 adapter_capabilities[2];	/* 0: PDO max pwr, 1: APDO max pwr */
 
 	/* charging policy */
 	struct gvotable_election *charging_policy_votable;
@@ -693,6 +699,7 @@ static int chg_hda_tz_vote(int voltage_max, int amperage_max)
 }
 
 static int info_usb_state(union gbms_ce_adapter_details *ad,
+			  struct chg_drv *chg_drv,
 			  struct power_supply *usb_psy,
 			  struct power_supply *tcpm_psy)
 {
@@ -705,9 +712,19 @@ static int info_usb_state(union gbms_ce_adapter_details *ad,
 
 		/* TODO: handle POWER_SUPPLY_PROP_REAL_TYPE in qc-compat */
 		usb_type = PSY_GET_PROP(usb_psy, POWER_SUPPLY_PROP_USB_TYPE);
-		if (tcpm_psy)
+		if (tcpm_psy) {
 			usbc_type = PSY_GET_PROP(tcpm_psy,
 						 POWER_SUPPLY_PROP_USB_TYPE);
+
+			if(pps_get_src_cap(&chg_drv->pps_data, tcpm_psy) > 0) {
+				pps_get_max_power(&chg_drv->pps_data,
+						  &chg_drv->adapter_capabilities[ADAPTER_CAP_PDO],
+						  true);
+				pps_get_max_power(&chg_drv->pps_data,
+						  &chg_drv->adapter_capabilities[ADAPTER_CAP_APDO],
+						  false);
+			}
+		}
 
 		voltage_max = PSY_GET_PROP(usb_psy,
 					   POWER_SUPPLY_PROP_VOLTAGE_MAX);
@@ -1218,7 +1235,7 @@ static void chg_work_adapter_details(union gbms_ce_adapter_details *ad,
 	if (ext_online)
 		(void)info_ext_state(ad, chg_drv->ext_psy);
 	if (usb_online)
-		(void)info_usb_state(ad, chg_drv->usb_psy, chg_drv->tcpm_psy);
+		(void)info_usb_state(ad, chg_drv, chg_drv->usb_psy, chg_drv->tcpm_psy);
 }
 
 static bool chg_work_check_wlc_state(struct power_supply *wlc_psy)
@@ -3988,6 +4005,9 @@ charge_stats_show(struct device *dev, struct device_attribute *attr, char *buf)
 		len += gbms_tier_stats_cstr(&buf[len], PAGE_SIZE, bd_p_stats, false);
 	if (chg_drv->bd_state.bd_resume_stats_last_update > 0)
 		len += gbms_tier_stats_cstr(&buf[len], PAGE_SIZE, bd_r_stats, false);
+	len += scnprintf(&buf[len], PAGE_SIZE - len, "D:%#x,%#x,0x0,0x0,0x0,0x0,0x0\n",
+			 chg_drv->adapter_capabilities[ADAPTER_CAP_PDO],
+			 chg_drv->adapter_capabilities[ADAPTER_CAP_APDO]);
 	mutex_unlock(&chg_drv->stats_lock);
 
 	return len;
@@ -4002,8 +4022,11 @@ static ssize_t charge_stats_store(struct device *dev,
 	if (count < 1)
 		return -ENODATA;
 
-	if (buf[0] == '0')
+	if (buf[0] == '0') {
 		bd_dd_stats_init(chg_drv);
+		chg_drv->adapter_capabilities[0] = 0;
+		chg_drv->adapter_capabilities[1] = 0;
+	}
 
 	return count;
 }

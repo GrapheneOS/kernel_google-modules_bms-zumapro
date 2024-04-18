@@ -956,7 +956,7 @@ int pps_get_apdo_max_power(struct pd_pps_data *pps_data, unsigned int *ta_idx,
 		if (pdo_type(pdo) != PDO_TYPE_FIXED)
 			continue;
 
-		max_voltage = pdo_max_voltage(pdo); /* mV */
+		max_voltage = pdo_fixed_voltage(pdo); /* mV */
 		max_current = pdo_max_current(pdo); /* mA */
 		max_power = pdo_max_power(pdo); /* mW */
 		*ta_max_pwr = max_power * 1000; /* uW */
@@ -990,3 +990,37 @@ int pps_get_apdo_max_power(struct pd_pps_data *pps_data, unsigned int *ta_idx,
 	return -EINVAL;
 }
 // EXPORT_SYMBOL_GPL(pps_get_apdo_max_power);
+
+int pps_get_max_power(struct pd_pps_data *pps_data, unsigned int *ta_max_pwr, bool pd)
+{
+	int max_current, max_voltage;
+	unsigned int max_power;
+	int i;
+
+	if (pps_data->nr_src_cap <= 0)
+		return -ENOENT;
+
+	*ta_max_pwr = 0;
+
+	/* find the new max_uv, max_ua, and max_pwr */
+	for (i = 0; i < pps_data->nr_src_cap; i++) {
+		const u32 pdo = pps_data->src_caps[i];
+
+		if (pd && pdo_type(pdo) == PDO_TYPE_FIXED) {
+			max_voltage = pdo_fixed_voltage(pdo); /* mV */
+			max_current = pdo_max_current(pdo); /* mA */
+		} else if (!pd && pdo_type(pdo) == PDO_TYPE_APDO) {
+			max_voltage = pdo_pps_apdo_max_voltage(pdo); /* mV */
+			max_current = pdo_pps_apdo_max_current(pdo); /* mA */
+		}
+
+		max_power = max_voltage * max_current / 1000;
+
+		if (max_power > *ta_max_pwr)
+			*ta_max_pwr = max_power; /* uW */
+
+	}
+
+	pr_debug("%s: max_power: %u\n", __func__, *ta_max_pwr);
+	return 0;
+}
