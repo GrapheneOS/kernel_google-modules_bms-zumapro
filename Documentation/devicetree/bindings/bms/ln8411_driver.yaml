@@ -41,10 +41,6 @@ properties:
     description: Travel Adapter 2-1 mode max voltage limit.
     $ref: /schemas/types.yaml#/definitions/uint32
 
-  ln8411,float-voltage:
-    description: Default Float Voltage config.
-    $ref: /schemas/types.yaml#/definitions/uint32
-
   ln8411,input-itopoff:
     description: Input topoff current. Used to detect end of charge. Units -uV
     $ref: /schemas/types.yaml#/definitions/uint32
