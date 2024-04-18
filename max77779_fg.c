@@ -172,7 +172,7 @@ static enum power_supply_property max77779_fg_battery_props[] = {
 static bool max77779_fg_reg_can_modify(struct max77779_fg_chip* chip)
 {
 	/* model_lock is already acquired by the caller and chip is already valid */
-	if (chip->fw_update_mode || chip->model_reload > MAX77779_FG_LOAD_MODEL_IDLE)
+	if (chip->fw_update_mode || chip->por)
 		return false;
 
 	return true;
@@ -392,8 +392,7 @@ EXPORT_SYMBOL_GPL(max77779_external_fg_reg_write_nolock);
 static int max77779_fg_model_reload(struct max77779_fg_chip *chip, bool force)
 {
 	const bool disabled = chip->model_reload == MAX77779_FG_LOAD_MODEL_DISABLED;
-	const bool pending = chip->model_reload != MAX77779_FG_LOAD_MODEL_IDLE;
-	int version_now, version_load;
+	const bool pending = chip->model_reload > MAX77779_FG_LOAD_MODEL_IDLE;
 
 	dev_info(chip->dev, "model_reload=%d force=%d pending=%d disabled=%d\n",
 		 chip->model_reload, force, pending, disabled);
@@ -401,16 +400,13 @@ static int max77779_fg_model_reload(struct max77779_fg_chip *chip, bool force)
 	if (!force && (pending || disabled))
 		return -EEXIST;
 
-	version_now = max77779_model_read_version(chip->model_data);
-	version_load = max77779_fg_model_version(chip->model_data);
+	if (!force && max77779_fg_model_check_version(chip->model_data))
+		return -EINVAL;
 
-	if (!force && version_now == version_load)
-		return -EEXIST;
-
-	/* REQUEST -> IDLE or set to the number of retries */
 	gbms_logbuffer_devlog(chip->monitor_log, chip->dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
 			      "Schedule Load FG Model, ID=%d, ver:%d->%d",
-			      chip->batt_id, version_now, version_load);
+			      chip->batt_id, max77779_model_read_version(chip->model_data),
+			      max77779_fg_model_version(chip->model_data));
 
 	chip->model_reload = MAX77779_FG_LOAD_MODEL_REQUEST;
 	chip->model_ok = false;
@@ -647,7 +643,7 @@ static int max77779_fg_update_battery_qh_based_capacity(struct max77779_fg_chip 
 static void max77779_fg_restore_battery_cycle(struct max77779_fg_chip *chip)
 {
 	int ret = 0;
-	u16 reg_cycle;
+	u16 eeprom_cycle, reg_cycle;
 
 	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_Cycles, &reg_cycle);
 	if (ret < 0) {
@@ -656,14 +652,13 @@ static void max77779_fg_restore_battery_cycle(struct max77779_fg_chip *chip)
 		return;
 	}
 
-	ret = gbms_storage_read(GBMS_TAG_CNHS, &chip->eeprom_cycle,
-				sizeof(chip->eeprom_cycle));
+	ret = gbms_storage_read(GBMS_TAG_CNHS, &eeprom_cycle, sizeof(eeprom_cycle));
 	if (ret < 0) {
 		dev_info(chip->dev, "Fail to read eeprom cycle count (%d)", ret);
 		return;
 	}
 
-	if (chip->eeprom_cycle == 0xFFFF) { /* empty storage */
+	if (eeprom_cycle == 0xFFFF) { /* empty storage */
 		ret = gbms_storage_write(GBMS_TAG_CNHS, &reg_cycle, sizeof(reg_cycle));
 		if (ret < 0)
 			dev_info(chip->dev, "Fail to write eeprom cycle (%d)", ret);
@@ -672,6 +667,7 @@ static void max77779_fg_restore_battery_cycle(struct max77779_fg_chip *chip)
 		return;
 	}
 
+	chip->eeprom_cycle = eeprom_cycle;
 	dev_info(chip->dev, "reg_cycle:%d, eeprom_cycle:%d, update:%c",
 		 reg_cycle, chip->eeprom_cycle, chip->eeprom_cycle > reg_cycle ? 'Y' : 'N');
 	if (chip->eeprom_cycle > reg_cycle) {
@@ -729,6 +725,12 @@ static int max77779_fg_update_cycle_count(struct max77779_fg_chip *chip)
 	err = REGMAP_READ(&chip->regmap, MAX77779_FG_Cycles, &reg_cycle);
 	if (err < 0)
 		return err;
+
+	/* If cycle register hasn't been successfully restored from eeprom */
+	if (reg_cycle < chip->eeprom_cycle) {
+		max77779_fg_restore_battery_cycle(chip);
+		return 0;
+	}
 
 	chip->cycle_count = reg_to_cycles((u32)reg_cycle);
 
@@ -906,7 +908,7 @@ static int max77779_fg_check_impedance(struct max77779_fg_chip *chip, u16 *th)
 	int soc, temp, cycle_count, ret;
 	u16 data, timerh;
 
-	if (!chip->model_state_valid)
+	if (!chip->model_ok)
 		return -EAGAIN;
 
 	soc = max77779_fg_get_battery_soc(chip);
@@ -1384,8 +1386,7 @@ static int max77779_fg_get_property(struct power_supply *psy,
 
 	mutex_lock(&chip->model_lock);
 
-	if (max77779_fg_resume_check(chip) || !chip->model_ok ||
-	    chip->model_reload != MAX77779_FG_LOAD_MODEL_IDLE) {
+	if (max77779_fg_resume_check(chip) || !chip->model_ok) {
 		mutex_unlock(&chip->model_lock);
 		return -EAGAIN;
 	}
@@ -1486,11 +1487,12 @@ static int max77779_fg_get_property(struct power_supply *psy,
 			if (!val->intval)
 				break;
 
-			/* chip->por prevent garbage in cycle count */
-			chip->por = (data & MAX77779_FG_FG_INT_MASK_POR_m_MASK) != 0;
-			if (chip->por && chip->model_ok &&
-			    chip->model_reload == MAX77779_FG_LOAD_MODEL_IDLE) {
-				/* trigger reload model and clear of POR */
+			/*
+			 * chip->por prevent garbage in cycle count
+			 * detect POR interrupt and trigger irq thread
+			 */
+			if (!chip->por && (data & MAX77779_FG_FG_INT_MASK_POR_m_MASK)) {
+				/* trigger reload model */
 				mutex_unlock(&chip->model_lock);
 				max77779_fg_irq_thread_fn(-1, chip);
 				return err;
@@ -1695,7 +1697,7 @@ static int max77779_gbms_fg_set_property(struct power_supply *psy,
 
 		mutex_lock(&ce->batt_ce_lock);
 
-		if (!chip->model_state_valid) {
+		if (!chip->model_ok) {
 			mutex_unlock(&ce->batt_ce_lock);
 			return -EAGAIN;
 		}
@@ -1943,7 +1945,7 @@ static int max77779_fg_mask_por(struct max77779_fg_chip *chip, bool mask)
 static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 {
 	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)obj;
-	u16 fg_status, fg_int_sts, fg_int_sts_clr;
+	u16 fg_int_sts, fg_int_sts_clr;
 	int err = 0;
 
 	if (!chip || (irq != -1 && irq != chip->irq)) {
@@ -1956,30 +1958,28 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 		return IRQ_HANDLED;
 	}
 
-	err = REGMAP_READ(&chip->regmap, MAX77779_FG_Status, &fg_status);
-	if (err) {
-		dev_err_ratelimited(chip->dev, "%s i2c error reading status, IRQ_NONE\n", __func__);
-		return IRQ_NONE;
-	}
 	err = REGMAP_READ(&chip->regmap, MAX77779_FG_FG_INT_STS, &fg_int_sts);
 	if (err) {
 		dev_err_ratelimited(chip->dev, "%s i2c error reading INT status, IRQ_NONE\n", __func__);
 		return IRQ_NONE;
 	}
-	if (fg_status == 0 && fg_int_sts == 0) {
-		dev_err_ratelimited(chip->dev, "fg_status == 0 and fg_int_sts == 0\n");
+	if (fg_int_sts == 0) {
+		dev_err_ratelimited(chip->dev, "fg_int_sts == 0, irq:%d\n", irq);
 		return IRQ_NONE;
 	}
 
-	dev_dbg(chip->dev, "FG_Status:%04x, FG_INT_STS:%04x\n", fg_status, fg_int_sts);
+	dev_dbg(chip->dev, "FG_INT_STS:%04x\n", fg_int_sts);
 
 	/* only used to report health */
-	chip->health_status |= fg_status;
+	chip->health_status |= fg_int_sts;
 	fg_int_sts_clr = fg_int_sts;
 
-	if (fg_status & MAX77779_FG_Status_PONR_MASK) {
+	if (fg_int_sts & MAX77779_FG_Status_PONR_MASK) {
 		mutex_lock(&chip->model_lock);
+		chip->model_ok = false;
 		chip->por = true;
+		/* Not clear POR interrupt here, model work will do */
+		fg_int_sts_clr &= ~MAX77779_FG_Status_PONR_MASK;
 
 		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
 				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
@@ -1987,20 +1987,18 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 				      fg_int_sts, irq, chip->model_reload);
 
 		/* trigger model load if not on-going */
-		if (chip->model_reload == MAX77779_FG_LOAD_MODEL_IDLE) {
-			err = max77779_fg_model_reload(chip, false);
-			if (err < 0)
-				dev_dbg(chip->dev, "unable to reload model, err=%d\n", err);
-		}
+		err = max77779_fg_model_reload(chip, false);
+		if (err < 0)
+			dev_dbg(chip->dev, "unable to reload model, err=%d\n", err);
 
 		mutex_unlock(&chip->model_lock);
 	}
 
-	/* NOTE: should always clear everything even if we lose state */
+	/* NOTE: should always clear everything except POR even if we lose state */
 	MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_FG_INT_STS, fg_int_sts_clr);
 
 	/* SOC interrupts need to go through all the time */
-	if (fg_status & MAX77779_FG_Status_dSOCi_MASK) {
+	if (fg_int_sts & MAX77779_FG_Status_dSOCi_MASK) {
 		max77779_fg_monitor_log_data(chip, false);
 		max77779_fg_update_cycle_count(chip);
 		max77779_fg_check_logging_event(chip);
@@ -2952,21 +2950,15 @@ static int max77779_fg_model_load(struct max77779_fg_chip *chip)
 {
 	int ret;
 
-	/* retrieve model state from permanent storage only on boot */
-	if (!chip->model_state_valid) {
-
-		/*
-		 * retrieve state from storage: retry on -EAGAIN as long as
-		 * model_reload > _IDLE
-		 */
-		ret = max77779_load_state_data(chip->model_data);
-		if (ret == -EAGAIN)
-			return -EAGAIN;
-		if (ret < 0)
-			dev_warn(chip->dev, "Load Model Using Default State (%d)\n", ret);
-
-		/* use the state from the DT when GMSR is invalid */
-	}
+	/*
+	 * retrieve state from storage: retry on -EAGAIN as long as
+	 * model_reload > _IDLE
+	 */
+	ret = max77779_load_state_data(chip->model_data);
+	if (ret == -EAGAIN)
+		return -EAGAIN;
+	if (ret < 0)
+		dev_warn(chip->dev, "Load Model Using Default State (%d)\n", ret);
 
 	/* get fw version from pmic if it's not ready during init */
 	if (!chip->fw_rev && !chip->fw_sub_rev)
@@ -2987,9 +2979,7 @@ static int max77779_fg_model_load(struct max77779_fg_chip *chip)
 		return -EAGAIN;
 	}
 
-	/* mark model state as "safe" */
 	chip->reg_prop_capacity_raw = MAX77779_FG_RepSOC;
-	chip->model_state_valid = true;
 	return 0;
 }
 
@@ -3032,8 +3022,8 @@ static void max77779_fg_model_work(struct work_struct *work)
 
 	mutex_lock(&chip->model_lock);
 
-	/* set model_reload to the #attempts, might change cycle count */
-	if (chip->model_reload > MAX77779_FG_LOAD_MODEL_IDLE) {
+	if (chip->model_reload >= MAX77779_FG_LOAD_MODEL_REQUEST) {
+		/* will clear POR interrupt bit */
 		rc = max77779_fg_model_load(chip);
 		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
 				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
@@ -3042,9 +3032,10 @@ static void max77779_fg_model_work(struct work_struct *work)
 		if (rc == 0) {
 			max77779_fg_restore_battery_cycle(chip);
 			rc = REGMAP_READ(&chip->regmap, MAX77779_FG_Cycles, &reg_cycle);
-			if (rc == 0 && reg_cycle >= 0) {
+			if (rc == 0) {
 				chip->model_reload = MAX77779_FG_LOAD_MODEL_IDLE;
 				chip->model_ok = true;
+				chip->por = false;
 				new_model = true;
 				/* saved new value in max77779_fg_set_next_update */
 				chip->model_next_update = reg_cycle > 0 ? reg_cycle - 1 : 0;
@@ -3053,9 +3044,6 @@ static void max77779_fg_model_work(struct work_struct *work)
 		} else if (rc != -EAGAIN) {
 			chip->model_reload = MAX77779_FG_LOAD_MODEL_DISABLED;
 			chip->model_ok = false;
-		} else {
-			chip->model_reload += 1;
-			mod_delayed_work(system_wq, &chip->model_work, msecs_to_jiffies(1000));
 		}
 	}
 
@@ -3068,6 +3056,9 @@ static void max77779_fg_model_work(struct work_struct *work)
 		max77779_fg_init_setting(chip);
 		max77779_fg_prime_battery_qh_capacity(chip);
 		power_supply_changed(chip->psy);
+	} else if (chip->model_reload >= MAX77779_FG_LOAD_MODEL_REQUEST) {
+		chip->model_reload += 1;
+		mod_delayed_work(system_wq, &chip->model_work, msecs_to_jiffies(1000));
 	}
 
 	mutex_unlock(&chip->model_lock);
@@ -3164,7 +3155,6 @@ static int max77779_fg_init_model_data(struct max77779_fg_chip *chip)
 		 chip->model_next_update);
 
 	chip->reg_prop_capacity_raw = MAX77779_FG_RepSOC;
-	chip->model_state_valid = true;
 	chip->model_ok = true;
 	return 0;
 }

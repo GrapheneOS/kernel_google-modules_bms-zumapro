@@ -103,7 +103,6 @@ struct max77779_fg_chip {
 	int model_next_update;
 	/* also used to restore model state from permanent storage */
 	u16 reg_prop_capacity_raw;
-	bool model_state_valid;	/* state read from persistent */
 	int model_reload;
 	bool model_ok;		/* model is running */
 
@@ -271,10 +270,9 @@ static inline int max77779_fg_model_version(const struct max77779_model_data *mo
  */
 static inline int max77779_fg_model_check_version(const struct max77779_model_data *model_data)
 {
-	if (!model_data)
+	/* if model version is invalid, no reload */
+	if (!model_data || model_data->model_version == MAX77779_FG_INVALID_VERSION)
 		return 1;
-	if (model_data->model_version == MAX77779_FG_INVALID_VERSION)
-		return 0;
 
 	return max77779_model_read_version(model_data) == model_data->model_version;
 }
