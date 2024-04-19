@@ -9073,20 +9073,33 @@ static bool gbatt_check_critical_level(const struct batt_drv *batt_drv,
 
 	/* debounce with battery voltage (if set) for VBATT_CRITICAL_DEADLINE_SEC at boot */
 	if (ssoc_state->buck_enabled == 1 &&
-	    fg_status == POWER_SUPPLY_STATUS_DISCHARGING) {
+	    (fg_status == POWER_SUPPLY_STATUS_DISCHARGING ||
+	     fg_status == POWER_SUPPLY_STATUS_NOT_CHARGING)) {
 		const ktime_t now = get_boot_sec();
 		int vbatt;
+
+		if (!batt_drv->fg_psy)
+			return false;
+
+		vbatt = PSY_GET_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
+		if (vbatt == -EAGAIN)
+			return false;
 
 		/* disable the check */
 		if (now > batt_drv->vbatt_crit_deadline_sec ||
 		    batt_drv->batt_critical_voltage == 0)
-			return true;
+			goto exit_done;
 
-		vbatt = GPSY_GET_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
-		if (vbatt == -EAGAIN)
+		if (vbatt >= batt_drv->batt_critical_voltage)
 			return false;
 
-		return (vbatt < 0) ? : vbatt < batt_drv->batt_critical_voltage;
+exit_done:
+		/* dump log for tuning parameters */
+		pr_info("%s: vbatt: %d, v_th:%d, fg_status: %d, now: %lld\n",
+			__func__, vbatt, batt_drv->batt_critical_voltage,
+			fg_status, now);
+
+		return true;
 	}
 
 	/* here soc == 0, shutdown if not connected or if state is not charging  */
