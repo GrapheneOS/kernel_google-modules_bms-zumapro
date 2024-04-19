@@ -32,8 +32,6 @@ struct ln8411_platform_data {
 	s32		irq_gpio;	/* GPIO pin that's connected to INT# */
 	u32		iin_cfg;	/* Input Current Limit - uA unit */
 	u32		iin_cfg_max;	/* from config/dt */
-	u32		v_float;	/* V_Float Voltage - uV unit */
-	u32		v_float_dt;	/* from config/dt */
 	u32		iin_topoff;	/* Input Topoff current -uV unit */
 	s32		iin_max_offset;
 	s32		iin_cc_comp_offset;
