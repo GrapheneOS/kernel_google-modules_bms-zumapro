@@ -1383,11 +1383,9 @@ static void max77779_cop_enable_work(struct work_struct *work)
 
 static int max77779_cop_config(struct max77779_chgr_data * data)
 {
-	int ret = 0;
+	int ret;
 
-	ret = max77779_get_cop_warn(data, &data->cop_warn);
-	if (ret < 0)
-		dev_err(data->dev, "Error getting COP warn\n");
+	max77779_set_cop_warn(data, MAX77779_COP_MAX_VALUE);
 
 	/* TODO: b/293487608 Support COP limit */
 	/* Setting limit to MAX to not trip */
