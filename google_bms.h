@@ -248,6 +248,8 @@ struct batt_ttf_stats {
 	struct logbuffer *ttf_log;
 
 	struct mutex ttf_lock;
+
+	int report_max_ratio; /* max ratio to report ttf */
 };
 
 /*
