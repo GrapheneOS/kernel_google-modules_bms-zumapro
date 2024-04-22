@@ -65,16 +65,6 @@ properties:
     description: Max input constant charge current compensation offset. Units uA.
     $ref: /schemas/types.yaml#/definitions/uint32
 
-  google,irdrop-limits:
-    description: Legacy IR drop control logic.
-    $ref: /schemas/types.yaml#/definitions/uint32-array
-    items:
-      maximum: 3
-
-  google,pca-irdrop:
-    description: IR drop compensation is enabled
-    type: boolean
-
   pca9468,sc-clk-dither-rate:
     description: Spread spectrum clk rate.
     $ref: /schemas/types.yaml#/definitions/uint32
