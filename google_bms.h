@@ -240,6 +240,8 @@ struct batt_ttf_stats {
 	struct ttf_tier_stat tier_stats[GBMS_STATS_TIER_COUNT];
 
 	struct logbuffer *ttf_log;
+
+	int report_max_ratio; /* max ratio to report ttf */
 };
 
 /*
