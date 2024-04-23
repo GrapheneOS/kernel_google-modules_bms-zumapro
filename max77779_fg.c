@@ -680,7 +680,7 @@ static void max77779_fg_restore_battery_cycle(struct max77779_fg_chip *chip)
 	}
 }
 
-static u16 max77779_fg_save_battery_cycle(const struct max77779_fg_chip *chip, u16 reg_cycle)
+static u16 max77779_fg_save_battery_cycle(struct max77779_fg_chip *chip, u16 reg_cycle)
 {
 	int ret = 0;
 	u16 eeprom_cycle = chip->eeprom_cycle;
@@ -691,6 +691,12 @@ static u16 max77779_fg_save_battery_cycle(const struct max77779_fg_chip *chip, u
 	if (reg_cycle <= eeprom_cycle)
 		return eeprom_cycle;
 
+	mutex_lock(&chip->save_data_lock);
+	if (chip->pm_notifier_suspended) {
+		mutex_unlock(&chip->save_data_lock);
+		return eeprom_cycle;
+	}
+
 	ret = gbms_storage_write(GBMS_TAG_CNHS, &reg_cycle, sizeof(reg_cycle));
 	if (ret < 0) {
 		dev_info(chip->dev, "Fail to write %d eeprom cycle count (%d)", reg_cycle, ret);
@@ -698,6 +704,7 @@ static u16 max77779_fg_save_battery_cycle(const struct max77779_fg_chip *chip, u
 		dev_info(chip->dev, "update saved cycle:%d -> %d\n", eeprom_cycle, reg_cycle);
 		eeprom_cycle = reg_cycle;
 	}
+	mutex_unlock(&chip->save_data_lock);
 
 	return eeprom_cycle;
 }
@@ -2931,8 +2938,16 @@ static int max77779_fg_set_next_update(struct max77779_fg_chip *chip)
 		}
 	}
 
-	if (rc == 0 && chip->model_next_update)
+	if (rc == 0 && chip->model_next_update) {
+		mutex_lock(&chip->save_data_lock);
+		if (chip->pm_notifier_suspended) {
+			mutex_unlock(&chip->save_data_lock);
+			return 0;
+		}
+
 		rc = max77779_save_state_data(chip->model_data);
+		mutex_unlock(&chip->save_data_lock);
+	}
 	/*
 	 * cycle register LSB is 25% of one cycle
 	 * schedule next update at multiples of 4
@@ -3159,6 +3174,29 @@ static int max77779_fg_init_model_data(struct max77779_fg_chip *chip)
 	return 0;
 }
 
+static int max77779_fg_pm_notifier(struct notifier_block *nb,
+				   unsigned long action, void *nb_data)
+{
+	struct max77779_fg_chip *chip = container_of(nb, struct max77779_fg_chip, pm_nb);
+
+	mutex_lock(&chip->save_data_lock);
+
+	switch (action) {
+	case PM_SUSPEND_PREPARE:
+		chip->pm_notifier_suspended = true;
+		break;
+	case PM_POST_SUSPEND:
+		chip->pm_notifier_suspended = false;
+		break;
+	default:
+		break;
+	}
+
+	mutex_unlock(&chip->save_data_lock);
+
+	return NOTIFY_OK;
+}
+
 static int max77779_fg_init_chip(struct max77779_fg_chip *chip)
 {
 	int ret;
@@ -3230,6 +3268,10 @@ static int max77779_fg_init_chip(struct max77779_fg_chip *chip)
 
 	MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_FG_INT_MASK,
 				 MAX77779_FG_FG_INT_MASK_dSOCi_m_CLEAR);
+
+	chip->pm_notifier_suspended = false;
+	chip->pm_nb.notifier_call = max77779_fg_pm_notifier;
+	register_pm_notifier(&chip->pm_nb);
 
 	max77779_fg_restore_battery_cycle(chip);
 
@@ -3559,6 +3601,7 @@ int max77779_fg_init(struct max77779_fg_chip *chip)
 
 	/* fuel gauge model needs to know the batt_id */
 	mutex_init(&chip->model_lock);
+	mutex_init(&chip->save_data_lock);
 
 	chip->max77779_fg_psy_desc.psy_dsc.type = POWER_SUPPLY_TYPE_BATTERY;
 	chip->max77779_fg_psy_desc.psy_dsc.get_property = max77779_fg_get_property;
@@ -3645,6 +3688,7 @@ void max77779_fg_remove(struct max77779_fg_chip *chip)
 		power_supply_unregister(chip->psy);
 
 	maxfg_free_capture_buf(&chip->cb_lh);
+	unregister_pm_notifier(&chip->pm_nb);
 }
 EXPORT_SYMBOL_GPL(max77779_fg_remove);
 
