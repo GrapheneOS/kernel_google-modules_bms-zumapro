@@ -5915,6 +5915,8 @@ static int google_charger_remove(struct platform_device *pdev)
 	struct chg_drv *chg_drv = (struct chg_drv *)platform_get_drvdata(pdev);
 
 	if (chg_drv) {
+		power_supply_unreg_notifier(&chg_drv->psy_nb);
+
 		if (chg_drv->chg_term.enable) {
 			alarm_cancel(&chg_drv->chg_term.alarm);
 			cancel_work_sync(&chg_drv->chg_term.work);
@@ -5947,6 +5949,14 @@ static int google_charger_remove(struct platform_device *pdev)
 	}
 
 	return 0;
+}
+
+static void google_charger_shutdown(struct platform_device *pdev)
+{
+	struct chg_drv *chg_drv = (struct chg_drv *)platform_get_drvdata(pdev);
+
+	if (chg_drv)
+		power_supply_unreg_notifier(&chg_drv->psy_nb);
 }
 
 #ifdef SUPPORT_PM_SLEEP
@@ -5990,6 +6000,7 @@ static struct platform_driver google_charger_driver = {
 		   },
 	.probe = google_charger_probe,
 	.remove = google_charger_remove,
+	.shutdown = google_charger_shutdown,
 };
 
 module_platform_driver(google_charger_driver);

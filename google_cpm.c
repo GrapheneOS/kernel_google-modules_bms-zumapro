@@ -4700,6 +4700,8 @@ static int google_cpm_remove(struct platform_device *pdev)
 	if (!gcpm)
 		return 0;
 
+	power_supply_unreg_notifier(&gcpm->chg_nb);
+
 	gvotable_destroy_election(gcpm->dc_fcc_votable);
 
 	for (i = 0; i < gcpm->chg_psy_count; i++) {
@@ -4721,6 +4723,16 @@ static int google_cpm_remove(struct platform_device *pdev)
 		logbuffer_unregister(gcpm->log);
 
 	return 0;
+}
+
+static void google_cpm_shutdown(struct platform_device *pdev)
+{
+	struct gcpm_drv *gcpm = platform_get_drvdata(pdev);
+
+	if (!gcpm)
+		return;
+
+	power_supply_unreg_notifier(&gcpm->chg_nb);
 }
 
 static int __maybe_unused gcpm_pm_suspend(struct device *dev)
@@ -4772,6 +4784,7 @@ static struct platform_driver google_cpm_driver = {
 		   },
 	.probe = google_cpm_probe,
 	.remove = google_cpm_remove,
+	.shutdown = google_cpm_shutdown,
 };
 
 module_platform_driver(google_cpm_driver);
