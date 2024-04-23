@@ -173,6 +173,11 @@ struct max77779_fg_chip {
 
 	/* buffer for recording learning history */
 	struct maxfg_capture_buf cb_lh;
+
+	/* get suspend/resume notification */
+	struct notifier_block	pm_nb;
+	bool pm_notifier_suspended;
+	struct mutex save_data_lock;
 };
 
 /** ------------------------------------------------------------------------ */
