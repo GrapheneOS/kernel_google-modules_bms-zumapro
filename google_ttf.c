@@ -993,6 +993,7 @@ static void ttf_init_ref_table(struct batt_ttf_stats *stats,
 }
 
 /* must come after charge profile */
+#define TTF_REPORT_MAX_RATIO	300
 int ttf_stats_init(struct batt_ttf_stats *stats, struct device *device,
 		   int capacity_ma)
 {
@@ -1028,6 +1029,12 @@ int ttf_stats_init(struct batt_ttf_stats *stats, struct device *device,
 	ret = ttf_init_tier_parse_dt(stats, device);
 	if (ret < 0)
 		return ret;
+
+	/* max ratio to report ttf */
+	ret = of_property_read_u32(device->of_node, "google,ttf-report-max-ratio",
+				   &stats->report_max_ratio);
+	if (ret < 0)
+		stats->report_max_ratio = TTF_REPORT_MAX_RATIO;
 
 	/* initialize the reference stats for the reference soc estimates */
 	ttf_init_ref_table(stats, &as, capacity_ma);
