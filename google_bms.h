@@ -28,6 +28,8 @@
 
 struct device_node;
 
+#define DEFAULT_BATT_FAKE_CAPACITY	50
+
 #define GBMS_CHG_TEMP_NB_LIMITS_MAX 10
 #define GBMS_CHG_VOLT_NB_LIMITS_MAX 5
 #define GBMS_CHG_ALG_BUF_SZ 500
