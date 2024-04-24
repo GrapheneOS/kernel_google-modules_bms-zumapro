@@ -410,6 +410,7 @@ static int max77779_fg_model_reload(struct max77779_fg_chip *chip, bool force)
 
 	chip->model_reload = MAX77779_FG_LOAD_MODEL_REQUEST;
 	chip->model_ok = false;
+	chip->por = true;
 	mod_delayed_work(system_wq, &chip->model_work, 0);
 
 	return 0;
@@ -1964,14 +1965,17 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 		dev_warn_ratelimited(chip->dev, "%s: irq skipped, irq%d\n", __func__, irq);
 		return IRQ_HANDLED;
 	}
-
+	/* b/336418454 lock to sync FG_INT_STS with model work */
+	mutex_lock(&chip->model_lock);
 	err = REGMAP_READ(&chip->regmap, MAX77779_FG_FG_INT_STS, &fg_int_sts);
 	if (err) {
 		dev_err_ratelimited(chip->dev, "%s i2c error reading INT status, IRQ_NONE\n", __func__);
+		mutex_unlock(&chip->model_lock);
 		return IRQ_NONE;
 	}
 	if (fg_int_sts == 0) {
 		dev_err_ratelimited(chip->dev, "fg_int_sts == 0, irq:%d\n", irq);
+		mutex_unlock(&chip->model_lock);
 		return IRQ_NONE;
 	}
 
@@ -1982,9 +1986,6 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 	fg_int_sts_clr = fg_int_sts;
 
 	if (fg_int_sts & MAX77779_FG_Status_PONR_MASK) {
-		mutex_lock(&chip->model_lock);
-		chip->model_ok = false;
-		chip->por = true;
 		/* Not clear POR interrupt here, model work will do */
 		fg_int_sts_clr &= ~MAX77779_FG_Status_PONR_MASK;
 
@@ -1997,9 +1998,8 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 		err = max77779_fg_model_reload(chip, false);
 		if (err < 0)
 			dev_dbg(chip->dev, "unable to reload model, err=%d\n", err);
-
-		mutex_unlock(&chip->model_lock);
 	}
+	mutex_unlock(&chip->model_lock);
 
 	/* NOTE: should always clear everything except POR even if we lose state */
 	MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_FG_INT_STS, fg_int_sts_clr);
@@ -3412,7 +3412,7 @@ static void max77779_fg_init_work(struct work_struct *work)
 
 	/*
 	 * Handle any IRQ that might have been set before init
-	 * NOTE: will clear the POR bit and trigger model load if needed
+	 * NOTE: will trigger model load if needed
 	 */
 	max77779_fg_irq_thread_fn(-1, chip);
 
