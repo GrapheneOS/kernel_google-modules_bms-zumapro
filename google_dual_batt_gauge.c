@@ -1219,6 +1219,10 @@ static int google_dual_batt_gauge_remove(struct platform_device *pdev)
 {
 	struct dual_fg_drv *dual_fg_drv = platform_get_drvdata(pdev);
 
+	if (!dual_fg_drv)
+		return 0;
+
+	power_supply_unreg_notifier(&dual_fg_drv->fg_nb);
 	gbms_free_chg_profile(&dual_fg_drv->chg_profile);
 	kfree(dual_fg_drv->base_profile.cccm_limits);
 	kfree(dual_fg_drv->sec_profile.cccm_limits);
@@ -1227,6 +1231,16 @@ static int google_dual_batt_gauge_remove(struct platform_device *pdev)
 		logbuffer_unregister(dual_fg_drv->log);
 
 	return 0;
+}
+
+static void google_dual_batt_gauge_shutdown(struct platform_device *pdev)
+{
+	struct dual_fg_drv *dual_fg_drv = platform_get_drvdata(pdev);
+
+	if (!dual_fg_drv)
+		return;
+
+	power_supply_unreg_notifier(&dual_fg_drv->fg_nb);
 }
 
 static int __maybe_unused google_dual_batt_pm_suspend(struct device *dev)
@@ -1273,6 +1287,7 @@ static struct platform_driver google_dual_batt_gauge_driver = {
 		   },
 	.probe = google_dual_batt_gauge_probe,
 	.remove = google_dual_batt_gauge_remove,
+	.shutdown = google_dual_batt_gauge_shutdown,
 };
 
 module_platform_driver(google_dual_batt_gauge_driver);
