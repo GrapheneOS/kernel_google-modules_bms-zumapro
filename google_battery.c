@@ -11425,6 +11425,8 @@ static int google_battery_remove(struct platform_device *pdev)
 	if (!batt_drv)
 		return 0;
 
+	power_supply_unreg_notifier(&batt_drv->fg_nb);
+
 	if (batt_drv->ssoc_log)
 		logbuffer_unregister(batt_drv->ssoc_log);
 	if (batt_drv->ttf_stats.ttf_log)
@@ -11456,6 +11458,16 @@ static int google_battery_remove(struct platform_device *pdev)
 	batt_drv->point_full_ui_soc_votable = NULL;
 
 	return 0;
+}
+
+static void google_battery_shutdown(struct platform_device *pdev)
+{
+	struct batt_drv *batt_drv = platform_get_drvdata(pdev);
+
+	if (!batt_drv)
+		return;
+
+	power_supply_unreg_notifier(&batt_drv->fg_nb);
 }
 
 #ifdef SUPPORT_PM_SLEEP
@@ -11511,6 +11523,7 @@ static struct platform_driver google_battery_driver = {
 		   },
 	.probe = google_battery_probe,
 	.remove = google_battery_remove,
+	.shutdown = google_battery_shutdown,
 };
 
 module_platform_driver(google_battery_driver);

@@ -8267,6 +8267,7 @@ static void p9221_charger_remove(struct i2c_client *client)
 {
 	struct p9221_charger_data *charger = i2c_get_clientdata(client);
 
+	power_supply_unreg_notifier(&charger->nb);
 	cancel_delayed_work_sync(&charger->dcin_work);
 	cancel_delayed_work_sync(&charger->stop_online_spoof_work);
 	cancel_delayed_work_sync(&charger->change_det_status_work);
@@ -8293,7 +8294,6 @@ static void p9221_charger_remove(struct i2c_client *client)
 	disable_irq_wake(charger->pdata->irq_int);
 	device_init_wakeup(charger->dev, false);
 	cancel_delayed_work_sync(&charger->notifier_work);
-	power_supply_unreg_notifier(&charger->nb);
 	if (!IS_ERR_OR_NULL(charger->batt_psy))
 		power_supply_put(charger->batt_psy);
 	mutex_destroy(&charger->io_lock);
@@ -8314,6 +8314,14 @@ static void p9221_charger_remove(struct i2c_client *client)
 		kfree(charger->i2c_rxdebug_buf);
 	if (charger->i2c_txdebug_buf)
 		kfree(charger->i2c_txdebug_buf);
+}
+
+static void p9221_charger_shutdown(struct i2c_client *client)
+{
+	struct p9221_charger_data *charger = i2c_get_clientdata(client);
+
+	if (charger)
+		power_supply_unreg_notifier(&charger->nb);
 }
 
 static const struct i2c_device_id p9221_charger_id_table[] = {
@@ -8379,6 +8387,7 @@ static struct i2c_driver p9221_charger_driver = {
 	},
 	.probe		= p9221_charger_probe,
 	.remove		= p9221_charger_remove,
+	.shutdown	= p9221_charger_shutdown,
 	.id_table	= p9221_charger_id_table,
 };
 module_i2c_driver(p9221_charger_driver);
