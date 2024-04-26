@@ -1720,6 +1720,7 @@ static void max77779_wcin_inlim_work(struct work_struct *work)
 		goto done;
 
 	if (!data->dc_icl_votable) {
+		mutex_unlock(&data->wcin_inlim_lock);
 		dev_err(data->dev, "Could not get votable: DC_ICL\n");
 		return;
 	}
