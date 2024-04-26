@@ -5586,8 +5586,13 @@ static struct power_supply *get_tcpm_psy(struct chg_drv *chg_drv)
 				power_supply_put(psy[i]);
 		}
 
-		chg_drv->tcpm_psy_name = tcpm_psy->desc->name;
-		pr_info("tcpm psy_name: %s\n", chg_drv->tcpm_psy_name);
+		if (tcpm_psy) {
+			chg_drv->tcpm_psy_name = tcpm_psy->desc->name;
+			pr_info("tcpm psy_name: %s\n", chg_drv->tcpm_psy_name);
+		} else {
+			dev_dbg_ratelimited(chg_drv->device,
+					    "tcpm power supply invalid. retrying ...\n");
+		}
 	}
 
 	return tcpm_psy;
@@ -5645,7 +5650,7 @@ static void google_charger_init_work(struct work_struct *work)
 
 	if (!chg_drv->tcpm_psy && chg_drv->tcpm_phandle && chg_drv->psy_retry_count) {
 		tcpm_psy = get_tcpm_psy(chg_drv);
-		if (IS_ERR(tcpm_psy)) {
+		if (IS_ERR_OR_NULL(tcpm_psy)) {
 			tcpm_psy = NULL;
 			chg_drv->psy_retry_count--;
 			ret_tcpm = -EAGAIN;
