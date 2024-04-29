@@ -158,7 +158,7 @@ static int max77779_chg_prot(struct max77779_chgr_data *data, uint8_t reg, int c
 	if (ret)
 		dev_err(data->dev, "error modifying protection bits reg:0x%x count:%d "
 			"enable:%d ret:%d\n", reg, count, enable, ret);
-	if (enable)
+	if (enable || ret)
 		mutex_unlock(&data->prot_lock);
 
 	return ret ? ret : changed;
