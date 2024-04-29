@@ -40,8 +40,6 @@
 #include <linux/seq_file.h>
 #endif
 
-/* 200 * 250 = 50 seconds of logging */
-#define CHG_LOG_PSY_RATELIMIT_CNT	200
 #define CHG_DELAY_INIT_MS		250
 #define CHG_DELAY_INIT_DETECT_MS	1000
 
@@ -248,7 +246,6 @@ struct chg_drv {
 	const char *bat_psy_name;
 	struct power_supply *tcpm_psy;
 	const char *tcpm_psy_name;
-	int log_psy_ratelimit;
 	int psy_retry_count;
 
 	struct notifier_block psy_nb;
@@ -5543,11 +5540,10 @@ static struct power_supply *psy_get_by_name(struct chg_drv *chg_drv,
 	struct power_supply *psy;
 
 	psy = power_supply_get_by_name(name);
-	if (!psy && chg_drv->log_psy_ratelimit) {
-		pr_warn_ratelimited("failed to get \"%s\" power supply, retrying...\n",
+	if (!psy)
+		dev_dbg_ratelimited(chg_drv->device,
+				    "failed to get \"%s\" power supply, retrying...\n",
 				    name);
-		chg_drv->log_psy_ratelimit -= 1;
-	}
 
 	return psy;
 }
@@ -5563,17 +5559,9 @@ static struct power_supply *get_tcpm_psy(struct chg_drv *chg_drv)
 						"google,tcpm-power-supply", psy,
 						ARRAY_SIZE(psy));
 	if (ret < 0 && !chg_drv->usb_skip_probe) {
-		if (!chg_drv->log_psy_ratelimit)
-			return ERR_PTR(ret);
-
-		pr_info("failed to get tcpm power supply, retrying... ret:%d\n",
-			ret);
-		/*
-		 * Accessed from the same execution context i.e.
-		 * google_charger_init_workor else needs to be protected
-		 * along with access in psy_get_by_name.
-		 */
-		chg_drv->log_psy_ratelimit -= 1;
+		dev_dbg_ratelimited(chg_drv->device,
+				    "failed to get tcpm power supply, retrying... ret:%d\n",
+				    ret);
 
 		return ERR_PTR(ret);
 	} else if (ret > 0) {
@@ -5588,7 +5576,7 @@ static struct power_supply *get_tcpm_psy(struct chg_drv *chg_drv)
 
 		if (tcpm_psy) {
 			chg_drv->tcpm_psy_name = tcpm_psy->desc->name;
-			pr_info("tcpm psy_name: %s\n", chg_drv->tcpm_psy_name);
+			dev_dbg(chg_drv->device, "tcpm psy_name: %s\n", chg_drv->tcpm_psy_name);
 		} else {
 			dev_dbg_ratelimited(chg_drv->device,
 					    "tcpm power supply invalid. retrying ...\n");
@@ -5906,8 +5894,6 @@ static int google_charger_probe(struct platform_device *pdev)
 	/* sysfs & debug */
 	chg_init_fs(chg_drv);
 
-	/* ratelimit makes init work quiet */
-	chg_drv->log_psy_ratelimit = CHG_LOG_PSY_RATELIMIT_CNT;
 	schedule_delayed_work(&chg_drv->init_work,
 			      msecs_to_jiffies(CHG_DELAY_INIT_MS));
 
