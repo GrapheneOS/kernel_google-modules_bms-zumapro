@@ -84,7 +84,6 @@ int max77779_external_vimon_read_buffer(struct device *dev, uint16_t *buff, size
 	if (!data)
 		return -ENODEV;
 
-	mutex_lock(&data->vimon_lock);
 
 	copy_count = data->buf_len;
 
@@ -94,7 +93,6 @@ int max77779_external_vimon_read_buffer(struct device *dev, uint16_t *buff, size
 	memcpy(buff, data->buf, copy_count);
 	*count = copy_count;
 
-	mutex_unlock(&data->vimon_lock);
 	return ret;
 }
 EXPORT_SYMBOL_GPL(max77779_external_vimon_read_buffer);
@@ -590,12 +588,9 @@ static irqreturn_t max77779_vimon_irq(int irq, void *ptr)
 	struct max77779_vimon_data *data = ptr;
 	int ret;
 
-	mutex_lock(&data->vimon_lock);
 
-	if (data->state <= MAX77779_VIMON_DISABLED) {
-		mutex_unlock(&data->vimon_lock);
+	if (data->state <= MAX77779_VIMON_DISABLED)
 		return IRQ_HANDLED;
-	}
 
 	if (data->state >= MAX77779_VIMON_DATA_AVAILABLE)
 		goto vimon_rearm_interrupt;
@@ -612,7 +607,6 @@ vimon_rearm_interrupt:
 	if (ret)
 		dev_err(data->dev, "Failed to clear INT_STS (%d).\n", ret);
 
-	mutex_unlock(&data->vimon_lock);
 
 	return IRQ_HANDLED;
 }
