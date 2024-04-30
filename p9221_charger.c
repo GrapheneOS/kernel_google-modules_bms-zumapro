@@ -7239,16 +7239,6 @@ static int p9221_parse_dt(struct device *dev,
 			 pdata->irq_det_gpio, pdata->irq_det_int);
 	}
 
-	ret = of_get_named_gpio(node, "google,wcin_inlim_en", 0);
-	pdata->wcin_inlim_en_gpio = ret;
-	if (ret == -EPROBE_DEFER)
-		return ret;
-	if (ret > 0) {
-		pdata->wcin_inlim_en_gpio = ret;
-		dev_info(dev, "WCIN_INLIM_EN gpio: %d\n", pdata->wcin_inlim_en_gpio);
-		gpio_direction_output(pdata->wcin_inlim_en_gpio, 0);
-	}
-
 	/* Optional VOUT max */
 	pdata->max_vout_mv = P9221_MAX_VOUT_SET_MV_DEFAULT;
 	ret = of_property_read_u32(node, "idt,max_vout_mv", &data);
