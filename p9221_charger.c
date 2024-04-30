@@ -1840,6 +1840,7 @@ store:
 		entry->last_use = 0;
 }
 
+/* call holding mutex_lock(&chg_fts->feat_lock); */
 static bool feature_cache_update_entry(struct p9221_charger_feature *chg_fts,
 				       u64 id, u64 mask, u64 ft)
 {
@@ -1847,14 +1848,11 @@ static bool feature_cache_update_entry(struct p9221_charger_feature *chg_fts,
 	bool updated = false;
 	int index;
 
-	mutex_lock(&chg_fts->feat_lock);
-
 	index = feature_cache_lookup_by_id(chg_fts, id);
 	if (index < 0) {
 		/* add the new tx_id with ft to the feature cache */
 		feature_update_cache(chg_fts, id, ft);
-		updated = true;
-		goto done_unlock;
+		return true;
 	}
 
 	pr_debug("%s: tx_id=%llx, mask=%llx ft=%llx\n", __func__, id, mask, ft);
@@ -1867,8 +1865,6 @@ static bool feature_cache_update_entry(struct p9221_charger_feature *chg_fts,
 	}
 
 	/* return true when features for id were actually updated  */
-done_unlock:
-	mutex_unlock(&chg_fts->feat_lock);
 	return updated;
 }
 
@@ -1896,14 +1892,10 @@ static bool feature_is_enabled(struct p9221_charger_feature *chg_fts,
 {
 	bool enabled = false;
 
-	mutex_lock(&chg_fts->feat_lock);
-
 	if (id)
 		enabled = feature_cache_lookup_entry(chg_fts, id, ft, ft);
 	if (!enabled)
 		enabled = (chg_fts->session_features & ft) != 0;
-
-	mutex_unlock(&chg_fts->feat_lock);
 
 	return enabled;
 }
@@ -1911,10 +1903,11 @@ static bool feature_is_enabled(struct p9221_charger_feature *chg_fts,
 static bool p9221_check_feature(struct p9221_charger_data *charger, u64 ft)
 {
 	struct p9221_charger_feature *chg_fts = &charger->chg_features;
-	const bool feat_compat_mode = charger->pdata->feat_compat_mode;
 	bool supported = false;
 	u32 tx_id = 0;
 	u8 val;
+
+	mutex_lock(&chg_fts->feat_lock);
 
 	/*  txid is available sometime after placing the device on the charger */
 	if (p9221_get_tx_id_str(charger) != NULL)
@@ -1923,10 +1916,10 @@ static bool p9221_check_feature(struct p9221_charger_data *charger, u64 ft)
 	/* tx_ix = 0 will check only the session features */
 	supported = feature_is_enabled(chg_fts, tx_id, ft);
 	if (supported)
-		return true;
+		goto unlock;
 
-	if (!supported && !feat_compat_mode)
-		return false;
+	if (!supported && !charger->pdata->feat_compat_mode)
+		goto unlock;
 
 	/* compat mode until the features API is usedm check txid */
 	val = (tx_id & TXID_TYPE_MASK) >> TXID_TYPE_SHIFT;
@@ -1942,7 +1935,8 @@ static bool p9221_check_feature(struct p9221_charger_data *charger, u64 ft)
 			pr_debug("%s: tx_id=%x, ft=%llx supported=%d\n", __func__,
 				  tx_id, ft, supported);
 	}
-
+unlock:
+	mutex_unlock(&chg_fts->feat_lock);
 	return supported;
 }
 
@@ -2474,15 +2468,20 @@ static bool feature_check_fast_charge(struct p9221_charger_data *charger)
 	struct p9221_charger_feature *chg_fts = &charger->chg_features;
 	bool enabled;
 
+	mutex_lock(&chg_fts->feat_lock);
+
 	/* ignore the feature in compatibility until the first vote */
 	if (charger->pdata->feat_compat_mode) {
 		pr_debug("%s: COMPAT FAST_CHARGE ENABLED\n", __func__);
+		mutex_unlock(&chg_fts->feat_lock);
 		return true;
 	}
 
 	enabled = feature_is_enabled(chg_fts, 0, WLCF_FAST_CHARGE);
 	if (enabled)
 		pr_debug("%s: feature enabled=%d\n", __func__, enabled);
+
+	mutex_unlock(&chg_fts->feat_lock);
 
 	return enabled;
 }
@@ -2607,7 +2606,7 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 	/* online = 2 enable LL, return < 0 if NOT on LL */
 	if (online == PPS_PSY_PROG_ONLINE) {
 		const int extben_gpio = charger->pdata->ext_ben_gpio;
-		bool feat_enable;
+		const bool feat_enable = feature_check_fast_charge(charger);
 		u8 val8;
 
 		if (!enabled) {
@@ -2622,7 +2621,6 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 		/* Ping? */
 		if (wlc_dc_enabled) {
 			/* TODO: disable fast charge if enabled */
-			feat_enable = feature_check_fast_charge(charger);
 			if (feat_enable == 0)
 				pr_debug("%s: FAST_CHARGE disabled\n", __func__);
 
@@ -2679,7 +2677,6 @@ static int p9221_set_psy_online(struct p9221_charger_data *charger, int online)
 		/* will return -EAGAIN until the feature is supported */
 		mutex_lock(&charger->auth_lock);
 
-		feat_enable = feature_check_fast_charge(charger);
 		if (feat_enable) {
 			pr_debug("%s: Feature check OK\n", __func__);
 		} else if (charger->auth_delay || !charger->set_auth_icl) {
@@ -4852,6 +4849,7 @@ static ssize_t features_store(struct device *dev,
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct p9221_charger_data *charger = i2c_get_clientdata(client);
+	struct p9221_charger_feature *chg_fts = &charger->chg_features;
 	u64 id, ft;
 	int ret;
 
@@ -4862,17 +4860,18 @@ static ssize_t features_store(struct device *dev,
 	pr_debug("%s: tx_id=%llx, ft=%llx", __func__, id, ft);
 
 	if (id) {
+		mutex_lock(&chg_fts->feat_lock);
 		if (id != 1)
 			feature_update_cache(&charger->chg_features, id, ft);
 		/*
 		 * disable prefill of feature cache on first use of the API,
 		 * TODO: possibly clear the cache as well.
-		 * NOTE: Protect this with a lock.
 		 */
 		if (charger->pdata->feat_compat_mode) {
 			dev_info(charger->dev, "compat mode off\n");
 			charger->pdata->feat_compat_mode = false;
 		}
+		mutex_unlock(&chg_fts->feat_lock);
 	} else {
 		mutex_lock(&charger->auth_lock);
 		/* remove auth_icl after AUTH is done */
