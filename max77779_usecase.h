@@ -67,6 +67,8 @@ enum gsu_usecases {
 	GSU_MODE_USB_WLC_RX	= 13,
 
 	GSU_MODE_DOCK		= 14,
+
+	GSU_MODE_FWUPDATE	= 18,   /* boost mode for frimware update */
 };
 
 enum wlc_state_t {

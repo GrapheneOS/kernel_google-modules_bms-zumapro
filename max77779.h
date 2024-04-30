@@ -25,6 +25,8 @@
 #define MAX77779_FG_BOOT_CHECK_REG 0x40
 #define MAX77779_FG_BOOT_CHECK_SUCCESS 0x82
 
+#define MAX77779_REASON_FIRMWARE        "FW_UPDATE"
+
 
 struct device* max77779_get_dev(struct device *dev, const char *name);
 
@@ -121,6 +123,8 @@ struct max77779_foreach_cb_data {
 	u8 raw_value;	/* hard override */
 	bool use_raw;
 
+	bool fwupdate_on; /* enter firmware update mode */
+
 	u8 reg;
 
 	struct gvotable_election *dc_avail_votable;	/* DC_AVAIL */
@@ -139,6 +143,9 @@ enum {
 
 	/* charging enabled (charging current != 0) */
 	GBMS_CHGR_MODE_CHGR_BUCK_ON	= 0x10 + MAX77779_CHGR_MODE_CHGR_BUCK_ON,
+
+	/* boost mode (0x9) during firmware update */
+	GBMS_CHGR_MODE_FWUPDATE_BOOST_ON = 0x20 + MAX77779_CHGR_MODE_BOOST_ON,
 };
 
 
