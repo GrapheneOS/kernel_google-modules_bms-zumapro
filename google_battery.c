@@ -1588,8 +1588,10 @@ static int batt_ttf_estimate(ktime_t *res, struct batt_drv *batt_drv)
 		goto done;
 	}
 
-	/* charge to limit enable */
-	if (batt_charge_to_limit_enable(&batt_drv->chg_health)) {
+	if (batt_drv->charging_policy == CHARGING_POLICY_VOTE_LONGLIFE) {
+		ssoc_full = LONGLIFE_CHARGE_STOP_LEVEL;
+		raw_full = qnum_fromint(ssoc_full) - qnum_rconst(SOC_ROUND_BASE);
+	} else if (batt_charge_to_limit_enable(&batt_drv->chg_health)) {
 		ssoc_full = batt_drv->chg_health.always_on_soc;
 		raw_full = qnum_fromint(ssoc_full) - qnum_rconst(SOC_ROUND_BASE);
 	}
@@ -1603,7 +1605,8 @@ static int batt_ttf_estimate(ktime_t *res, struct batt_drv *batt_drv)
 	/* no estimates during debounce or with special profiles */
 	if (batt_drv->ttf_debounce ||
 	    batt_drv->batt_health == POWER_SUPPLY_HEALTH_OVERHEAT ||
-	    batt_drv->chg_state.f.flags & GBMS_CS_FLAG_CCLVL) {
+	    ((batt_drv->chg_state.f.flags & GBMS_CS_FLAG_CCLVL) &&
+	    (batt_drv->charging_policy != CHARGING_POLICY_VOTE_LONGLIFE))) {
 		estimate = -1;
 		goto done;
 	}
@@ -7700,6 +7703,7 @@ static void batt_update_charging_policy(struct batt_drv *batt_drv)
 		   batt_drv->charging_policy == CHARGING_POLICY_VOTE_ADAPTIVE_AON)
 		batt_set_health_charge_limit(batt_drv, -1);
 
+	pr_info("update charging_policy: %d -> %d\n", batt_drv->charging_policy, value);
 	batt_drv->charging_policy = value;
 }
 
