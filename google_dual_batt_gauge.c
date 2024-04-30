@@ -39,6 +39,7 @@
 
 #define DUAL_BATT_VSEC_OFFSET		50000
 #define DUAL_BATT_VSEC_OFFSET_IDX	0
+#define DUAL_BATT_VSEC_DEFAULT_RATIO	50
 
 static int debug_printk_prlog = LOGLEVEL_INFO;
 #define logbuffer_prlog(p, level, fmt, ...)	\
@@ -88,6 +89,8 @@ struct dual_fg_drv {
 
 	u32 vsec_offset;
 	u32 vsec_offset_max_idx;
+	u32 vsec_ratio;
+	u32 vbatt_ov_allowed_idx;
 
 	int base_soc;
 	int sec_soc;
@@ -294,6 +297,38 @@ static void gdbatt_ov_handler(struct dual_fg_drv *dual_fg_drv, int vbatt_idx, in
 	}
 }
 
+/*
+ * use the max of base and flip vbatt as battery voltage to solve the problem of
+ * OV triggered by battery DCR(Direct Current Resistanc) unbalance.
+ */
+static int gdbatt_get_dual_vbatt(struct dual_fg_drv *dual_fg_drv,
+				 int base_vbatt, int sec_vbatt)
+{
+	const int ov_allowed_idx = dual_fg_drv->vbatt_ov_allowed_idx;
+	int dual_vbatt;
+
+	if (ov_allowed_idx < 0) {
+		const int sec_ratio = dual_fg_drv->vsec_ratio;
+		const int base_ratio = 100 - sec_ratio;
+
+		/* get the battery voltage based on the ratio of base and sec vbatt */
+		dual_vbatt = (base_vbatt * base_ratio + sec_vbatt * sec_ratio) / 100;
+	}
+	else {
+		/* use the max of base and flip vbatt as battery voltage */
+		dual_vbatt = MAX(base_vbatt, sec_vbatt);
+	}
+
+	return dual_vbatt;
+}
+
+static bool gdbatt_ov_handler_allowed(struct dual_fg_drv *dual_fg_drv, int vbatt_idx)
+{
+	const int ov_allowed_idx = dual_fg_drv->vbatt_ov_allowed_idx;
+
+	return ov_allowed_idx < 0 ? false : vbatt_idx >= ov_allowed_idx;
+}
+
 static void gdbatt_select_cc_max(struct dual_fg_drv *dual_fg_drv)
 {
 	struct gbms_chg_profile *profile = &dual_fg_drv->chg_profile;
@@ -324,7 +359,7 @@ static void gdbatt_select_cc_max(struct dual_fg_drv *dual_fg_drv)
 	if (sec_vbatt < 0)
 		goto check_done;
 
-	dual_vbatt = (base_vbatt + sec_vbatt) / 2;
+	dual_vbatt = gdbatt_get_dual_vbatt(dual_fg_drv, base_vbatt, sec_vbatt);
 
 	base_temp_idx = gdbatt_select_temp_idx(profile, base_temp);
 	sec_temp_idx = gdbatt_select_temp_idx(profile, sec_temp);
@@ -357,7 +392,12 @@ static void gdbatt_select_cc_max(struct dual_fg_drv *dual_fg_drv)
 	}
 
 	if (cc_max == dual_fg_drv->cc_max) {
-		if ((base_vbatt_idx > vbatt_idx) || (sec_vbatt_idx > vbatt_idx)) {
+		if ((base_vbatt_idx > vbatt_idx) || (sec_vbatt_idx > vbatt_idx) ||
+		    /*
+		     * trigger ov_handler in allowed idx if use max of
+		     * base and flip vbatt as dual vbatt
+		     */
+		    gdbatt_ov_handler_allowed(dual_fg_drv, vbatt_idx)) {
 			logbuffer_prlog(dual_fg_drv, LOGLEVEL_DEBUG,
 					"%s: battery OV v_base:%d, v_sec:%d",
 					__func__, base_vbatt, sec_vbatt);
@@ -636,13 +676,13 @@ static int gdbatt_get_property(struct power_supply *psy,
 		val->intval = MAX(fg_1.intval, fg_2.intval);
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
-		val->intval = (fg_1.intval + fg_2.intval)/2;
+		val->intval = gdbatt_get_dual_vbatt(dual_fg_drv, fg_1.intval, fg_2.intval);
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_AVG:
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN:
 	case POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN:
 	case POWER_SUPPLY_PROP_VOLTAGE_OCV:
-		val->intval = (fg_1.intval + fg_2.intval)/2;
+		val->intval = gdbatt_get_dual_vbatt(dual_fg_drv, fg_1.intval, fg_2.intval);
 		break;
 	case POWER_SUPPLY_PROP_CAPACITY:
 		val->intval = gdbatt_get_capacity(dual_fg_drv, fg_1.intval, fg_2.intval);
@@ -1197,6 +1237,16 @@ static int google_dual_batt_gauge_probe(struct platform_device *pdev)
 				   &dual_fg_drv->vsec_offset_max_idx);
 	if (ret < 0)
 		dual_fg_drv->vsec_offset_max_idx = DUAL_BATT_VSEC_OFFSET_IDX;
+
+	ret = of_property_read_u32(pdev->dev.of_node, "google,sec-vbatt-ratio",
+				   &dual_fg_drv->vsec_ratio);
+	if (ret < 0)
+		dual_fg_drv->vsec_ratio = DUAL_BATT_VSEC_DEFAULT_RATIO;
+
+	ret = of_property_read_u32(pdev->dev.of_node, "google,vbatt-ov-allowed-idx",
+				   &dual_fg_drv->vbatt_ov_allowed_idx);
+	if (ret < 0)
+		dual_fg_drv->vbatt_ov_allowed_idx = -1;
 
 	dual_fg_drv->log = logbuffer_register("dual_batt");
 	if (IS_ERR(dual_fg_drv->log)) {
