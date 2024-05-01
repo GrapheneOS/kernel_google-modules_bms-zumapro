@@ -86,6 +86,13 @@
  *   MAX77779_CHG_INT2_MASK_CHG_STA_CC_M |
  *   MAX77779_CHG_INT2_MASK_CHG_STA_CV_M |
  *   MAX77779_CHG_INT_MASK_CHG_M
+ *
+ * NOTE: don't use this to write to the interupt mask register. Read/write the
+ * MAX77779_CHG_INT_MASK because external interrupt handlers can mask/unmask their
+ * own bits.
+ *
+ * This array only contains the internally handled interupts. It doesn't take into
+ * account externally registered interupts
  */
 static u8 max77779_int_mask[MAX77779_CHG_INT_COUNT] = {
 	~(MAX77779_CHG_INT_CHGIN_I_MASK |
@@ -1696,16 +1703,30 @@ static int max77779_wlc_spoof_callback(struct gvotable_election *el,
 static void max77779_inlim_irq_en(struct max77779_chgr_data *data, bool en)
 {
 	int ret;
+	uint16_t intb_mask;
 
-	if (en)
+	mutex_lock(&data->io_lock);
+
+	ret = max77779_readn(data, MAX77779_CHG_INT_MASK, (uint8_t*)&intb_mask, 2);
+	if (ret < 0) {
+		dev_err(data->dev, "Unable to read interrupt mask (%d)\n", ret);
+		goto unlock_out;
+	}
+
+	if (en) {
 		max77779_int_mask[0] &= ~MAX77779_CHG_INT_INLIM_I_MASK;
-	else
+		intb_mask &= ~MAX77779_CHG_INT_INLIM_I_MASK;
+	} else {
 		max77779_int_mask[0] |= MAX77779_CHG_INT_INLIM_I_MASK;
-	ret = max77779_writen(data, MAX77779_CHG_INT_MASK,
-					max77779_int_mask,
-					sizeof(max77779_int_mask));
+		intb_mask |= MAX77779_CHG_INT_INLIM_I_MASK;
+	}
+	ret = max77779_writen(data, MAX77779_CHG_INT_MASK, /* NOTYPO */
+			      (uint8_t*)&intb_mask, sizeof(intb_mask));
 	if (ret < 0)
-		pr_err("%s: cannot set irq_mask (%d)\n", __func__, ret);
+		dev_err(data->dev, "%s: cannot set irq_mask (%d)\n", __func__, ret);
+
+unlock_out:
+	mutex_unlock(&data->io_lock);
 }
 
 static void max77779_wcin_inlim_work(struct work_struct *work)
@@ -3429,6 +3450,8 @@ static void max77779_chg_bus_sync_unlock(struct irq_data *d)
 	uint16_t intb_mask, offset, value;
 	int err;
 
+	mutex_lock(&data->io_lock);
+
 	if (!data->mask_u)
 		goto unlock_out;
 
@@ -3451,12 +3474,12 @@ static void max77779_chg_bus_sync_unlock(struct irq_data *d)
 
 	err = max77779_writen(data, MAX77779_CHG_INT_MASK, /* NOTYPO */
 			      (uint8_t*)&intb_mask, 2);
-	if (err < 0) {
+	if (err < 0)
 		dev_err(data->dev, "Unable to write interrupt mask (%d)\n", err);
-		goto unlock_out;
-	}
+
 
  unlock_out:
+	mutex_unlock(&data->io_lock);
 	mutex_unlock(&data->irq_lock);
 }
 
@@ -3679,13 +3702,27 @@ int max77779_charger_init(struct max77779_chgr_data *data)
 						"max77779_charger",
 						data);
 		if (ret == 0) {
+			uint16_t intb_mask;
+
 			/* might cause the isr to be called */
 			max77779_chg_irq_handler(-1, data);
+
+			mutex_lock(&data->io_lock);
+
+			ret = max77779_readn(data, MAX77779_CHG_INT_MASK, (uint8_t*)&intb_mask, 2);
+			if (ret < 0) {
+				dev_err(data->dev, "Unable to read interrupt mask (%d)\n", ret);
+				goto unlock;
+			}
+
+			intb_mask &= (max77779_int_mask[0] | (max77779_int_mask[1] << 8));
+
 			ret = max77779_writen(data, MAX77779_CHG_INT_MASK, /* NOTYPO */
-					      max77779_int_mask,
-					      sizeof(max77779_int_mask));
+					      (uint8_t*)&intb_mask, sizeof(intb_mask));
 			if (ret < 0)
 				dev_warn(dev, "cannot set irq_mask (%d)\n", ret);
+unlock:
+			mutex_unlock(&data->io_lock);
 
 			device_init_wakeup(data->dev, true);
 			ret = enable_irq_wake(data->irq_int);
