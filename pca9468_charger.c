@@ -2388,7 +2388,7 @@ done:
 }
 
 /* called on loop inactive */
-static int pca9468_ajdust_ccmode_wireless(struct pca9468_charger *pca9468, int iin)
+static void pca9468_adjust_ccmode_wireless(struct pca9468_charger *pca9468, int iin)
 {
 	/* IIN_ADC > IIN_CC -20mA ? */
 	if (iin > (pca9468->iin_cc - PCA9468_IIN_ADC_OFFSET)) {
@@ -2433,12 +2433,10 @@ static int pca9468_ajdust_ccmode_wireless(struct pca9468_charger *pca9468, int i
 		pca9468->timer_id = TIMER_PDMSG_SEND;
 		pca9468->timer_period = 0;
 	}
-
-	return 0;
 }
 
 /* called on loop inactive */
-static int pca9468_ajdust_ccmode_wired(struct pca9468_charger *pca9468, int iin)
+static void pca9468_adjust_ccmode_wired(struct pca9468_charger *pca9468, int iin)
 {
 
 	/* USBPD TA is connected */
@@ -2573,8 +2571,6 @@ static int pca9468_ajdust_ccmode_wired(struct pca9468_charger *pca9468, int iin)
 		pca9468->timer_id = TIMER_PDMSG_SEND;
 		pca9468->timer_period = 0;
 	}
-
-	return 0;
 }
 
 static int pca9468_vote_dc_avail(struct pca9468_charger *pca9468, int vote, int enable)
@@ -2686,15 +2682,12 @@ static int pca9468_charge_adjust_ccmode(struct pca9468_charger *pca9468)
 			break;
 
 		if (pca9468->ta_type == TA_TYPE_WIRELESS) {
-			ret = pca9468_ajdust_ccmode_wireless(pca9468, iin);
+			pca9468_adjust_ccmode_wireless(pca9468, iin);
 		} else {
-			ret = pca9468_ajdust_ccmode_wired(pca9468, iin);
+			pca9468_adjust_ccmode_wired(pca9468, iin);
 		}
 
-		if (ret < 0)
-			pr_err("%s: %d", __func__, ret);
-		else
-			pca9468->prev_iin = iin;
+		pca9468->prev_iin = iin;
 		break;
 
 	case STS_MODE_VIN_UVLO:
