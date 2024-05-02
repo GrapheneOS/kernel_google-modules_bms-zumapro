@@ -2522,7 +2522,7 @@ done:
 }
 
 /* called on loop inactive */
-static int ln8411_ajdust_ccmode_wireless(struct ln8411_charger *ln8411, int iin)
+static void ln8411_adjust_ccmode_wireless(struct ln8411_charger *ln8411, int iin)
 {
 	/* IIN_ADC > IIN_CC -20mA ? */
 	if (iin > (ln8411->iin_cc - LN8411_IIN_ADC_OFFSET)) {
@@ -2567,12 +2567,10 @@ static int ln8411_ajdust_ccmode_wireless(struct ln8411_charger *ln8411, int iin)
 		ln8411->timer_id = TIMER_PDMSG_SEND;
 		ln8411->timer_period = 0;
 	}
-
-	return 0;
 }
 
 /* called on loop inactive */
-static int ln8411_ajdust_ccmode_wired(struct ln8411_charger *ln8411, int iin)
+static void ln8411_adjust_ccmode_wired(struct ln8411_charger *ln8411, int iin)
 {
 
 	/* USBPD TA is connected */
@@ -2707,8 +2705,6 @@ static int ln8411_ajdust_ccmode_wired(struct ln8411_charger *ln8411, int iin)
 		ln8411->timer_id = TIMER_PDMSG_SEND;
 		ln8411->timer_period = 0;
 	}
-
-	return 0;
 }
 
 static int ln8411_vote_dc_avail(struct ln8411_charger *ln8411, int vote, int enable)
@@ -2819,17 +2815,12 @@ static int ln8411_charge_adjust_ccmode(struct ln8411_charger *ln8411)
 			break;
 
 		if (ln8411->ta_type == TA_TYPE_WIRELESS) {
-			ret = ln8411_ajdust_ccmode_wireless(ln8411, iin);
+			ln8411_adjust_ccmode_wireless(ln8411, iin);
 		} else {
-			ret = ln8411_ajdust_ccmode_wired(ln8411, iin);
+			ln8411_adjust_ccmode_wired(ln8411, iin);
 		}
 
-		if (ret < 0) {
-			dev_err(ln8411->dev, "%s: %d", __func__, ret);
-		} else {
-			ln8411->prev_iin = iin;
-		}
-
+		ln8411->prev_iin = iin;
 		break;
 
 	case STS_MODE_VIN_UVLO:
