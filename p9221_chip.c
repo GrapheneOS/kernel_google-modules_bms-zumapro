@@ -2562,9 +2562,12 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 		break;
 	case RA9530_CHIP_ID:
 		// Mostly Same as 9412
-		chgr->ints.over_curr_bit = P9412_STAT_OVC;
-		chgr->ints.over_volt_bit = P9412_STAT_OVV; // TODO: check if 9412 issue still occur in HPP
-		chgr->ints.over_temp_bit = P9412_STAT_OVT;
+		chgr->ints.over_curr_bit = 0;
+		chgr->ints.over_volt_bit = 0;
+		chgr->ints.over_temp_bit = 0;
+		chgr->ints.log_oc_bit = P9412_STAT_OVC;
+		chgr->ints.log_ov_bit = P9412_STAT_OVV;
+		chgr->ints.log_ot_bit = P9412_STAT_OVT;
 		chgr->ints.over_uv_bit = 0;
 		chgr->ints.cc_send_busy_bit = P9412_STAT_CCSENDBUSY;
 		chgr->ints.cc_data_rcvd_bit = P9412_STAT_CCDATARCVD;
@@ -2672,6 +2675,9 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 				      chgr->ints.over_temp_bit |
 				      chgr->ints.over_volt_bit |
 				      chgr->ints.over_curr_bit);
+	chgr->ints.stat_limitlog_mask = (chgr->ints.log_oc_bit |
+					 chgr->ints.log_ov_bit |
+					 chgr->ints.log_ot_bit);
 	chgr->ints.stat_cc_mask = (chgr->ints.cc_send_busy_bit |
 				   chgr->ints.cc_reset_bit |
 				   chgr->ints.pp_rcvd_bit |
