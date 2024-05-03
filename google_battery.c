@@ -2002,6 +2002,18 @@ static void batt_chg_stats_update(struct batt_drv *batt_drv, int temp_idx,
 		gbms_stats_update_tier(temp_idx, ibatt_ma, temp, elap, cc,
 				       &batt_drv->chg_state, msc_state, soc_in,
 				       &ce_data->health_stats);
+
+	} else if (batt_drv->temp_filter.enable) {
+		struct batt_temp_filter *temp_filter = &batt_drv->temp_filter;
+		int no_filter_temp;
+
+		mutex_lock(&temp_filter->lock);
+		no_filter_temp = temp_filter->sample[temp_filter->last_idx];
+		mutex_unlock(&temp_filter->lock);
+
+		gbms_stats_update_tier(temp_idx, ibatt_ma, no_filter_temp, elap, cc,
+				       &batt_drv->chg_state, msc_state, soc_in,
+				       &ce_data->temp_filter_stats);
 	} else {
 		const qnum_t soc = ssoc_get_capacity_raw(&batt_drv->ssoc_state);
 
@@ -2034,15 +2046,6 @@ static void batt_chg_stats_update(struct batt_drv *batt_drv, int temp_idx,
 		gbms_stats_update_tier(temp_idx, ibatt_ma, temp, elap, cc,
 				       &batt_drv->chg_state, msc_state, soc_in,
 				       &ce_data->cc_lvl_stats);
-		tier = NULL;
-	}
-
-	if (batt_drv->temp_filter.enable) {
-		struct batt_temp_filter *temp_filter = &batt_drv->temp_filter;
-		int no_filter_temp = temp_filter->sample[temp_filter->last_idx];
-		gbms_stats_update_tier(temp_idx, ibatt_ma, no_filter_temp, elap, cc,
-				       &batt_drv->chg_state, msc_state, soc_in,
-				       &ce_data->temp_filter_stats);
 		tier = NULL;
 	}
 
