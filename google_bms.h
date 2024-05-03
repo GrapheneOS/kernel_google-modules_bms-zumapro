@@ -743,7 +743,7 @@ enum charging_state {
 };
 
 #define LONGLIFE_CHARGE_STOP_LEVEL 80
-#define LONGLIFE_CHARGE_START_LEVEL 70
+#define LONGLIFE_CHARGE_START_LEVEL 79
 #define ADAPTIVE_ALWAYS_ON_SOC 80
 
 enum charging_policy {
