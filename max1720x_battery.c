@@ -1953,7 +1953,6 @@ static int max1720x_get_property(struct power_supply *psy,
 	struct maxfg_regmap *map = &chip->regmap;
 	int rc, err = 0;
 	u16 data = 0;
-	int idata;
 
 	__pm_stay_awake(chip->get_prop_ws);
 	mutex_lock(&chip->model_lock);
@@ -1969,38 +1968,31 @@ static int max1720x_get_property(struct power_supply *psy,
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_STATUS:
-		err = max1720x_get_battery_status(chip);
-		if (err < 0)
+		val->intval = max1720x_get_battery_status(chip);
+		if (val->intval < 0) {
+			val->intval = POWER_SUPPLY_STATUS_UNKNOWN;
 			break;
+		}
 
 		/*
 		 * Capacity estimation must run only once.
 		 * NOTE: this is a getter with a side effect
 		 */
-		val->intval = err;
-		if (err == POWER_SUPPLY_STATUS_FULL)
+		if (val->intval == POWER_SUPPLY_STATUS_FULL)
 			batt_ce_start(&chip->cap_estimate,
 				      chip->cap_estimate.cap_tsettle);
 		/* check for relaxation event and log it */
 		max1720x_monitor_log_learning(chip, false);
-
-		/* return data ok */
-		err = 0;
 		break;
 	case POWER_SUPPLY_PROP_CAPACITY:
-		idata = max1720x_get_battery_soc(chip);
-		if (idata < 0) {
-			err = idata;
-			break;
-		}
-
-		val->intval = idata;
+		val->intval = max1720x_get_battery_soc(chip);
+		/* fake soc 50% on error */
+		if (val->intval < 0)
+			val->intval = DEFAULT_BATT_FAKE_CAPACITY;
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_COUNTER:
-		err = max1720x_update_battery_qh_based_capacity(chip);
-		if (err < 0)
-			break;
-
+		rc = max1720x_update_battery_qh_based_capacity(chip);
+		/* use previous capacity on error */
 		val->intval = reg_to_capacity_uah(chip->current_capacity, chip);
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_FULL:
@@ -2009,55 +2001,51 @@ static int max1720x_get_property(struct power_supply *psy,
 		 * prevent large fluctuations in FULLCAPNOM. MAX1720X_CYCLES LSB
 		 * is 16%
 		 */
-		err = max1720x_get_cycle_count(chip);
-		if (err < 0)
+		rc = max1720x_get_cycle_count(chip);
+		if (rc < 0)
 			break;
 
-		/* err is cycle_count */
-		if (err <= FULLCAPNOM_STABILIZE_CYCLES)
-			err = REGMAP_READ(map, MAX1720X_DESIGNCAP, &data);
+		/* rc is cycle_count */
+		if (rc <= FULLCAPNOM_STABILIZE_CYCLES)
+			rc = REGMAP_READ(map, MAX1720X_DESIGNCAP, &data);
 		else
-			err = REGMAP_READ(map, MAX1720X_FULLCAPNOM, &data);
+			rc = REGMAP_READ(map, MAX1720X_FULLCAPNOM, &data);
 
-		if (err == 0)
+		if (rc == 0)
 			val->intval = reg_to_capacity_uah(data, chip);
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
-		err = REGMAP_READ(map, MAX1720X_DESIGNCAP, &data);
-		if (err == 0)
+		rc = REGMAP_READ(map, MAX1720X_DESIGNCAP, &data);
+		if (rc == 0)
 			val->intval = reg_to_capacity_uah(data, chip);
 		break;
 	/* current is positive value when flowing to device */
 	case POWER_SUPPLY_PROP_CURRENT_AVG:
-		err = maxfg_reg_read(map, MAXFG_TAG_avgc, &data);
-		if (err == 0)
+		rc = maxfg_reg_read(map, MAXFG_TAG_avgc, &data);
+		if (rc == 0)
 			val->intval = -reg_to_micro_amp(data, chip->RSense);
 		break;
 	/* current is positive value when flowing to device */
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
-		err = maxfg_reg_read(map, MAXFG_TAG_curr, &data);
-		if (err == 0)
+		rc = maxfg_reg_read(map, MAXFG_TAG_curr, &data);
+		if (rc == 0)
 			val->intval = -reg_to_micro_amp(data, chip->RSense);
 		break;
 	case POWER_SUPPLY_PROP_CYCLE_COUNT:
-		err = max1720x_get_cycle_count(chip);
-		if (err < 0)
+		rc = max1720x_get_cycle_count(chip);
+		if (rc < 0)
 			break;
-		/* err is cycle_count */
-		val->intval = err;
-		/* return data ok */
-		err = 0;
+		/* rc is cycle_count */
+		val->intval = rc;
 		break;
 	case POWER_SUPPLY_PROP_PRESENT:
-
 		if (chip->fake_battery != -1) {
 			val->intval = chip->fake_battery;
 		} else if (chip->gauge_type == -1) {
 			val->intval = 0;
 		} else {
-
-			err = REGMAP_READ(map, MAX1720X_STATUS, &data);
-			if (err < 0)
+			rc = REGMAP_READ(map, MAX1720X_STATUS, &data);
+			if (rc < 0)
 				break;
 
 			/* BST is 0 when the battery is present */
@@ -2078,8 +2066,8 @@ static int max1720x_get_property(struct power_supply *psy,
 		}
 		break;
 	case POWER_SUPPLY_PROP_TEMP:
-		err = maxfg_reg_read(map, MAXFG_TAG_temp, &data);
-		if (err < 0)
+		rc = maxfg_reg_read(map, MAXFG_TAG_temp, &data);
+		if (rc < 0)
 			break;
 
 		val->intval = reg_to_deci_deg_cel(data);
@@ -2101,8 +2089,8 @@ static int max1720x_get_property(struct power_supply *psy,
 		val->intval = -1;
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_AVG:
-		err = REGMAP_READ(map, MAX1720X_AVGVCELL, &data);
-		if (err == 0)
+		rc = REGMAP_READ(map, MAX1720X_AVGVCELL, &data);
+		if (rc == 0)
 			val->intval = reg_to_micro_volt(data);
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN:
@@ -2118,17 +2106,14 @@ static int max1720x_get_property(struct power_supply *psy,
 			val->intval = (data & 0xFF) * 20000;
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
-		err = maxfg_reg_read(map, MAXFG_TAG_vcel, &data);
-		if (err == 0)
+		rc = maxfg_reg_read(map, MAXFG_TAG_vcel, &data);
+		if (rc == 0)
 			val->intval = reg_to_micro_volt(data);
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_OCV:
 		rc = maxfg_reg_read(map, MAXFG_TAG_vfocv, &data);
-		if (rc == -EINVAL) {
-			val->intval = -1;
-			break;
-		}
-		val->intval = reg_to_micro_volt(data);
+		if (rc == 0)
+			val->intval = reg_to_micro_volt(data);
 		break;
 	case POWER_SUPPLY_PROP_TECHNOLOGY:
 		val->intval = POWER_SUPPLY_TECHNOLOGY_LION;
