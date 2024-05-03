@@ -42,7 +42,6 @@
 #define BATT_WORK_DEBOUNCE_RETRY_MS	3000
 #define BATT_WORK_ERROR_RETRY_MS	1000
 
-#define DEFAULT_BATT_FAKE_CAPACITY		50
 #define DEFAULT_BATT_UPDATE_INTERVAL		47000
 #define DEFAULT_BATT_DRV_RL_SOC_THRESHOLD	95
 #define DEFAULT_BD_TRICKLE_RL_SOC_THRESHOLD	90
@@ -9086,7 +9085,7 @@ static bool gbatt_check_critical_level(const struct batt_drv *batt_drv,
 			return false;
 
 		vbatt = PSY_GET_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
-		if (vbatt == -EAGAIN)
+		if (vbatt <= 0)
 			return false;
 
 		/* disable the check */
