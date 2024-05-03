@@ -139,6 +139,7 @@ int chg_switch_profile(struct pd_pps_data *pps, struct power_supply *tcpm_psy,
 int pps_get_apdo_max_power(struct pd_pps_data *pps, unsigned int *ta_idx,
 			   unsigned int *ta_max_vol, unsigned int *ta_max_cur,
 			   unsigned long *ta_max_pwr);
+int pps_get_max_power(struct pd_pps_data *pps_data, unsigned int *ta_max_pwr, bool pd);
 
 bool pps_check_prog_online(struct pd_pps_data *pps_data);
 bool pps_prog_check_online(struct pd_pps_data *pps_data,
