@@ -6744,9 +6744,9 @@ static ssize_t batt_show_ttf_stats(struct device *dev,
 	len += scnprintf(&buf[len], PAGE_SIZE - len, "\n");
 
 	if (verbose)
-		len += ttf_soc_cstr(&buf[len], PAGE_SIZE - len,
-				    &batt_drv->ttf_stats.soc_stats,
-				    0, 99);
+		len += ttf_soc_cstr_combine(&buf[len], PAGE_SIZE - len,
+					    &batt_drv->ttf_stats.soc_ref,
+					    &batt_drv->ttf_stats.soc_stats);
 
 	mutex_unlock(&batt_drv->stats_lock);
 
