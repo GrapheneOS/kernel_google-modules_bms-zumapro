@@ -4446,7 +4446,7 @@ static int google_cpm_probe(struct platform_device *pdev)
 		unsigned long init_flags = GPIOF_OUT_INIT_LOW;
 
 		gcpm->dcen_gpio_default = of_property_read_bool(pdev->dev.of_node,
-								"google,google,dc-en-value");
+								"google,dc-en-value");
 		if (gcpm->dcen_gpio_default)
 			init_flags = GPIOF_OUT_INIT_HIGH;
 

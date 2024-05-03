@@ -45,7 +45,7 @@ properties:
     description: DC enable gpio
     type: boolean
 
-  google,google,dc-en-value:
+  google,dc-en-value:
     description: DC enable gpio output active HIGH. Absence of gpio indicates
     output active LOW.
     type: boolean
