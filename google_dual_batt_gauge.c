@@ -56,7 +56,6 @@ struct dual_fg_drv {
 	struct power_supply *first_fg_psy;
 	struct power_supply *second_fg_psy;
 
-	struct mutex fg_lock;
 	struct mutex stats_lock;
 
 	struct delayed_work init_work;
@@ -512,6 +511,7 @@ static void gdbatt_stats_init(struct dual_fg_drv *dual_fg_drv)
 	mutex_unlock(&dual_fg_drv->stats_lock);
 }
 
+/* call holding stats_lock */
 static int gbatt_update_batt_stats(struct power_supply *psy, ktime_t elap,
 				   struct gbms_ce_tier_stats *tier,
 				   struct gbms_chg_profile *profile,
@@ -555,15 +555,13 @@ static void gbatt_update_stats(struct dual_fg_drv *dual_fg_drv)
 
 	ret = gdbatt_resume_check(dual_fg_drv);
 	if (ret < 0)
-		goto done;
-
-	mutex_lock(&dual_fg_drv->stats_lock);
+		return;
 
 	if (!dual_fg_drv->cable_in)
-		goto done;
+		return;
 
 	if (!dual_fg_drv->first_fg_psy && !dual_fg_drv->second_fg_psy)
-		goto done;
+		return;
 
 	if (!dual_fg_drv->batt_psy)
 		dual_fg_drv->batt_psy = power_supply_get_by_name("battery");
@@ -572,9 +570,12 @@ static void gbatt_update_stats(struct dual_fg_drv *dual_fg_drv)
 		dual_fg_drv->chg_state.v = GPSY_GET_INT64_PROP(dual_fg_drv->batt_psy,
 							       GBMS_PROP_CHARGE_CHARGER_STATE,
 							       &ret);
-	if (ret < 0)
-		goto done;
+	if (ret < 0) {
+		pr_info("fail to get charge state from battery (%d)\n", ret);
+		return;
+	}
 
+	mutex_lock(&dual_fg_drv->stats_lock);
 	elap = now - dual_fg_drv->last_update;
 	dual_fg_drv->last_update = now;
 
@@ -584,17 +585,17 @@ static void gbatt_update_stats(struct dual_fg_drv *dual_fg_drv)
 					      &dual_fg_drv->base_profile,
 					      &dual_fg_drv->chg_state);
 	if (ret < 0)
-		goto done;
+		pr_info("fail to update base battery stats (%d)\n", ret);
 
 	if (dual_fg_drv->second_fg_psy)
 		ret = gbatt_update_batt_stats(dual_fg_drv->second_fg_psy, elap,
 					      &dual_fg_drv->sec_batt_stats,
 					      &dual_fg_drv->sec_profile,
 					      &dual_fg_drv->chg_state);
-	if (ret < 0)
-		goto done;
 
-done:
+	if (ret < 0)
+		pr_info("fail to update sec battery stats (%d)\n", ret);
+
 	mutex_unlock(&dual_fg_drv->stats_lock);
 }
 
@@ -604,8 +605,6 @@ static void google_dual_batt_work(struct work_struct *work)
 						 gdbatt_work.work);
 	struct power_supply *base_psy = dual_fg_drv->first_fg_psy;
 	struct power_supply *sec_psy = dual_fg_drv->second_fg_psy;
-
-	mutex_lock(&dual_fg_drv->fg_lock);
 
 	if (!dual_fg_drv->init_complete)
 		goto done;
@@ -620,8 +619,6 @@ static void google_dual_batt_work(struct work_struct *work)
 done:
 	mod_delayed_work(system_wq, &dual_fg_drv->gdbatt_work,
 			 msecs_to_jiffies(DUAL_FG_WORK_PERIOD_MS));
-
-	mutex_unlock(&dual_fg_drv->fg_lock);
 }
 
 static int gdbatt_get_property(struct power_supply *psy,
@@ -644,19 +641,15 @@ static int gdbatt_get_property(struct power_supply *psy,
 	if (!dual_fg_drv->first_fg_psy || !dual_fg_drv->second_fg_psy)
 		goto single_fg;
 
-	mutex_lock(&dual_fg_drv->fg_lock);
-
 	err = power_supply_get_property(dual_fg_drv->first_fg_psy, psp, &fg_1);
 	if (err != 0) {
 		pr_debug("error %d reading first fg prop %d\n", err, psp);
-		mutex_unlock(&dual_fg_drv->fg_lock);
 		return err;
 	}
 
 	err = power_supply_get_property(dual_fg_drv->second_fg_psy, psp, &fg_2);
 	if (err != 0) {
 		pr_debug("error %d reading second fg prop %d\n", err, psp);
-		mutex_unlock(&dual_fg_drv->fg_lock);
 		return err;
 	}
 
@@ -713,17 +706,13 @@ static int gdbatt_get_property(struct power_supply *psy,
 		break;
 	}
 
-	mutex_unlock(&dual_fg_drv->fg_lock);
-
 	return 0;
 
 single_fg:
-	mutex_lock(&dual_fg_drv->fg_lock);
 	if (dual_fg_drv->first_fg_psy)
 		err = power_supply_get_property(dual_fg_drv->first_fg_psy, psp, val);
 	else if (dual_fg_drv->second_fg_psy)
 		err = power_supply_get_property(dual_fg_drv->second_fg_psy, psp, val);
-	mutex_unlock(&dual_fg_drv->fg_lock);
 
 	if (err < 0)
 		pr_debug("error %d reading single prop %d\n", err, psp);
@@ -766,19 +755,15 @@ static int gdbatt_gbms_get_property(struct power_supply *psy,
 	if (!dual_fg_drv->first_fg_psy || !dual_fg_drv->second_fg_psy)
 		goto single_fg;
 
-	mutex_lock(&dual_fg_drv->fg_lock);
-
 	fg_1.prop.intval = GPSY_GET_INT_PROP(dual_fg_drv->first_fg_psy, psp, &err);
 	if (err != 0) {
 		pr_debug("error %d reading first fg prop %d\n", err, psp);
-		mutex_unlock(&dual_fg_drv->fg_lock);
 		return err;
 	}
 
 	fg_2.prop.intval = GPSY_GET_INT_PROP(dual_fg_drv->second_fg_psy, psp, &err);
 	if (err != 0) {
 		pr_debug("error %d reading second fg prop %d\n", err, psp);
-		mutex_unlock(&dual_fg_drv->fg_lock);
 		return err;
 	}
 
@@ -804,21 +789,16 @@ static int gdbatt_gbms_get_property(struct power_supply *psy,
 		break;
 	default:
 		pr_debug("%s: route to gdbatt_get_property, psp:%d\n", __func__, psp);
-		mutex_unlock(&dual_fg_drv->fg_lock);
 		return -ENODATA;
 	}
-
-	mutex_unlock(&dual_fg_drv->fg_lock);
 
 	return 0;
 
 single_fg:
-	mutex_lock(&dual_fg_drv->fg_lock);
 	if (dual_fg_drv->first_fg_psy)
 		val->prop.intval = GPSY_GET_INT_PROP(dual_fg_drv->first_fg_psy, psp, &err);
 	else if (dual_fg_drv->second_fg_psy)
 		val->prop.intval = GPSY_GET_INT_PROP(dual_fg_drv->second_fg_psy, psp, &err);
-	mutex_unlock(&dual_fg_drv->fg_lock);
 
 	if (err < 0)
 		pr_debug("error %d reading single prop %d\n", err, psp);
@@ -850,9 +830,11 @@ static int gdbatt_gbms_set_property(struct power_supply *psy,
 			if (ret < 0)
 				pr_err("Cannot set the second BATT_CE_CTRL, ret=%d\n", ret);
 		}
+		mutex_lock(&dual_fg_drv->stats_lock);
 		dual_fg_drv->cable_in = !!val->prop.intval;
 		if (dual_fg_drv->cable_in)
 			dual_fg_drv->last_update = get_boot_sec();
+		mutex_unlock(&dual_fg_drv->stats_lock);
 		mod_delayed_work(system_wq, &dual_fg_drv->gdbatt_work, 0);
 		break;
 	case GBMS_PROP_HEALTH_ACT_IMPEDANCE:
@@ -1206,7 +1188,6 @@ static int google_dual_batt_gauge_probe(struct platform_device *pdev)
 
 	INIT_DELAYED_WORK(&dual_fg_drv->init_work, google_dual_batt_gauge_init_work);
 	INIT_DELAYED_WORK(&dual_fg_drv->gdbatt_work, google_dual_batt_work);
-	mutex_init(&dual_fg_drv->fg_lock);
 	mutex_init(&dual_fg_drv->stats_lock);
 	platform_set_drvdata(pdev, dual_fg_drv);
 
