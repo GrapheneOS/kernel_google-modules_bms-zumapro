@@ -403,7 +403,7 @@ static int max77779_fg_model_reload(struct max77779_fg_chip *chip, bool force)
 	if (!force && max77779_fg_model_check_version(chip->model_data))
 		return -EINVAL;
 
-	gbms_logbuffer_devlog(chip->monitor_log, chip->dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+	gbms_logbuffer_devlog(chip->ce_log, chip->dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
 			      "Schedule Load FG Model, ID=%d, ver:%d->%d",
 			      chip->batt_id, max77779_model_read_version(chip->model_data),
 			      max77779_fg_model_version(chip->model_data));
@@ -1014,7 +1014,7 @@ static int max77779_fg_get_fw_ver(struct max77779_fg_chip *chip)
 
 	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_ic_info, &fg_ic_info);
 
-	gbms_logbuffer_devlog(chip->monitor_log, chip->dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+	gbms_logbuffer_devlog(chip->ce_log, chip->dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
 			      "FW_REV=%d, FW_SUB_REV=%d, PMIC_VER/REV=%d/PASS%d, TestProgramRev=%d",
 			      chip->fw_rev, chip->fw_sub_rev,
 			      _max77779_pmic_revision_ver_get(pmic_revision),
@@ -1076,7 +1076,7 @@ static int max77779_adjust_cgain(struct max77779_fg_chip *chip, unsigned int otp
 	else
 		v_cgain = v_cgain | (((-1) * i_otrim_real) & 0x3F);
 
-	gbms_logbuffer_devlog(chip->monitor_log, chip->dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+	gbms_logbuffer_devlog(chip->ce_log, chip->dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
 			      "OTP_VER:%d,%02X:%04X,%02X:%04X,%02X:%04X,trim:%d,new Cgain:%04X",
 			      otp_revision, MAX77779_FG_TrimIbattGain, i_gtrim,
 			      MAX77779_FG_TrimBattOffset, i_otrim, MAX77779_FG_CGain, ro_cgain,
@@ -1147,7 +1147,8 @@ static int max77779_fg_monitor_log_data(struct max77779_fg_chip *chip, bool forc
 		charge_counter = reg_to_capacity_uah(chip->current_capacity, chip);
 
 	gbms_logbuffer_devlog(chip->monitor_log, chip->dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-			      "%02X:%04X %s CC:%d", MAX77779_FG_RepSOC, data, buf, charge_counter);
+			      "0x%04X %02X:%04X %s CC:%d", MONITOR_TAG_RM, MAX77779_FG_RepSOC, data,
+			      buf, charge_counter);
 
 	chip->pre_repsoc = repsoc;
 
@@ -1200,7 +1201,7 @@ static int max77779_fg_monitor_log_learning(struct max77779_fg_chip *chip, bool 
 	if (ret > 0)
 		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
 				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-				      "learn %s", buf);
+				      "0x%04X %s", MONITOR_TAG_LH, buf);
 
 	kfree(buf);
 
@@ -1972,7 +1973,7 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 		/* Not clear POR interrupt here, model work will do */
 		fg_int_sts_clr &= ~MAX77779_FG_Status_PONR_MASK;
 
-		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
+		gbms_logbuffer_devlog(chip->ce_log, chip->dev,
 				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
 				      "POR is set (FG_INT_STS:%04x), irq:%d, model_reload:%d",
 				      fg_int_sts, irq, chip->model_reload);
@@ -3023,7 +3024,7 @@ static void max77779_fg_model_work(struct work_struct *work)
 	if (chip->model_reload >= MAX77779_FG_LOAD_MODEL_REQUEST) {
 		/* will clear POR interrupt bit */
 		rc = max77779_fg_model_load(chip);
-		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
+		gbms_logbuffer_devlog(chip->ce_log, chip->dev,
 				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
 				      "Model loading complete, rc=%d, reload=%d", rc,
 				      chip->model_reload);
@@ -3126,7 +3127,7 @@ static int max77779_fg_init_model_data(struct max77779_fg_chip *chip)
 		else
 			dev_warn(chip->dev, "GMSR: model data erased\n");
 
-		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
+		gbms_logbuffer_devlog(chip->ce_log, chip->dev,
 				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
 				      "FG Version Changed, Reload");
 

@@ -1349,7 +1349,7 @@ static int max1720x_check_history(struct max1720x_chip *chip)
 
 	gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
 			      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-			      "0x4856 %d %d %d %d",
+			      "0x%04X 00:%4X 01:%4X 02:%4X 03:%4X", MONITOR_TAG_HV,
 			      first_empty, misplaced_count, chip->cycle_count, est_cycle);
 
 	return 0;
@@ -1935,7 +1935,7 @@ static int max1720x_monitor_log_learning(struct max1720x_chip *chip, bool force)
 	if (ret > 0)
 		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
 				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-				      "learn %s", buf);
+				      "0x%04X %s", MONITOR_TAG_LH, buf);
 
 	kfree(buf);
 
@@ -2250,7 +2250,8 @@ static int max1720x_monitor_log_data(struct max1720x_chip *chip, bool force_log)
 		charge_counter = reg_to_capacity_uah(chip->current_capacity, chip);
 
 	gbms_logbuffer_devlog(chip->monitor_log, chip->dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-			     "%02X:%04X %s CC:%d", MAX1720X_REPSOC, data, buf, charge_counter);
+			     "0x%04X %02X:%04X %s CC:%d", MONITOR_TAG_RM, MAX1720X_REPSOC, data,
+			     buf, charge_counter);
 
 	chip->pre_repsoc = repsoc;
 
@@ -4288,7 +4289,7 @@ static void max1720x_rc_work(struct work_struct *work)
 		if (ret == 0)
 			ret = REGMAP_WRITE(&chip->regmap, MAX_M5_LEARNCFG, learncfg);
 
-		gbms_logbuffer_prlog(chip->monitor_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+		gbms_logbuffer_prlog(chip->ce_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
 				     "%s to RC1. ret=%d soc=%d temp=%d tempco=0x%x, learncfg=0x%x",
 				     __func__, ret, soc, temp, chip->rc_switch.rc1_tempco, learncfg);
 
@@ -4309,7 +4310,7 @@ static void max1720x_rc_work(struct work_struct *work)
 		if (ret == 0)
 			ret = REGMAP_WRITE(&chip->regmap, MAX_M5_LEARNCFG, learncfg);
 
-		gbms_logbuffer_prlog(chip->monitor_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+		gbms_logbuffer_prlog(chip->ce_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
 				     "%s to RC2. ret=%d soc=%d temp=%d tempco=0x%x, learncfg=0x%x",
 				     __func__, ret, soc, temp, chip->rc_switch.rc2_tempco, learncfg);
 	}
@@ -4317,7 +4318,7 @@ static void max1720x_rc_work(struct work_struct *work)
 reschedule:
 	if (ret != 0) {
 		interval = RC_WORK_TIME_QUICK_MS;
-		gbms_logbuffer_prlog(chip->monitor_log, LOGLEVEL_WARNING, 0, LOGLEVEL_INFO,
+		gbms_logbuffer_prlog(chip->ce_log, LOGLEVEL_WARNING, 0, LOGLEVEL_INFO,
 				     "%s didn't finish. ret=%d", __func__, ret);
 	}
 
