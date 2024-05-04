@@ -62,6 +62,7 @@ enum max77779_fg_command_bits {
 static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj);
 static int max77779_fg_set_next_update(struct max77779_fg_chip *chip);
 static int max77779_fg_update_cycle_count(struct max77779_fg_chip *chip);
+static int max77779_fg_apply_n_register(struct max77779_fg_chip *chip);
 
 /* Do not move reg_write_nolock to public header */
 int max77779_external_fg_reg_write_nolock(struct device *dev, uint16_t reg, uint16_t val);
@@ -2985,7 +2986,6 @@ static int max77779_fg_model_load(struct max77779_fg_chip *chip)
 static void max77779_fg_init_setting(struct max77779_fg_chip *chip)
 {
 	int ret;
-	u16 data16;
 
 	/* dump registers */
 	max77779_fg_monitor_log_data(chip, true);
@@ -2993,19 +2993,9 @@ static void max77779_fg_init_setting(struct max77779_fg_chip *chip)
 	/* PASS1/1.5 */
 	max77779_current_offset_check(chip);
 
-	/* Set thm2 config */
-	if (!chip->dev->of_node)
-		return;
-
-	ret = of_property_read_u16(chip->dev->of_node, "max77779,thm2-config", &data16);
-	if (ret == 0) {
-		ret = MAX77779_FG_N_REGMAP_WRITE(&chip->regmap, &chip->regmap_debug,
-						 MAX77779_FG_NVM_nThermCfg2, data16);
-		if (ret)
-			dev_warn(chip->dev, "Unable to write THM2 config (%d)\n", ret);
-		else
-			dev_info(chip->dev, "THM2 config set 0x%x\n", data16);
-	}
+	ret = max77779_fg_apply_n_register(chip);
+	if (ret < 0)
+		dev_err(chip->dev, "Fail to apply_n_register(%d)\n", ret);
 }
 
 static void max77779_fg_model_work(struct work_struct *work)
@@ -3491,6 +3481,62 @@ static struct attribute *max77779_fg_attrs[] = {
 static const struct attribute_group max77779_fg_attr_grp = {
 	.attrs = max77779_fg_attrs,
 };
+
+static int max77779_fg_apply_n_register(struct max77779_fg_chip *chip)
+{
+	struct device_node *node = chip->dev->of_node;
+	const char *propname = "max77779,fg_n_regval";
+	int cnt, ret = 0, idx, err;
+	u16 *regs, data;
+
+	if (!node)
+		return 0;
+
+	cnt = of_property_count_elems_of_size(node, propname, sizeof(u16));
+	if (cnt <= 0)
+		return 0;
+
+	if (cnt & 1) {
+		dev_warn(chip->dev, "%s %s u16 elems count is not even: %d\n",
+			 node->name, propname, cnt);
+		return -EINVAL;
+	}
+
+	regs = (u16 *)kmalloc_array(cnt, sizeof(u16), GFP_KERNEL);
+	if (!regs)
+		return -ENOMEM;
+
+	ret = of_property_read_u16_array(node, propname, regs, cnt);
+	if (ret) {
+		dev_warn(chip->dev, "failed to read %s %s: %d\n",
+			 node->name, propname, ret);
+		goto register_out;
+	}
+
+	for (idx = 0; idx < cnt; idx += 2) {
+		if (!max77779_fg_dbg_is_reg(chip->dev, regs[idx]))
+			continue;
+
+		err = REGMAP_READ(&chip->regmap_debug, regs[idx], &data);
+		if (err) {
+			dev_warn(chip->dev, "%s: fail to read %#x(%d)\n",
+				 __func__, regs[idx], err);
+			continue;
+		}
+
+		if (data != regs[idx + 1]) {
+			err = MAX77779_FG_N_REGMAP_WRITE(&chip->regmap, &chip->regmap_debug,
+							 regs[idx], regs[idx + 1]);
+			if (err)
+				dev_warn(chip->dev, "%s: fail to write %#x to %#x(%d)\n",
+					 __func__, regs[idx + 1], regs[idx], err);
+		}
+	}
+
+register_out:
+	kfree(regs);
+	return ret;
+}
 
 static int max77779_init_fg_capture(struct max77779_fg_chip *chip)
 {
