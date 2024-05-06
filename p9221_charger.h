@@ -802,6 +802,8 @@ struct p9221_charger_platform_data {
 	bool				freq_108_disable_ramp;
 	bool				magsafe_optimized;
 	u8				ask_mod_fet;
+	u32				freq_109_icl;
+	u32				freq_109_vout;
 };
 
 struct p9221_charger_ints_bit {

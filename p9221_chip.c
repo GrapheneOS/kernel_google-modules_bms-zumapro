@@ -2456,9 +2456,19 @@ static void ra9530_chip_set_cmfet(struct p9221_charger_data *chgr)
 
 static int p9xxx_chip_set_bpp_icl(struct p9221_charger_data *chgr)
 {
-	int default_icl;
+	const int default_icl = chgr->pdata->bpp_icl > 0 ?
+				chgr->pdata->bpp_icl : P9221_DC_ICL_BPP_UA;
 
-	default_icl = chgr->pdata->bpp_icl > 0 ? chgr->pdata->bpp_icl : P9221_DC_ICL_BPP_UA;
+	return default_icl;
+}
+
+static int p9222_chip_set_bpp_icl(struct p9221_charger_data *chgr)
+{
+	const int default_icl = chgr->pdata->bpp_icl > 0 ?
+				chgr->pdata->bpp_icl : P9221_DC_ICL_BPP_UA;
+
+	if (chgr->pdata->freq_109_icl > 0 && is_ping_freq_fixed_at(chgr, 109))
+		return chgr->pdata->freq_109_icl;
 
 	return default_icl;
 }
@@ -2971,6 +2981,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->chip_capdiv_en = p9221_capdiv_en;
 		chgr->chip_get_ping_freq = p9222_chip_get_ping_freq;
 		chgr->chip_magsafe_optimized = p9222_magsafe_optimized;
+		chgr->chip_set_bpp_icl = p9222_chip_set_bpp_icl;
 		break;
 	default:
 		chgr->rx_buf_size = P9221R5_DATA_RECV_BUF_SIZE;

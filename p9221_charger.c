@@ -3745,6 +3745,10 @@ static int p9xxx_set_vout_iop(struct p9221_charger_data *charger)
 		ret = charger->chip_set_vout_max(charger, charger->pdata->set_iop_vout_bpp);
 	else if (charger->pdata->set_iop_vout_epp > 0 && vout_mv == P9XXX_VOUT_10000MV)
 		ret = charger->chip_set_vout_max(charger, charger->pdata->set_iop_vout_epp);
+
+	if (charger->pdata->freq_109_vout > 0 && is_ping_freq_fixed_at(charger, 109) &&
+	    !p9221_is_epp(charger))
+		ret = charger->chip_set_vout_max(charger, charger->pdata->freq_109_vout);
 exit:
 	if (ret < 0)
 		dev_dbg(&charger->client->dev, "Fail to change VOUT\n");
@@ -7656,6 +7660,14 @@ static int p9221_parse_dt(struct device *dev,
 	ret = of_property_read_u8(node, "google,bpp_ask_mod_fet", &pdata->ask_mod_fet);
 	if (ret < 0)
 		pdata->ask_mod_fet = 0;
+
+	ret = of_property_read_u32(node, "google,bpp_freq109_icl_ma", &data);
+	if (ret == 0)
+		pdata->freq_109_icl = data;
+
+	ret = of_property_read_u32(node, "google,bpp_freq109_vout_mv", &data);
+	if (ret == 0)
+		pdata->freq_109_vout = data;
 
 	return 0;
 }
