@@ -20,6 +20,7 @@
 #include "max77779_regs.h"
 #include "max77779.h"
 #include "maxfg_common.h"
+#include "max77779_charger.h"
 
 #define MAX77779_FIRMWARE_BINARY_PREFIX "batt_fw_adi_79"
 #define MAX77779_REASON_FIRMWARE        "FW_UPDATE"
@@ -35,8 +36,8 @@
 
 #define FW_UPDATE_MAXIMUM_PAGE_SIZE            (PAGE_SIZE*10)
 
-/* b/308445917: adding device tree for voltage threshold */
-#define MAX77779_FW_UPDATE_MIN_VOLTAGE 4100
+/* b/308445917: adding device tree for voltage threshold in micro volts */
+#define MAX77779_FW_UPDATE_MIN_VOLTAGE 4000000
 
 #define MAX77779_FW_IMG_SZ_HEADER 8
 #define MAX77779_FW_IMG_SZ_PACKET 42
@@ -1114,7 +1115,6 @@ perform_firmware_update_cleanup:
 static void firmware_update_work(struct work_struct* work)
 {
 	int ret;
-	uint16_t val;
 	struct max77779_version_info target_version;
 	const struct firmware* fw_data;
 	struct max77779_fwupdate *fwu = NULL;
@@ -1122,14 +1122,6 @@ static void firmware_update_work(struct work_struct* work)
 	fwu = container_of(work, struct max77779_fwupdate, update_work.work);
 	if (!fwu)
 		return;
-
-	/* check current voltage */
-	ret = max77779_external_fg_reg_read(fwu->fg, MAX77779_FG_AvgVCell, &val);
-	if (ret || reg_to_micro_volt(val) < fwu->minimum_voltage) {
-		dev_warn(fwu->dev, "low voltage for update. schedule again\n");
-		max77779_schedule_update(fwu);
-		return;
-	}
 
 	ret = request_firmware(&fw_data, fwu->fw_name, fwu->dev);
 	if (ret) {
@@ -1158,6 +1150,28 @@ firmware_update_work_cleanup:
 		max77779_schedule_update(fwu);
 }
 
+static inline bool max77779_can_charge(struct device* chg)
+{
+	struct max77779_chgr_data *data = dev_get_drvdata(chg);
+	int ret;
+	uint8_t chg_detail;
+
+	ret = max77779_external_chg_reg_read(chg, MAX77779_CHG_DETAILS_00, &chg_detail);
+	if (ret)
+		return false;
+
+	/* check usb: 0x0 or 0x1 means VBUS is invalid */
+	if (_max77779_chg_details_00_chgin_dtls_get(chg_detail) >= 2 && !data->chgin_input_suspend)
+		return true;
+
+	/* check wireless: 0x0 or 0x1 means VWCIN is invalid */
+	if ((_max77779_chg_details_00_wcin_dtls_get(chg_detail) >= 2 && !data->wcin_input_suspend)
+	    || data->wlc_spoof)
+		return true;
+
+	return false;
+}
+
 /*
  * trigger firmware update with override version tag
  *  - echo xxx > update_firmware
@@ -1166,7 +1180,9 @@ static ssize_t trigger_update_firmware(struct device *dev,
 				       struct device_attribute *attr,
 				       const char *options, size_t count)
 {
-	int current_ver, read_cnt, target_ver, override_ver = 0;
+	int ret, current_ver, read_cnt, target_ver;
+	int bypass_check = 0, override_ver = 0;
+	uint16_t voltage;
 	struct max77779_fwupdate *fwu = dev_get_drvdata(dev);
 
 	if (!fwu)
@@ -1177,11 +1193,26 @@ static ssize_t trigger_update_firmware(struct device *dev,
 		return -EACCES;
 	}
 
-	read_cnt = sscanf(options, "%d %d", &target_ver, &override_ver);
+	read_cnt = sscanf(options, "%d %d %d", &target_ver, &override_ver, &bypass_check);
 	if (read_cnt < 1) {
 		dev_err(fwu->dev, "incorrect input: expects override_tag(number) and reset_tag"
 			"(optional)\n");
 		return -EINVAL;
+	}
+
+	if (!bypass_check) {
+		/* check chgin/wcin */
+		if (!max77779_can_charge(fwu->chg)) {
+			dev_err(fwu->dev, "charger is not plugged. connect charger required\n");
+			return -EBUSY;
+		}
+
+		/* check current voltage */
+		ret = max77779_external_fg_reg_read(fwu->fg, MAX77779_FG_AvgVCell, &voltage);
+		if (ret || reg_to_micro_volt(voltage) < fwu->minimum_voltage) {
+			dev_err(fwu->dev, "low voltage for update\n");
+			return -ERANGE;
+		}
 	}
 
 	current_ver = get_firmware_update_tag(fwu);
