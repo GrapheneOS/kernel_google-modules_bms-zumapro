@@ -88,7 +88,7 @@ static inline int reg_to_twos_comp_int(u16 val)
 
 static inline int reg_to_micro_amp(s16 val, u16 rsense)
 {
-	/* LSB: 1.5625μV/RSENSE ; Rsense LSB is 2μΩ */
+	/* LSB: 1.5625μV/RSENSE ; Rsense LSB is 10μΩ */
 	return div_s64((s64) val * 156250, rsense);
 }
 
@@ -3286,7 +3286,7 @@ static int max77779_fg_prop_read(gbms_tag_t tag, void *buff, size_t size,
 	switch (tag) {
 	case GBMS_TAG_CLHI:
 		ret = maxfg_collect_history_data(buff, size, chip->por, chip->designcap,
-						 &chip->regmap, &chip->regmap_debug);
+						 chip->RSense, &chip->regmap, &chip->regmap_debug);
 		break;
 
 	default:
