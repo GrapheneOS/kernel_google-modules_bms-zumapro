@@ -526,6 +526,11 @@ static int max77779_foreach_callback(void *data, const char *reason,
 		cb_data->wlc_tx += 1;
 		break;
 
+	case GBMS_CHGR_MODE_FWUPDATE_BOOST_ON:
+		pr_debug("%s: FWUPDATE vote=%x\n", __func__, mode);
+		cb_data->fwupdate_on = true;
+		break;
+
 	default:
 		pr_err("mode=%x not supported\n", mode);
 		break;
@@ -975,7 +980,7 @@ static int max77779_mode_callback(struct gvotable_election *el,
 	       !cb_data.chgr_on && !cb_data.buck_on &&
 	       !cb_data.otg_on && !cb_data.wlc_tx &&
 	       !cb_data.wlc_rx && !cb_data.wlcin_off && !cb_data.chgin_off &&
-	       !cb_data.usb_wlc;
+	       !cb_data.usb_wlc && !cb_data.fwupdate_on;
 	if (nope) {
 		pr_debug("%s: nope callback\n", __func__);
 		goto unlock_done;
@@ -983,15 +988,19 @@ static int max77779_mode_callback(struct gvotable_election *el,
 
 	dev_info(data->dev, "%s:%s full=%d raw=%d stby_on=%d, dc_on=%d, chgr_on=%d, buck_on=%d,"
 		" otg_on=%d, wlc_tx=%d wlc_rx=%d usb_wlc=%d"
-		" chgin_off=%d wlcin_off=%d frs_on=%d\n",
+		" chgin_off=%d wlcin_off=%d frs_on=%d fwupdate=%d\n",
 		__func__, trigger ? trigger : "<>",
 		data->charge_done, cb_data.use_raw, cb_data.stby_on, cb_data.dc_on,
 		cb_data.chgr_on, cb_data.buck_on, cb_data.otg_on,
 		cb_data.wlc_tx, cb_data.wlc_rx, cb_data.usb_wlc,
-		cb_data.chgin_off, cb_data.wlcin_off, cb_data.frs_on);
+		cb_data.chgin_off, cb_data.wlcin_off, cb_data.frs_on, cb_data.fwupdate_on);
 
 	/* just use raw "as is", no changes to switches etc */
-	if (cb_data.use_raw) {
+	if (unlikely(cb_data.fwupdate_on)) {
+		cb_data.reg =  MAX77779_CHGR_MODE_BOOST_ON;
+		cb_data.reason = MAX77779_REASON_FIRMWARE;
+		use_case = GSU_MODE_FWUPDATE;
+	} else if (cb_data.use_raw) {
 		cb_data.reg = cb_data.raw_value;
 		use_case = GSU_RAW_MODE;
 	} else {
