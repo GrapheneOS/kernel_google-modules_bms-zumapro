@@ -850,7 +850,7 @@ static int max77779_fwl_prepare(struct max77779_fwupdate *fwu,
 	}
 
 	ret = gvotable_cast_long_vote(fwu->mode_votable, MAX77779_REASON_FIRMWARE,
-				      MAX77779_CHGR_MODE_BOOST_ON, true);
+				      GBMS_CHGR_MODE_FWUPDATE_BOOST_ON, true);
 	MAX77779_ABORT_ON_ERROR(ret, __func__, "failed to set mode BOOST_ON");
 
 	ret = max77779_fg_enable_firmware_update(fwu->fg, true);
@@ -1012,7 +1012,7 @@ static void max77779_fwl_cleanup(struct max77779_fwupdate *fwu)
 		return;
 
 	ret = gvotable_cast_long_vote(fwu->mode_votable, MAX77779_REASON_FIRMWARE,
-				      MAX77779_CHGR_MODE_BOOST_ON, false);
+				      GBMS_CHGR_MODE_FWUPDATE_BOOST_ON, false);
 	if (ret)
 		dev_err(fwu->dev, "failed to restore CHG from update mode (%d)\n", ret);
 }
