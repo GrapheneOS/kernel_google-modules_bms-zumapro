@@ -63,6 +63,7 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj);
 static int max77779_fg_set_next_update(struct max77779_fg_chip *chip);
 static int max77779_fg_update_cycle_count(struct max77779_fg_chip *chip);
 static int max77779_fg_apply_n_register(struct max77779_fg_chip *chip);
+static u16 max77779_fg_save_battery_cycle(struct max77779_fg_chip *chip, u16 reg_cycle);
 
 /* Do not move reg_write_nolock to public header */
 int max77779_external_fg_reg_write_nolock(struct device *dev, uint16_t reg, uint16_t val);
@@ -642,7 +643,8 @@ static int max77779_fg_update_battery_qh_based_capacity(struct max77779_fg_chip 
 	return 0;
 }
 
-static void max77779_fg_restore_battery_cycle(struct max77779_fg_chip *chip)
+/* max77779_fg_restore_battery_cycle need to be protected by chip->model_lock */
+static int max77779_fg_restore_battery_cycle(struct max77779_fg_chip *chip)
 {
 	int ret = 0;
 	u16 eeprom_cycle, reg_cycle;
@@ -651,22 +653,21 @@ static void max77779_fg_restore_battery_cycle(struct max77779_fg_chip *chip)
 	if (ret < 0) {
 		dev_info(chip->dev, "Fail to read reg %#x (%d)",
 				MAX77779_FG_Cycles, ret);
-		return;
+		return ret;
 	}
 
+	mutex_lock(&chip->save_data_lock);
 	ret = gbms_storage_read(GBMS_TAG_CNHS, &eeprom_cycle, sizeof(eeprom_cycle));
+	mutex_unlock(&chip->save_data_lock);
+
 	if (ret < 0) {
 		dev_info(chip->dev, "Fail to read eeprom cycle count (%d)", ret);
-		return;
+		return ret;
 	}
 
 	if (eeprom_cycle == 0xFFFF) { /* empty storage */
-		ret = gbms_storage_write(GBMS_TAG_CNHS, &reg_cycle, sizeof(reg_cycle));
-		if (ret < 0)
-			dev_info(chip->dev, "Fail to write eeprom cycle (%d)", ret);
-		else
-			chip->eeprom_cycle = reg_cycle;
-		return;
+		chip->eeprom_cycle = max77779_fg_save_battery_cycle(chip, reg_cycle);
+		return -EINVAL;
 	}
 
 	chip->eeprom_cycle = eeprom_cycle;
@@ -677,9 +678,9 @@ static void max77779_fg_restore_battery_cycle(struct max77779_fg_chip *chip)
 						      chip->eeprom_cycle);
 		if (ret < 0)
 			dev_warn(chip->dev, "fail to update cycles (%d)", ret);
-		else
-			max77779_fg_update_cycle_count(chip);
 	}
+
+	return ret;
 }
 
 static u16 max77779_fg_save_battery_cycle(struct max77779_fg_chip *chip, u16 reg_cycle)
@@ -737,13 +738,20 @@ static int max77779_fg_update_cycle_count(struct max77779_fg_chip *chip)
 
 	/* If cycle register hasn't been successfully restored from eeprom */
 	if (reg_cycle < chip->eeprom_cycle) {
-		max77779_fg_restore_battery_cycle(chip);
-		return 0;
+		mutex_lock(&chip->model_lock);
+		err = max77779_fg_restore_battery_cycle(chip);
+		mutex_unlock(&chip->model_lock);
+
+		if (err)
+			return 0;
+
+		/* the value of MAX77779_FG_Cycles will be set as chip->eeprom_cycle */
+		reg_cycle = chip->eeprom_cycle;
+	} else {
+		chip->eeprom_cycle = max77779_fg_save_battery_cycle(chip, reg_cycle);
 	}
 
 	chip->cycle_count = reg_to_cycles((u32)reg_cycle);
-
-	chip->eeprom_cycle = max77779_fg_save_battery_cycle(chip, reg_cycle);
 
 	if (chip->model_ok && reg_cycle >= chip->model_next_update) {
 		err = max77779_fg_set_next_update(chip);
@@ -3247,11 +3255,10 @@ static int max77779_fg_init_chip(struct max77779_fg_chip *chip)
 	chip->pm_nb.notifier_call = max77779_fg_pm_notifier;
 	register_pm_notifier(&chip->pm_nb);
 
-	max77779_fg_restore_battery_cycle(chip);
+	max77779_fg_update_cycle_count(chip);
 
 	/* triggers loading of the model in the irq handler on POR */
 	if (!chip->por) {
-		max77779_fg_update_cycle_count(chip);
 		ret = max77779_fg_init_model_data(chip);
 		if (ret < 0)
 			return ret;
