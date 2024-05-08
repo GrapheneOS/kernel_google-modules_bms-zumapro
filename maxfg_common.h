@@ -214,6 +214,12 @@ static inline u16 percentage_to_reg(int val)
 	return val << 8;
 }
 
+static inline u8 s8_to_u4_boundary(s8 val)
+{
+	/* Convert s8 to u4 with boundary, range 0 to 15 */
+	return val < 0 ? 0 : val > 15 ? 15 : val;
+}
+
 #define NB_REGMAP_MAX 256
 
 struct maxfg_reglog {
@@ -357,7 +363,7 @@ void dump_model(struct device *dev, u16 model_start, u16 *data, int count);
 int maxfg_get_fade_rate(struct device *dev, int bhi_fcn_count, int *fade_rate, enum gbms_property p);
 const struct maxfg_reg * maxfg_find_by_tag(struct maxfg_regmap *map, enum maxfg_reg_tags tag);
 int maxfg_reg_read(struct maxfg_regmap *map, enum maxfg_reg_tags tag, u16 *val);
-int maxfg_collect_history_data(void *buff, size_t size, bool is_por, u16 designcap,
+int maxfg_collect_history_data(void *buff, size_t size, bool is_por, u16 designcap, u16 RSense,
 			       struct maxfg_regmap *regmap, struct maxfg_regmap *regmap_debug);
 int maxfg_read_resistance_avg(u16 RSense);
 int maxfg_read_resistance_raw(struct maxfg_regmap *map);
