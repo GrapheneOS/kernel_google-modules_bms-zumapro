@@ -573,6 +573,9 @@ int ttf_pwr_ibatt(const struct gbms_ce_tier_stats *ts);
 
 void ttf_tier_reset(struct batt_ttf_stats *stats);
 
+int ttf_soc_cstr_combine(char *buff, int size, const struct ttf_soc_stats *soc_ref,
+			 const struct ttf_soc_stats *soc_stats);
+
 int gbms_read_aacr_limits(struct gbms_chg_profile *profile,
 			  struct device_node *node);
 
