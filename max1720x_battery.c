@@ -5255,7 +5255,7 @@ static int max17x0x_prop_read(gbms_tag_t tag, void *buff, size_t size,
 	switch (tag) {
 	case GBMS_TAG_CLHI:
 		ret = maxfg_collect_history_data(buff, size, chip->por, chip->designcap,
-						 &chip->regmap, &chip->regmap);
+						 chip->RSense, &chip->regmap, &chip->regmap);
 		break;
 
 	default:

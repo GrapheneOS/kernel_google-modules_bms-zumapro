@@ -165,7 +165,7 @@ static int maxfg_reg_write_verify(struct maxfg_regmap *map, enum maxfg_reg_tags 
 
 #define REG_HALF_HIGH(reg)     ((reg >> 8) & 0x00FF)
 #define REG_HALF_LOW(reg)      (reg & 0x00FF)
-int maxfg_collect_history_data(void *buff, size_t size, bool is_por, u16 designcap,
+int maxfg_collect_history_data(void *buff, size_t size, bool is_por, u16 designcap, u16 RSense,
 			       struct maxfg_regmap *regmap, struct maxfg_regmap *regmap_debug)
 {
 	struct maxfg_eeprom_history hist = { 0 };
@@ -244,18 +244,18 @@ int maxfg_collect_history_data(void *buff, size_t size, bool is_por, u16 designc
 	if (ret)
 		return ret;
 
-	/* Convert LSB from 1degC to 3degC, store values from 25degC min */
-	hist.maxtemp = ((s8)REG_HALF_HIGH(data) - 25) / 3;
-	/* Convert LSB from 1degC to 3degC, store values from -20degC min */
-	hist.mintemp = ((s8)REG_HALF_LOW(data) + 20) / 3;
+	/* Convert LSB from 1degC to 3degC, store values from 25degC min to 70degC max */
+	hist.maxtemp = s8_to_u4_boundary(((s8)REG_HALF_HIGH(data) - 25) / 3);
+	/* Convert LSB from 1degC to 3degC, store values from -20degC min to 25degC max */
+	hist.mintemp = s8_to_u4_boundary(((s8)REG_HALF_LOW(data) + 20) / 3);
 
 	ret = maxfg_reg_read(regmap, MAXFG_TAG_mmdc, &data);
 	if (ret)
 		return ret;
 
-	/* Convert LSB from 0.08A to 0.5A */
-	hist.maxchgcurr = (s8)REG_HALF_HIGH(data) * 8 / 50;
-	hist.maxdischgcurr = (s8)REG_HALF_LOW(data) * 8 / 50;
+	/* Convert LSB from 400uV/RSENSE(Rsense LSB is 10μΩ) to 0.5A, range 0A to 7.5A */
+	hist.maxchgcurr = (s8)REG_HALF_HIGH(data) * 400 * 2 / (RSense * 10);
+	hist.maxdischgcurr = -(s8)REG_HALF_LOW(data) * 400 * 2 / (RSense * 10);
 
 	memcpy(buff, &hist, sizeof(hist));
 	return (size_t)sizeof(hist);
