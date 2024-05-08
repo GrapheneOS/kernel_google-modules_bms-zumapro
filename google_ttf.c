@@ -412,10 +412,47 @@ int ttf_soc_estimate(ktime_t *res, const struct batt_ttf_stats *stats,
 	return max_ratio;
 }
 
+static int ttf_cstr(char *buff, int size, const struct ttf_soc_stats *soc_stats,
+		    const struct ttf_soc_stats *soc_ref, int start, int end,
+		    int const split, const char type)
+{
+	const bool combine = soc_ref == NULL ? false : true;
+	int i, cc, len = 0;
+	ktime_t elap;
+
+	for (i = start; i <= end; i++) {
+		if (i % split == 0 || i == start) {
+			len += scnprintf(&buff[len], size - len, &type);
+			if (split == 10)
+				len += scnprintf(&buff[len], size - len,
+						"%d", i / 10);
+			len += scnprintf(&buff[len], size - len, ":");
+		}
+		if (type == 'T') {
+			elap = soc_stats->elap[i];
+			if (combine && elap == 0)
+				elap = soc_ref->elap[i];
+			len += scnprintf(&buff[len], size - len, " %4ld", elap);
+		} else if (type == 'C') {
+			cc = soc_stats->cc[i];
+			if (combine && cc == 0)
+				cc = soc_ref->cc[i];
+			len += scnprintf(&buff[len], size - len, " %4d", cc);
+		}
+
+		if (i != end && (i + 1) % split == 0)
+			len += scnprintf(&buff[len], size - len, "\n");
+	}
+
+	len += scnprintf(&buff[len], size - len, "\n");
+
+	return len;
+}
+
 int ttf_soc_cstr(char *buff, int size, const struct ttf_soc_stats *soc_stats,
 		 int start, int end)
 {
-	int i, len = 0, split = 100;
+	int len = 0, split = 100;
 
 	if (start < 0 || start >= GBMS_SOC_STATS_LEN ||
 	    end < 0 || end >= GBMS_SOC_STATS_LEN ||
@@ -432,40 +469,26 @@ int ttf_soc_cstr(char *buff, int size, const struct ttf_soc_stats *soc_stats,
 		split = 10;
 
 	/* dump elap time as T: */
-	for (i = start; i <= end; i++) {
-		if (i % split == 0 || i == start) {
-			len += scnprintf(&buff[len], size - len, "T");
-			if (split == 10)
-				len += scnprintf(&buff[len], size - len,
-						"%d", i / 10);
-			len += scnprintf(&buff[len], size - len, ":");
-		}
-
-		len += scnprintf(&buff[len], size - len, " %4ld",
-				soc_stats->elap[i]);
-		if (i != end && (i + 1) % split == 0)
-			len += scnprintf(&buff[len], size - len, "\n");
-	}
-
-	len += scnprintf(&buff[len], size - len, "\n");
+	len += ttf_cstr(&buff[len], size - len, soc_stats, NULL, start, end, split, 'T');
 
 	/* dump coulumb count as C: */
-	for (i = start; i <= end; i++) {
-		if (i % split == 0 || i == start) {
-			len += scnprintf(&buff[len], size - len, "C");
-			if (split == 10)
-				len += scnprintf(&buff[len], size - len,
-						 "%d", i / 10);
-			len += scnprintf(&buff[len], size - len, ":");
-		}
+	len += ttf_cstr(&buff[len], size - len, soc_stats, NULL, start, end, split, 'C');
 
-		len += scnprintf(&buff[len], size - len, " %4d",
-				soc_stats->cc[i]);
-		if (i != end && (i + 1) % split == 0)
-			len += scnprintf(&buff[len], size - len, "\n");
-	}
+	return len;
+}
+
+int ttf_soc_cstr_combine(char *buff, int size, const struct ttf_soc_stats *soc_ref,
+			 const struct ttf_soc_stats *soc_stats)
+{
+	int len = 0;
 
 	len += scnprintf(&buff[len], size - len, "\n");
+
+	/* dump elap time as T: */
+	len += ttf_cstr(&buff[len], size - len, soc_stats, soc_ref, 0, 99, 10, 'T');
+
+	/* dump coulumb count as C: */
+	len += ttf_cstr(&buff[len], size - len, soc_stats, soc_ref, 0, 99, 10, 'C');
 
 	return len;
 }
