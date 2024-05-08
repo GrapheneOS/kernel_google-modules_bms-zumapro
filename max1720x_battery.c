@@ -939,13 +939,11 @@ static int max1720x_model_reload(struct max1720x_chip *chip, bool force)
 	if (!force && version_now == version_load)
 		return -EEXIST;
 
-	/* REQUEST -> IDLE or set to the number of retries */
-	dev_info(chip->dev, "Schedule Load FG Model, ID=%d, ver:%d->%d cap_lsb:%d->%d\n",
-			chip->batt_id,
-			version_now,
-			version_load,
-			max_m5_model_get_cap_lsb(chip->model_data),
-			max_m5_cap_lsb(chip->model_data));
+	gbms_logbuffer_devlog(chip->ce_log, chip->dev,  LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+			      "Schedule Load FG Model, ID=%d, ver:%d->%d cap_lsb:%d->%d",
+			      chip->batt_id, version_now, version_load,
+			      max_m5_model_get_cap_lsb(chip->model_data),
+			      max_m5_cap_lsb(chip->model_data));
 
 	chip->model_reload = MAX_M5_LOAD_MODEL_REQUEST;
 	chip->model_ok = false;
@@ -1555,7 +1553,7 @@ static int max1720x_check_history(struct max1720x_chip *chip)
 
 	gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
 			      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-			      "0x4856 %d %d %d %d",
+			      "%#04X 00:%04X 01:%04X 02:%04X 03:%04X", MONITOR_TAG_HV,
 			      first_empty, misplaced_count, chip->cycle_count, est_cycle);
 
 	return 0;
@@ -2377,7 +2375,7 @@ static int max1720x_monitor_log_learning(struct max1720x_chip *chip, bool force)
 	if (ret > 0)
 		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
 				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-				      "learn %s", buf);
+				      "0x%04X %s", MONITOR_TAG_LH, buf);
 
 	kfree(buf);
 
@@ -2902,11 +2900,11 @@ static int max1720x_monitor_log_data(struct max1720x_chip *chip, bool force_log)
 		charge_counter = reg_to_capacity_uah(chip->current_capacity, chip);
 
 	gbms_logbuffer_prlog(chip->monitor_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-			     "%s %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
+			     "%#04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
 			     " %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
 			     " %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
 			     " %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X CC:%d",
-			     chip->max1720x_psy_desc.name, MAX1720X_REPSOC, data, MAX1720X_VFSOC,
+			     MONITOR_TAG_RM, MAX1720X_REPSOC, data, MAX1720X_VFSOC,
 			     vfsoc, MAX1720X_AVCAP, avcap, MAX1720X_REPCAP, repcap,
 			     MAX1720X_FULLCAP, fullcap, MAX1720X_FULLCAPREP, fullcaprep,
 			     MAX1720X_FULLCAPNOM, fullcapnom, MAX1720X_QH0, qh0,
@@ -3132,8 +3130,10 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 		if (no_battery) {
 			fg_status_clr &= ~MAX1720X_STATUS_POR;
 		} else {
-			dev_warn(chip->dev, "POR is set(%04x), model reload:%d\n",
-				 fg_status, chip->model_reload);
+			gbms_logbuffer_devlog(chip->ce_log, chip->dev,
+					      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+					      "POR is set(%04x), model reload:%d",
+					      fg_status, chip->model_reload);
 			/*
 			 * trigger model load if not on-going, clear POR only when
 			 * model loading done successfully
@@ -4732,6 +4732,9 @@ static void max1720x_model_work(struct work_struct *work)
 	if (chip->model_reload >= MAX_M5_LOAD_MODEL_REQUEST) {
 
 		rc = max1720x_model_load(chip);
+		gbms_logbuffer_devlog(chip->ce_log, chip->dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+				      "Model loading complete, rc=%d, reload=%d",
+				      rc, chip->model_reload);
 		if (rc == 0) {
 			rc = max1720x_clear_por(chip);
 
@@ -4887,8 +4890,8 @@ static void max1720x_rc_work(struct work_struct *work)
 		if (ret == 0)
 			ret = REGMAP_WRITE(&chip->regmap, MAX_M5_LEARNCFG, learncfg);
 
-		gbms_logbuffer_prlog(chip->monitor_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-				     "%s to RC1. ret=%d soc=%d temp=%d tempco=0x%x, learncfg=0x%x",
+		gbms_logbuffer_prlog(chip->ce_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+				     "%s to RC1. ret=%d soc=%d temp=%d tempco=%#x, learncfg=%#x",
 				     __func__, ret, soc, temp, chip->rc_switch.rc1_tempco, learncfg);
 
 	} else if (to_rc2 && ((learncfg & MAX_M5_LEARNCFG_RC_VER) == MAX_M5_LEARNCFG_RC1)) {
@@ -4908,15 +4911,15 @@ static void max1720x_rc_work(struct work_struct *work)
 		if (ret == 0)
 			ret = REGMAP_WRITE(&chip->regmap, MAX_M5_LEARNCFG, learncfg);
 
-		gbms_logbuffer_prlog(chip->monitor_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-				     "%s to RC2. ret=%d soc=%d temp=%d tempco=0x%x, learncfg=0x%x",
+		gbms_logbuffer_prlog(chip->ce_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+				     "%s to RC2. ret=%d soc=%d temp=%d tempco=%#x, learncfg=%#x",
 				     __func__, ret, soc, temp, chip->rc_switch.rc2_tempco, learncfg);
 	}
 
 reschedule:
 	if (ret != 0) {
 		interval = RC_WORK_TIME_QUICK_MS;
-		gbms_logbuffer_prlog(chip->monitor_log, LOGLEVEL_WARNING, 0, LOGLEVEL_INFO,
+		gbms_logbuffer_prlog(chip->ce_log, LOGLEVEL_WARNING, 0, LOGLEVEL_INFO,
 				     "%s didn't finish. ret=%d", __func__, ret);
 	}
 
