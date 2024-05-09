@@ -514,6 +514,7 @@ struct batt_drv {
 	bool dead_battery;
 	int capacity_level;
 	bool chg_done;
+	int vbatt_crit_deadline_sec;
 
 	/* temp outside the charge table */
 	int jeita_stop_charging;
@@ -8687,7 +8688,8 @@ static bool gbatt_check_critical_level(const struct batt_drv *batt_drv,
 		int vbatt;
 
 		/* disable the check */
-		if (now > VBATT_CRITICAL_DEADLINE_SEC || batt_drv->batt_critical_voltage == 0)
+		if (now > batt_drv->vbatt_crit_deadline_sec ||
+		    batt_drv->batt_critical_voltage == 0)
 			return true;
 
 		vbatt = GPSY_GET_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
@@ -10659,6 +10661,12 @@ static int google_battery_probe(struct platform_device *pdev)
 	if (ret == 0) {
 		gbatt_psy_desc.name =
 		    devm_kstrdup(&pdev->dev, psy_name, GFP_KERNEL);
+	}
+
+	ret = of_property_read_s32(pdev->dev.of_node, "google,vbatt-crit-deadline-sec",
+				   &batt_drv->vbatt_crit_deadline_sec);
+	if (ret != 0) {
+		batt_drv->vbatt_crit_deadline_sec = VBATT_CRITICAL_DEADLINE_SEC;
 	}
 
 	INIT_DELAYED_WORK(&batt_drv->init_work, google_battery_init_work);
