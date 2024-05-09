@@ -2217,6 +2217,10 @@ static int ra9530_prop_mode_enable(struct p9221_charger_data *chgr, int req_pwr)
 		chgr->chg_mode_off = true;
 	}
 
+	ret = p9xxx_chip_set_cmfet_reg(chgr, chgr->wlc_dc_comcap);
+	if (ret)
+		dev_warn(&chgr->client->dev, "%s: cannot set COM Cap (%d)\n", __func__, ret);
+
 	/*
 	 * Enable Proprietary Mode: write 0x01 to 0x4F (0x4E bit8)
 	 */
