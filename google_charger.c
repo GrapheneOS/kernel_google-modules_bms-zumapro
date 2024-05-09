@@ -4005,9 +4005,9 @@ charge_stats_show(struct device *dev, struct device_attribute *attr, char *buf)
 		len += gbms_tier_stats_cstr(&buf[len], PAGE_SIZE, bd_p_stats, false);
 	if (chg_drv->bd_state.bd_resume_stats_last_update > 0)
 		len += gbms_tier_stats_cstr(&buf[len], PAGE_SIZE, bd_r_stats, false);
-	len += scnprintf(&buf[len], PAGE_SIZE - len, "D:%#x,%#x,0x0,0x0,0x0,0x0,0x0\n",
-			 chg_drv->adapter_capabilities[ADAPTER_CAP_PDO],
-			 chg_drv->adapter_capabilities[ADAPTER_CAP_APDO]);
+	len += scnprintf(&buf[len], PAGE_SIZE - len, "\nD:0x0,%#x,0x0,0x0,0x0,0x0,%#x\n",
+			 chg_drv->adapter_capabilities[ADAPTER_CAP_APDO],
+			 chg_drv->adapter_capabilities[ADAPTER_CAP_PDO]);
 	mutex_unlock(&chg_drv->stats_lock);
 
 	return len;
@@ -4024,8 +4024,8 @@ static ssize_t charge_stats_store(struct device *dev,
 
 	if (buf[0] == '0') {
 		bd_dd_stats_init(chg_drv);
-		chg_drv->adapter_capabilities[0] = 0;
-		chg_drv->adapter_capabilities[1] = 0;
+		chg_drv->adapter_capabilities[ADAPTER_CAP_PDO] = 0;
+		chg_drv->adapter_capabilities[ADAPTER_CAP_APDO] = 0;
 	}
 
 	return count;
