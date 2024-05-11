@@ -9088,7 +9088,7 @@ static bool gbatt_check_critical_level(const struct batt_drv *batt_drv,
 			return false;
 
 		vbatt = PSY_GET_PROP(batt_drv->fg_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
-		if (vbatt <= 0)
+		if (vbatt <= -EAGAIN)
 			return false;
 
 		/* disable the check */
@@ -9098,7 +9098,6 @@ static bool gbatt_check_critical_level(const struct batt_drv *batt_drv,
 
 		if (vbatt >= batt_drv->batt_critical_voltage)
 			return false;
-
 exit_done:
 		/* dump log for tuning parameters */
 		pr_info("%s: vbatt: %d, v_th:%d, fg_status: %d, now: %lld\n",
