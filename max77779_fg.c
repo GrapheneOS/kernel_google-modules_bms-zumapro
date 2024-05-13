@@ -976,7 +976,7 @@ static int max77779_fg_get_age(struct max77779_fg_chip *chip)
 	int ret;
 
 	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_TimerH, &timerh);
-	if (ret < 0 || timerh == 0)
+	if (ret < 0)
 		return -ENODATA;
 
 	return reg_to_time_hr(timerh, chip);
