@@ -9567,6 +9567,17 @@ static int batt_set_shutdown_flag(struct batt_drv *batt_drv)
 	return (ret < 0) ? -EIO : 0;
 }
 
+#define BOOT_TO_OS_ATTEMPTS_CLR_SOC 5
+
+static void batt_clear_shutdown_flag(struct batt_drv *batt_drv)
+{
+	const struct batt_ssoc_state *ssoc_state = &batt_drv->ssoc_state;
+	const int soc = ssoc_get_real(ssoc_state);
+
+	if (ssoc_state->buck_enabled == 1 && soc >= BOOT_TO_OS_ATTEMPTS_CLR_SOC)
+		batt_drv->boot_to_os_attempts = 0;
+}
+
 static int point_full_ui_soc_cb(struct gvotable_election *el,
 			      const char *reason, void *vote)
 {
@@ -9735,6 +9746,9 @@ static void google_battery_work(struct work_struct *work)
 			batt_drv->capacity_level = level;
 			notify_psy_changed = true;
 		}
+
+		if (batt_drv->boot_to_os_attempts > 0)
+			batt_clear_shutdown_flag(batt_drv);
 
 		if (batt_drv->dead_battery) {
 			batt_drv->dead_battery = gbatt_check_dead_battery(batt_drv);
