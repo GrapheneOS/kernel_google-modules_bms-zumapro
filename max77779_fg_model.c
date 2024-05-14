@@ -73,12 +73,20 @@ int max77779_model_write_version(const struct max77779_model_data *model_data, i
 int max77779_reset_state_data(struct max77779_model_data *model_data)
 {
 	struct model_state_save data;
+	struct max77779_fg_chip *chip = dev_get_drvdata(model_data->dev);
 	int ret = 0;
+
+	__pm_stay_awake(chip->fg_wake_lock);
+	mutex_lock(&chip->save_data_lock);
 
 	memset(&data, 0xff, sizeof(data));
 
 	ret = gbms_storage_write(GBMS_TAG_GMSR, &data, sizeof(data));
-	if (ret < 0)
+
+	mutex_unlock(&chip->save_data_lock);
+	__pm_relax(chip->fg_wake_lock);
+
+	if (ret != GBMS_GMSR_LEN)
 		dev_warn(model_data->dev, "Erase GMSR fail (%d)\n", ret);
 
 	return ret == sizeof(data) ? 0 : ret;
@@ -462,6 +470,7 @@ static u8 max77779_fg_data_crc(char *reason, struct model_state_save *state)
 int max77779_load_state_data(struct max77779_model_data *model_data)
 {
 	struct max77779_custom_parameters *cp = &model_data->parameters;
+	struct max77779_fg_chip *chip = dev_get_drvdata(model_data->dev);
 	u8 crc;
 	int ret;
 
@@ -469,9 +478,12 @@ int max77779_load_state_data(struct max77779_model_data *model_data)
 		return -EINVAL;
 
 	/* might return -EAGAIN during init */
+	mutex_lock(&chip->save_data_lock);
 	ret = gbms_storage_read(GBMS_TAG_GMSR, &model_data->model_save,
 				sizeof(model_data->model_save));
-	if (ret < 0) {
+	mutex_unlock(&chip->save_data_lock);
+
+	if (ret != GBMS_GMSR_LEN) {
 		dev_info(model_data->dev, "Saved Model Data empty\n");
 		return ret;
 	}
@@ -501,8 +513,13 @@ int max77779_load_state_data(struct max77779_model_data *model_data)
 int max77779_save_state_data(struct max77779_model_data *model_data)
 {
 	struct max77779_custom_parameters *cp = &model_data->parameters;
+	struct max77779_fg_chip *chip = dev_get_drvdata(model_data->dev);
+
 	struct model_state_save rb;
 	int ret = 0;
+
+	__pm_stay_awake(chip->fg_wake_lock);
+	mutex_lock(&chip->save_data_lock);
 
 	model_data->model_save.qrtable00 = cp->qresidual00;
 	model_data->model_save.qrtable10 = cp->qresidual10;
@@ -516,19 +533,22 @@ int max77779_save_state_data(struct max77779_model_data *model_data)
 
 	model_data->model_save.crc = max77779_fg_data_crc("save", &model_data->model_save);
 
+
 	ret = gbms_storage_write(GBMS_TAG_GMSR, (const void *)&model_data->model_save,
 				 sizeof(model_data->model_save));
-	if (ret < 0)
-		return ret;
+	if (ret != GBMS_GMSR_LEN)
+		goto max77779_save_state_data_exit;
 
-	if (ret != sizeof(model_data->model_save))
-		return -ERANGE;
+	if (ret != sizeof(model_data->model_save)) {
+		ret = -ERANGE;
+		goto max77779_save_state_data_exit;
+	}
 
 	/* Read back to make sure data all good */
 	ret = gbms_storage_read(GBMS_TAG_GMSR, &rb, sizeof(rb));
-	if (ret < 0) {
+	if (ret != GBMS_GMSR_LEN) {
 		dev_info(model_data->dev, "Read Back Data Failed ret=%d\n", ret);
-		return ret;
+		goto max77779_save_state_data_exit;
 	}
 
 	if (rb.rcomp0 != model_data->model_save.rcomp0 ||
@@ -537,9 +557,15 @@ int max77779_save_state_data(struct max77779_model_data *model_data)
 	    rb.fullcapnom != model_data->model_save.fullcapnom ||
 	    rb.cycles != model_data->model_save.cycles ||
 	    rb.crc != model_data->model_save.crc)
-		return -EINVAL;
+		ret = -EINVAL;
+	else
+		ret = 0;
 
-	return 0;
+max77779_save_state_data_exit:
+	mutex_unlock(&chip->save_data_lock);
+	__pm_relax(chip->fg_wake_lock);
+
+	return ret;
 }
 
 /* 0 ok, < 0 error. Call after reading from the FG */
@@ -623,6 +649,8 @@ ssize_t max77779_gmsr_state_cstr(char *buf, int max)
 	ret = gbms_storage_read(GBMS_TAG_GMSR, &saved_data, GBMS_GMSR_LEN);
 	if (ret < 0)
 		return ret;
+	if (ret != GBMS_GMSR_LEN)
+		return -EIO;
 
 	len = scnprintf(&buf[len], max - len,
 			"rcomp0     :%04X\ntempco     :%04X\n"
