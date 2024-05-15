@@ -577,6 +577,12 @@ static inline int reg_to_time_hr(u16 val, struct max1720x_chip *chip)
 	return (val * 32 * lsb) / 10;
 }
 
+static inline u8 s8_to_u4_boundary(s8 val)
+{
+	/* Convert s8 to u4 with boundary, range 0 to 15 */
+	return val < 0 ? 0 : val > 15 ? 15 : val;
+}
+
 #if 0
 /* TODO: will need in outliers */
 static inline int capacity_uah_to_reg(int capacity, struct max1720x_chip *chip)
@@ -5762,10 +5768,10 @@ static int max17x0x_collect_history_data(void *buff, size_t size,
 	if (ret)
 		return ret;
 
-	/* Convert LSB from 1degC to 3degC, store values from 25degC min */
-	hist.maxtemp = ((s8)REG_HALF_HIGH(data) - 25) / 3;
-	/* Convert LSB from 1degC to 3degC, store values from -20degC min */
-	hist.mintemp = ((s8)REG_HALF_LOW(data) + 20) / 3;
+	/* Convert LSB from 1degC to 3degC, store values from 25degC min to 70degC max */
+	hist.maxtemp = s8_to_u4_boundary(((s8)REG_HALF_HIGH(data) - 25) / 3);
+	/* Convert LSB from 1degC to 3degC, store values from -20degC min to 25degC max */
+	hist.mintemp = s8_to_u4_boundary(((s8)REG_HALF_LOW(data) + 20) / 3);
 
 	ret = REGMAP_READ(&chip->regmap, MAX1720X_MAXMINCURR, &data);
 	if (ret)
@@ -5773,7 +5779,7 @@ static int max17x0x_collect_history_data(void *buff, size_t size,
 
 	/* Convert LSB from 0.08A to 0.5A */
 	hist.maxchgcurr = (s8)REG_HALF_HIGH(data) * 8 / 50;
-	hist.maxdischgcurr = (s8)REG_HALF_LOW(data) * 8 / 50;
+	hist.maxdischgcurr = -(s8)REG_HALF_LOW(data) * 8 / 50;
 
 	memcpy(buff, &hist, sizeof(hist));
 	return (size_t)sizeof(hist);
