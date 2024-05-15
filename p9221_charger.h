@@ -603,6 +603,14 @@
 #define RA9530_CMFET_REG			0xF4
 #define RA9530_EPP_RF_REG			0x27C
 #define RA9530_FW_REV_22			0x22
+#define RA9530_OVSET_REG			0xB3
+#define RA9530_OVSET_13V			4
+#define RA9530_OVSET_16_7V			2
+#define RA9530_OVSET_24_7V			6
+
+#define OVSET_BPP				0
+#define OVSET_EPP				1
+#define OVSET_HPP				2
 
 /* Features */
 typedef enum {
@@ -816,7 +824,6 @@ struct p9221_charger_ints_bit {
 	u16				pp_rcvd_bit;
 	u16				cc_error_bit;
 	u16				cc_reset_bit;
-	u16				cc_vout_bit;
 	u16				propmode_stat_bit;
 	u16				cdmode_change_bit;
 	u16				cdmode_err_bit;
@@ -970,6 +977,7 @@ struct p9221_charger_data {
 	u32				de_q_value;
 	u16				fw_rev;
 	u32				wlc_ocp;
+	u8				wlc_ovp;
 	struct mutex			stats_lock;
 	struct p9221_charge_stats	chg_data;
 	u32				mitigate_threshold;
@@ -1106,6 +1114,7 @@ struct p9221_charger_data {
 	int (*chip_set_bpp_icl)(struct p9221_charger_data *chgr);
 	void (*chip_magsafe_optimized)(struct p9221_charger_data *chgr);
 	bool (*chip_is_vout_on)(struct p9221_charger_data *chgr);
+	void (*chip_set_ovp)(struct p9221_charger_data *chgr, u8 mode);
 };
 
 u8 p9221_crc8(u8 *pdata, size_t nbytes, u8 crc);
