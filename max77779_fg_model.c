@@ -188,6 +188,8 @@ static int max77779_update_custom_parameters(struct max77779_model_data *model_d
 	if (ret == 0)
 		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_NVM_nTempCo, cp->tempco);
 	if (ret == 0)
+		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_NVM_nCycles, model_data->cycles);
+	if (ret == 0)
 		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_NVM_nQRTable00, cp->qresidual00);
 	if (ret == 0)
 		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_NVM_nQRTable10, cp->qresidual10);
