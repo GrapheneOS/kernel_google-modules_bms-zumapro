@@ -694,6 +694,7 @@ enum csi_status {
 	CSI_STATUS_Defender_Dwell = 41,	// DWELL Defend
 	CSI_STATUS_Defender_Trickle = 42,
 	CSI_STATUS_Defender_Dock = 43,	// Dock Defend
+	CSI_STATUS_Defender_Limit = 44,	// Charging Policy Longlife
 	CSI_STATUS_NotCharging = 100,	// There will be a more specific reason
 	CSI_STATUS_Charging = 200,	// All good
 };
@@ -720,6 +721,7 @@ enum csi_status {
 #define CSI_STATUS_MASK_DEFEND_DOCK	(1 << 11)
 #define CSI_STATUS_MASK_NOTCHARGING	(1 << 12)
 #define CSI_STATUS_MASK_CHARGING	(1 << 13)
+#define CSI_STATUS_MASK_DEFEND_LIMIT	(1 << 14)
 
 enum charging_state {
        BATTERY_STATUS_UNKNOWN = -1,
