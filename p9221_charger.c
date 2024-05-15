@@ -956,6 +956,8 @@ static int p9221_reset_wlc_dc(struct p9221_charger_data *charger)
 	if (charger->alignment == -1)
 		p9221_init_align(charger);
 
+	charger->chip_set_ovp(charger, OVSET_EPP);
+
 	return ret;
 }
 
@@ -2700,6 +2702,7 @@ static int p9221_enable_wlc_dc(struct p9221_charger_data *charger)
 		dev_dbg(&charger->client->dev, "Set renego state retry\n");
 		return ret;
 	}
+	charger->chip_set_ovp(charger, OVSET_HPP);
 	ret = charger->chip_prop_mode_en(charger, req_pwr);
 	if (ret == -ENODEV) {
 		dev_err(&charger->client->dev, "Offline during PROP Mode\n");
@@ -3253,11 +3256,8 @@ static int p9221_enable_interrupts(struct p9221_charger_data *charger)
 	} else {
 		mask = charger->ints.stat_limit_mask | charger->ints.stat_cc_mask |
 		       charger->ints.vrecton_bit | charger->ints.prop_mode_mask |
-		       charger->ints.extended_mode_bit;
+		       charger->ints.extended_mode_bit | charger->ints.vout_changed_bit;
 
-		if (charger->pdata->needs_dcin_reset ==
-						P9221_WC_DC_RESET_VOUTCHANGED)
-			mask |= charger->ints.vout_changed_bit;
 		if (charger->pdata->needs_dcin_reset ==
 						P9221_WC_DC_RESET_MODECHANGED)
 			mask |= charger->ints.mode_changed_bit;
@@ -6760,6 +6760,7 @@ static irqreturn_t p9221_irq_thread(int irq, void *irq_data)
 	struct p9221_charger_data *charger = irq_data;
 	int ret;
 	u16 irq_src = 0;
+	u8 sys_mode;
 	ktime_t now = get_boot_msec();
 
 	if ((now - charger->irq_at) < IRQ_DEBOUNCE_TIME_MS)
@@ -6812,6 +6813,9 @@ static irqreturn_t p9221_irq_thread(int irq, void *irq_data)
 	if (irq_src & charger->ints.vrecton_bit) {
 		dev_info(&charger->client->dev,
 			"Received VRECTON, online=%d\n", charger->online);
+
+		charger->chip_set_ovp(charger, OVSET_EPP);
+
 		if (!charger->online) {
 			charger->check_det = true;
 			pm_stay_awake(charger->dev);
@@ -6825,6 +6829,17 @@ static irqreturn_t p9221_irq_thread(int irq, void *irq_data)
 			}
 		}
 	}
+
+	if (irq_src & charger->ints.vout_changed_bit) {
+		ret = charger->chip_get_sys_mode(charger, &sys_mode);
+		if (ret)
+			dev_err(&charger->client->dev, "Failed to get mode to set ovp: %d\n", ret);
+		else if (sys_mode == P9XXX_SYS_OP_MODE_WPC_EXTD)
+			charger->chip_set_ovp(charger, OVSET_EPP);
+		else if (sys_mode == P9XXX_SYS_OP_MODE_WPC_BASIC)
+			charger->chip_set_ovp(charger, OVSET_BPP);
+	}
+
 	p9221_irq_handler(charger, irq_src);
 
 out:

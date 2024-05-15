@@ -2541,6 +2541,35 @@ static void p9222_magsafe_optimized(struct p9221_charger_data *chgr)
 		dev_err(&chgr->client->dev, "Fail to set Vout, ret=%d\n", ret);
 }
 
+static void p9xxx_chip_set_ovp(struct p9221_charger_data *chgr, u8 mode)
+{
+
+}
+
+static void ra9530_chip_set_ovp(struct p9221_charger_data *chgr, u8 mode)
+{
+	int ret = 0;
+
+	switch (mode) {
+	case OVSET_BPP:
+		chgr->wlc_ovp = RA9530_OVSET_13V;
+		break;
+	case OVSET_EPP:
+		chgr->wlc_ovp = RA9530_OVSET_16_7V;
+		break;
+	case OVSET_HPP:
+		chgr->wlc_ovp = RA9530_OVSET_24_7V;
+		break;
+	default:
+		break;
+	}
+
+	if (chgr->wlc_ovp)
+		ret = chgr->reg_write_8(chgr, RA9530_OVSET_REG, chgr->wlc_ovp);
+	if (ret)
+		dev_warn(&chgr->client->dev, "fail to set ovp\n");
+}
+
 void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id)
 {
 	chgr->ints.mode_changed_bit = P9221R5_STAT_MODECHANGED;
@@ -2558,7 +2587,6 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 		chgr->ints.pp_rcvd_bit = P9412_STAT_PPRCVD;
 		chgr->ints.cc_error_bit = P9412_STAT_CCERROR;
 		chgr->ints.cc_reset_bit = 0;
-		chgr->ints.cc_vout_bit = 0;
 		chgr->ints.propmode_stat_bit = P9412_PROP_MODE_STAT_INT;
 		chgr->ints.cdmode_change_bit = P9412_CDMODE_CHANGE_INT;
 		chgr->ints.cdmode_err_bit = P9412_CDMODE_ERROR_INT;
@@ -2585,7 +2613,6 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 		chgr->ints.pp_rcvd_bit = P9412_STAT_PPRCVD;
 		chgr->ints.cc_error_bit = P9412_STAT_CCERROR;
 		chgr->ints.cc_reset_bit = 0;
-		chgr->ints.cc_vout_bit = P9221R5_STAT_VOUTCHANGED;
 		chgr->ints.propmode_stat_bit = P9412_PROP_MODE_STAT_INT;
 		chgr->ints.cdmode_change_bit = 0; // No capdiv mode
 		chgr->ints.cdmode_err_bit = 0; // No capdiv mode
@@ -2611,7 +2638,6 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 		chgr->ints.pp_rcvd_bit = P9221R5_STAT_PPRCVD;
 		chgr->ints.cc_error_bit = P9221R5_STAT_CCERROR;
 		chgr->ints.cc_reset_bit = P9221R5_STAT_CCRESET;
-		chgr->ints.cc_vout_bit = 0;
 		chgr->ints.propmode_stat_bit = 0;
 		chgr->ints.cdmode_change_bit = 0;
 		chgr->ints.cdmode_err_bit = 0;
@@ -2637,7 +2663,6 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 		chgr->ints.pp_rcvd_bit = P9222_STAT_PPRCVD;
 		chgr->ints.cc_error_bit = P9222_STAT_CCERROR;
 		chgr->ints.cc_reset_bit = 0;
-		chgr->ints.cc_vout_bit = 0;
 		chgr->ints.propmode_stat_bit = 0;
 		chgr->ints.cdmode_change_bit = 0;
 		chgr->ints.cdmode_err_bit = 0;
@@ -2663,7 +2688,6 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 		chgr->ints.pp_rcvd_bit = P9221R5_STAT_PPRCVD;
 		chgr->ints.cc_error_bit = P9221R5_STAT_CCERROR;
 		chgr->ints.cc_reset_bit = P9221R5_STAT_CCRESET;
-		chgr->ints.cc_vout_bit = 0;
 		chgr->ints.propmode_stat_bit = 0;
 		chgr->ints.cdmode_change_bit = 0;
 		chgr->ints.cdmode_err_bit = 0;
@@ -2690,8 +2714,7 @@ void p9221_chip_init_interrupt_bits(struct p9221_charger_data *chgr, u16 chip_id
 				   chgr->ints.cc_reset_bit |
 				   chgr->ints.pp_rcvd_bit |
 				   chgr->ints.cc_error_bit |
-				   chgr->ints.cc_data_rcvd_bit |
-				   chgr->ints.cc_vout_bit);
+				   chgr->ints.cc_data_rcvd_bit);
 	chgr->ints.prop_mode_mask = (chgr->ints.propmode_stat_bit |
 				     chgr->ints.cdmode_change_bit |
 				     chgr->ints.cdmode_err_bit);
@@ -2760,6 +2783,7 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->rtx_fod_thrsh = RA9530_TX_FOD_THRSH_1600;
 		chgr->ra9530_rtx_plim = RA9530_PLIM_900MA;
 		chgr->wlc_ocp = RA9530_ILIM_MAX_UA;
+		chgr->wlc_ovp = RA9530_OVSET_13V;
 		chgr->low_neg_pwr_icl = RA9530_ILIM_500UA;
 		chgr->det_off_debounce = 1000;
 		chgr->reg_freq_limit_addr = 0;
@@ -2845,6 +2869,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 	chgr->chip_get_ping_freq = p9xxx_chip_get_ping_freq;
 	chgr->chip_magsafe_optimized = p9xxx_magsafe_optimized;
 	chgr->chip_is_vout_on = p9xxx_is_vout_on;
+	chgr->chip_set_ovp = p9xxx_chip_set_ovp;
 
 	switch (chip_id) {
 	case P9412_CHIP_ID:
@@ -2914,6 +2939,7 @@ int p9221_chip_init_funcs(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->chip_is_calibrated = ra9530_chip_is_calibrated;
 		chgr->chip_set_cmfet = ra9530_chip_set_cmfet;
 		chgr->chip_set_bpp_icl = ra9530_chip_set_bpp_icl;
+		chgr->chip_set_ovp = ra9530_chip_set_ovp;
 		break;
 	case P9382A_CHIP_ID:
 		chgr->rx_buf_size = P9221R5_DATA_RECV_BUF_SIZE;
