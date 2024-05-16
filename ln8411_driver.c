@@ -4735,6 +4735,9 @@ static int ln8411_gpio_get(struct gpio_chip *chip, unsigned int offset)
 	case LN8411_GPIO_1_2_EN:
 		mutex_lock(&ln8411->lock);
 		ret = (ln8411->chg_mode == CHG_NO_DC_MODE) || (ln8411->chg_mode == CHG_1TO2_DC_MODE);
+
+		if (ln8411->chg_mode == CHG_1TO2_DC_MODE)
+			ln8411_check_error(ln8411);
 		mutex_unlock(&ln8411->lock);
 		break;
 	default:
