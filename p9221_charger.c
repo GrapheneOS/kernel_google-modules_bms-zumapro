@@ -6276,6 +6276,9 @@ static void p9xxx_reset_rtx(struct p9221_charger_data *charger)
 		charger->rtx_reset_cnt = 0;
 	}
 	charger->is_rtx_mode = false;
+	/* use gpio_get to log any plc errors during rtx */
+	if (charger->pdata->ben_gpio > 0)
+		gpio_get_value_cansleep(charger->pdata->ben_gpio);
 	p9382_set_rtx(charger, false);
 
 	msleep(REENABLE_RTX_DELAY);
