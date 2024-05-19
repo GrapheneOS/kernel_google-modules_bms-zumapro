@@ -5500,8 +5500,13 @@ static int p9xxx_rtx_mode_en(struct p9221_charger_data *charger, bool enable)
 		return charger->chip_tx_mode_en(charger, false);
 
 	if (p9xxx_rtx_gpio_is_state(charger, RTX_READY)) {
-		if (charger->pdata->rtx_wait_ben && charger->pdata->ben_gpio > 0)
+		if (charger->pdata->rtx_wait_ben && charger->pdata->ben_gpio > 0) {
+			if (!gpio_get_value_cansleep(charger->pdata->ben_gpio)) {
+				dev_err(&charger->client->dev, "ben_gpio not ready");
+				return -EINVAL;
+			}
 			gpio_set_value_cansleep(charger->pdata->ben_gpio, true);
+		}
 		return charger->chip_tx_mode_en(charger, true);
 	}
 
@@ -6283,10 +6288,14 @@ static void p9xxx_reset_rtx(struct p9221_charger_data *charger)
 
 	msleep(REENABLE_RTX_DELAY);
 
-	if (charger->pdata->ben_gpio > 0)
+	/* external boost is on but not for rtx */
+	if (charger->pdata->ben_gpio > 0 && !charger->pdata->rtx_wait_ben)
 		ext_bst_on = gpio_get_value_cansleep(charger->pdata->ben_gpio);
-	if (ext_bst_on && !rtx_gpio_retry)
+	if (ext_bst_on && !rtx_gpio_retry) {
+		dev_warn(&charger->client->dev, "not allowed to re-enable due to ext on");
+		schedule_work(&charger->uevent_work);
 		return;
+	}
 
 	if (charger->rtx_reset_cnt || rtx_gpio_retry) {
 		dev_info(&charger->client->dev, "re-enable RTx mode, cnt=%d\n", charger->rtx_reset_cnt);
@@ -6956,6 +6965,8 @@ static void p9382_rtx_disable_work(struct work_struct *work)
 	if (charger->bcl_wlc_votable)
 		gvotable_cast_vote(charger->bcl_wlc_votable, BCL_DEV_VOTER,
 				   (void *)BCL_WLC_VOTE, WLC_DISABLED_TX);
+
+	charger->rtx_reset_cnt = 0;
 
 	/* Disable rtx mode */
 	ret = p9382_set_rtx(charger, false);
