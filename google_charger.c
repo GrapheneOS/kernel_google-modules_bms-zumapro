@@ -106,7 +106,7 @@
 #define EXT1_DETECT_THRESHOLD_UV	(10500000)
 #define EXT2_DETECT_THRESHOLD_UV	(5000000)
 
-#define PSY_RETRY_LIMIT	10
+#define PSY_RETRY_LIMIT	120
 
 #define usb_pd_is_high_volt(ad) \
 	(((ad)->ad_type == CHG_EV_ADAPTER_TYPE_USB_PD || \
