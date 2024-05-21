@@ -95,6 +95,14 @@ int ttf_pwr_vtier_idx(const struct batt_ttf_stats *stats, int soc)
  * reference or current average current demand for a soc at max rate.
  * NOTE: always <= cc_max for reference temperature
  */
+
+static bool ttf_cc_check(const struct ttf_soc_stats *soc_stats, int soc)
+{
+	/* delta_cc shouldn't be negative */
+	return soc_stats->cc[soc] && soc_stats->cc[soc + 1] &&
+	       soc_stats->cc[soc] < soc_stats->cc[soc + 1];
+}
+
 int ttf_ref_cc(const struct batt_ttf_stats *stats, int soc)
 {
 	const struct ttf_soc_stats *sstat = NULL;
@@ -105,11 +113,9 @@ int ttf_ref_cc(const struct batt_ttf_stats *stats, int soc)
 		return 0;
 
 	/* soc average current demand */
-	if (stats->soc_stats.cc[soc + 1] && stats->soc_stats.cc[soc] &&
-	    stats->soc_stats.elap[soc])
+	if (ttf_cc_check(&stats->soc_stats, soc) && stats->soc_stats.elap[soc])
 		sstat = &stats->soc_stats;
-	else if (stats->soc_ref.cc[soc + 1] && stats->soc_ref.cc[soc] &&
-		 stats->soc_ref.elap[soc])
+	else if (ttf_cc_check(&stats->soc_ref, soc) && stats->soc_ref.elap[soc])
 		sstat = &stats->soc_ref;
 	else
 		return 0;
