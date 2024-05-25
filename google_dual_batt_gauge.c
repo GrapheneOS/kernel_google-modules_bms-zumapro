@@ -41,9 +41,21 @@
 #define DUAL_BATT_VSEC_OFFSET_IDX	0
 #define DUAL_BATT_VSEC_DEFAULT_RATIO	50
 
+#define MONITOR_SOC_DIFF	5
+
+#define REPORT_DEFAULT	0
+#define REPORT_BASE	1
+#define REPORT_SEC	2
+
 static int debug_printk_prlog = LOGLEVEL_INFO;
 #define logbuffer_prlog(p, level, fmt, ...)	\
 	gbms_logbuffer_prlog(p->log, level, 0, debug_printk_prlog, fmt, ##__VA_ARGS__)
+
+struct seq_soc_drop_wa {
+	int seq_fg_delta_limit;
+	int seq_fg_soc_limit;
+	int report_soc_type;
+};
 
 struct dual_fg_drv {
 	struct device *device;
@@ -98,6 +110,8 @@ struct dual_fg_drv {
 	struct gbms_ce_tier_stats sec_batt_stats;
 	union gbms_charger_state chg_state;
 	ktime_t last_update;
+
+	struct seq_soc_drop_wa seq_wa;
 };
 
 static int gdbatt_resume_check(struct dual_fg_drv *dual_fg_drv) {
@@ -465,17 +479,42 @@ static int gdbatt_get_capacity(struct dual_fg_drv *dual_fg_drv, int base_soc, in
 	const int sec_full = dual_fg_drv->sec_charge_full / 1000;
 	const int full_sum = base_full + sec_full;
 
+	if (dual_fg_drv->seq_wa.report_soc_type == REPORT_BASE)
+		return base_soc;
+
+	if (dual_fg_drv->seq_wa.report_soc_type == REPORT_SEC)
+		return sec_soc;
+
 	if (!base_full || !sec_full)
 		return (base_soc + sec_soc) / 2;
 
 	return (base_soc * base_full + sec_soc * sec_full) / full_sum;
 }
 
-#define MONITOR_SOC_DIFF	10
+static int seq_soc_drop_check(const struct seq_soc_drop_wa *wa, int seq_soc, int sec_soc)
+{
+	const int soc_delta = sec_soc - seq_soc;
+	int report_soc_type = REPORT_DEFAULT;
+
+	if (!wa->seq_fg_soc_limit || !wa->seq_fg_delta_limit)
+		return report_soc_type;
+
+	if (!seq_soc || !sec_soc)
+		report_soc_type = seq_soc ? REPORT_BASE : REPORT_SEC;
+	else if (soc_delta > 0 && seq_soc < wa->seq_fg_soc_limit)
+		report_soc_type = REPORT_SEC;
+
+	return report_soc_type;
+}
+
 static void gdbatt_fg_logging(struct dual_fg_drv *dual_fg_drv, int base_soc_raw, int sec_soc_raw)
 {
 	const int base_soc = qnum_toint(qnum_from_q8_8(base_soc_raw));
 	const int sec_soc = qnum_toint(qnum_from_q8_8(sec_soc_raw));
+	const int soc_delta = sec_soc - base_soc;
+	const int soc_logging_delta = dual_fg_drv->seq_wa.seq_fg_delta_limit ?
+				      dual_fg_drv->seq_wa.seq_fg_delta_limit : MONITOR_SOC_DIFF;
+	int report_soc_type;
 
 	if (dual_fg_drv->base_soc == base_soc && dual_fg_drv->sec_soc == sec_soc)
 		return;
@@ -484,14 +523,20 @@ static void gdbatt_fg_logging(struct dual_fg_drv *dual_fg_drv, int base_soc_raw,
 		dev_info(dual_fg_drv->device, "initial base_soc:%d(%#x), sec_soc:%d(%#x)\n",
 			 base_soc, base_soc_raw, sec_soc, sec_soc_raw);
 
-	/* Dump registers */
-	if (abs(base_soc - sec_soc) >= MONITOR_SOC_DIFF) {
+	if (abs(soc_delta) < soc_logging_delta) {
+		/* Dump registers */
 		GPSY_SET_PROP(dual_fg_drv->first_fg_psy, GBMS_PROP_FG_REG_LOGGING, true);
 		GPSY_SET_PROP(dual_fg_drv->second_fg_psy, GBMS_PROP_FG_REG_LOGGING, true);
 	}
 
 	dual_fg_drv->base_soc = base_soc;
 	dual_fg_drv->sec_soc = sec_soc;
+	report_soc_type = seq_soc_drop_check(&dual_fg_drv->seq_wa, base_soc, sec_soc);
+	if (dual_fg_drv->seq_wa.report_soc_type != report_soc_type) {
+		dev_info(dual_fg_drv->device, "report_soc_type:%d -> %d, seq_soc:%d, sec_soc:%d\n",
+			 dual_fg_drv->seq_wa.report_soc_type, report_soc_type, base_soc, sec_soc);
+		dual_fg_drv->seq_wa.report_soc_type = report_soc_type;
+	}
 }
 
 static void gdbatt_stats_init(struct dual_fg_drv *dual_fg_drv)
@@ -769,8 +814,8 @@ static int gdbatt_gbms_get_property(struct power_supply *psy,
 
 	switch (psp) {
 	case GBMS_PROP_CAPACITY_RAW:
-		val->prop.intval = gdbatt_get_capacity(dual_fg_drv, fg_1.prop.intval, fg_2.prop.intval);
 		gdbatt_fg_logging(dual_fg_drv, fg_1.prop.intval, fg_2.prop.intval);
+		val->prop.intval = gdbatt_get_capacity(dual_fg_drv, fg_1.prop.intval, fg_2.prop.intval);
 		break;
 	/* support bhi */
 	case GBMS_PROP_HEALTH_ACT_IMPEDANCE:
@@ -1122,6 +1167,7 @@ static const DEVICE_ATTR_RW(dbatt_stats);
 
 static int google_dual_batt_init_sysfs(struct dual_fg_drv *dual_fg_drv)
 {
+	struct seq_soc_drop_wa *wa = &dual_fg_drv->seq_wa;
 	struct dentry *de;
 	int ret;
 
@@ -1132,10 +1178,14 @@ static int google_dual_batt_init_sysfs(struct dual_fg_drv *dual_fg_drv)
 
 	/* debugfs */
 	de = debugfs_create_dir("google_dual_batt", 0);
-	if (IS_ERR_OR_NULL(de))
+	if (IS_ERR_OR_NULL(de)) {
 		dev_err(dual_fg_drv->device, "Couldn't create debugfs, (%ld)\n", PTR_ERR(de));
-	else
+	} else {
 		debugfs_create_u32("debug_level", 0644, de, &debug_printk_prlog);
+		debugfs_create_u32("seq_report_soc_type", 0644, de, &wa->report_soc_type);
+		debugfs_create_u32("seq_soc_limit", 0644, de, &wa->seq_fg_soc_limit);
+		debugfs_create_u32("seq_delta_limit", 0644, de, &wa->seq_fg_delta_limit);
+	}
 
 	return 0;
 }
@@ -1228,6 +1278,16 @@ static int google_dual_batt_gauge_probe(struct platform_device *pdev)
 				   &dual_fg_drv->vbatt_ov_allowed_idx);
 	if (ret < 0)
 		dual_fg_drv->vbatt_ov_allowed_idx = -1;
+
+	ret = of_property_read_u32(pdev->dev.of_node, "google,seq-fg-soc-limit",
+				   &dual_fg_drv->seq_wa.seq_fg_soc_limit);
+	if (ret < 0)
+		dual_fg_drv->seq_wa.seq_fg_soc_limit = 0;
+
+	ret = of_property_read_u32(pdev->dev.of_node, "google,seq-fg-delta-limit",
+				   &dual_fg_drv->seq_wa.seq_fg_delta_limit);
+	if (ret < 0)
+		dual_fg_drv->seq_wa.seq_fg_delta_limit = 0;
 
 	dual_fg_drv->log = logbuffer_register("dual_batt");
 	if (IS_ERR(dual_fg_drv->log)) {
