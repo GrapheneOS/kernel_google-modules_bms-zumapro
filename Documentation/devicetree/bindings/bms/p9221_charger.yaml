@@ -353,6 +353,14 @@ patternProperties:
     description: DC_ICL to set for a specific TX MFG ID
     $ref: /schemas/types.yaml#/definitions/uint32"
 
+  "^google,bpp_freq[0-9]+_icl_ma$":
+    description: DC_ICL to set for a specific ping frequency BPP charger
+    $ref: /schemas/types.yaml#/definitions/uint32"
+
+  "^google,bpp_freq[0-9]+_vout_mv$":
+    description: Vout to set for a specific ping frequency BPP charger
+    $ref: /schemas/types.yaml#/definitions/uint32"
+
 required:
   - compatible
 
