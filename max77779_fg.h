@@ -71,6 +71,14 @@ static const struct maxfg_reg max77779_fg[] = {
 	[MAXFG_TAG_vfocv] = { ATOM_INIT_REG16(MAX77779_FG_VFOCV)},
 	[MAXFG_TAG_avgt] = { ATOM_INIT_REG16(MAX77779_FG_AvgTA)},
 	[MAXFG_TAG_avgv] = { ATOM_INIT_REG16(MAX77779_FG_AvgVCell)},
+	[MAXFG_TAG_mixcap] = { ATOM_INIT_REG16(MAX77779_FG_MixCap)},
+	[MAXFG_TAG_vfremcap] = { ATOM_INIT_REG16(MAX77779_FG_VFRemCap)},
+	[MAXFG_TAG_vfsoc0] = { ATOM_INIT_REG16(MAX77779_FG_VFSOC0)},
+	[MAXFG_TAG_qrtable00] = { ATOM_INIT_REG16(MAX77779_FG_QRTable00)},
+	[MAXFG_TAG_qrtable10] = { ATOM_INIT_REG16(MAX77779_FG_QRTable10)},
+	[MAXFG_TAG_qrtable20] = { ATOM_INIT_REG16(MAX77779_FG_QRTable20)},
+	[MAXFG_TAG_qrtable30] = { ATOM_INIT_REG16(MAX77779_FG_QRTable30)},
+	[MAXFG_TAG_status] = { ATOM_INIT_REG16(MAX77779_FG_Status)},
 };
 
 static const struct maxfg_reg max77779_debug_fg[] = {
@@ -158,8 +166,9 @@ struct max77779_fg_chip {
 	bool fw_update_mode;
 
 	/* in-field logging */
-	int fg_logging_events;
-	u16 pre_fullcapnom;
+	unsigned int abnormal_event_bits;
+	u16 last_fullcapnom;
+	struct mutex check_event_lock;
 
 	/* firmware revision */
 	int fw_rev;

@@ -70,6 +70,17 @@ enum maxfg_reg_tags {
 	MAXFG_TAG_relaxcfg,
 	MAXFG_TAG_avgt,
 	MAXFG_TAG_avgv,
+	MAXFG_TAG_mixcap,
+	MAXFG_TAG_vfremcap,
+	MAXFG_TAG_vfsoc0,
+	MAXFG_TAG_qrtable00,
+	MAXFG_TAG_qrtable10,
+	MAXFG_TAG_qrtable20,
+	MAXFG_TAG_qrtable30,
+	MAXFG_TAG_status,
+	MAXFG_TAG_fstat2,
+	MAXFG_TAG_config,
+	MAXFG_TAG_config2,
 
 	MAXFG_TAG_BCNT,
 	MAXFG_TAG_SNUM,
@@ -374,6 +385,8 @@ void batt_ce_dump_data(const struct gbatt_capacity_estimation *cap_esti, struct 
 void batt_ce_store_data(struct maxfg_regmap *map, struct gbatt_capacity_estimation *cap_esti);
 void batt_ce_stop_estimation(struct gbatt_capacity_estimation *cap_esti, int reason);
 int maxfg_health_write_ai(u16 act_impedance, u16 act_timerh);
+int maxfg_reg_log_abnormal(struct maxfg_regmap *map, struct maxfg_regmap *map_debug,
+			   char *buf, int buf_len);
 int maxfg_reg_log_data(struct maxfg_regmap *map, struct maxfg_regmap *map_debug, char *buf);
 
 void maxfg_init_fg_learn_capture_config(struct maxfg_capture_config *config,
