@@ -1615,6 +1615,14 @@ const struct maxfg_reg max_m5[] = {
 	[MAXFG_TAG_relaxcfg] = { ATOM_INIT_REG16(MAX_M5_RELAXCFG)},
 	[MAXFG_TAG_avgt] = { ATOM_INIT_REG16(MAX_M5_AVGTA)},
 	[MAXFG_TAG_avgv] = { ATOM_INIT_REG16(MAX_M5_AVGVCELL)},
+	[MAXFG_TAG_mixcap] = { ATOM_INIT_REG16(MAX_M5_MIXCAP)},
+	[MAXFG_TAG_vfremcap] = { ATOM_INIT_REG16(MAX_M5_VFREMCAP)},
+	[MAXFG_TAG_vfsoc0] = { ATOM_INIT_REG16(MAX_M5_VFSOC0)},
+	[MAXFG_TAG_qrtable00] = { ATOM_INIT_REG16(MAX_M5_QRTABLE00)},
+	[MAXFG_TAG_qrtable10] = { ATOM_INIT_REG16(MAX_M5_QRTABLE10)},
+	[MAXFG_TAG_qrtable20] = { ATOM_INIT_REG16(MAX_M5_QRTABLE20)},
+	[MAXFG_TAG_qrtable30] = { ATOM_INIT_REG16(MAX_M5_QRTABLE30)},
+	[MAXFG_TAG_status] = { ATOM_INIT_REG16(MAX_M5_STATUS)},
 };
 
 int max_m5_regmap_init(struct maxfg_regmap *regmap, struct i2c_client *clnt)
