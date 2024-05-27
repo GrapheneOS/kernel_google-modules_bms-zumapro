@@ -2388,7 +2388,8 @@ int chg_switch_profile(struct pd_pps_data *pps, struct power_supply *tcpm_psy,
 
 static void chg_update_csi(struct chg_drv *chg_drv)
 {
-	const bool is_dwell= chg_is_custom_enabled(chg_drv->charge_stop_level,
+	const bool is_dwell= chg_drv->charging_policy != CHARGING_POLICY_VOTE_LONGLIFE &&
+			     chg_is_custom_enabled(chg_drv->charge_stop_level,
 						   chg_drv->charge_start_level);
 	const bool is_disconnected = chg_state_is_disconnected(&chg_drv->chg_state);
 	const bool is_full = (chg_drv->chg_state.f.flags & GBMS_CS_FLAG_DONE) != 0;
