@@ -807,9 +807,6 @@ struct p9221_charger_ints_bit {
 	u16				over_curr_bit;
 	u16				over_volt_bit;
 	u16				over_temp_bit;
-	u16				log_oc_bit;
-	u16				log_ov_bit;
-	u16				log_ot_bit;
 	u16				over_uv_bit;
 	u16				mode_changed_bit;
 	u16				vrecton_bit;
@@ -824,7 +821,6 @@ struct p9221_charger_ints_bit {
 	u16				cdmode_change_bit;
 	u16				cdmode_err_bit;
 	u16				stat_limit_mask;
-	u16				stat_limitlog_mask;
 	u16				stat_cc_mask;
 	u16				prop_mode_mask;
 	u16				extended_mode_bit;
