@@ -1949,26 +1949,25 @@ static int gcpm_dc_chg_avail_callback(struct gvotable_election *el,
 	return 0;
 }
 
-static void gcpm_route_cc_max_to_main_charger(struct gcpm_drv *gcpm,
-					      const union power_supply_propval *pval)
+static int gcpm_route_to_main_charger(struct gcpm_drv *gcpm, enum power_supply_property psp,
+				      const union power_supply_propval *pval)
 {
 	struct power_supply *main_chg_psy = NULL;
 	int ret;
 
-	/* Route to main charger if COP enabled */
+	/* Route to main charger */
 	main_chg_psy = gcpm_chg_get_default(gcpm);
 	if (!main_chg_psy) {
-		pr_err("invalid default charger for"
-		       "prop=POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX\n");
-		return;
+		pr_err("invalid default charger for psp=%d\n", psp);
+		return -EIO;
 	}
 
-	ret = power_supply_set_property(main_chg_psy,
-					POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
-					pval);
+	ret = power_supply_set_property(main_chg_psy, psp, pval);
 	if (ret < 0 && ret != -EAGAIN)
-		pr_err("cannot route POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX"
-		       "to default:%s (%d)\n", gcpm_psy_name(main_chg_psy), ret);
+		pr_err("cannot route prop:%d to default:%s (%d)\n",
+		       psp, gcpm_psy_name(main_chg_psy), ret);
+
+	return ret;
 }
 
 static int gcpm_reset_dc(struct gcpm_drv *gcpm)
@@ -2085,11 +2084,12 @@ done:
 		}
 
 		if (cc_max_changed && gcpm->cop_supported)
-			gcpm_route_cc_max_to_main_charger(gcpm, pval);
-
+			gcpm_route_to_main_charger(gcpm, psp, pval);
 		gcpm_update_gcpm_fcc(gcpm, "CC_MAX", cc_max, !route);
 
 		gcpm->cop_saved_offset = gcpm->cop_current_offset;
+	} else if (psp == POWER_SUPPLY_PROP_CHARGE_TERM_CURRENT) {
+		ret = gcpm_route_to_main_charger(gcpm, psp, pval);
 	}
 
 	return ret;
@@ -2120,6 +2120,7 @@ static int gcpm_psy_set_property(struct power_supply *psy,
 		ta_check = true;
 		break;
 
+	case POWER_SUPPLY_PROP_CHARGE_TERM_CURRENT:
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
 		route = !gcpm_chg_is_cp_active(gcpm);
 		break;
