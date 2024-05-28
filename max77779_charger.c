@@ -391,6 +391,8 @@ static int max77779_read_vbatt(struct max77779_chgr_data *data, int *vbatt)
 	return ret;
 }
 
+#define MAX77779_WCIN_RAW_TO_UV 625
+
 static int max77779_read_wcin(struct max77779_chgr_data *data, int *vbyp)
 {
 	u16 tmp;
@@ -402,8 +404,7 @@ static int max77779_read_wcin(struct max77779_chgr_data *data, int *vbyp)
 		return ret;
 	}
 
-	/* LSB: 0.625 */
-	*vbyp = div_u64((u64) tmp * 625, 1000);
+	*vbyp = tmp * MAX77779_WCIN_RAW_TO_UV;
 	return 0;
 }
 
