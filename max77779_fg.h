@@ -184,9 +184,8 @@ struct max77779_fg_chip {
 	struct maxfg_capture_buf cb_lh;
 
 	/* get suspend/resume notification */
-	struct notifier_block	pm_nb;
-	bool pm_notifier_suspended;
 	struct mutex save_data_lock;
+	struct wakeup_source *fg_wake_lock;
 };
 
 /** ------------------------------------------------------------------------ */

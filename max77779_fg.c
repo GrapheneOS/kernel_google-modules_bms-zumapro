@@ -661,19 +661,21 @@ static int max77779_fg_restore_battery_cycle(struct max77779_fg_chip *chip)
 
 	mutex_lock(&chip->save_data_lock);
 	ret = gbms_storage_read(GBMS_TAG_CNHS, &eeprom_cycle, sizeof(eeprom_cycle));
-	mutex_unlock(&chip->save_data_lock);
-
-	if (ret < 0) {
+	if (ret != sizeof(eeprom_cycle)) {
+		mutex_unlock(&chip->save_data_lock);
 		dev_info(chip->dev, "Fail to read eeprom cycle count (%d)", ret);
 		return ret;
 	}
 
 	if (eeprom_cycle == 0xFFFF) { /* empty storage */
-		chip->eeprom_cycle = max77779_fg_save_battery_cycle(chip, reg_cycle);
+		mutex_unlock(&chip->save_data_lock);
+		max77779_fg_save_battery_cycle(chip, reg_cycle);
 		return -EINVAL;
 	}
 
 	chip->eeprom_cycle = eeprom_cycle;
+	mutex_unlock(&chip->save_data_lock);
+
 	dev_info(chip->dev, "reg_cycle:%d, eeprom_cycle:%d, update:%c",
 		 reg_cycle, chip->eeprom_cycle, chip->eeprom_cycle > reg_cycle ? 'Y' : 'N');
 	if (chip->eeprom_cycle > reg_cycle) {
@@ -689,30 +691,28 @@ static int max77779_fg_restore_battery_cycle(struct max77779_fg_chip *chip)
 static u16 max77779_fg_save_battery_cycle(struct max77779_fg_chip *chip, u16 reg_cycle)
 {
 	int ret = 0;
-	u16 eeprom_cycle = chip->eeprom_cycle;
 
-	if (chip->por || reg_cycle == 0)
-		return eeprom_cycle;
-
-	if (reg_cycle <= eeprom_cycle)
-		return eeprom_cycle;
-
+	__pm_stay_awake(chip->fg_wake_lock);
 	mutex_lock(&chip->save_data_lock);
-	if (chip->pm_notifier_suspended) {
-		mutex_unlock(&chip->save_data_lock);
-		return eeprom_cycle;
-	}
+
+	if (chip->por || reg_cycle == 0 || reg_cycle <= chip->eeprom_cycle)
+		goto max77779_fg_save_battery_cycle_exit;
 
 	ret = gbms_storage_write(GBMS_TAG_CNHS, &reg_cycle, sizeof(reg_cycle));
-	if (ret < 0) {
+
+	if (ret != sizeof(reg_cycle)) {
 		dev_info(chip->dev, "Fail to write %d eeprom cycle count (%d)", reg_cycle, ret);
 	} else {
-		dev_info(chip->dev, "update saved cycle:%d -> %d\n", eeprom_cycle, reg_cycle);
-		eeprom_cycle = reg_cycle;
+		dev_info(chip->dev, "update saved cycle:%d -> %d\n", chip->eeprom_cycle, reg_cycle);
+		chip->eeprom_cycle = reg_cycle;
 	}
-	mutex_unlock(&chip->save_data_lock);
 
-	return eeprom_cycle;
+
+max77779_fg_save_battery_cycle_exit:
+	mutex_unlock(&chip->save_data_lock);
+	__pm_relax(chip->fg_wake_lock);
+
+	return chip->eeprom_cycle;
 }
 
 #define MAX17201_HIST_CYCLE_COUNT_OFFSET	0x4
@@ -751,7 +751,7 @@ static int max77779_fg_update_cycle_count(struct max77779_fg_chip *chip)
 		/* the value of MAX77779_FG_Cycles will be set as chip->eeprom_cycle */
 		reg_cycle = chip->eeprom_cycle;
 	} else {
-		chip->eeprom_cycle = max77779_fg_save_battery_cycle(chip, reg_cycle);
+		max77779_fg_save_battery_cycle(chip, reg_cycle);
 	}
 
 	chip->cycle_count = reg_to_cycles((u32)reg_cycle);
@@ -2649,16 +2649,13 @@ BATTERY_DEBUG_ATTRIBUTE(debug_force_psy_update_fops, NULL,
 static int debug_cnhs_reset(void *data, u64 val)
 {
 	struct max77779_fg_chip *chip = data;
-	u16 reset_val;
 	int ret;
 
-	reset_val = (u16)val;
+	ret = max77779_fg_save_battery_cycle(chip, (u16)val);
 
-	ret = gbms_storage_write(GBMS_TAG_CNHS, &reset_val,
-				sizeof(reset_val));
-	dev_info(chip->dev, "reset CNHS to %d, (ret=%d)\n", reset_val, ret);
+	dev_info(chip->dev, "reset CNHS to %d, (ret=%d)\n", (int)val, ret);
 
-	return ret == sizeof(reset_val) ? 0 : ret;
+	return ret == sizeof(u16) ? 0 : ret;
 }
 
 DEFINE_SIMPLE_ATTRIBUTE(debug_reset_cnhs_fops, NULL, debug_cnhs_reset, "%llu\n");
@@ -2967,16 +2964,9 @@ static int max77779_fg_set_next_update(struct max77779_fg_chip *chip)
 		}
 	}
 
-	if (rc == 0 && chip->model_next_update) {
-		mutex_lock(&chip->save_data_lock);
-		if (chip->pm_notifier_suspended) {
-			mutex_unlock(&chip->save_data_lock);
-			return 0;
-		}
-
+	if (rc == 0 && chip->model_next_update)
 		rc = max77779_save_state_data(chip->model_data);
-		mutex_unlock(&chip->save_data_lock);
-	}
+
 	/*
 	 * cycle register LSB is 25% of one cycle
 	 * schedule next update at multiples of 4
@@ -3001,7 +2991,7 @@ static int max77779_fg_model_load(struct max77779_fg_chip *chip)
 	ret = max77779_load_state_data(chip->model_data);
 	if (ret == -EAGAIN)
 		return -EAGAIN;
-	if (ret < 0)
+	if (ret != 0)
 		dev_warn(chip->dev, "Load Model Using Default State (%d)\n", ret);
 
 	/* get fw version from pmic if it's not ready during init */
@@ -3053,6 +3043,7 @@ static void max77779_fg_model_work(struct work_struct *work)
 	if (!chip->model_data)
 		return;
 
+	__pm_stay_awake(chip->fg_wake_lock);
 	mutex_lock(&chip->model_lock);
 
 	if (chip->model_reload >= MAX77779_FG_LOAD_MODEL_REQUEST) {
@@ -3095,6 +3086,7 @@ static void max77779_fg_model_work(struct work_struct *work)
 	}
 
 	mutex_unlock(&chip->model_lock);
+	__pm_relax(chip->fg_wake_lock);
 
 	/*
 	 * notify event only when no more model loading activities
@@ -3192,29 +3184,6 @@ static int max77779_fg_init_model_data(struct max77779_fg_chip *chip)
 	return 0;
 }
 
-static int max77779_fg_pm_notifier(struct notifier_block *nb,
-				   unsigned long action, void *nb_data)
-{
-	struct max77779_fg_chip *chip = container_of(nb, struct max77779_fg_chip, pm_nb);
-
-	mutex_lock(&chip->save_data_lock);
-
-	switch (action) {
-	case PM_SUSPEND_PREPARE:
-		chip->pm_notifier_suspended = true;
-		break;
-	case PM_POST_SUSPEND:
-		chip->pm_notifier_suspended = false;
-		break;
-	default:
-		break;
-	}
-
-	mutex_unlock(&chip->save_data_lock);
-
-	return NOTIFY_OK;
-}
-
 static int max77779_fg_init_chip(struct max77779_fg_chip *chip)
 {
 	int ret;
@@ -3286,10 +3255,6 @@ static int max77779_fg_init_chip(struct max77779_fg_chip *chip)
 
 	MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_FG_INT_MASK,
 				 MAX77779_FG_FG_INT_MASK_dSOCi_m_CLEAR);
-
-	chip->pm_notifier_suspended = false;
-	chip->pm_nb.notifier_call = max77779_fg_pm_notifier;
-	register_pm_notifier(&chip->pm_nb);
 
 	max77779_fg_update_cycle_count(chip);
 
@@ -3728,6 +3693,10 @@ int max77779_fg_init(struct max77779_fg_chip *chip)
 	INIT_DELAYED_WORK(&chip->init_work, max77779_fg_init_work);
 	INIT_DELAYED_WORK(&chip->model_work, max77779_fg_model_work);
 
+	chip->fg_wake_lock = wakeup_source_register(NULL, "max77779-fg");
+	if (!chip->fg_wake_lock)
+		dev_warn(dev, "failed to register wake source\n");
+
 	schedule_delayed_work(&chip->init_work, 0);
 
 	return 0;
@@ -3748,6 +3717,11 @@ void max77779_fg_remove(struct max77779_fg_chip *chip)
 		chip->ce_log = NULL;
 	}
 
+	if (chip->fg_wake_lock) {
+		wakeup_source_unregister(chip->fg_wake_lock);
+		chip->fg_wake_lock = NULL;
+	}
+
 	if (chip->model_data)
 		max77779_free_data(chip->model_data);
 	cancel_delayed_work(&chip->init_work);
@@ -3762,7 +3736,6 @@ void max77779_fg_remove(struct max77779_fg_chip *chip)
 		power_supply_unregister(chip->psy);
 
 	maxfg_free_capture_buf(&chip->cb_lh);
-	unregister_pm_notifier(&chip->pm_nb);
 }
 EXPORT_SYMBOL_GPL(max77779_fg_remove);
 
