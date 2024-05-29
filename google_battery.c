@@ -9752,6 +9752,36 @@ static int gbatt_restore_capacity(struct batt_drv *batt_drv)
 	return ret;
 }
 
+static int gbatt_get_ttf(struct batt_drv *batt_drv)
+{
+	const int report_ratio = batt_drv->ttf_stats.report_max_ratio;
+	union power_supply_propval val;
+	int max_ratio, rc;
+	ktime_t res;
+
+	/* report deadline when AC enable */
+	if (batt_drv->chg_health.rest_deadline > 0) {
+		const ktime_t now = get_boot_sec();
+		const ktime_t ac_end = batt_drv->chg_health.rest_deadline - now;
+
+		return ac_end > 0 ? ac_end : 0;
+	}
+
+	max_ratio = batt_ttf_estimate(&res, batt_drv);
+	/* always report when report_max_ratio is 0 */
+	if (report_ratio && max_ratio >= report_ratio)
+		return 0;
+
+	if (max_ratio >= 0)
+		return res < 0 ? 0 : res;
+
+	if (!batt_drv->fg_psy)
+		return -1;
+
+	rc = power_supply_get_property(batt_drv->fg_psy, POWER_SUPPLY_PROP_TIME_TO_FULL_NOW, &val);
+	return rc < 0 ? -1 : val.intval;
+}
+
 static int gbatt_get_property(struct power_supply *psy,
 				 enum power_supply_property psp,
 				 union power_supply_propval *val)
@@ -9870,28 +9900,9 @@ static int gbatt_get_property(struct power_supply *psy,
 		break;
 
 	/* cannot set err, negative estimate will revert to HAL */
-	case POWER_SUPPLY_PROP_TIME_TO_FULL_NOW: {
-		ktime_t res;
-		int max_ratio;
-		const int report_ratio = batt_drv->ttf_stats.report_max_ratio;
-
-		max_ratio = batt_ttf_estimate(&res, batt_drv);
-		/* always report when report_max_ratio is 0 */
-		if (report_ratio && max_ratio >= report_ratio) {
-			val->intval = 0;
-		} else if (max_ratio >= 0) {
-			if (res < 0)
-				res = 0;
-			val->intval = res;
-		} else if (!batt_drv->fg_psy) {
-			val->intval = -1;
-		} else {
-			rc = power_supply_get_property(batt_drv->fg_psy,
-							psp, val);
-			if (rc < 0)
-				val->intval = -1;
-		}
-	} break;
+	case POWER_SUPPLY_PROP_TIME_TO_FULL_NOW:
+		val->intval = gbatt_get_ttf(batt_drv);
+		break;
 
 	case POWER_SUPPLY_PROP_TEMP:
 		err = gbatt_get_temp(batt_drv, &val->intval);
