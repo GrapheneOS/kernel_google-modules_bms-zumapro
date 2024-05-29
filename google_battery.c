@@ -2451,6 +2451,9 @@ static int batt_csi_status_mask(void *data, const char *reason, void *vote)
 	case CSI_STATUS_Charging:
 		status_mask = CSI_STATUS_MASK_CHARGING;
 		break;
+	case CSI_STATUS_Defender_Limit:
+		status_mask = CSI_STATUS_MASK_DEFEND_LIMIT;
+		break;
 	default:
 		break;
 	}
@@ -7708,6 +7711,10 @@ static void batt_update_charging_policy(struct batt_drv *batt_drv)
 
 	pr_info("update charging_policy: %d -> %d\n", batt_drv->charging_policy, value);
 	batt_drv->charging_policy = value;
+
+	gvotable_cast_long_vote(batt_drv->csi_status_votable, "CSI_STATUS_DEFEND_LIMIT",
+				CSI_STATUS_Defender_Limit,
+				value == CHARGING_POLICY_VOTE_LONGLIFE);
 }
 
 static int charging_policy_translate(int value)
