@@ -8230,18 +8230,26 @@ static int p9221_charger_probe(struct i2c_client *client,
 				   &charger->rtx_total_delay);
 		debugfs_create_bool("needs_align_check", 0644, charger->debug_entry,
 				    &charger->pdata->needs_align_check);
-		debugfs_create_file("irq_det", 0444, charger->debug_entry, charger, &debug_irq_det_fops);
-		debugfs_create_u32("det_on_debounce", 0644, charger->debug_entry, &charger->det_on_debounce);
-		debugfs_create_u32("det_off_debounce", 0644, charger->debug_entry, &charger->det_off_debounce);
-		debugfs_create_u32("de_hpp_neg_pwr", 0644, charger->debug_entry, &charger->de_hpp_neg_pwr);
-		debugfs_create_u32("de_epp_neg_pwr", 0644, charger->debug_entry, &charger->de_epp_neg_pwr);
-		debugfs_create_u32("de_wait_prop_irq_ms", 0644, charger->debug_entry, &charger->de_wait_prop_irq_ms);
+		debugfs_create_file("irq_det", 0444, charger->debug_entry, charger,
+				    &debug_irq_det_fops);
+		debugfs_create_u32("det_on_debounce", 0644, charger->debug_entry,
+				   &charger->det_on_debounce);
+		debugfs_create_u32("det_off_debounce", 0644, charger->debug_entry,
+				   &charger->det_off_debounce);
+		debugfs_create_u32("de_hpp_neg_pwr", 0644, charger->debug_entry,
+				   &charger->de_hpp_neg_pwr);
+		debugfs_create_u32("de_epp_neg_pwr", 0644, charger->debug_entry,
+				   &charger->de_epp_neg_pwr);
+		debugfs_create_u32("de_wait_prop_irq_ms", 0644, charger->debug_entry,
+				   &charger->de_wait_prop_irq_ms);
 		debugfs_create_u16("de_rtx_ocp_ma", 0644, charger->debug_entry,
 				   &charger->rtx_ocp);
 		debugfs_create_u16("de_rtx_api_limit_ma", 0644, charger->debug_entry,
 				   &charger->rtx_api_limit);
-		debugfs_create_u16("de_rtx_freq_low_khz", 0644, charger->debug_entry,
-				   &charger->rtx_freq_low_limit);
+		debugfs_create_u16("de_rtx_fb_freq_low_khz", 0644, charger->debug_entry,
+				   &charger->rtx_fb_freq_low_limit);
+		debugfs_create_u16("de_rtx_hb_freq_low_khz", 0644, charger->debug_entry,
+				   &charger->rtx_hb_freq_low_limit);
 		debugfs_create_u16("de_rtx_fod_thrsh_mw", 0644, charger->debug_entry,
 				   &charger->rtx_fod_thrsh);
 		debugfs_create_u16("de_rtx_plim_ma", 0644, charger->debug_entry,

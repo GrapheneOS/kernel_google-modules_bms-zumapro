@@ -1191,21 +1191,33 @@ static int ra9530_chip_tx_mode(struct p9221_charger_data *chgr, bool enable)
 	logbuffer_log(chgr->rtx_log, "configure TX OCP to %dMA", chgr->rtx_ocp);
 	if (ret < 0)
 		return ret;
-	if (chgr->pdata->hw_ocp_det) {
-		rtx_current_limit_opt(chgr);
-		/*
-		 * Set Frequency low limit to 120kHz
-		 * val = (clock/freq)-1 in number of 60MHz clock cycles
-		 */
-		val = chgr->rtx_freq_low_limit;
-		val = (val > 0 && val <= 60000) ?
-			(60000 / val) - 1 : RA9530_MIN_FREQ_PER_120;
-		ret = chgr->reg_write_16(chgr, P9412_MIN_FREQ_PER, val);
-		logbuffer_log(chgr->rtx_log, "set freq min: write %#02x to %#02x", val, P9412_MIN_FREQ_PER);
-		if (ret < 0)
-			logbuffer_log(chgr->rtx_log, "min freq fail, ret=%d\n", ret);
-	}
 
+	rtx_current_limit_opt(chgr);
+	/*
+	 * Set FB Frequency low limit to 120kHz
+	 * val = (clock/freq)-1 in number of 60MHz clock cycles
+	 */
+	val = chgr->rtx_fb_freq_low_limit;
+	ret = chgr->reg_write_16(chgr, RA9530_FB_MIN_FREQ_REG, val);
+	logbuffer_log(chgr->rtx_log, "set FB freq min: write %#02x to %#02x",
+		      val, RA9530_FB_MIN_FREQ_REG);
+	if (ret < 0)
+		logbuffer_log(chgr->rtx_log, "min FB freq fail, ret=%d\n", ret);
+
+	/* Set HB Frequency low limit to 105kHz */
+	val = chgr->rtx_hb_freq_low_limit;
+	ret = chgr->reg_write_16(chgr, RA9530_HB_MIN_FREQ_REG, val);
+	logbuffer_log(chgr->rtx_log, "set HB freq min: write %#02x to %#02x",
+		      val, RA9530_HB_MIN_FREQ_REG);
+	if (ret < 0)
+		logbuffer_log(chgr->rtx_log, "min HB freq fail, ret=%d\n", ret);
+
+	val = chgr->rtx_hb_ping_freq;
+	ret = chgr->reg_write_16(chgr, RA9530_HB_PING_FREQ_REG, val);
+	logbuffer_log(chgr->rtx_log, "set HB ping freq: write %#02x to %#02x",
+		      val, RA9530_HB_PING_FREQ_REG);
+	if (ret < 0)
+		logbuffer_log(chgr->rtx_log, "HB ping freq fail, ret=%d\n", ret);
 
 	/* Set Foreign Object Detection Threshold to 1600mW */
 	ret = chgr->reg_write_16(chgr, P9412_TX_FOD_THRSH_REG, chgr->rtx_fod_thrsh);
@@ -2792,6 +2804,9 @@ void p9221_chip_init_params(struct p9221_charger_data *chgr, u16 chip_id)
 		chgr->wlc_dd_comcap = RA9530_CMFET_ENABLE_ALL;
 		chgr->wlc_default_comcap = RA9530_CMFET_COM_1_2;
 		chgr->wlc_disable_comcap = RA9530_CMFET_DISABLE_ALL;
+		chgr->rtx_fb_freq_low_limit = RA9530_FREQ_PER_120;
+		chgr->rtx_hb_freq_low_limit = RA9530_FREQ_PER_105;
+		chgr->rtx_hb_ping_freq = RA9530_FREQ_PER_120;
 		break;
 	case P9382A_CHIP_ID:
 		chgr->reg_tx_id_addr = P9382_PROP_TX_ID_REG;
