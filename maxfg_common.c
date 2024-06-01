@@ -1009,7 +1009,7 @@ int maxfg_dynrel_mark_det(struct maxfg_dynrel_state *dr_state,
 		dr_state->temp_det = 0xffff;
 	ret = maxfg_reg_read(regmap, MAXFG_TAG_vfocv, &dr_state->vfocv_det);
 	if (ret < 0)
-		dr_state->temp_det = 0xffff;
+		dr_state->vfocv_det = 0xffff;
 
 	return 0;
 }
