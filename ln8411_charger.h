@@ -217,6 +217,7 @@ struct ln8411_charger {
 
 	s32			retry_cnt;
 	s32			ibus_ucp_retry_cnt;
+	u8			ibus_ucp_debounce_cnt;
 
 	struct ln8411_platform_data *pdata;
 
