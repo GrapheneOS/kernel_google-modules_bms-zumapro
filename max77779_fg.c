@@ -1341,11 +1341,12 @@ static void max77779_fg_dynrelax(struct max77779_fg_chip *chip)
 				dr_state->mark_last = fstat;
 				dr_state->sticky_cnt = 0;
 			}
+
+			maxfg_dynrel_log(mon, chip->dev, fstat, dr_state);
 		} else {
 			mon = NULL; /* do not pollute the logbuffer */
 		}
 
-		maxfg_dynrel_log(mon, chip->dev, fstat, dr_state);
 		return;
 	}
 
