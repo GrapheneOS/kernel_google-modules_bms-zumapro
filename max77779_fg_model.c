@@ -36,6 +36,14 @@
 #define MAX7779_FG_CRC8_POLYNOMIAL		0x07	/* (x^8) + x^2 + x + 1 */
 DECLARE_CRC8_TABLE(max77779_fg_crc8_table);
 
+/*
+ * b/329101930: using MAX77779 sp to save model version
+ * SP reset value is undefined and only reset when entering shipmode and UVLO.
+ * If current SP value is the same as model version, then model won't reload.
+ * Otherwise, model will reload and SP data will be model version.
+ * If enter shipmode or UVLO, POR will lead to reload model regardless of SP data.
+ * So undefined reset value won't be a side effect for that.
+ */
 int max77779_model_read_version(const struct max77779_model_data *model_data)
 {
 	u8 temp;
