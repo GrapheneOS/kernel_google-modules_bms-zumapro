@@ -3581,7 +3581,8 @@ done_exit:
 
 done_no_op:
 	/* send a power supply event when rest_state changes */
-	changed = rest->rest_state != rest_state;
+	changed = rest->rest_state != rest_state ||
+		  rest->rest_cc_max != cc_max || rest->rest_fv_uv != fv_uv;
 
 	/* msc_logic_* will vote on cc_max and fv_uv. */
 	rest->rest_cc_max = cc_max;
