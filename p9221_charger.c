@@ -8490,8 +8490,15 @@ static void p9221_charger_shutdown(struct i2c_client *client)
 {
 	struct p9221_charger_data *charger = i2c_get_clientdata(client);
 
-	if (charger)
-		power_supply_unreg_notifier(&charger->nb);
+	if (!charger)
+		return;
+
+	if (charger->online) {
+		gpio_direction_output(charger->pdata->wlc_en, charger->pdata->wlc_en_act_low);
+		dev_info(&charger->client->dev, "Disable WLC chip, wlc_en=%d, val=%d\n",
+			 charger->pdata->wlc_en, charger->pdata->wlc_en_act_low);
+	}
+	power_supply_unreg_notifier(&charger->nb);
 }
 
 static const struct i2c_device_id p9221_charger_id_table[] = {
