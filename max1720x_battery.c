@@ -1725,7 +1725,8 @@ static int max1720x_update_cycle_count(struct max1720x_chip *chip)
 		return -ECANCELED;
 
 	/* if cycle reg hasn't been restored from storage, restore it before update cycle count */
-	if (!chip->cycle_reg_ok && max_m5_recal_state(chip->model_data) == RE_CAL_STATE_IDLE) {
+	if (!chip->cycle_reg_ok && chip->gauge_type == MAX_M5_GAUGE_TYPE &&
+	    max_m5_recal_state(chip->model_data) == RE_CAL_STATE_IDLE) {
 		err = max1720x_restore_battery_cycle(chip);
 		if (err < 0)
 			dev_err(chip->dev, "%s cannot restore cycle count (%d)\n", __func__, err);
@@ -2613,7 +2614,8 @@ static int max1720x_get_property(struct power_supply *psy,
 		val->intval = chip->batt_id;
 		break;
 	case GBMS_PROP_RECAL_FG:
-		val->intval = max_m5_recal_state(chip->model_data);
+		if (chip->gauge_type == MAX_M5_GAUGE_TYPE)
+			val->intval = max_m5_recal_state(chip->model_data);
 		break;
 	default:
 		err = -EINVAL;
@@ -3227,8 +3229,10 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 		} else {
 			max1720x_monitor_log_learning(chip, false);
 			max1720x_monitor_log_data(chip, false);
-			max_m5_check_recal_state(chip->model_data, chip->bhi_recalibration_algo,
-						 chip->eeprom_cycle);
+			if (chip->gauge_type == MAX_M5_GAUGE_TYPE)
+				max_m5_check_recal_state(chip->model_data,
+							 chip->bhi_recalibration_algo,
+							 chip->eeprom_cycle);
 			max1720x_update_cycle_count(chip);
 		}
 
