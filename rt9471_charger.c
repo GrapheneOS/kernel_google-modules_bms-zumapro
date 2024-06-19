@@ -1803,6 +1803,37 @@ static void rt9471_gpio_init(struct rt9471_chip *chip)
 
 /* ------------------------------------------------------------------------ */
 
+static ssize_t registers_dump_show(struct device *dev, struct device_attribute *attr,
+				   char *buf)
+{
+	struct rt9471_chip *chip = dev_get_drvdata(dev);
+	u8 tmp[RT9471_REG_BUCK_HDEN5 - RT9471_REG_OTGCFG + 1];
+	int ret = 0, i;
+	int len = 0;
+
+	mutex_lock(&chip->io_lock);
+	ret = regmap_bulk_read(chip->rm_dev, RT9471_REG_OTGCFG, &tmp, sizeof(tmp));
+	mutex_unlock(&chip->io_lock);
+	if (ret < 0)
+		return ret;
+
+	for (i = 0; i < sizeof(tmp); i++)
+		len += scnprintf(&buf[len], PAGE_SIZE - len, "%02x: %02x\n", i, tmp[i]);
+
+	return len;
+}
+
+static DEVICE_ATTR_RO(registers_dump);
+
+static int rt9471_create_fs_entries(struct rt9471_chip *chip)
+{
+	device_create_file(chip->dev, &dev_attr_registers_dump);
+
+	return 0;
+}
+
+/* ------------------------------------------------------------------------ */
+
 static enum power_supply_property rt9471_psy_props[] = {
 	POWER_SUPPLY_PROP_STATUS,
 	POWER_SUPPLY_PROP_CHARGE_TYPE,
@@ -2085,6 +2116,8 @@ static int rt9471_probe(struct i2c_client *client,
 			 chip->gpio.ngpio, ret);
 	}
 #endif
+
+	(void)rt9471_create_fs_entries(chip);
 
 	schedule_work(&chip->init_work);
 	dev_info(chip->dev, "%s successfully\n", __func__);
