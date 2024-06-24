@@ -678,16 +678,12 @@ static int max77779_get_usecase(struct max77779_foreach_cb_data *cb_data,
 		dc_on = false;
 		if (wlc_tx) {
 			usecase = GSU_MODE_WLC_TX;
-			if (!uc_data->reverse12_en)
-				mode = MAX77779_CHGR_MODE_BOOST_UNO_ON;
+			mode = MAX77779_CHGR_MODE_BOOST_UNO_ON;
 		}
 	} else if (wlc_tx) {
 		/* above checks that buck_on is false */
 		usecase = GSU_MODE_WLC_TX;
-		if (uc_data->reverse12_en)
-			mode = MAX77779_CHGR_MODE_ALL_OFF;
-		else
-			mode = MAX77779_CHGR_MODE_BOOST_UNO_ON;
+		mode = MAX77779_CHGR_MODE_BOOST_UNO_ON;
 	} else if (wlc_rx) {
 
 		/* will be in mode 4 if in stby unless dc is enabled */
@@ -744,17 +740,8 @@ static int max77779_get_usecase(struct max77779_foreach_cb_data *cb_data,
 
 	}
 
-	if (!cb_data->dc_avail_votable)
-		cb_data->dc_avail_votable = gvotable_election_get_handle(VOTABLE_DC_CHG_AVAIL);
-	if (cb_data->dc_avail_votable)
-		gvotable_cast_int_vote(cb_data->dc_avail_votable,
-				       "WLC_TX", wlc_tx? 0 : 1, wlc_tx);
-	if (wlc_tx) {
-		if (uc_data->reverse12_en)
-			dc_on = true;
-		else
-			dc_on = false;
-	}
+	if (wlc_tx)
+		dc_on = false;
 
 	/* reg might be ignored later */
 	cb_data->reg = _max77779_chg_cnfg_00_cp_en_set(cb_data->reg, dc_on);
