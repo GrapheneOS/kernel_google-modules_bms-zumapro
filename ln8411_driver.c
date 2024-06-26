@@ -84,6 +84,7 @@
 #define LN8411_MAX_RETRY_CNT			3	/* retries */
 #define LN8411_MAX_IBUS_UCP_RETRY_CNT		10	/* retries */
 #define LN8411_MAX_IBUS_UCP_DEBOUNCE_COUNT	3
+#define LN8411_MAX_LOW_BATT_RETRY_CNT		10	/* retries */
 
 /* TA IIN tolerance */
 #define LN8411_TA_IIN_OFFSET		100000	/* uA */
@@ -930,6 +931,18 @@ static int ln8411_check_state(struct ln8411_charger *ln8411, int loglevel)
 	return ret;
 }
 
+static bool ln8411_err_is_ucp(struct ln8411_charger *ln8411, bool *retries)
+{
+	*retries = !!ln8411->ibus_ucp_retry_cnt;
+	return ln8411->error == LN8411_ERROR_UCP;
+}
+
+static bool ln8411_err_is_low_batt(struct ln8411_charger *ln8411, bool *retries)
+{
+	*retries = !!ln8411->low_batt_retry_cnt;
+	return ln8411->error == LN8411_ERROR_LOW_VBATT;
+}
+
 static int ln8411_check_not_active(struct ln8411_charger *ln8411, int loglevel)
 {
 	int ret, rc = -EINVAL;
@@ -1030,6 +1043,7 @@ static int ln8411_check_error(struct ln8411_charger *ln8411)
 			ln8411->ibus_ucp_debounce_cnt = LN8411_MAX_IBUS_UCP_DEBOUNCE_COUNT;
 		}
 		ln8411->error = LN8411_ERROR_NONE;
+		ln8411->low_batt_retry_cnt = LN8411_MAX_LOW_BATT_RETRY_CNT;
 		dev_dbg(ln8411->dev, "%s: Active Status ok. debounce_cnt:%d->%d\n", __func__,
 			debounce_cnt, ln8411->ibus_ucp_debounce_cnt);
 
@@ -3718,6 +3732,10 @@ static int ln8411_check_vbatmin(struct ln8411_charger *ln8411)
 	if (vbat < 0) {
 		ret = vbat;
 		goto error;
+	} else if (vbat <= LN8411_DC_VBAT_MIN) {
+		ret = -EAGAIN;
+		ln8411->error = LN8411_ERROR_LOW_VBATT;
+		goto error;
 	}
 
 	/* wait for hw init and CPM to send in the params */
@@ -3966,6 +3984,7 @@ static void ln8411_timer_work(struct work_struct *work)
 	unsigned int charging_state;
 	int timer_id;
 	int ret = 0;
+	bool retries = false;
 
 	dev_dbg(ln8411->dev, "%s: ========= START =========\n", __func__);
 
@@ -4105,11 +4124,14 @@ static void ln8411_timer_work(struct work_struct *work)
 error:
 	dev_dbg(ln8411->dev, "%s: ========= ERROR =========\n", __func__);
 	logbuffer_prlog(ln8411, LOGLEVEL_ERR,
-			"%s: timer_id=%d->%d, charging_state=%u->%u, period=%ld err=%d ret=%d",
+			"%s: timer_id=%d->%d, charging_state=%u->%u, period=%ld err=%d ret=%d "
+			"ucp_count:%d ucp_debounce:%d low_batt_count:%d",
 			__func__, timer_id, ln8411->timer_id, charging_state,
-			ln8411->charging_state, ln8411->timer_period, ln8411->error, ret);
+			ln8411->charging_state, ln8411->timer_period, ln8411->error, ret,
+			ln8411->ibus_ucp_retry_cnt, ln8411->ibus_ucp_debounce_cnt,
+			ln8411->low_batt_retry_cnt);
 
-	if (ret == -EAGAIN && ln8411->ibus_ucp_retry_cnt && (ln8411->error == LN8411_ERROR_UCP)) {
+	if (ret == -EAGAIN && ln8411_err_is_ucp(ln8411, &retries) && retries) {
 		/* Retry for IBUS UCP case */
 		ln8411->ibus_ucp_retry_cnt--;
 		ln8411->ibus_ucp_debounce_cnt = LN8411_MAX_IBUS_UCP_DEBOUNCE_COUNT;
@@ -4127,11 +4149,15 @@ error:
 		if (!ret)
 			mod_delayed_work(ln8411->dc_wq, &ln8411->timer_work,
 					msecs_to_jiffies(LN8411_ENABLE_WLC_DELAY_T));
+	} else if (ret == -EAGAIN && ln8411_err_is_low_batt(ln8411, &retries) && retries) {
+		ln8411->low_batt_retry_cnt--;
+		mod_delayed_work(ln8411->dc_wq, &ln8411->timer_work,
+				 msecs_to_jiffies(LN8411_ENABLE_WLC_DELAY_T));
 	} else {
 		ln8411_stop_charging(ln8411);
-		if (ret == -EAGAIN &&
-		    (!ln8411->ibus_ucp_retry_cnt && (ln8411->error == LN8411_ERROR_UCP))) {
-			pr_err("%s: retry failed\n", __func__);
+		if (ret == -EAGAIN && ((ln8411_err_is_ucp(ln8411, &retries) && !retries) ||
+                                       (ln8411_err_is_low_batt(ln8411, &retries) && !retries))) {
+			dev_err(ln8411->dev, "%s: retry failed err:%d\n", __func__, ln8411->error);
 
 			ln8411->charging_state = DC_STATE_ERROR;
 			ln8411_vote_dc_avail(ln8411, 0, 1);
@@ -5032,6 +5058,7 @@ static int ln8411_gbms_mains_set_property(struct power_supply *psy,
 			ln8411->ibus_ucp_retry_cnt = LN8411_MAX_IBUS_UCP_RETRY_CNT;
 			ln8411->ibus_ucp_debounce_cnt = LN8411_MAX_IBUS_UCP_DEBOUNCE_COUNT;
 			ln8411->error = LN8411_ERROR_NONE;
+			ln8411->low_batt_retry_cnt = LN8411_MAX_LOW_BATT_RETRY_CNT;
 		}
 		break;
 
@@ -5504,6 +5531,7 @@ static int ln8411_probe(struct i2c_client *client,
 	ln8411_charger->hw_init_done = false;
 	ln8411_charger->ibus_ucp_retry_cnt = LN8411_MAX_IBUS_UCP_RETRY_CNT;
 	ln8411_charger->ibus_ucp_debounce_cnt = LN8411_MAX_IBUS_UCP_DEBOUNCE_COUNT;
+	ln8411_charger->low_batt_retry_cnt = LN8411_MAX_LOW_BATT_RETRY_CNT;
 
 	/* Create a work queue for the direct charger */
 	ln8411_charger->dc_wq = alloc_ordered_workqueue("ln8411_dc_wq", WQ_MEM_RECLAIM);
