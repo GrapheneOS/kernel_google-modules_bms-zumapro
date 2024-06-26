@@ -945,10 +945,13 @@ static int ln8411_check_not_active(struct ln8411_charger *ln8411, int loglevel)
 		goto done;
 
 	if (reg & LN8411_STANDBY_STS) {
-		if (safety_sts[0] & LN8411_REV_IBUS_LATCHED)
+		if (safety_sts[0] & LN8411_REV_IBUS_LATCHED) {
 			rc = -EAGAIN;
-		else
+			ln8411->error = LN8411_ERROR_UCP;
+		} else {
 			rc = -EINVAL;
+			ln8411->error = LN8411_ERROR_NOT_ACTIVE;
+		}
 		logbuffer_prlog(ln8411, loglevel, "%s: in standby (%d)\n", __func__, rc);
 	} else if (reg & LN8411_SHUTDOWN_STS) {
 		rc = -EINVAL;
@@ -1026,6 +1029,7 @@ static int ln8411_check_error(struct ln8411_charger *ln8411)
 			ln8411->ibus_ucp_retry_cnt = LN8411_MAX_IBUS_UCP_RETRY_CNT;
 			ln8411->ibus_ucp_debounce_cnt = LN8411_MAX_IBUS_UCP_DEBOUNCE_COUNT;
 		}
+		ln8411->error = LN8411_ERROR_NONE;
 		dev_dbg(ln8411->dev, "%s: Active Status ok. debounce_cnt:%d->%d\n", __func__,
 			debounce_cnt, ln8411->ibus_ucp_debounce_cnt);
 
@@ -3388,6 +3392,7 @@ static int ln8411_set_chg_mode_by_apdo(struct ln8411_charger *ln8411)
 	dev_err(ln8411->dev, "%s: No APDO to support 2:1\n", __func__);
 	ln8411->chg_mode = CHG_NO_DC_MODE;
 	ln8411->ta_max_vol = 0;
+	ln8411->error = LN8411_ERROR_APDO;
 
 done:
 	return ret;
@@ -4102,11 +4107,12 @@ static void ln8411_timer_work(struct work_struct *work)
 error:
 	dev_dbg(ln8411->dev, "%s: ========= ERROR =========\n", __func__);
 	logbuffer_prlog(ln8411, LOGLEVEL_ERR,
-			"%s: timer_id=%d->%d, charging_state=%u->%u, period=%ld ret=%d",
+			"%s: timer_id=%d->%d, charging_state=%u->%u, period=%ld err=%d ret=%d",
 			__func__, timer_id, ln8411->timer_id, charging_state,
-			ln8411->charging_state, ln8411->timer_period, ret);
+			ln8411->charging_state, ln8411->timer_period, ln8411->error, ret);
 
-	if (ret == -EAGAIN && ln8411->ibus_ucp_retry_cnt) { /* Retry for IBUS UCP case */
+	if (ret == -EAGAIN && ln8411->ibus_ucp_retry_cnt && (ln8411->error == LN8411_ERROR_UCP)) {
+		/* Retry for IBUS UCP case */
 		ln8411->ibus_ucp_retry_cnt--;
 		ln8411->ibus_ucp_debounce_cnt = LN8411_MAX_IBUS_UCP_DEBOUNCE_COUNT;
 		ret = ln8411_set_status_disable_charging(ln8411);
@@ -4125,7 +4131,8 @@ error:
 					msecs_to_jiffies(LN8411_ENABLE_WLC_DELAY_T));
 	} else {
 		ln8411_stop_charging(ln8411);
-		if (ret == -EAGAIN && !ln8411->ibus_ucp_retry_cnt) {
+		if (ret == -EAGAIN &&
+		    (!ln8411->ibus_ucp_retry_cnt && (ln8411->error == LN8411_ERROR_UCP))) {
 			pr_err("%s: retry failed\n", __func__);
 
 			ln8411->charging_state = DC_STATE_ERROR;
@@ -5026,6 +5033,7 @@ static int ln8411_gbms_mains_set_property(struct power_supply *psy,
 
 			ln8411->ibus_ucp_retry_cnt = LN8411_MAX_IBUS_UCP_RETRY_CNT;
 			ln8411->ibus_ucp_debounce_cnt = LN8411_MAX_IBUS_UCP_DEBOUNCE_COUNT;
+			ln8411->error = LN8411_ERROR_NONE;
 		}
 		break;
 
