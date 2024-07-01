@@ -1546,11 +1546,6 @@ out:
 	return ret;
 }
 
-static int rt9471_enable_wdt(struct rt9471_chip *chip, bool en)
-{
-	return __rt9471_set_wdt(chip, en ? chip->desc->wdt : 0);
-}
-
 static int rt9471_init_setting(struct rt9471_chip *chip)
 {
 	int ret;
@@ -1773,8 +1768,6 @@ static void rt9471_gpio_set(struct gpio_chip *chip, unsigned int offset, int val
 	switch (offset) {
 	case RT9471_GPIO_USB_OTG_EN:
 		ret = __rt9471_enable_otg(data, value);
-		if (ret == 0)
-			ret = rt9471_enable_wdt(data, value > 0);
 		break;
 
 	default:
@@ -1977,8 +1970,6 @@ static int rt9471_psy_set_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
 		ret = __rt9471_set_ichg(chip, val->intval);
-		if (ret == 0)
-			ret = rt9471_enable_wdt(chip, val->intval > 0);
 		break;
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
 		ret = __rt9471_set_cv(chip, val->intval);
