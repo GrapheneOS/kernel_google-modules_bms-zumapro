@@ -65,7 +65,7 @@ enum max77779_fg_command_bits {
 static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj);
 static int max77779_fg_set_next_update(struct max77779_fg_chip *chip);
 static int max77779_fg_update_cycle_count(struct max77779_fg_chip *chip);
-static int max77779_fg_apply_n_register(struct max77779_fg_chip *chip);
+static int max77779_fg_apply_register(struct max77779_fg_chip *chip, struct device_node *node);
 static u16 max77779_fg_save_battery_cycle(struct max77779_fg_chip *chip, u16 reg_cycle);
 
 /* Do not move reg_write_nolock to public header */
@@ -3086,9 +3086,15 @@ static void max77779_fg_init_setting(struct max77779_fg_chip *chip)
 	/* PASS1/1.5 */
 	max77779_current_offset_check(chip);
 
-	ret = max77779_fg_apply_n_register(chip);
+	/* apply registers in max77779fg node */
+	ret = max77779_fg_apply_register(chip, chip->dev->of_node);
 	if (ret < 0)
-		dev_err(chip->dev, "Fail to apply_n_register(%d)\n", ret);
+		dev_err(chip->dev, "Fail to apply register in max77779fg node (%d)\n", ret);
+
+	/* apply registers in batt node */
+	ret = max77779_fg_apply_register(chip, chip->batt_node);
+	if (ret < 0)
+		dev_err(chip->dev, "Fail to apply register in batt node (%d)\n", ret);
 }
 
 static void max77779_fg_model_work(struct work_struct *work)
@@ -3551,59 +3557,69 @@ static const struct attribute_group max77779_fg_attr_grp = {
 	.attrs = max77779_fg_attrs,
 };
 
-static int max77779_fg_apply_n_register(struct max77779_fg_chip *chip)
+static int max77779_fg_apply_register(struct max77779_fg_chip *chip, struct device_node *node)
 {
-	struct device_node *node = chip->dev->of_node;
-	const char *propname = "max77779,fg_n_regval";
-	int cnt, ret = 0, idx, err;
+	struct maxfg_regmap *regmap;
+	const char *propname[] = {"max77779,fg_regval", "max77779,fg_n_regval"};
+	int regmap_idx, cnt, idx;
+	int ret = 0;
 	u16 *regs, data;
 
 	if (!node)
-		return 0;
-
-	cnt = of_property_count_elems_of_size(node, propname, sizeof(u16));
-	if (cnt <= 0)
-		return 0;
-
-	if (cnt & 1) {
-		dev_warn(chip->dev, "%s %s u16 elems count is not even: %d\n",
-			 node->name, propname, cnt);
 		return -EINVAL;
-	}
 
-	regs = (u16 *)kmalloc_array(cnt, sizeof(u16), GFP_KERNEL);
-	if (!regs)
-		return -ENOMEM;
-
-	ret = of_property_read_u16_array(node, propname, regs, cnt);
-	if (ret) {
-		dev_warn(chip->dev, "failed to read %s %s: %d\n",
-			 node->name, propname, ret);
-		goto register_out;
-	}
-
-	for (idx = 0; idx < cnt; idx += 2) {
-		if (!max77779_fg_dbg_is_reg(chip->dev, regs[idx]))
+	for (regmap_idx = 0; regmap_idx < ARRAY_SIZE(propname); regmap_idx++) {
+		cnt = of_property_count_elems_of_size(node, propname[regmap_idx], sizeof(u16));
+		if (cnt <= 0)
 			continue;
 
-		err = REGMAP_READ(&chip->regmap_debug, regs[idx], &data);
-		if (err) {
-			dev_warn(chip->dev, "%s: fail to read %#x(%d)\n",
-				 __func__, regs[idx], err);
+		if (cnt & 1) {
+			ret = -EINVAL;
+			dev_warn(chip->dev, "%s %s u16 elems count is not even: %d\n",
+				 node->name, propname[regmap_idx], cnt);
 			continue;
 		}
 
-		if (data != regs[idx + 1]) {
-			err = MAX77779_FG_N_REGMAP_WRITE(&chip->regmap, &chip->regmap_debug,
-							 regs[idx], regs[idx + 1]);
-			if (err)
+		regs = (u16 *)kmalloc_array(cnt, sizeof(u16), GFP_KERNEL);
+		if (!regs)
+			return -ENOMEM;
+
+		ret = of_property_read_u16_array(node, propname[regmap_idx], regs, cnt);
+		if (ret) {
+			dev_warn(chip->dev, "failed to read %s %s: %d\n",
+				 node->name, propname[regmap_idx], ret);
+			goto free_out;
+		}
+
+		regmap = (regmap_idx == 0) ? &chip->regmap : &chip->regmap_debug;
+		for (idx = 0; idx < cnt; idx += 2) {
+			ret = REGMAP_READ(regmap, regs[idx], &data);
+
+			if (ret) {
+				dev_warn(chip->dev, "%s: fail to read %#x(%d)\n",
+					 __func__, regs[idx], ret);
+				continue;
+			}
+
+			if (data == regs[idx + 1])
+				continue;
+
+			if (regmap_idx == 0)
+				ret = MAX77779_FG_REGMAP_WRITE(&chip->regmap,
+							       regs[idx], regs[idx + 1]);
+			else
+				ret = MAX77779_FG_N_REGMAP_WRITE(&chip->regmap,
+								 &chip->regmap_debug,
+								 regs[idx], regs[idx + 1]);
+
+			if (ret)
 				dev_warn(chip->dev, "%s: fail to write %#x to %#x(%d)\n",
-					 __func__, regs[idx + 1], regs[idx], err);
+					 __func__, regs[idx + 1], regs[idx], ret);
 		}
+free_out:
+		kfree(regs);
 	}
 
-register_out:
-	kfree(regs);
 	return ret;
 }
 
