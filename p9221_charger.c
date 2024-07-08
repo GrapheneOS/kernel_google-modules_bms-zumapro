@@ -6656,8 +6656,7 @@ static void p9221_handle_pp(struct p9221_charger_data *charger)
 
 	/* len is the length of the data + 1 for header. (cksum not supplied) */
 	p9221_hex_str(buff, msg_len + 1, bufstr, sizeof(bufstr), false);
-	dev_info(&charger->client->dev, "Received PP: %s\n", bufstr);
-	logbuffer_log(charger->log, "Received PP: %s", bufstr);
+	dev_dbg(&charger->client->dev, "Received PP: %s\n", bufstr);
 
 	if ((buff[0] == CHARGE_STATUS_PACKET_HEADER) &&
 	    (buff[1] == PP_TYPE_POWER_CONTROL) &&
@@ -6681,6 +6680,7 @@ static void p9221_handle_pp(struct p9221_charger_data *charger)
 	 */
 	if (buff[0] != 0x4f)
 		return;
+	logbuffer_log(charger->log, "Received PP: %s", bufstr);
 	memcpy(charger->pp_buf, buff, sizeof(charger->pp_buf));
 	charger->pp_buf_valid = 1;
 
