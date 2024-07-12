@@ -10124,6 +10124,8 @@ static int gbatt_get_health(struct batt_drv *batt_drv)
 
 	switch (charging_state) {
 	case BATTERY_STATUS_NORMAL:
+	case BATTERY_STATUS_LONGLIFE:
+	case BATTERY_STATUS_ADAPTIVE:
 		health = POWER_SUPPLY_HEALTH_GOOD;
 		break;
 	case BATTERY_STATUS_TOO_COLD:
