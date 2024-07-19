@@ -341,6 +341,7 @@ int max77779_fg_param_cstr(char *buf, int max, const struct max77779_model_data 
 int max77779_fg_param_sscan(struct max77779_model_data *model_data, const char *buf, int max);
 int max77779_fg_model_cstr(char *buf, int max, const struct max77779_model_data *model_data);
 int max77779_fg_model_sscan(struct max77779_model_data *model_data, const char *buf, int max);
+bool max77779_fg_check_state(struct max77779_model_data *model_data);
 
 /* read saved value */
 ssize_t max77779_gmsr_state_cstr(char *buf, int max);

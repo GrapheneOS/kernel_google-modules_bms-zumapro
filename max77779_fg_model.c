@@ -417,21 +417,29 @@ error_done:
 }
 
 #define MAX77779_FG_CAP_MAX_RATIO	110
+#define MAX77779_FG_CAP_MIN_RATIO	50
 static int max77779_fg_check_state_data(struct model_state_save *state,
 					struct max77779_custom_parameters *ini)
 {
 	int max_cap = ini->designcap * MAX77779_FG_CAP_MAX_RATIO / 100;
+	int min_cap = ini->designcap * MAX77779_FG_CAP_MIN_RATIO / 100;
 
-	if (state->rcomp0 == 0xFFFF)
+	if (state->rcomp0 == 0xFFFF || state->rcomp0 == 0)
 		return -ERANGE;
 
-	if (state->tempco == 0xFFFF)
+	if (state->tempco == 0xFFFF || state->tempco == 0)
 		return -ERANGE;
 
 	if (state->fullcaprep > max_cap)
 		return -ERANGE;
 
 	if (state->fullcapnom > max_cap)
+		return -ERANGE;
+
+	if (state->fullcaprep < min_cap)
+		return -ERANGE;
+
+	if (state->fullcapnom < min_cap)
 		return -ERANGE;
 
 	if (state->cycles == 0xFFFF)
@@ -564,6 +572,34 @@ max77779_save_state_data_exit:
 	__pm_relax(chip->fg_wake_lock);
 
 	return ret;
+}
+
+bool max77779_fg_check_state(struct max77779_model_data *model_data)
+{
+	int rc;
+	struct maxfg_regmap *regmap = model_data->regmap;
+	struct maxfg_regmap *debug_regmap = model_data->debug_regmap;
+	struct max77779_custom_parameters *cp = &model_data->parameters;
+	const int min_cap = cp->designcap * MAX77779_FG_CAP_MIN_RATIO / 100;
+	u16 fullcapnom, fullcaprep, rcomp0, tempco;
+
+	rc = REGMAP_READ(regmap, MAX77779_FG_FullCapRep, &fullcaprep);
+	if (rc == 0 && fullcaprep < min_cap)
+		return false;
+
+	rc = REGMAP_READ(regmap, MAX77779_FG_FullCapNom, &fullcapnom);
+	if (rc == 0 && fullcapnom < min_cap)
+		return false;
+
+	rc = REGMAP_READ(debug_regmap, MAX77779_FG_NVM_nRComp0, &rcomp0);
+	if (rc == 0 && rcomp0 == 0)
+		return false;
+
+	rc = REGMAP_READ(debug_regmap, MAX77779_FG_NVM_nTempCo, &tempco);
+	if (rc == 0 && tempco == 0)
+		return false;
+
+	return true;
 }
 
 /* 0 ok, < 0 error. Call after reading from the FG */
