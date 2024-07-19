@@ -53,12 +53,10 @@ static int gs201_wlc_tx_enable(struct max77779_usecase_data *uc_data, int use_ca
 	pr_debug("%s: use_case:%d enable:%d\n", __func__, use_case, enable);
 
 	if (!enable) {
-		if (!uc_data->reverse12_en) {
-			ret = max77779_external_chg_reg_write(uc_data->dev, MAX77779_CHG_CNFG_11, 0x0);
-			if (ret < 0)
-				pr_err("%s: fail to reset MAX77779_CHG_REVERSE_BOOST_VOUT\n",
-				       __func__);
-		}
+		ret = max77779_external_chg_reg_write(uc_data->dev, MAX77779_CHG_CNFG_11, 0x0);
+		if (ret < 0)
+			pr_err("%s: fail to reset MAX77779_CHG_REVERSE_BOOST_VOUT\n",
+				__func__);
 
 		ret = gs201_wlc_en(uc_data, WLC_DISABLED);
 		if (ret < 0)
@@ -81,33 +79,31 @@ static int gs201_wlc_tx_config(struct max77779_usecase_data *uc_data, int use_ca
 	u8 val;
 	int ret = 0;
 
-	/* No reverse 1:2 available, we need to configure max77779 */
-	if (!uc_data->reverse12_en) {
-		if (use_case == GSU_MODE_WLC_TX) {
-			ret = max77779_external_chg_reg_write(uc_data->dev,
-							      MAX77779_CHG_CNFG_11,
-							      MAX77779_CHG_REVERSE_BOOST_VOUT_7V);
-			if (ret < 0)
-				pr_err("fail to configure MAX77779_CHG_REVERSE_BOOST_VOUT\n");
-		} else {
-			ret = max77779_external_chg_reg_write(uc_data->dev,
-							      MAX77779_CHG_CNFG_11,
-							      0x0);
-			if (ret < 0)
-				pr_err("fail to reset MAX77779_CHG_REVERSE_BOOST_VOUT\n");
-		}
-		/* Set WCSM to 1.4A */
-		ret = max77779_external_chg_reg_read(uc_data->dev, MAX77779_CHG_CNFG_05, &val);
+	/* We need to configure max77779 */
+	if (use_case == GSU_MODE_WLC_TX) {
+		ret = max77779_external_chg_reg_write(uc_data->dev,
+							MAX77779_CHG_CNFG_11,
+							MAX77779_CHG_REVERSE_BOOST_VOUT_7V);
 		if (ret < 0)
-			pr_err("%s: fail to read MAX77779_CHG_CNFG_05 ret:%d\n", __func__, ret);
+			pr_err("fail to configure MAX77779_CHG_REVERSE_BOOST_VOUT\n");
+	} else {
+		ret = max77779_external_chg_reg_write(uc_data->dev,
+							MAX77779_CHG_CNFG_11,
+							0x0);
+		if (ret < 0)
+			pr_err("fail to reset MAX77779_CHG_REVERSE_BOOST_VOUT\n");
+	}
+	/* Set WCSM to 1.4A */
+	ret = max77779_external_chg_reg_read(uc_data->dev, MAX77779_CHG_CNFG_05, &val);
+	if (ret < 0)
+		pr_err("%s: fail to read MAX77779_CHG_CNFG_05 ret:%d\n", __func__, ret);
 
-		ret = max77779_external_chg_reg_write(uc_data->dev, MAX77779_CHG_CNFG_05,
-			_max77779_chg_cnfg_05_wcsm_ilim_set(val,
-					MAX77779_CHG_CNFG_05_WCSM_ILIM_1400_MA));
-		if (ret < 0) {
-			pr_err("%s: fail to write MAX77779_CHG_CNFG_05 ret:%d\n", __func__, ret);
-			return ret;
-		}
+	ret = max77779_external_chg_reg_write(uc_data->dev, MAX77779_CHG_CNFG_05,
+		_max77779_chg_cnfg_05_wcsm_ilim_set(val,
+				MAX77779_CHG_CNFG_05_WCSM_ILIM_1400_MA));
+	if (ret < 0) {
+		pr_err("%s: fail to write MAX77779_CHG_CNFG_05 ret:%d\n", __func__, ret);
+		return ret;
 	}
 
 	return ret;
@@ -207,8 +203,8 @@ int gs201_to_standby(struct max77779_usecase_data *uc_data, int use_case)
 			    use_case != GSU_MODE_WLC_DC;
 		break;
 	case GSU_MODE_WLC_TX:
-		need_stby = !uc_data->reverse12_en;
-		if (need_stby && uc_data->rtx_ready >= 0)
+		need_stby = true;
+		if (uc_data->rtx_ready >= 0)
 			gpio_set_value_cansleep(uc_data->rtx_ready, 0);
 		break;
 	case GSU_MODE_USB_OTG:
