@@ -2253,7 +2253,7 @@ static void bat_log_chg_stats(struct logbuffer *log,
 			ce_data->adapter_details.ad_voltage * 100,
 			ce_data->adapter_details.ad_amperage * 100);
 
-	logbuffer_log(log, "S: %hu,%hu, %hu,%hu %hu,%hu %lld,%lld, %u",
+	logbuffer_log(log, "S: %hu,%hu, %hu,%hu %hu,%hu %ld,%ld, %u",
 			ce_data->charging_stats.ssoc_in,
 			ce_data->charging_stats.voltage_in,
 			ce_data->charging_stats.ssoc_out,

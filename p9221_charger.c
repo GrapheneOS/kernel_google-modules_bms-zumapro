@@ -5901,9 +5901,9 @@ static ssize_t authstart_show(struct device *dev,
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct p9221_charger_data *charger = i2c_get_clientdata(client);
-	const bool need_icl = charger->is_mfg_google || charger->mfg == WLC_MFG_108_FOR_GOOGLE;
 
-	return scnprintf(buf, PAGE_SIZE, "%c\n", !need_icl || charger->set_auth_icl ? 'Y' : 'N');
+	return scnprintf(buf, PAGE_SIZE, "%c\n",
+			 charger->set_auth_icl ? 'Y' : 'N');
 }
 
 static ssize_t authstart_store(struct device *dev,
@@ -5912,36 +5912,34 @@ static ssize_t authstart_store(struct device *dev,
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct p9221_charger_data *charger = i2c_get_clientdata(client);
-	const bool need_icl = charger->is_mfg_google || charger->mfg == WLC_MFG_108_FOR_GOOGLE;
+	const bool is_enhanced = charger->pdata->has_wlc_dc ||
+				 charger->pdata->gpp_enhanced;
+	const bool need_auth = charger->is_mfg_google ||
+			       charger->mfg == WLC_MFG_108_FOR_GOOGLE;
 	const ktime_t timeout = ms_to_ktime(WLCDC_DEBOUNCE_TIME_S * 1000);
 	int ret = 0;
 
-	if (buf[0] != '1')
+	if (buf[0] != '1' || !charger->chip_is_calibrated(charger))
 		return -EINVAL;
 
 	mutex_lock(&charger->auth_lock);
 
-	if (charger->set_auth_icl || !need_icl)
+	if (charger->set_auth_icl)
 		goto unlock;
 
-	if (!charger->chip_is_calibrated(charger)) {
-		cancel_work_sync(&charger->calibration_work);
-		schedule_work(&charger->calibration_work);
-		ret = -EINVAL;
+	charger->set_auth_icl = true;
+
+	if (!need_auth || !is_enhanced)
 		goto unlock;
-	}
 
 	ret = p9221_set_auth_dc_icl(charger, true);
-
-	if (ret == 0) {
-		charger->set_auth_icl = true;
-		pm_stay_awake(charger->dev);
-		alarm_start_relative(&charger->auth_dc_icl_alarm, timeout);
-		schedule_delayed_work(&charger->auth_dc_icl_work,
-				      msecs_to_jiffies(WLCDC_AUTH_CHECK_INIT_DELAY_MS));
-	} else if (ret < 0) {
+	if (ret < 0)
 		dev_err(&charger->client->dev, "cannot set Auth ICL: %d\n", ret);
-	}
+
+	pm_stay_awake(charger->dev);
+	alarm_start_relative(&charger->auth_dc_icl_alarm, timeout);
+	schedule_delayed_work(&charger->auth_dc_icl_work,
+			      msecs_to_jiffies(WLCDC_AUTH_CHECK_INIT_DELAY_MS));
 
 unlock:
 	mutex_unlock(&charger->auth_lock);
@@ -7040,25 +7038,6 @@ static void p9221_uevent_work(struct work_struct *work)
 	}
 }
 
-static void p9xxx_calibration_work(struct work_struct *work)
-{
-	struct p9221_charger_data *charger = container_of(work,
-			struct p9221_charger_data, calibration_work);
-
-	for (int i = 0; i < 5; i++) {
-		if (!p9221_is_epp(charger))
-			break;
-		dev_dbg(&charger->client->dev, "not calibrated yet, check again in 5 secs\n");
-		msleep(5000);
-		if (charger->chip_is_calibrated(charger)) {
-			if (!charger->set_auth_icl)
-				schedule_work(&charger->uevent_work);
-			break;
-		}
-	}
-
-}
-
 static void p9221_parse_fod(struct device *dev,
 			    int *fod_num, u8 *fod, char *of_name)
 {
@@ -8027,7 +8006,6 @@ static int p9221_charger_probe(struct i2c_client *client,
 	INIT_DELAYED_WORK(&charger->chk_fod_work, p9xxx_chk_fod_work);
 	INIT_DELAYED_WORK(&charger->set_rf_work, p9xxx_set_rf_work);
 	INIT_WORK(&charger->uevent_work, p9221_uevent_work);
-	INIT_WORK(&charger->calibration_work, p9xxx_calibration_work);
 	INIT_WORK(&charger->rtx_disable_work, p9382_rtx_disable_work);
 	INIT_WORK(&charger->rtx_reset_work, p9xxx_rtx_reset_work);
 	INIT_DELAYED_WORK(&charger->power_mitigation_work,
@@ -8368,7 +8346,6 @@ static void p9221_charger_remove(struct i2c_client *client)
 	cancel_delayed_work_sync(&charger->chk_fod_work);
 	cancel_delayed_work_sync(&charger->set_rf_work);
 	cancel_work_sync(&charger->uevent_work);
-	cancel_work_sync(&charger->calibration_work);
 	cancel_work_sync(&charger->rtx_disable_work);
 	cancel_work_sync(&charger->rtx_reset_work);
 	cancel_delayed_work_sync(&charger->power_mitigation_work);
