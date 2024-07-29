@@ -2785,6 +2785,62 @@ static int fg_fw_update_get(void* data, u64* val) {
 
 DEFINE_SIMPLE_ATTRIBUTE(debug_fw_update_fops, fg_fw_update_get, fg_fw_update_set, "%llu\n");
 
+static ssize_t registers_dump_show(struct device *dev, struct device_attribute *attr,
+				   char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct max77779_fg_chip *chip = power_supply_get_drvdata(psy);
+	u32 reg_address, data;
+	int ret = 0, offset = 0;
+
+	if (!chip->regmap.regmap || !chip->regmap_debug.regmap) {
+		dev_err(dev, "Failed to read, no regmap\n");
+		return -EIO;
+	}
+
+	for (reg_address = 0; reg_address <= 0xFF; reg_address++) {
+		if (!max77779_fg_is_reg(dev, reg_address))
+			continue;
+
+		ret = regmap_read(chip->regmap.regmap, reg_address, &data);
+		if (ret < 0)
+			continue;
+
+		ret = sysfs_emit_at(buf, offset, "%02x: %04x\n", reg_address, data);
+		if (!ret) {
+			dev_err(dev, "[%s]: Not all registers printed. last:%x\n", __func__,
+				reg_address - 1);
+			break;
+		}
+		offset += ret;
+	}
+
+	ret = sysfs_emit_at(buf, offset, "\nFG_DEBUG:\n");
+	if (!ret)
+		return offset;
+
+	offset += ret;
+	for (reg_address = 0; reg_address <= 0xFF; reg_address++) {
+		if (!max77779_fg_dbg_is_reg(dev, reg_address))
+			continue;
+
+		ret = regmap_read(chip->regmap_debug.regmap, reg_address, &data);
+		if (ret < 0)
+			continue;
+
+		ret = sysfs_emit_at(buf, offset, "%02x: %04x\n", reg_address, data);
+		if (!ret) {
+			dev_err(dev, "[%s]: Not all registers printed. last:%x\n", __func__,
+				reg_address - 1);
+			break;
+		}
+		offset += ret;
+	}
+
+	return offset;
+}
+
+static DEVICE_ATTR_RO(registers_dump);
 
 static ssize_t act_impedance_store(struct device *dev,
 				   struct device_attribute *attr,
@@ -3550,6 +3606,7 @@ static struct attribute *max77779_fg_attrs[] = {
 	&dev_attr_model_state.attr,
 	&dev_attr_fg_abnormal_events.attr,
 	&dev_attr_fg_learning_events.attr,
+	&dev_attr_registers_dump.attr,
 	NULL,
 };
 
