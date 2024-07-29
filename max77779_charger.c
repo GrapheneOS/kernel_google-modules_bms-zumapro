@@ -3169,7 +3169,8 @@ static irqreturn_t max77779_chgr_irq(int irq, void *d)
 		dev_err_ratelimited(data->dev, "%s i2c error writing INT, IRQ_NONE\n", __func__);
 		return IRQ_NONE;
 	}
-	pr_debug("max77779_chgr_irq INT : %02x %02x\n", chg_int[0], chg_int[1]);
+
+	dev_info_ratelimited(data->dev, "%s INT : %02x %02x\n", __func__, chg_int[0], chg_int[1]);
 
 	/* No need to monitor wcin_inlim when on USB */
 	if (chg_int[0] & MAX77779_CHG_INT_CHGIN_I_MASK) {
