@@ -2601,7 +2601,7 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 	if (!chip->init_complete || !chip->resume_complete) {
 		dev_warn_ratelimited(chip->dev, "%s: irq skipped, irq%d\n", __func__, irq);
 		pm_runtime_put_sync(chip->dev);
-		return IRQ_HANDLED;
+		return IRQ_NONE;
 	}
 	pm_runtime_put_sync(chip->dev);
 

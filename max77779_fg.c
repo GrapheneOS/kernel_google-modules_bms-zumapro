@@ -1994,7 +1994,7 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 
 	if (irq != -1 && max77779_fg_resume_check(chip)) {
 		dev_warn_ratelimited(chip->dev, "%s: irq skipped, irq%d\n", __func__, irq);
-		return IRQ_HANDLED;
+		return IRQ_NONE;
 	}
 	/* b/336418454 lock to sync FG_INT_STS with model work */
 	mutex_lock(&chip->model_lock);

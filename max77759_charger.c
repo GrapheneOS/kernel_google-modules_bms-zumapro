@@ -2929,7 +2929,7 @@ static irqreturn_t max77759_chgr_irq(int irq, void *client)
 
 	if (max77759_resume_check(data)) {
 		dev_warn_ratelimited(data->dev, "%s: irq skipped, irq:%d\n", __func__, irq);
-		return IRQ_HANDLED;
+		return IRQ_NONE;
 	}
 
 	ret = max77759_readn(data->regmap, MAX77759_CHG_INT, chg_int,

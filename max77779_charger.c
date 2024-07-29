@@ -3144,7 +3144,7 @@ static irqreturn_t max77779_chgr_irq(int irq, void *d)
 
 	if (max77779_resume_check(data)) {
 		dev_warn_ratelimited(data->dev, "%s: irq skipped, irq%d\n", __func__, irq);
-		return IRQ_HANDLED;
+		return IRQ_NONE;
 	}
 
 	ret = max77779_readn(data, MAX77779_CHG_INT, chg_int, 2);
@@ -3319,7 +3319,7 @@ static irqreturn_t max77779_chg_irq_handler(int irq, void *ptr)
 
 	if (max77779_resume_check(data)) {
 		dev_warn_ratelimited(data->dev, "%s: irq skipped, irq%d\n", __func__, irq);
-		return IRQ_HANDLED;
+		return IRQ_NONE;
 	}
 
 	ret = max77779_readn(data, MAX77779_CHG_INT, (uint8_t*)&intsrc_sts, 2);
