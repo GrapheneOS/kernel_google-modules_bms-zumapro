@@ -4840,12 +4840,7 @@ static bool chg_therm_override_fcc(struct chg_drv *chg_drv)
 		return false;
 
 	wlc_online = GPSY_GET_PROP(chg_drv->wlc_psy, POWER_SUPPLY_PROP_ONLINE);
-	if (wlc_online == PPS_PSY_PROG_ONLINE)
-		override = ctdev_wlcfcc->current_level != 0;
-	else if (wlc_online && override)
-		override = ctdev_dcin->current_level != 0;
-	else
-		override = 0;
+	override = wlc_online > 0;
 
 	pr_debug("%s: MSC_THERM_FCC wlc_online=%d override=%d, wlcfcc_lvl=%d, dcin_lvl=%d\n",
 		__func__,  wlc_online, override, ctdev_wlcfcc->current_level,
