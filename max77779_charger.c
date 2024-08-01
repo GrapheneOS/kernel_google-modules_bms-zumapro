@@ -1886,6 +1886,12 @@ static int max77779_wcin_is_valid(struct max77779_chgr_data *data)
 	uint8_t wcin_dtls;
 	int ret;
 
+	ret = max77779_reg_read(data, MAX77779_CHG_CNFG_12, &val);
+	if (ret < 0)
+		return ret;
+	if (!_max77779_chg_cnfg_12_wcinsel_get(val))
+		return 0;
+
 	ret = max77779_reg_read(data, MAX77779_CHG_DETAILS_00, &val);
 	if (ret < 0)
 		return ret;
