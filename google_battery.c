@@ -9216,7 +9216,9 @@ static int batt_history_data_work(struct batt_drv *batt_drv)
 	/* TODO: google_battery caches cycle count, should use that */
 	cycle_cnt = GPSY_GET_PROP(batt_drv->fg_psy,
 				  POWER_SUPPLY_PROP_CYCLE_COUNT);
-	if (cycle_cnt < 0)
+
+	/* not update history if cycle count is not ready */
+	if (cycle_cnt <= 0)
 		return -EIO;
 
 	if (batt_drv->blf_collect_now) {
