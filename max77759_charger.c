@@ -1331,8 +1331,8 @@ static int max77759_chgin_input_suspend(struct max77759_chgr_data *data,
 	const int old_value = data->chgin_input_suspend;
 	int ret;
 
-	pr_debug("%s enabled=%d->%d reason=%s\n", __func__,
-		 data->wcin_input_suspend, enabled, reason);
+	dev_dbg(data->dev, "%s enabled=%d->%d reason=%s\n", __func__,
+		 data->chgin_input_suspend, enabled, reason);
 
 	data->chgin_input_suspend = enabled; /* the callback might use this */
 	ret = gvotable_cast_long_vote(data->mode_votable, "CHGIN_SUSP",
