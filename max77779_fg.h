@@ -185,6 +185,9 @@ struct max77779_fg_chip {
 	/* get suspend/resume notification */
 	struct mutex save_data_lock;
 	struct wakeup_source *fg_wake_lock;
+
+	/* mutex lock to access FG USR reg */
+	struct mutex usr_lock;
 };
 
 /** ------------------------------------------------------------------------ */
