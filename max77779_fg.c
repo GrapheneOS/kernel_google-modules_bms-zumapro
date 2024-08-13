@@ -72,7 +72,6 @@ static u16 max77779_fg_save_battery_cycle(struct max77779_fg_chip *chip, u16 reg
 int max77779_external_fg_reg_write_nolock(struct device *dev, uint16_t reg, uint16_t val);
 
 
-static struct mutex section_lock;
 
 static bool max77779_fg_reglog_init(struct max77779_fg_chip *chip)
 {
@@ -210,10 +209,12 @@ static DEVICE_ATTR_RW(offmode_charger);
 
 int max77779_fg_usr_lock_section(const struct maxfg_regmap *map, enum max77779_fg_reg_sections section, bool enabled)
 {
-	int ret, i;
+	struct max77779_fg_chip *chip = container_of(map, struct max77779_fg_chip, regmap);
+	struct reg_sequence cmds[2];
+	int ret;
 	u16 data;
 
-	mutex_lock(&section_lock);
+	mutex_lock(&chip->usr_lock);
 	ret = REGMAP_READ(map, MAX77779_FG_USR, &data);
 	if (ret)
 		goto unlock_exit;
@@ -234,19 +235,20 @@ int max77779_fg_usr_lock_section(const struct maxfg_regmap *map, enum max77779_f
 		data = _max77779_fg_usr_nlock_set(data, enabled);
 		break;
 	default:
-		pr_err("Failed to lock section %d\n", section);
+		dev_err(chip->dev, "Failed to lock section %d\n", section);
+		ret = -EINVAL;
 		goto unlock_exit;
 	}
 
-	/* Requires write twice */
-	for (i = 0; i < 2; i++) {
-		ret = REGMAP_WRITE(map, MAX77779_FG_USR, data);
-		if (ret)
-			goto unlock_exit;
-	}
+	/* write USR twice in single regmap lock section to block other access to FG reg */
+	cmds[0].reg = cmds[1].reg = MAX77779_FG_USR;
+	cmds[0].def = cmds[1].def = data;
+	ret = regmap_multi_reg_write(map->regmap, cmds, ARRAY_SIZE(cmds));
+	if (ret)
+		dev_err(chip->dev, "Failed to multi write USR (%d)\n", ret);
 
 unlock_exit:
-	mutex_unlock(&section_lock);
+	mutex_unlock(&chip->usr_lock);
 	return ret;
 }
 
@@ -263,26 +265,27 @@ static int max77779_fg_resume_check(struct max77779_fg_chip *chip)
 }
 
 /* NOTE: it might not be static inline depending on how it's used */
-static inline int max77779_fg_usr_lock(const struct maxfg_regmap *map, unsigned int reg, bool enabled) {
+static inline int max77779_fg_usr_lock(const struct maxfg_regmap *map, unsigned int reg,
+				       bool enabled) {
 	switch (reg) {
 	case 0x00 ... 0xDF:
 		return max77779_fg_usr_lock_section(map, MAX77779_FG_RAM_SECTION, enabled);
 	case 0xE0 ... 0xEE:
 		return max77779_fg_usr_lock_section(map, MAX77779_FG_FUNC_SECTION, enabled);
 	default:
-		pr_err("Failed to translate reg 0x%X to section\n", reg);
-		return -EINVAL;
+		return 0;
 	}
 }
 
 int max77779_fg_register_write(const struct maxfg_regmap *map,
 			       unsigned int reg, u16 value, bool verify)
 {
+	struct max77779_fg_chip *chip = container_of(map, struct max77779_fg_chip, regmap);
 	int ret, rc;
 
 	ret = max77779_fg_usr_lock(map, reg, false);
 	if (ret) {
-		pr_err("Failed to unlock ret=%d\n", ret);
+		dev_err(chip->dev, "Failed to unlock ret=%d\n", ret);
 		return ret;
 	}
 
@@ -291,11 +294,11 @@ int max77779_fg_register_write(const struct maxfg_regmap *map,
 	else
 		ret = REGMAP_WRITE(map, reg, value);
 	if (ret)
-		pr_err("Failed to write reg verify=%d ret=%d\n", verify, ret);
+		dev_err(chip->dev, "Failed to write reg verify=%d ret=%d\n", verify, ret);
 
 	rc = max77779_fg_usr_lock(map, reg, true);
 	if (rc)
-		pr_err("Failed to lock ret=%d\n", rc);
+		dev_err(chip->dev, "Failed to lock ret=%d\n", rc);
 
 	return ret;
 }
@@ -304,11 +307,12 @@ int max77779_fg_nregister_write(const struct maxfg_regmap *map,
 				const struct maxfg_regmap *debug_map,
 				unsigned int reg, u16 value, bool verify)
 {
+	struct max77779_fg_chip *chip = container_of(map, struct max77779_fg_chip, regmap);
 	int ret, rc;
 
 	ret = max77779_fg_usr_lock_section(map, MAX77779_FG_NVM_SECTION, false);
 	if (ret) {
-		pr_err("Failed to unlock ret=%d\n", ret);
+		dev_err(chip->dev, "Failed to unlock ret=%d\n", ret);
 		return ret;
 	}
 
@@ -317,11 +321,11 @@ int max77779_fg_nregister_write(const struct maxfg_regmap *map,
 	else
 		ret = REGMAP_WRITE(debug_map, reg, value);
 	if (ret)
-		pr_err("Failed to write reg verify=%d ret=%d\n", verify, ret);
+		dev_err(chip->dev, "Failed to write reg verify=%d ret=%d\n", verify, ret);
 
 	rc = max77779_fg_usr_lock_section(map, MAX77779_FG_NVM_SECTION, true);
 	if (rc)
-		pr_err("Failed to lock ret=%d\n", rc);
+		dev_err(chip->dev, "Failed to lock ret=%d\n", rc);
 
 	return ret;
 }
@@ -3641,7 +3645,7 @@ int max77779_fg_init(struct max77779_fg_chip *chip)
 	chip->fake_battery = of_property_read_bool(dev->of_node, "max77779,no-battery") ? 0 : -1;
 	chip->batt_id_defer_cnt = DEFAULT_BATTERY_ID_RETRIES;
 
-	mutex_init(&section_lock);
+	mutex_init(&chip->usr_lock);
 
 	ret = of_property_read_u32(dev->of_node, "max77779,status-charge-threshold-ma",
 				   &data32);
