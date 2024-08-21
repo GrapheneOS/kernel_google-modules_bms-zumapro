@@ -804,20 +804,6 @@ static const struct file_operations name ## _fops = {	\
 	.write	= name ## _store,			\
 }
 
-/*
- * The patch introducing tcpm_update_sink_capabilities() was reverted in
- * android-mainline (See aosp/1911031). While we wait for such patch to be
- * sent upstream let's stub out tcpm_update_sink_capabilities() here.
- * TODO(b/215766959): revert this hack.
- */
-struct tcpm_port;
-static inline int tcpm_update_sink_capabilities(struct tcpm_port *port,
-				const u32 *pdo,
-				unsigned int nr_pdo,
-				unsigned int operating_snk_mw)
-{
-	return 0;
-}
 
 /* trend point types */
 #define GBMS_TP_TRENDPOINTS   'T'
