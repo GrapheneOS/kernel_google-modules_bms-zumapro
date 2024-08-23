@@ -2530,94 +2530,54 @@ static int debug_model_version_set(void *data, u64 val)
 DEFINE_SIMPLE_ATTRIBUTE(debug_model_version_fops, debug_model_version_get,
 			debug_model_version_set, "%llu\n");
 
-static ssize_t max77779_fg_show_debug_data(struct file *filp, char __user *buf,
-					   size_t count, loff_t *ppos)
+static int max77779_fg_show_debug_data(void *d, u64 *val)
 {
-	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)filp->private_data;
-	char msg[8];
-	u16 data;
+	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)d;
+	u16 reg = 0;
 	int ret;
 
-	ret = REGMAP_READ(&chip->regmap, chip->debug_reg_address, &data);
+	ret = REGMAP_READ(&chip->regmap, chip->debug_reg_address, &reg);
 	if (ret < 0)
 		return ret;
 
-	ret = scnprintf(msg, sizeof(msg), "%x\n", data);
-
-	return simple_read_from_buffer(buf, count, ppos, msg, ret);
+	*val = reg;
+	return 0;
 }
 
-static ssize_t max77779_fg_set_debug_data(struct file *filp,
-					  const char __user *user_buf,
-					  size_t count, loff_t *ppos)
+static int max77779_fg_set_debug_data(void *d, u64 val)
 {
-	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)filp->private_data;
-	char temp[8] = { };
-	u16 data;
+	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)d;
+	u16 data = (u16) val;
+
+	return MAX77779_FG_REGMAP_WRITE(&chip->regmap, chip->debug_reg_address, data);
+}
+DEFINE_SIMPLE_ATTRIBUTE(debug_reg_data_fops, max77779_fg_show_debug_data,
+			max77779_fg_set_debug_data, "%02llx\n");
+
+static int max77779_fg_show_dbg_debug_data(void *d, u64 *val)
+{
+	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)d;
+	u16 reg;
 	int ret;
 
-	ret = simple_write_to_buffer(temp, sizeof(temp) - 1, ppos, user_buf, count);
-	if (!ret)
-		return -EFAULT;
-
-	ret = kstrtou16(temp, 16, &data);
+	ret = REGMAP_READ(&chip->regmap_debug, chip->debug_dbg_reg_address, &reg);
 	if (ret < 0)
 		return ret;
 
-	ret =  MAX77779_FG_REGMAP_WRITE(&chip->regmap, chip->debug_reg_address, data);
-	if (ret < 0)
-		return ret;
-
-	return count;
+	*val = reg;
+	return 0;
 }
 
-BATTERY_DEBUG_ATTRIBUTE(debug_reg_data_fops, max77779_fg_show_debug_data,
-			max77779_fg_set_debug_data);
-
-static ssize_t max77779_fg_show_dbg_debug_data(struct file *filp, char __user *buf,
-					       size_t count, loff_t *ppos)
+static int max77779_fg_set_dbg_debug_data(void *d, u64 val)
 {
-	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)filp->private_data;
-	char msg[8];
-	u16 data;
-	int ret;
+	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)d;
+	u16 data = (u16) val;
 
-	ret = REGMAP_READ(&chip->regmap_debug, chip->debug_dbg_reg_address, &data);
-	if (ret < 0)
-		return ret;
-
-	ret = scnprintf(msg, sizeof(msg), "%x\n", data);
-
-	return simple_read_from_buffer(buf, count, ppos, msg, ret);
+	return MAX77779_FG_N_REGMAP_WRITE(&chip->regmap, &chip->regmap_debug,
+					  chip->debug_dbg_reg_address, data);
 }
-
-static ssize_t max77779_fg_set_dbg_debug_data(struct file *filp,
-					      const char __user *user_buf,
-					      size_t count, loff_t *ppos)
-{
-	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)filp->private_data;
-	char temp[8] = { };
-	u16 data;
-	int ret;
-
-	ret = simple_write_to_buffer(temp, sizeof(temp) - 1, ppos, user_buf, count);
-	if (!ret)
-		return -EFAULT;
-
-	ret = kstrtou16(temp, 16, &data);
-	if (ret < 0)
-		return ret;
-
-	ret = MAX77779_FG_N_REGMAP_WRITE(&chip->regmap, &chip->regmap_debug,
-					 chip->debug_dbg_reg_address, data);
-	if (ret < 0)
-		return ret;
-
-	return count;
-}
-
-BATTERY_DEBUG_ATTRIBUTE(debug_reg_dbg_data_fops, max77779_fg_show_dbg_debug_data,
-			max77779_fg_set_dbg_debug_data);
+DEFINE_SIMPLE_ATTRIBUTE(debug_reg_dbg_data_fops, max77779_fg_show_dbg_debug_data,
+			max77779_fg_set_dbg_debug_data, "%02llx\n");
 
 static ssize_t max77779_fg_show_reg_all(struct file *filp, char __user *buf,
 					size_t count, loff_t *ppos)
