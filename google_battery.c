@@ -637,6 +637,8 @@ struct batt_drv {
 	int aacr_cycle_grace;
 	int aacr_cycle_max;
 	int aacr_algo;
+	int aacr_min_capacity_rate;
+	int aacr_cliff_capacity_rate;
 
 	/* AAFV: Aged Adjusted Float Voltage */
 	enum batt_aafv_state aafv_state;
@@ -3878,14 +3880,17 @@ static int aacr_get_capacity_for_algo(const struct batt_drv *batt_drv, int cycle
 				      int aacr_algo)
 {
 	const int design_capacity = batt_drv->battery_capacity; /* mAh */
-	const int min_capacity = (batt_drv->battery_capacity * 80) / 100;
+	const int min_cap_rate = batt_drv->aacr_min_capacity_rate;
+	const int min_capacity = (batt_drv->battery_capacity * min_cap_rate) / 100;
+	const int cliff_cap_rate = batt_drv->aacr_cliff_capacity_rate;
+	const int cliff_capacity = (batt_drv->battery_capacity * cliff_cap_rate) / 100;
 	int reference_capacity, full_cap_nom, full_capacity;
 	struct power_supply *fg_psy = batt_drv->fg_psy;
 	int aacr_capacity;
 
 	/* peg at 80% of design when over limit (if set) */
 	if (batt_drv->aacr_cycle_max && (cycle_count >= batt_drv->aacr_cycle_max))
-		return min_capacity;
+		return cliff_capacity;
 
 	reference_capacity = aacr_get_reference_capacity(batt_drv, cycle_count);
 	if (reference_capacity <= 0)
@@ -5268,6 +5273,12 @@ static void aacr_update_chg_table(struct batt_drv *batt_drv)
 	u32 capacity = aacr_get_capacity(batt_drv);
 
 	if (capacity != batt_drv->chg_profile.capacity_ma) {
+		gbms_logbuffer_devlog(batt_drv->ttf_stats.ttf_log, batt_drv->device,
+		LOGLEVEL_INFO, 0, LOGLEVEL_INFO, "AACR: capacity:%d->%d, state:%d, "
+		"algo:%d, cycle_grace:%d, cycle_max:%d, min_cap_rate:%d, cliff_cap_rate:%d",
+		batt_drv->chg_profile.capacity_ma, capacity, batt_drv->aacr_state,
+		batt_drv->aacr_algo, batt_drv->aacr_cycle_grace, batt_drv->aacr_cycle_max,
+		batt_drv->aacr_min_capacity_rate, batt_drv->aacr_cliff_capacity_rate);
 		gbms_init_chg_table(&batt_drv->chg_profile, batt_drv->device->of_node, capacity);
 		google_battery_dump_profile(&batt_drv->chg_profile);
 	}
@@ -5739,6 +5750,16 @@ static int batt_init_chg_profile(struct batt_drv *batt_drv, struct device_node *
 	ret = of_property_read_u32(node, "google,aacr-algo", &batt_drv->aacr_algo);
 	if (ret < 0)
 		batt_drv->aacr_algo = BATT_AACR_ALGO_DEFAULT;
+
+	ret = of_property_read_u32(node, "google,aacr-min-capacity-rate",
+				   &batt_drv->aacr_min_capacity_rate);
+	if (ret < 0)
+		batt_drv->aacr_min_capacity_rate = 80; /* default rate */
+
+	ret = of_property_read_u32(node, "google,aacr-cliff-capacity-rate",
+				   &batt_drv->aacr_cliff_capacity_rate);
+	if (ret < 0)
+		batt_drv->aacr_cliff_capacity_rate = 50; /* default rate */
 
 	/* NOTE: with NG charger tolerance is applied from "charger" */
 	gbms_init_chg_table(profile, node, aacr_get_capacity(batt_drv));
@@ -7697,6 +7718,9 @@ static ssize_t aacr_cycle_grace_store(struct device *dev,
 	if (ret < 0)
 		return ret;
 
+	if (value < 0)
+		return -ERANGE;
+
 	batt_drv->aacr_cycle_grace = value;
 	return count;
 }
@@ -7725,6 +7749,9 @@ static ssize_t aacr_cycle_max_store(struct device *dev,
 	if (ret < 0)
 		return ret;
 
+	if (value < 0 || value > 3000) /* unexpected cycles */
+		return -ERANGE;
+
 	batt_drv->aacr_cycle_max = value;
 	return count;
 }
@@ -7750,6 +7777,63 @@ static ssize_t aacr_algo_show(struct device *dev,
 }
 
 static const DEVICE_ATTR_RO(aacr_algo);
+
+static ssize_t aacr_min_capacity_rate_store(struct device *dev,
+				       struct device_attribute *attr,
+				       const char *buf, size_t count)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	int rate, ret = 0;
+
+	ret = kstrtoint(buf, 0, &rate);
+	if (ret < 0 || rate > 100 || rate <= 0)
+		return ret;
+
+	batt_drv->aacr_min_capacity_rate = rate;
+	return count;
+}
+
+static ssize_t aacr_min_capacity_rate_show(struct device *dev,
+				      struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->aacr_min_capacity_rate);
+}
+
+static const DEVICE_ATTR_RW(aacr_min_capacity_rate);
+
+static ssize_t aacr_cliff_capacity_rate_store(struct device *dev,
+				       struct device_attribute *attr,
+				       const char *buf, size_t count)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	int rate, ret = 0;
+
+	ret = kstrtoint(buf, 0, &rate);
+	if (ret < 0)
+		return ret;
+
+	if(rate > 100 || rate <= 0)
+		return -ERANGE;
+
+	batt_drv->aacr_cliff_capacity_rate = rate;
+	return count;
+}
+
+static ssize_t aacr_cliff_capacity_rate_show(struct device *dev,
+				      struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", batt_drv->aacr_cliff_capacity_rate);
+}
+
+static const DEVICE_ATTR_RW(aacr_cliff_capacity_rate);
 
 /* AAFV ------------------------------------------------------------------- */
 
@@ -9129,6 +9213,12 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_aacr_algo);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create aacr algo\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_aacr_min_capacity_rate);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create aacr min capacity rate\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_aacr_cliff_capacity_rate);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create aacr cliff capacity rate\n");
 	/* aafv */
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_aafv_state);
 	if (ret)
