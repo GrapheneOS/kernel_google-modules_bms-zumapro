@@ -270,6 +270,7 @@ enum batt_aacr_state {
 	BATT_AACR_ENABLED = 1,
 	BATT_AACR_ALGO_DEFAULT = BATT_AACR_ENABLED,
 	BATT_AACR_ALGO_LOW_B, /* lower bound */
+	BATT_AACR_ALGO_REFERENCE_CAP, /* reference capacity only */
 	BATT_AACR_MAX,
 };
 
@@ -3866,6 +3867,9 @@ static int aacr_get_capacity_for_algo(const struct batt_drv *batt_drv, int cycle
 	reference_capacity = aacr_get_reference_capacity(batt_drv, cycle_count);
 	if (reference_capacity <= 0)
 		return design_capacity;
+
+	if (aacr_algo == BATT_AACR_ALGO_REFERENCE_CAP)
+		return reference_capacity;
 
 	/* full_cap_nom in uAh, need to scale to mAh */
 	full_cap_nom = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_CHARGE_FULL);
@@ -7545,6 +7549,10 @@ static ssize_t aacr_state_store(struct device *dev,
 	case BATT_AACR_ALGO_LOW_B:
 		state = BATT_AACR_ENABLED;
 		algo = BATT_AACR_ALGO_LOW_B;
+		break;
+	case BATT_AACR_ALGO_REFERENCE_CAP:
+		state = BATT_AACR_ENABLED;
+		algo = BATT_AACR_ALGO_REFERENCE_CAP;
 		break;
 	default:
 		return -ERANGE;
