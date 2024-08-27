@@ -5468,6 +5468,9 @@ static int chg_thermal_device_init(struct chg_drv *chg_drv)
 {
 	struct chg_thermal_device *ctdev_fcc, *ctdev_dc, *ctdev_wlcfcc;
 	int rfcc, rdc, rwfcc;
+	bool no_wlc;
+
+	no_wlc = of_property_read_bool(chg_drv->device->of_node, "no-wlc");
 
 	ctdev_fcc = &chg_drv->thermal_devices[CHG_TERMAL_DEVICE_FCC];
 	rfcc = chg_tdev_init(ctdev_fcc, "google,thermal-mitigation", chg_drv);
@@ -5498,7 +5501,13 @@ static int chg_thermal_device_init(struct chg_drv *chg_drv)
 	}
 
 	ctdev_dc = &chg_drv->thermal_devices[CHG_TERMAL_DEVICE_DC_IN];
-	rdc = chg_tdev_init(ctdev_dc, "google,wlc-thermal-mitigation", chg_drv);
+
+	if (no_wlc) {
+		dev_err(chg_drv->device, "No cooling device for wlc\n");
+		rdc = -ENOENT;
+	} else {
+		rdc = chg_tdev_init(ctdev_dc, "google,wlc-thermal-mitigation", chg_drv);
+	}
 	if (rdc == 0) {
 		int ret;
 
