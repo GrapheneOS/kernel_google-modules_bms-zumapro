@@ -2353,6 +2353,9 @@ static ssize_t debug_get_reglog_writes(struct file *filp, char __user *buf,
 	ssize_t rc = 0;
 	struct maxfg_reglog *reglog = (struct maxfg_reglog *)filp->private_data;
 
+	if (*ppos)
+		return 0;
+
 	buff = kmalloc(count, GFP_KERNEL);
 	if (!buff)
 		return -ENOMEM;
@@ -2374,6 +2377,9 @@ static ssize_t max77779_fg_show_custom_model(struct file *filp, char __user *buf
 	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)filp->private_data;
 	char *tmp;
 	int len;
+
+	if (*ppos)
+		return 0;
 
 	if (!chip->model_data)
 		return -EINVAL;
@@ -2434,6 +2440,9 @@ static ssize_t max77779_fg_show_custom_param(struct file *filp, char __user *buf
 	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)filp->private_data;
 	char *tmp;
 	int len;
+
+	if (*ppos)
+		return 0;
 
 	if (!chip->model_data)
 		return -EINVAL;
@@ -2589,6 +2598,9 @@ static ssize_t max77779_fg_show_reg_all(struct file *filp, char __user *buf,
 	char *tmp;
 	int ret = 0, len = 0;
 
+	if (*ppos)
+		return 0;
+
 	if (!map->regmap) {
 		pr_err("Failed to read, no regmap\n");
 		return -EIO;
@@ -2625,6 +2637,9 @@ static ssize_t max77779_fg_show_dbg_reg_all(struct file *filp, char __user *buf,
 	unsigned int data;
 	char *tmp;
 	int ret = 0, len = 0;
+
+	if (*ppos)
+		return 0;
 
 	if (!map->regmap) {
 		pr_err("Failed to read, no regmap\n");

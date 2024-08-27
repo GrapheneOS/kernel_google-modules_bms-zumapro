@@ -6059,6 +6059,9 @@ static ssize_t debug_get_ssoc_uicurve(struct file *filp,
 	struct batt_drv *batt_drv = (struct batt_drv *)filp->private_data;
 	char tmp[UICURVE_BUF_SZ] = { 0 };
 
+	if (*ppos)
+		return 0;
+
 	mutex_lock(&batt_drv->chg_lock);
 	ssoc_uicurve_cstr(tmp, sizeof(tmp), batt_drv->ssoc_state.ssoc_curve);
 	mutex_unlock(&batt_drv->chg_lock);
@@ -6239,6 +6242,9 @@ static ssize_t debug_get_chg_raw_profile(struct file *filp,
 	char *tmp;
 	int len;
 
+	if (*ppos)
+		return 0;
+
 	tmp = kzalloc(PAGE_SIZE, GFP_KERNEL);
 	if (!tmp)
 		return -ENOMEM;
@@ -6304,6 +6310,9 @@ static ssize_t debug_get_power_metrics(struct file *filp, char __user *buf,
 	struct batt_drv *batt_drv = (struct batt_drv *)filp->private_data;
 	char *tmp;
 	int idx, len = 0;
+
+	if (*ppos)
+		return 0;
 
 	tmp = kzalloc(PAGE_SIZE, GFP_KERNEL);
 	if (!tmp)
@@ -6389,6 +6398,9 @@ static ssize_t debug_get_fake_temp(struct file *filp,
 {
 	struct batt_drv *batt_drv = (struct batt_drv *)filp->private_data;
 	char tmp[8];
+
+	if (*ppos)
+		return 0;
 
 	mutex_lock(&batt_drv->chg_lock);
 	scnprintf(tmp, sizeof(tmp), "%d\n", batt_drv->fake_temp);
@@ -6480,19 +6492,17 @@ static ssize_t debug_set_pairing_state(struct file *filp,
 BATTERY_DEBUG_ATTRIBUTE(debug_pairing_fops, 0, debug_set_pairing_state);
 
 /* TODO: add write to stop/start collection, erase history etc. */
-static ssize_t debug_get_blf_state(struct file *filp, char __user *buf,
-				   size_t count, loff_t *ppos)
+static int debug_get_blf_state(void *data, u64 *val)
 {
-	struct batt_drv *batt_drv = (struct batt_drv *)filp->private_data;
-	char tmp[8];
+	struct batt_drv *batt_drv = (struct batt_drv *)data;
 
 	mutex_lock(&batt_drv->chg_lock);
-	scnprintf(tmp, sizeof(tmp), "%d\n", batt_drv->blf_state);
+	*val = batt_drv->blf_state;
 	mutex_unlock(&batt_drv->chg_lock);
 
-	return simple_read_from_buffer(buf, count, ppos, tmp, strlen(tmp));
+	return 0;
 }
-BATTERY_DEBUG_ATTRIBUTE(debug_blf_state_fops, debug_get_blf_state, 0);
+DEFINE_SIMPLE_ATTRIBUTE(debug_blf_state_fops, debug_get_blf_state, NULL, "%llu\n");
 
 static ssize_t debug_get_bhi_status(struct file *filp, char __user *buf,
 				   size_t count, loff_t *ppos)
