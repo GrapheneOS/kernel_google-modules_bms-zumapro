@@ -1195,7 +1195,7 @@ static void p9221_wcin_inlim(struct p9221_charger_data *charger)
 
 	msc_last = gvotable_get_current_int_vote(charger->msc_last_votable);
 
-	if (charger->online && msc_last == 1 && !p9221_is_epp(charger))
+	if (charger->online && (msc_last == 1 || charger->last_capacity > 90) && !p9221_is_epp(charger))
 		gpio_set_value_cansleep(charger->pdata->wcin_inlim_en_gpio, true);
 	else
 		gpio_set_value_cansleep(charger->pdata->wcin_inlim_en_gpio, false);
