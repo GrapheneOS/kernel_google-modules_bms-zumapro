@@ -1355,7 +1355,7 @@ static int max1720x_restore_battery_cycle(struct max1720x_chip *chip)
 	u16 eeprom_cycle, reg_cycle;
 
 	if (chip->gauge_type != MAX_M5_GAUGE_TYPE)
-		return -EINVAL;
+		return 0;
 
 	ret = REGMAP_READ(&chip->regmap, MAX1720X_CYCLES, &reg_cycle);
 	if (ret < 0) {

@@ -2526,7 +2526,8 @@ static void chg_work(struct work_struct *work)
 
 		gbms_logbuffer_devlog(bd_state->bd_log, chg_drv->device,
 				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-				      "online:%d->%d [%d/%d/%d], present:%d->%d [%d/%d/%d] (%d)",
+				      "online:%d->%d [USB:%d/WLC:%d/EXT:%d], "
+				      "present:%d->%d [USB:%d/WLC:%d/EXT:%d] (stop_charging:%d)",
 				      chg_drv->online, online, usb_online, wlc_online,  ext_online,
 				      chg_drv->present, present, usb_present, wlc_present,
 				      ext_present, chg_drv->stop_charging);
