@@ -4902,13 +4902,12 @@ static int msc_logic(struct batt_drv *batt_drv)
 		 * NOTE: should I use a voltage limit instead?
 		 */
 
-		if (chg_type == POWER_SUPPLY_CHARGE_TYPE_FAST) {
+		if (chg_type == POWER_SUPPLY_CHARGE_TYPE_FAST)
 			msc_state = MSC_FAST;
-		} else if (chg_type != POWER_SUPPLY_CHARGE_TYPE_TAPER_EXT) {
+		else if (chg_type != POWER_SUPPLY_CHARGE_TYPE_TAPER_EXT)
 			msc_state = MSC_TYPE;
-		} else {
+		else
 			msc_state = MSC_LAST;
-		}
 
 		log_level = batt_prlog_level(batt_drv->msc_state != msc_state);
 		if (log_level != BATT_PRLOG_ALWAYS && msc_state == MSC_LAST) {
