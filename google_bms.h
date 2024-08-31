@@ -67,8 +67,8 @@ struct gbms_chg_profile {
 	u32 cc_ua_resolution;
 
 	/* AACR feature */
-	u32 reference_cycles[GBMS_AACR_DATA_MAX];
-	u32 reference_fade10[GBMS_AACR_DATA_MAX];
+	u32 aacr_reference_cycles[GBMS_AACR_DATA_MAX];
+	u32 aacr_reference_fade10[GBMS_AACR_DATA_MAX];
 	u32 aacr_nb_limits;
 
 	bool debug_chg_profile;

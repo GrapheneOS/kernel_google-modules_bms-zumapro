@@ -295,12 +295,12 @@ int gbms_read_aacr_limits(struct gbms_chg_profile *profile,
 	}
 
 	ret = of_property_read_u32_array(node, "google,aacr-ref-cycles",
-					 (u32 *)profile->reference_cycles, cycle_nb_limits);
+					 (u32 *)profile->aacr_reference_cycles, cycle_nb_limits);
 	if (ret < 0)
 		return ret;
 
 	ret = of_property_read_u32_array(node, "google,aacr-ref-fade10",
-					 (u32 *)profile->reference_fade10, fade10_nb_limits);
+					 (u32 *)profile->aacr_reference_fade10, fade10_nb_limits);
 	if (ret < 0)
 		return ret;
 
@@ -324,15 +324,15 @@ int gbms_aacr_fade10(const struct gbms_chg_profile *profile, int cycles)
 		return -EINVAL;
 
 	for (idx = 0; idx < profile->aacr_nb_limits - 1; idx++)
-		if (cycles < profile->reference_cycles[idx])
+		if (cycles < profile->aacr_reference_cycles[idx])
 			break;
 
 	/* Interpolation */
-	cycle_f = profile->reference_cycles[idx];
-	fade_f = profile->reference_fade10[idx];
+	cycle_f = profile->aacr_reference_cycles[idx];
+	fade_f = profile->aacr_reference_fade10[idx];
 	if (idx > 0) {
-		cycle_s = profile->reference_cycles[idx - 1];
-		fade_s = profile->reference_fade10[idx - 1];
+		cycle_s = profile->aacr_reference_cycles[idx - 1];
+		fade_s = profile->aacr_reference_fade10[idx - 1];
 	}
 
 	return (cycles - cycle_s) * (fade_f - fade_s) / (cycle_f - cycle_s) + fade_s;
