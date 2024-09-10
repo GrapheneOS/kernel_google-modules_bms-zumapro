@@ -646,7 +646,7 @@ struct batt_drv {
 	int aafv_max_offset;
 	int aafv_cliff_cycle;
 	int aafv_cliff_offset;
-	struct logbuffer *aafv_log;
+	struct logbuffer *bd_log;
 	struct mutex aafv_state_lock;
 
 	/* BHI: updated on disconnect, EOC */
@@ -4826,6 +4826,10 @@ static int batt_init_aafv_profile(struct batt_drv *batt_drv)
 	dev_info(batt_drv->device, "AAFV: schedule supported: %s",
 		ret ? "not detected" : "detected");
 
+	ret = of_property_read_u32(node, "google,aafv-max-offset", &batt_drv->aafv_max_offset);
+	if (ret < 0)
+		batt_drv->aafv_max_offset = AAFV_MAX_OFFSET_DEFAULT;
+
 	ret = of_property_read_u32(node, "google,aafv-cliff-cycle", &batt_drv->aafv_cliff_cycle);
 	if (ret < 0)
 		batt_drv->aafv_cliff_cycle = AAFV_CLIFF_CYCLE_DEFAULT;
@@ -4861,16 +4865,11 @@ static u32 aafv_update_state(struct batt_drv *batt_drv)
 	aafv_offset = offset * 1000;
 
 exit_done:
-	if ((u32)aafv_offset != batt_drv->chg_profile.aafv_offset) {
-		dev_info(batt_drv->device, "AAFV: of=%d, cc=%d, st=%d, clf_c=%d, clf_o=%d\n",
-			 aafv_offset / 1000, cycle_count, batt_drv->aafv_state,
-			 batt_drv->aafv_cliff_cycle, batt_drv->aafv_cliff_offset);
+	gbms_logbuffer_prlog(batt_drv->bd_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+			     "AAFV: of=%d, cc=%d, st=%d, clf_c=%d, clf_o=%d",
+			     aafv_offset / 1000, cycle_count, batt_drv->aafv_state,
+			     batt_drv->aafv_cliff_cycle, batt_drv->aafv_cliff_offset);
 
-		logbuffer_log(batt_drv->aafv_log,
-			"AAFV: of=%d, cc=%d, st=%d, clf_c=%d, clf_o=%d\n",
-			 aafv_offset / 1000, cycle_count, batt_drv->aafv_state,
-			 batt_drv->aafv_cliff_cycle, batt_drv->aafv_cliff_offset);
-	}
 	batt_drv->chg_profile.aafv_offset = (u32)aafv_offset;
 
 	mutex_unlock(&batt_drv->aafv_state_lock);
@@ -4878,12 +4877,12 @@ exit_done:
 	return (u32)aafv_offset;
 }
 
-static void aafv_update_voltage(struct batt_drv *batt_drv, int *fv_uv)
+static void aafv_update_voltage(struct batt_drv *batt_drv, int *fv_uv, const int last_vbatt_idx)
 {
 	struct gbms_chg_profile *profile = &batt_drv->chg_profile;
-	const u32 last_fv = profile->volt_limits[profile->volt_nb_limits - 1];
-	const u32 penultimate_fv = (profile->volt_nb_limits > 1) ?
-			profile->volt_limits[profile->volt_nb_limits - 2] : 0;
+	const u32 last_fv = profile->volt_limits[last_vbatt_idx];
+	const u32 penultimate_fv = (last_vbatt_idx >= 1) ?
+			profile->volt_limits[last_vbatt_idx - 1] : 0;
 	u32 aafv_fv, aafv_offset = aafv_update_state(batt_drv);
 
 	aafv_fv = last_fv - aafv_offset;
@@ -5180,8 +5179,12 @@ static int msc_logic(struct batt_drv *batt_drv)
 	}
 
 	/* adjust last fv_uv */
-	if (vbatt_idx != batt_drv->vbatt_idx && vbatt_idx == profile->volt_nb_limits - 1)
-		aafv_update_voltage(batt_drv, &fv_uv);
+	if (vbatt_idx != batt_drv->vbatt_idx || temp_idx != batt_drv->temp_idx) {
+		const int last_vbatt_idx = gbms_msc_get_last_voltage_idx(profile, temp_idx);
+
+		if (vbatt_idx == last_vbatt_idx)
+			aafv_update_voltage(batt_drv, &fv_uv, last_vbatt_idx);
+	}
 
 	batt_prlog(batt_prlog_level(changed),
 		   "MSC_LOGIC temp_idx:%d->%d, vbatt_idx:%d->%d, fv=%d->%d, cc_max=%d, ui=%d cv_cnt=%d ov_cnt=%d\n",
@@ -7860,10 +7863,8 @@ static ssize_t aafv_state_store(struct device *dev,
 
 	mutex_lock(&batt_drv->aafv_state_lock);
 
-	if (batt_drv->aafv_state == val) {
-		mutex_unlock(&batt_drv->aafv_state_lock);
-		return count;
-	}
+	if (batt_drv->aafv_state == val)
+		goto done;
 
 	if (val == BATT_AAFV_ENABLED && batt_drv->aafv_state != BATT_AAFV_DISABLED) {
 		mutex_unlock(&batt_drv->aafv_state_lock);
@@ -7872,6 +7873,7 @@ static ssize_t aafv_state_store(struct device *dev,
 
 	dev_info(batt_drv->device, "AAFV: aafv_state: %d -> %d\n", batt_drv->aafv_state, val);
 	batt_drv->aafv_state = val;
+done:
 	mutex_unlock(&batt_drv->aafv_state_lock);
 
 	return count;
@@ -7931,8 +7933,10 @@ static ssize_t aafv_max_offset_store(struct device *dev,
 	if (ret < 0)
 		return ret;
 
+	mutex_lock(&batt_drv->aafv_state_lock);
 	if (value >= 0)
 		batt_drv->aafv_max_offset = value;
+	mutex_unlock(&batt_drv->aafv_state_lock);
 
 	return count;
 }
@@ -8025,6 +8029,7 @@ static ssize_t aafv_profile_store(struct device *dev,
 	int cnt = 0, batt_id, nb_limits, idx;
 	bool is_valid;
 
+	/* This profile might change due to AACR and AACT */
 	cnt = sscanf(buf, "%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u, \
 		     %u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u", &batt_id,
 		     &cc[0], &of[0], &cc[1], &of[1], &cc[2], &of[2], &cc[3], &of[3],
@@ -10980,6 +10985,12 @@ static int gbatt_gbms_set_property(struct power_supply *psy,
 		mutex_unlock(&batt_drv->chg_lock);
 		break;
 
+	case GBMS_PROP_LOGBUFFER_BD:
+		batt_drv->bd_log = (struct logbuffer *)val->int64val;
+		gbms_logbuffer_prlog(batt_drv->bd_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+				     "AACP: set logbuffer_bd addr");
+		break;
+
 	default:
 		pr_debug("%s: route to gbatt_set_property, psp:%d\n", __func__, psp);
 		return -ENODATA;
@@ -11002,6 +11013,7 @@ static int gbatt_gbms_property_is_writeable(struct power_supply *psy,
 	case GBMS_PROP_ADAPTER_DETAILS:
 	case POWER_SUPPLY_PROP_TIME_TO_FULL_NOW:
 	case POWER_SUPPLY_PROP_HEALTH:
+	case GBMS_PROP_LOGBUFFER_BD:
 		return 1;
 	default:
 		break;
@@ -11408,14 +11420,6 @@ static void google_battery_init_work(struct work_struct *work)
 
 	/* init aafv setting */
 	batt_init_aafv_profile(batt_drv);
-
-	batt_drv->aafv_log = logbuffer_register("aafv");
-	if (IS_ERR(batt_drv->aafv_log)) {
-		ret = PTR_ERR(batt_drv->aafv_log);
-		dev_err(batt_drv->device, "failed to create aafv_log, ret=%d\n", ret);
-
-		batt_drv->aafv_log = NULL;
-	}
 
 	/* chg_profile will use cycle_count when aacr is enabled */
 	ret = batt_init_chg_profile(batt_drv, node);
@@ -11905,8 +11909,6 @@ static int google_battery_remove(struct platform_device *pdev)
 		logbuffer_unregister(batt_drv->ssoc_log);
 	if (batt_drv->ttf_stats.ttf_log)
 		logbuffer_unregister(batt_drv->ttf_stats.ttf_log);
-	if (batt_drv->aafv_log)
-		logbuffer_unregister(batt_drv->aafv_log);
 	if (batt_drv->history)
 		gbms_storage_cleanup_device(batt_drv->history);
 
