@@ -639,6 +639,7 @@ struct batt_drv {
 	int aacr_algo;
 	int aacr_min_capacity_rate;
 	int aacr_cliff_capacity_rate;
+	struct mutex aacr_state_lock;
 
 	/* AAFV: Aged Adjusted Float Voltage */
 	enum batt_aafv_state aafv_state;
@@ -3945,6 +3946,7 @@ static u32 aacr_get_capacity(struct batt_drv *batt_drv)
 	if (batt_drv->aacr_state == BATT_AACR_DISABLED)
 		goto exit_done;
 
+	mutex_lock(&batt_drv->aacr_state_lock);
 	if (cycle_count <= batt_drv->aacr_cycle_grace) {
 		batt_drv->aacr_state = BATT_AACR_UNDER_CYCLES;
 	} else {
@@ -3958,6 +3960,7 @@ static u32 aacr_get_capacity(struct batt_drv *batt_drv)
 			capacity = aacr_capacity;
 		}
 	}
+	mutex_unlock(&batt_drv->aacr_state_lock);
 
 exit_done:
 	return (u32)capacity;
@@ -7699,8 +7702,10 @@ static ssize_t aacr_state_store(struct device *dev,
 
 	pr_info("aacr_state: %d -> %d, aacr_algo: %d -> %d\n",
 		batt_drv->aacr_state, state, batt_drv->aacr_algo, algo);
+	mutex_lock(&batt_drv->aacr_state_lock);
 	batt_drv->aacr_state = state;
 	batt_drv->aacr_algo = algo;
+	mutex_unlock(&batt_drv->aacr_state_lock);
 
 	aacr_update_chg_table(batt_drv);
 
@@ -7734,7 +7739,10 @@ static ssize_t aacr_cycle_grace_store(struct device *dev,
 	if (value < 0)
 		return -ERANGE;
 
+	mutex_lock(&batt_drv->aacr_state_lock);
 	batt_drv->aacr_cycle_grace = value;
+	mutex_unlock(&batt_drv->aacr_state_lock);
+
 	return count;
 }
 
@@ -7765,7 +7773,10 @@ static ssize_t aacr_cycle_max_store(struct device *dev,
 	if (value < 0 || value > 3000) /* unexpected cycles */
 		return -ERANGE;
 
+	mutex_lock(&batt_drv->aacr_state_lock);
 	batt_drv->aacr_cycle_max = value;
+	mutex_unlock(&batt_drv->aacr_state_lock);
+
 	return count;
 }
 
@@ -7803,7 +7814,10 @@ static ssize_t aacr_min_capacity_rate_store(struct device *dev,
 	if (ret < 0 || rate > 100 || rate <= 0)
 		return ret;
 
+	mutex_lock(&batt_drv->aacr_state_lock);
 	batt_drv->aacr_min_capacity_rate = rate;
+	mutex_unlock(&batt_drv->aacr_state_lock);
+
 	return count;
 }
 
@@ -7833,7 +7847,10 @@ static ssize_t aacr_cliff_capacity_rate_store(struct device *dev,
 	if(rate > 100 || rate <= 0)
 		return -ERANGE;
 
+	mutex_lock(&batt_drv->aacr_state_lock);
 	batt_drv->aacr_cliff_capacity_rate = rate;
+	mutex_unlock(&batt_drv->aacr_state_lock);
+
 	return count;
 }
 
@@ -11318,6 +11335,7 @@ static void google_battery_init_work(struct work_struct *work)
 	mutex_init(&batt_drv->cc_data.lock);
 	mutex_init(&batt_drv->bpst_state.lock);
 	mutex_init(&batt_drv->hda_tz_lock);
+	mutex_init(&batt_drv->aacr_state_lock);
 	mutex_init(&batt_drv->aafv_state_lock);
 
 	ret = of_property_read_u32(node, "google,batt-init-delay", &init_delay_ms);
