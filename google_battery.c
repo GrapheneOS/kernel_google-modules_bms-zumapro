@@ -7642,6 +7642,7 @@ static ssize_t health_index_stats_show(struct device *dev,
 		const int use_algo = batt_bhi_map_algo(i, health_data);
 
 		cap_index = bhi_calc_cap_index(use_algo, batt_drv);
+		cap_index = bhi_cap_index_bound(use_algo, cap_index);
 		imp_index = bhi_calc_imp_index(use_algo, health_data);
 		sd_index = bhi_calc_sd_index(use_algo, health_data);
 
