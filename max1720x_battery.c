@@ -1752,7 +1752,7 @@ static u16 max1720x_save_battery_cycle(const struct max1720x_chip *chip,
 	reg_cycle /= 2;
 
 	/* Over 655 cycles */
-	if (reg_cycle < eeprom_cycle)
+	if (reg_cycle < eeprom_cycle && chip->cycle_count_offset == MAXIM_CYCLE_COUNT_RESET)
 		reg_cycle |= EEPROM_CC_OVERFLOW_BIT;
 
 	if (reg_cycle <= eeprom_cycle)
@@ -1864,6 +1864,7 @@ static int max1720x_update_cycle_count(struct max1720x_chip *chip)
 		chip->model_next_update = -1;
 		dev_info(chip->dev, "cycle count last:%d, now:%d => cycle_count_offset:%d\n",
 			 chip->cycle_count, cycle_count, chip->cycle_count_offset);
+		cycle_count += chip->cycle_count_offset;
 	}
 
 	chip->eeprom_cycle = max1720x_save_battery_cycle(chip, reg_cycle);
