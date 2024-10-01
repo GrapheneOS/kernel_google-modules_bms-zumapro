@@ -720,11 +720,13 @@ max77779_fg_save_battery_cycle_exit:
 #define MAX17201_HIST_CYCLE_COUNT_OFFSET	0x4
 #define MAX17201_HIST_TIME_OFFSET		0xf
 
+/* call holding chip->model_lock */
 static int max77779_fg_get_cycle_count(struct max77779_fg_chip *chip)
 {
 	return chip->cycle_count;
 }
 
+/* call holding chip->model_lock */
 static int max77779_fg_update_cycle_count(struct max77779_fg_chip *chip)
 {
 	int err;
@@ -743,9 +745,7 @@ static int max77779_fg_update_cycle_count(struct max77779_fg_chip *chip)
 
 	/* If cycle register hasn't been successfully restored from eeprom */
 	if (reg_cycle < chip->eeprom_cycle) {
-		mutex_lock(&chip->model_lock);
 		err = max77779_fg_restore_battery_cycle(chip);
-		mutex_unlock(&chip->model_lock);
 
 		if (err)
 			return 0;
@@ -1298,6 +1298,7 @@ static int max77779_dynrel_config(struct max77779_fg_chip *chip)
 	return ret;
 }
 
+/* call holding chip->model_lock */
 static void max77779_fg_dynrelax(struct max77779_fg_chip *chip)
 {
 	struct maxfg_dynrel_state *dr_state = &chip->dynrel_state;
@@ -1306,6 +1307,9 @@ static void max77779_fg_dynrelax(struct max77779_fg_chip *chip)
 	int learn_stage, ret;
 	bool relaxed;
 	u16 fstat;
+
+	if (!chip->model_ok)
+		return;
 
 	/* dynamic relaxation */
 	if (!dr_state->vfsoc_delta) {
@@ -2031,7 +2035,6 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 		if (err < 0)
 			dev_dbg(chip->dev, "unable to reload model, err=%d\n", err);
 	}
-	mutex_unlock(&chip->model_lock);
 
 	/* NOTE: should always clear everything except POR even if we lose state */
 	MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_FG_INT_STS, fg_int_sts_clr);
@@ -2043,6 +2046,7 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 		max77779_fg_monitor_log_abnormal(chip);
 		max77779_fg_check_learning(chip);
 	}
+	mutex_unlock(&chip->model_lock);
 
 	if (chip->psy)
 		power_supply_changed(chip->psy);
@@ -3200,6 +3204,15 @@ static void max77779_fg_init_setting(struct max77779_fg_chip *chip)
 	ret = max77779_fg_apply_register(chip, chip->batt_node);
 	if (ret < 0)
 		dev_err(chip->dev, "Fail to apply register in batt node (%d)\n", ret);
+
+	/* always reset relax to the correct state */
+	ret = max77779_dynrel_config(chip);
+	if (ret < 0)
+		gbms_logbuffer_devlog(chip->ce_log, chip->dev,
+				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+				      "dynrel: config error enable=%d (%d)",
+				      chip->dynrel_state.vfsoc_delta != 0,
+				      ret);
 }
 
 static void max77779_fg_model_work(struct work_struct *work)
@@ -3428,7 +3441,9 @@ static int max77779_fg_init_chip(struct max77779_fg_chip *chip)
 	MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_FG_INT_MASK,
 				 MAX77779_FG_FG_INT_MASK_dSOCi_m_CLEAR);
 
+	mutex_lock(&chip->model_lock);
 	max77779_fg_update_cycle_count(chip);
+	mutex_unlock(&chip->model_lock);
 
 	/* triggers loading of the model in the irq handler on POR */
 	if (!chip->por) {
@@ -3552,27 +3567,17 @@ static void max77779_fg_init_work(struct work_struct *work)
 	/* call after max77779_fg_init_chip */
 	chip->dynrel_state.relcfg_allow = max77779_get_relaxcfg(chip->model_data);
 	maxfg_dynrel_init(&chip->dynrel_state, chip->dev->of_node);
-
-	/* always reset relax to the correct state */
-	ret = max77779_dynrel_config(chip);
-	if (ret < 0)
-		gbms_logbuffer_devlog(chip->ce_log, chip->dev,
-				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-				      "dynrel: config error enable=%d (%d)",
-				      chip->dynrel_state.vfsoc_delta != 0,
-				      ret);
-
 	max77779_dynrel_init_sysfs(chip, de);
+
+	/* if POR, model work will do it after complete */
+	if (!chip->por)
+		max77779_fg_init_setting(chip);
 
 	/*
 	 * Handle any IRQ that might have been set before init
 	 * NOTE: will trigger model load if needed
 	 */
 	max77779_fg_irq_thread_fn(-1, chip);
-
-	/* run after model loading done */
-	if (!chip->por)
-		max77779_fg_init_setting(chip);
 
 	dev_info(chip->dev, "init_work done\n");
 }
