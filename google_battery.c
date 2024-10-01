@@ -7865,6 +7865,72 @@ static ssize_t aacr_cliff_capacity_rate_show(struct device *dev,
 
 static const DEVICE_ATTR_RW(aacr_cliff_capacity_rate);
 
+static ssize_t aacr_profile_store(struct device *dev,
+				  struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	struct gbms_chg_profile *profile = &batt_drv->chg_profile;
+	u32 cc[GBMS_AACR_DATA_MAX] = { 0 };
+	u32 fd[GBMS_AACR_DATA_MAX] = { 0 };
+	int cnt = 0, batt_id;
+
+	cnt = sscanf(buf, "%d,%u:%u,%u:%u,%u:%u,%u:%u,%u:%u,%u:%u,%u:%u,%u:%u,%u:%u,%u:%u",
+		     &batt_id, &cc[0], &fd[0], &cc[1], &fd[1], &cc[2], &fd[2], &cc[3], &fd[3],
+		     &cc[4], &fd[4], &cc[5], &fd[5], &cc[6], &fd[6], &cc[7], &fd[7],
+		     &cc[8], &fd[8], &cc[9], &fd[9]);
+
+	/* The number entered must be an odd number (include batt_id) */
+	if (cnt % 2 == 0 || cnt < 3)
+		return -ERANGE;
+
+	/* validity check */
+	for (cnt = 0; cnt < GBMS_AACR_DATA_MAX - 1; cnt++) {
+		if (cc[cnt + 1] == 0)
+			break;
+
+		if (cc[cnt] > cc[cnt + 1] || fd[cnt] > fd[cnt + 1])
+			return -ERANGE;
+	}
+
+	if (batt_id == batt_drv->batt_id) {
+		mutex_lock(&batt_drv->aacr_state_lock);
+		memcpy(&profile->aacr_reference_cycles, cc, sizeof(cc));
+		memcpy(&profile->aacr_reference_fade10, fd, sizeof(fd));
+		profile->aacr_nb_limits = (u32)(cnt + 1);
+		mutex_unlock(&batt_drv->aacr_state_lock);
+	}
+
+	return count;
+}
+
+static ssize_t aacr_profile_show(struct device *dev,
+				      struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = container_of(dev, struct power_supply, dev);
+	struct batt_drv *batt_drv = power_supply_get_drvdata(psy);
+	struct gbms_chg_profile *profile = &batt_drv->chg_profile;
+	ssize_t cnt = 0;
+	int i;
+
+	if (profile->aacr_nb_limits == 0)
+		return cnt;
+
+	cnt += sysfs_emit_at(buf, cnt, "%d", batt_drv->batt_id);
+
+	for (i = 0; i < profile->aacr_nb_limits; i++)
+		cnt += sysfs_emit_at(buf, cnt, ",%u:%u",
+				     profile->aacr_reference_cycles[i],
+				     profile->aacr_reference_fade10[i]);
+
+	cnt += sysfs_emit_at(buf, cnt, "\n");
+
+	return cnt;
+}
+
+static const DEVICE_ATTR_RW(aacr_profile);
+
 /* AAFV ------------------------------------------------------------------- */
 
 static ssize_t aafv_state_store(struct device *dev,
@@ -9252,6 +9318,9 @@ static int batt_init_fs(struct batt_drv *batt_drv)
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_aacr_cliff_capacity_rate);
 	if (ret)
 		dev_err(&batt_drv->psy->dev, "Failed to create aacr cliff capacity rate\n");
+	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_aacr_profile);
+	if (ret)
+		dev_err(&batt_drv->psy->dev, "Failed to create aacr profile\n");
 	/* aafv */
 	ret = device_create_file(&batt_drv->psy->dev, &dev_attr_aafv_state);
 	if (ret)
