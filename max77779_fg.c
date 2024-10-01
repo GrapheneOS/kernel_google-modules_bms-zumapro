@@ -61,6 +61,7 @@ enum max77779_fg_command_bits {
 #define MAX77779_FG_EVENT_REPSOC_FDET        BIT(3)
 #define MAX77779_FG_EVENT_REPSOC             BIT(4)
 #define MAX77779_FG_EVENT_VFOCV              BIT(5)
+#define MAX77779_FG_EVENT_STUCK              BIT(6)
 
 static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj);
 static int max77779_fg_set_next_update(struct max77779_fg_chip *chip);
@@ -2059,24 +2060,70 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 	return IRQ_HANDLED;
 }
 
-#define MAX77779_FG_STUCK_PULL_MS 20000
+#define MAX77779_FG_STUCK_LOGGING_TIMES	5
+#define MAX77779_FG_STUCK_PULL_MS	20000
+#define MAX77779_FG_STUCK_LOG_MS	2000
+#define MAX77779_FG_STUCK_LOG_SIZE	((MAX77779_FG_MAX_LOG_REGS + 2) * 5) /* 2 for header */
+static int max77779_fg_log_stuck_event(struct max77779_fg_chip *chip)
+{
+	int ret, i;
+	u16 data16;
+	size_t len = 0;
+	char buf[MAX77779_FG_STUCK_LOG_SIZE];
+	static const u16 log_fg_reg[] = {0x00, 0x0c, 0x1a, 0x1b, 0x1c, 0x1e, 0x28, 0x3d, 0x3f,
+					 0x40, 0x49, 0x4a, 0x74, 0x7a, 0x7b, 0x7c, 0x7d, 0xab,
+					 0xe9, 0xff};
+	const size_t log_fg_cnt = ARRAY_SIZE(log_fg_reg);
+
+	for (i = 0; i < log_fg_cnt; i++) {
+		ret = REGMAP_READ(&chip->regmap, log_fg_reg[i], &data16);
+		if (ret < 0)
+			return ret;
+		len += scnprintf(&buf[len], sizeof(buf) - len, " %04X", data16);
+	}
+
+	/* fill rest with 0 */
+	for (; i < MAX77779_FG_MAX_LOG_REGS - 1; i++)
+		len += scnprintf(&buf[len], sizeof(buf) - len, " %04X", 0);
+
+	gbms_logbuffer_devlog(chip->monitor_log, chip->dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+			      "%#04X %d 1%s",
+			      MONITOR_TAG_AB, GET_BIT_POSITION(MAX77779_FG_EVENT_STUCK), buf);
+	chip->fg_stuck_count++;
+
+	return 0;
+}
+
 static void max77779_fg_stuck_monitor_work(struct work_struct *work)
 {
 	struct max77779_fg_chip *chip = container_of(work, struct max77779_fg_chip,
 						     stuck_monitor_work.work);
-	const int monitor_period = MAX77779_FG_STUCK_PULL_MS;
+	int monitor_period = MAX77779_FG_STUCK_PULL_MS;
 	u16 data;
 	int ret;
 
 	/* check timer changed */
 	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_Timer, &data);
-	if (ret)
+	if (ret < 0)
 		goto done;
 
-	if (chip->timer != 0 && data == chip->timer)
-		max77779_fg_full_reset(chip);
+	if (chip->timer != 0 && data == chip->timer &&
+	    chip->fg_stuck_count < MAX77779_FG_STUCK_LOGGING_TIMES) {
+		/* change period to 2 seconds when start logging registers */
+		monitor_period = MAX77779_FG_STUCK_LOG_MS;
+		ret = max77779_fg_log_stuck_event(chip);
+		if (ret)
+			goto done;
+	}
 
 	chip->timer = data;
+
+	if (chip->fg_stuck_count < MAX77779_FG_STUCK_LOGGING_TIMES)
+		goto done;
+
+	ret = max77779_fg_full_reset(chip);
+	if (ret == 0)
+		chip->fg_stuck_count = 0;
 
 done:
 	schedule_delayed_work(&chip->stuck_monitor_work, msecs_to_jiffies(monitor_period));
@@ -3555,23 +3602,24 @@ bool max77779_fg_is_reg(struct device *dev, unsigned int reg)
 {
 	switch (reg) {
 	case 0x00 ... 0x14:
-	case 0x16 ... 0x1D:
-	case 0x1F ... 0x27:
+	case 0x16 ... 0x28:
 	case 0x29: /* ICHGTERM */
 	case 0x2B: /* FullCapFltr */
 	case 0x2E ... 0x35:
 	case 0x37: /* VFSOC */
-		return true;
 	case 0x39 ... 0x3A:
 	case 0x3D ... 0x3F:
 	case 0x40: /* Can be used for boot completion check (0x82) */
 	case 0x42:
-	case 0x45 ... 0x48:
+	case 0x45 ... 0x4A:
 	case 0x4C ... 0x4E:
 	case 0x52 ... 0x54:
+	case 0x57 ... 0x58:
 	case 0x62 ... 0x63:
 	case 0x6C: /* CurrentOffsetCal */
 	case 0x6F: /* secure update result */
+	case 0x74:
+	case 0x7A ... 0x7D:
 	case 0x80 ... 0x9F: /* Model */
 	case 0xA0: /* CGain */
 	case 0xA3: /* Model cfg */
