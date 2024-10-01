@@ -186,6 +186,9 @@ struct max77779_fg_chip {
 	struct mutex save_data_lock;
 	struct wakeup_source *fg_wake_lock;
 
+	struct delayed_work stuck_monitor_work;
+	u16 timer;
+
 	/* mutex lock to access FG USR reg */
 	struct mutex usr_lock;
 };

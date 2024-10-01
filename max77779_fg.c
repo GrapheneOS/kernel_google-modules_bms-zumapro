@@ -2059,6 +2059,29 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 	return IRQ_HANDLED;
 }
 
+#define MAX77779_FG_STUCK_PULL_MS 20000
+static void max77779_fg_stuck_monitor_work(struct work_struct *work)
+{
+	struct max77779_fg_chip *chip = container_of(work, struct max77779_fg_chip,
+						     stuck_monitor_work.work);
+	const int monitor_period = MAX77779_FG_STUCK_PULL_MS;
+	u16 data;
+	int ret;
+
+	/* check timer changed */
+	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_Timer, &data);
+	if (ret)
+		goto done;
+
+	if (chip->timer != 0 && data == chip->timer)
+		max77779_fg_full_reset(chip);
+
+	chip->timer = data;
+
+done:
+	schedule_delayed_work(&chip->stuck_monitor_work, msecs_to_jiffies(monitor_period));
+}
+
 /* used to find batt_node and chemistry dependent FG overrides */
 static int max77779_fg_read_batt_id(int *batt_id, const struct max77779_fg_chip *chip)
 {
@@ -3805,12 +3828,15 @@ int max77779_fg_init(struct max77779_fg_chip *chip)
 			  batt_ce_capacityfiltered_work);
 	INIT_DELAYED_WORK(&chip->init_work, max77779_fg_init_work);
 	INIT_DELAYED_WORK(&chip->model_work, max77779_fg_model_work);
+	INIT_DELAYED_WORK(&chip->stuck_monitor_work, max77779_fg_stuck_monitor_work);
 
 	chip->fg_wake_lock = wakeup_source_register(NULL, "max77779-fg");
 	if (!chip->fg_wake_lock)
 		dev_warn(dev, "failed to register wake source\n");
 
 	schedule_delayed_work(&chip->init_work, 0);
+	schedule_delayed_work(&chip->stuck_monitor_work,
+			      msecs_to_jiffies(MAX77779_FG_STUCK_PULL_MS));
 
 	return 0;
 
@@ -3839,6 +3865,7 @@ void max77779_fg_remove(struct max77779_fg_chip *chip)
 		max77779_free_data(chip->model_data);
 	cancel_delayed_work(&chip->init_work);
 	cancel_delayed_work(&chip->model_work);
+	cancel_delayed_work(&chip->stuck_monitor_work);
 
 	disable_irq_wake(chip->irq);
 	device_init_wakeup(chip->dev, false);
