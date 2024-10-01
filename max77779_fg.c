@@ -3174,8 +3174,9 @@ static int max77779_fg_model_load(struct max77779_fg_chip *chip)
 	 */
 	ret = max77779_load_gauge_model(chip->model_data, chip->fw_rev, chip->fw_sub_rev);
 	if (ret < 0) {
-		dev_err(chip->dev, "Load Model Failed ret=%d\n", ret);
-		logbuffer_log(chip->ce_log, "max77779 Load Model Failed ret=%d\n", ret);
+		gbms_logbuffer_devlog(chip->ce_log, chip->dev,
+				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+				      "Load Model Failed ret=%d", ret);
 		chip->ml_fails++;
 
 		return -EAGAIN;
@@ -3255,9 +3256,10 @@ static void max77779_fg_model_work(struct work_struct *work)
 	}
 
 	if (new_model) {
-		dev_info(chip->dev, "FG Model OK, ver=%d next_update=%d\n",
-			 max77779_fg_model_version(chip->model_data),
-			 chip->model_next_update);
+		gbms_logbuffer_devlog(chip->ce_log, chip->dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+				      "FG Model OK, ver=%d next_update=%d",
+				      max77779_fg_model_version(chip->model_data),
+				      chip->model_next_update);
 		/* force check again after model loading */
 		chip->current_offset_check_done = false;
 		max77779_fg_init_setting(chip);
@@ -3339,7 +3341,9 @@ static int max77779_fg_init_model_data(struct max77779_fg_chip *chip)
 
 		gbms_logbuffer_devlog(chip->ce_log, chip->dev,
 				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-				      "FG Version Changed, Reload");
+				      "FG Version Changed(%d->%d), Reload",
+				      max77779_model_read_version(chip->model_data),
+				      max77779_fg_model_version(chip->model_data));
 
 		ret = max77779_fg_full_reset(chip);
 		if (ret < 0)
