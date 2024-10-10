@@ -776,6 +776,8 @@ enum csi_status {
 #define CSI_STATUS_MASK_CHARGING	(1 << 13)
 #define CSI_STATUS_MASK_DEFEND_LIMIT	(1 << 14)
 
+#define GET_BIT_POSITION(flag) (fls(flag) - 1)
+
 enum charging_state {
        BATTERY_STATUS_UNKNOWN = -1,
 
