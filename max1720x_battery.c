@@ -1420,11 +1420,10 @@ static u16 max1720x_save_battery_cycle(const struct max1720x_chip *chip,
 	reg_cycle /= 2;
 
 	/* Over 655 cycles */
-	if (reg_cycle < eeprom_cycle && chip->cycle_count_offset == MAXIM_CYCLE_COUNT_RESET)
+	if (reg_cycle < eeprom_cycle)
 		reg_cycle |= EEPROM_CC_OVERFLOW_BIT;
 
-	/* Block write 0xFFFF to CNHS, or it would be reset during restore */
-	if (reg_cycle <= eeprom_cycle || reg_cycle == 0xFFFF)
+	if (reg_cycle <= eeprom_cycle)
 		return eeprom_cycle;
 
 	ret = gbms_storage_write(GBMS_TAG_CNHS, &reg_cycle,
@@ -1527,17 +1526,16 @@ static int max1720x_update_cycle_count(struct max1720x_chip *chip)
 			reg_cycle += max_m5_recal_cycle(chip->model_data);
 
 	cycle_count = reg_to_cycles((u32)reg_cycle, chip->gauge_type) + chip->cycle_count_offset;
-	if (cycle_count < chip->cycle_count && chip->cycle_count_offset == 0) {
+	if (cycle_count < chip->cycle_count) {
 		chip->cycle_count_offset = max1720x_get_cycle_count_offset(chip);
 		chip->model_next_update = -1;
 		dev_info(chip->dev, "cycle count last:%d, now:%d => cycle_count_offset:%d\n",
 			 chip->cycle_count, cycle_count, chip->cycle_count_offset);
-		cycle_count += chip->cycle_count_offset;
 	}
 
 	chip->eeprom_cycle = max1720x_save_battery_cycle(chip, reg_cycle);
 
-	chip->cycle_count = cycle_count >= chip->cycle_count ? cycle_count : chip->cycle_count;
+	chip->cycle_count = cycle_count;
 
 	if (chip->model_ok && reg_cycle >= chip->model_next_update) {
 		err = max1720x_set_next_update(chip);
