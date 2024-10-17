@@ -61,6 +61,7 @@ enum max77779_fg_command_bits {
 #define MAX77779_FG_EVENT_REPSOC_FDET        BIT(3)
 #define MAX77779_FG_EVENT_REPSOC             BIT(4)
 #define MAX77779_FG_EVENT_VFOCV              BIT(5)
+#define MAX77779_FG_EVENT_STUCK              BIT(6)
 
 static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj);
 static int max77779_fg_set_next_update(struct max77779_fg_chip *chip);
@@ -719,11 +720,13 @@ max77779_fg_save_battery_cycle_exit:
 #define MAX17201_HIST_CYCLE_COUNT_OFFSET	0x4
 #define MAX17201_HIST_TIME_OFFSET		0xf
 
+/* call holding chip->model_lock */
 static int max77779_fg_get_cycle_count(struct max77779_fg_chip *chip)
 {
 	return chip->cycle_count;
 }
 
+/* call holding chip->model_lock */
 static int max77779_fg_update_cycle_count(struct max77779_fg_chip *chip)
 {
 	int err;
@@ -742,9 +745,7 @@ static int max77779_fg_update_cycle_count(struct max77779_fg_chip *chip)
 
 	/* If cycle register hasn't been successfully restored from eeprom */
 	if (reg_cycle < chip->eeprom_cycle) {
-		mutex_lock(&chip->model_lock);
 		err = max77779_fg_restore_battery_cycle(chip);
-		mutex_unlock(&chip->model_lock);
 
 		if (err)
 			return 0;
@@ -1297,6 +1298,7 @@ static int max77779_dynrel_config(struct max77779_fg_chip *chip)
 	return ret;
 }
 
+/* call holding chip->model_lock */
 static void max77779_fg_dynrelax(struct max77779_fg_chip *chip)
 {
 	struct maxfg_dynrel_state *dr_state = &chip->dynrel_state;
@@ -1305,6 +1307,9 @@ static void max77779_fg_dynrelax(struct max77779_fg_chip *chip)
 	int learn_stage, ret;
 	bool relaxed;
 	u16 fstat;
+
+	if (!chip->model_ok)
+		return;
 
 	/* dynamic relaxation */
 	if (!dr_state->vfsoc_delta) {
@@ -2030,7 +2035,6 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 		if (err < 0)
 			dev_dbg(chip->dev, "unable to reload model, err=%d\n", err);
 	}
-	mutex_unlock(&chip->model_lock);
 
 	/* NOTE: should always clear everything except POR even if we lose state */
 	MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_FG_INT_STS, fg_int_sts_clr);
@@ -2042,6 +2046,7 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 		max77779_fg_monitor_log_abnormal(chip);
 		max77779_fg_check_learning(chip);
 	}
+	mutex_unlock(&chip->model_lock);
 
 	if (chip->psy)
 		power_supply_changed(chip->psy);
@@ -2057,6 +2062,75 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 
 
 	return IRQ_HANDLED;
+}
+
+#define MAX77779_FG_STUCK_LOGGING_TIMES	5
+#define MAX77779_FG_STUCK_PULL_MS	20000
+#define MAX77779_FG_STUCK_LOG_MS	2000
+#define MAX77779_FG_STUCK_LOG_SIZE	((MAX77779_FG_MAX_LOG_REGS + 2) * 5) /* 2 for header */
+static int max77779_fg_log_stuck_event(struct max77779_fg_chip *chip)
+{
+	int ret, i;
+	u16 data16;
+	size_t len = 0;
+	char buf[MAX77779_FG_STUCK_LOG_SIZE];
+	static const u16 log_fg_reg[] = {0x00, 0x0c, 0x1a, 0x1b, 0x1c, 0x1e, 0x28, 0x3d, 0x3f,
+					 0x40, 0x49, 0x4a, 0x74, 0x7a, 0x7b, 0x7c, 0x7d, 0xab,
+					 0xe9, 0xff};
+	const size_t log_fg_cnt = ARRAY_SIZE(log_fg_reg);
+
+	for (i = 0; i < log_fg_cnt; i++) {
+		ret = REGMAP_READ(&chip->regmap, log_fg_reg[i], &data16);
+		if (ret < 0)
+			return ret;
+		len += scnprintf(&buf[len], sizeof(buf) - len, " %04X", data16);
+	}
+
+	/* fill rest with 0 */
+	for (; i < MAX77779_FG_MAX_LOG_REGS - 1; i++)
+		len += scnprintf(&buf[len], sizeof(buf) - len, " %04X", 0);
+
+	gbms_logbuffer_devlog(chip->monitor_log, chip->dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+			      "%#04X %d 1%s",
+			      MONITOR_TAG_AB, GET_BIT_POSITION(MAX77779_FG_EVENT_STUCK), buf);
+	chip->fg_stuck_count++;
+
+	return 0;
+}
+
+static void max77779_fg_stuck_monitor_work(struct work_struct *work)
+{
+	struct max77779_fg_chip *chip = container_of(work, struct max77779_fg_chip,
+						     stuck_monitor_work.work);
+	int monitor_period = MAX77779_FG_STUCK_PULL_MS;
+	u16 data;
+	int ret;
+
+	/* check timer changed */
+	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_Timer, &data);
+	if (ret < 0)
+		goto done;
+
+	if (chip->timer != 0 && data == chip->timer &&
+	    chip->fg_stuck_count < MAX77779_FG_STUCK_LOGGING_TIMES) {
+		/* change period to 2 seconds when start logging registers */
+		monitor_period = MAX77779_FG_STUCK_LOG_MS;
+		ret = max77779_fg_log_stuck_event(chip);
+		if (ret)
+			goto done;
+	}
+
+	chip->timer = data;
+
+	if (chip->fg_stuck_count < MAX77779_FG_STUCK_LOGGING_TIMES)
+		goto done;
+
+	ret = max77779_fg_full_reset(chip);
+	if (ret == 0)
+		chip->fg_stuck_count = 0;
+
+done:
+	schedule_delayed_work(&chip->stuck_monitor_work, msecs_to_jiffies(monitor_period));
 }
 
 /* used to find batt_node and chemistry dependent FG overrides */
@@ -3100,8 +3174,9 @@ static int max77779_fg_model_load(struct max77779_fg_chip *chip)
 	 */
 	ret = max77779_load_gauge_model(chip->model_data, chip->fw_rev, chip->fw_sub_rev);
 	if (ret < 0) {
-		dev_err(chip->dev, "Load Model Failed ret=%d\n", ret);
-		logbuffer_log(chip->ce_log, "max77779 Load Model Failed ret=%d\n", ret);
+		gbms_logbuffer_devlog(chip->ce_log, chip->dev,
+				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+				      "Load Model Failed ret=%d", ret);
 		chip->ml_fails++;
 
 		return -EAGAIN;
@@ -3130,6 +3205,15 @@ static void max77779_fg_init_setting(struct max77779_fg_chip *chip)
 	ret = max77779_fg_apply_register(chip, chip->batt_node);
 	if (ret < 0)
 		dev_err(chip->dev, "Fail to apply register in batt node (%d)\n", ret);
+
+	/* always reset relax to the correct state */
+	ret = max77779_dynrel_config(chip);
+	if (ret < 0)
+		gbms_logbuffer_devlog(chip->ce_log, chip->dev,
+				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+				      "dynrel: config error enable=%d (%d)",
+				      chip->dynrel_state.vfsoc_delta != 0,
+				      ret);
 }
 
 static void max77779_fg_model_work(struct work_struct *work)
@@ -3172,9 +3256,10 @@ static void max77779_fg_model_work(struct work_struct *work)
 	}
 
 	if (new_model) {
-		dev_info(chip->dev, "FG Model OK, ver=%d next_update=%d\n",
-			 max77779_fg_model_version(chip->model_data),
-			 chip->model_next_update);
+		gbms_logbuffer_devlog(chip->ce_log, chip->dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+				      "FG Model OK, ver=%d next_update=%d",
+				      max77779_fg_model_version(chip->model_data),
+				      chip->model_next_update);
 		/* force check again after model loading */
 		chip->current_offset_check_done = false;
 		max77779_fg_init_setting(chip);
@@ -3256,7 +3341,9 @@ static int max77779_fg_init_model_data(struct max77779_fg_chip *chip)
 
 		gbms_logbuffer_devlog(chip->ce_log, chip->dev,
 				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-				      "FG Version Changed, Reload");
+				      "FG Version Changed(%d->%d), Reload",
+				      max77779_model_read_version(chip->model_data),
+				      max77779_fg_model_version(chip->model_data));
 
 		ret = max77779_fg_full_reset(chip);
 		if (ret < 0)
@@ -3358,7 +3445,9 @@ static int max77779_fg_init_chip(struct max77779_fg_chip *chip)
 	MAX77779_FG_REGMAP_WRITE(&chip->regmap, MAX77779_FG_FG_INT_MASK,
 				 MAX77779_FG_FG_INT_MASK_dSOCi_m_CLEAR);
 
+	mutex_lock(&chip->model_lock);
 	max77779_fg_update_cycle_count(chip);
+	mutex_unlock(&chip->model_lock);
 
 	/* triggers loading of the model in the irq handler on POR */
 	if (!chip->por) {
@@ -3482,27 +3571,17 @@ static void max77779_fg_init_work(struct work_struct *work)
 	/* call after max77779_fg_init_chip */
 	chip->dynrel_state.relcfg_allow = max77779_get_relaxcfg(chip->model_data);
 	maxfg_dynrel_init(&chip->dynrel_state, chip->dev->of_node);
-
-	/* always reset relax to the correct state */
-	ret = max77779_dynrel_config(chip);
-	if (ret < 0)
-		gbms_logbuffer_devlog(chip->ce_log, chip->dev,
-				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-				      "dynrel: config error enable=%d (%d)",
-				      chip->dynrel_state.vfsoc_delta != 0,
-				      ret);
-
 	max77779_dynrel_init_sysfs(chip, de);
+
+	/* if POR, model work will do it after complete */
+	if (!chip->por)
+		max77779_fg_init_setting(chip);
 
 	/*
 	 * Handle any IRQ that might have been set before init
 	 * NOTE: will trigger model load if needed
 	 */
 	max77779_fg_irq_thread_fn(-1, chip);
-
-	/* run after model loading done */
-	if (!chip->por)
-		max77779_fg_init_setting(chip);
 
 	dev_info(chip->dev, "init_work done\n");
 }
@@ -3532,23 +3611,24 @@ bool max77779_fg_is_reg(struct device *dev, unsigned int reg)
 {
 	switch (reg) {
 	case 0x00 ... 0x14:
-	case 0x16 ... 0x1D:
-	case 0x1F ... 0x27:
+	case 0x16 ... 0x28:
 	case 0x29: /* ICHGTERM */
 	case 0x2B: /* FullCapFltr */
 	case 0x2E ... 0x35:
 	case 0x37: /* VFSOC */
-		return true;
 	case 0x39 ... 0x3A:
 	case 0x3D ... 0x3F:
 	case 0x40: /* Can be used for boot completion check (0x82) */
 	case 0x42:
-	case 0x45 ... 0x48:
+	case 0x45 ... 0x4A:
 	case 0x4C ... 0x4E:
 	case 0x52 ... 0x54:
+	case 0x57 ... 0x58:
 	case 0x62 ... 0x63:
 	case 0x6C: /* CurrentOffsetCal */
 	case 0x6F: /* secure update result */
+	case 0x74:
+	case 0x7A ... 0x7D:
 	case 0x80 ... 0x9F: /* Model */
 	case 0xA0: /* CGain */
 	case 0xA3: /* Model cfg */
@@ -3805,12 +3885,15 @@ int max77779_fg_init(struct max77779_fg_chip *chip)
 			  batt_ce_capacityfiltered_work);
 	INIT_DELAYED_WORK(&chip->init_work, max77779_fg_init_work);
 	INIT_DELAYED_WORK(&chip->model_work, max77779_fg_model_work);
+	INIT_DELAYED_WORK(&chip->stuck_monitor_work, max77779_fg_stuck_monitor_work);
 
 	chip->fg_wake_lock = wakeup_source_register(NULL, "max77779-fg");
 	if (!chip->fg_wake_lock)
 		dev_warn(dev, "failed to register wake source\n");
 
 	schedule_delayed_work(&chip->init_work, 0);
+	schedule_delayed_work(&chip->stuck_monitor_work,
+			      msecs_to_jiffies(MAX77779_FG_STUCK_PULL_MS));
 
 	return 0;
 
@@ -3839,6 +3922,7 @@ void max77779_fg_remove(struct max77779_fg_chip *chip)
 		max77779_free_data(chip->model_data);
 	cancel_delayed_work(&chip->init_work);
 	cancel_delayed_work(&chip->model_work);
+	cancel_delayed_work(&chip->stuck_monitor_work);
 
 	disable_irq_wake(chip->irq);
 	device_init_wakeup(chip->dev, false);
